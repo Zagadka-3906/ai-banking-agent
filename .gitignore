@@ -1,0 +1,13 @@
+# Python 虚拟环境与字节码
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 敏感配置文件
+.env
+*.key
+
+# Streamlit 缓存
+.streamlit/
