@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+.runtime
+.runtime2
+__pycache__
+*.pyc
+.env
+.streamlit
+.pytest_cache
+.ruff_cache
+.mypy_cache
+tests

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-banking-agent"
+version = "2.0.0"
+description = "安全可审计的银行 AI 智能体 Mock 沙箱"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.34.0",
+  "pydantic==2.10.6",
+  "requests==2.32.3",
+  "langgraph==0.2.53",
+  "langchain-openai==0.2.14",
+  "langchain-core==0.3.28",
+  "streamlit==1.41.1",
+  "pandas==2.2.3",
+  "python-dotenv==1.0.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.5", "httpx==0.28.1", "ruff>=0.6", "mypy>=1.11"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+exclude = ["venv", ".venv", ".runtime", ".runtime2"]
+
+# Keep the CI gate focused on correctness.  The project intentionally contains
+# long JSON/API payload declarations and supports Python 3.10 syntax; stricter
+# pyupgrade/annotation rules would turn dependency upgrades into unrelated
+# formatting migrations.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E402", "E501"]

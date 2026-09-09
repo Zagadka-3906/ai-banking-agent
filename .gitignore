@@ -1,6 +1,8 @@
 # Python 虚拟环境与字节码
 venv/
 .venv/
+.runtime/
+.runtime2/
 __pycache__/
 *.pyc
 *.pyo

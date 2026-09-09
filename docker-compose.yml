@@ -1,0 +1,60 @@
+services:
+  core:
+    build: .
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    environment:
+      # Leave empty only for an isolated throw-away demo; production/shared
+      # deployments must inject a random secret through .env/secret manager.
+      BANK_AUTH_SECRET: ${BANK_AUTH_SECRET:-}
+      BANK_DEMO_MODE: ${BANK_DEMO_MODE:-1}
+      BANK_MFA_TEST_OTP: ${BANK_MFA_TEST_OTP:-888888}
+      BANK_MFA_OTP: ${BANK_MFA_OTP:-}
+      BANK_REQUIRE_CLIENT_AUTH: ${BANK_REQUIRE_CLIENT_AUTH:-1}
+      BANK_ADMIN_AUDIT_TOKEN: ${BANK_ADMIN_AUDIT_TOKEN:-}
+      BANK_TOKEN_TTL_SECONDS: ${BANK_TOKEN_TTL_SECONDS:-120}
+      BANK_MFA_TTL_SECONDS: ${BANK_MFA_TTL_SECONDS:-120}
+      BANK_CIRCUIT_FAILURE_THRESHOLD: ${BANK_CIRCUIT_FAILURE_THRESHOLD:-5}
+      BANK_CIRCUIT_WINDOW_SECONDS: ${BANK_CIRCUIT_WINDOW_SECONDS:-300}
+      BANK_CIRCUIT_LOCKOUT_SECONDS: ${BANK_CIRCUIT_LOCKOUT_SECONDS:-300}
+      BANK_MAX_INPUT_LENGTH: ${BANK_MAX_INPUT_LENGTH:-2000}
+      BANK_MAX_TRANSFER_CENTS: ${BANK_MAX_TRANSFER_CENTS:-100000000}
+      BANK_AUDIT_MAX_EVENTS: ${BANK_AUDIT_MAX_EVENTS:-5000}
+      BANK_AUTH_TOKEN_MAX_RECORDS: ${BANK_AUTH_TOKEN_MAX_RECORDS:-20000}
+      BANK_IDEMPOTENCY_TTL_SECONDS: ${BANK_IDEMPOTENCY_TTL_SECONDS:-86400}
+      BANK_IDEMPOTENCY_MAX_RECORDS: ${BANK_IDEMPOTENCY_MAX_RECORDS:-10000}
+      BANK_CORS_ORIGINS: ${BANK_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    command: streamlit run web_app.py --server.address 0.0.0.0 --server.port 8501
+    environment:
+      BANK_API_BASE: http://core:8000/api/v1
+      BANK_DEMO_USER_ID: user_zhang
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      BANK_DEMO_MODE: ${BANK_DEMO_MODE:-1}
+      BANK_HTTP_TIMEOUT_SECONDS: ${BANK_HTTP_TIMEOUT_SECONDS:-8}
+      BANK_SANDBOX_TIMEOUT_SECONDS: ${BANK_SANDBOX_TIMEOUT_SECONDS:-1.5}
+      BANK_SANDBOX_MAX_EXPRESSION: ${BANK_SANDBOX_MAX_EXPRESSION:-1000}
+      BANK_SANDBOX_MAX_INPUT_BYTES: ${BANK_SANDBOX_MAX_INPUT_BYTES:-200000}
+      BANK_SANDBOX_MAX_RESULT_BYTES: ${BANK_SANDBOX_MAX_RESULT_BYTES:-200000}
+    ports:
+      - "8501:8501"
+    # The Dockerfile healthcheck targets the Core API on port 8000.  This
+    # service runs Streamlit instead, so override it to avoid reporting the
+    # UI container as permanently unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      core:
+        condition: service_healthy
