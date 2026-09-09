@@ -1,163 +1,233 @@
-# AI Banking Agent（银行 AI 智能体安全沙箱）
+# 🏦 AI Banking Agent (银行 AI 智能体沙箱系统)
 
-这是一个可离线运行的银行智能体参赛基线：自然语言先被解析为白名单意图和可追踪任务 DAG，再由独立的 Mock Core Banking 服务完成余额与流水变更。模型只能提出建议，不能直接调用任意工具或修改账户。
+[![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Framework](https://img.shields.io/badge/Orchestration-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
+[![Backend](https://img.shields.io/badge/Backend-FastAPI-green.svg)](https://fastapi.tiangolo.com/)
+[![Frontend](https://img.shields.io/badge/Frontend-Streamlit-red.svg)](https://streamlit.io/)
+[![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
-> 项目是教学/比赛 Mock，不是生产银行系统。账户数据在进程内存中，生产化必须替换为数据库事务、真实身份认证、KMS 密钥和合规审查。
+基于 **LangGraph 确定性状态机**、**受限核心银行沙箱 (Mock Core Banking)** 与 **DeepSeek 大模型** 构建的受控银行 AI 智能体系统（代号“安言”）[cite: 2, 3]。
 
-## 1. 赛题映射
+本项目针对银行业务的高安全、严风控需求设计，严格践行 **“决策与执行物理分离”** 与 **“低风险自动、高风险确认、极高风险强验证”** 的权限分级理念[cite: 3, 5]。大模型仅负责自然语言意图理解与任务 DAG 规划，账户变更由独立的确定性 Mock Core Banking API 统一执行，彻底杜绝模型幻觉与越权写账[cite: 2, 3]。
 
-| 要求 | 实现 | 权限 |
-| --- | --- | --- |
-| 智能转账 | 人名/别名/手机号、日累计限额、幂等、防重放、预约/AA Mock | ≤1000 元黄区；超出红区 |
-| 账单分析 | 今日/本月/上月/年度/全部过滤、分类统计、深夜/境外异常、流水引用 | 绿区 |
-| 理财操作 | 产品查询、风险评估、推荐/对比、申购/赎回 Mock 结算 | 查询/评估绿区；写操作红区 |
-| 卡片管理 | 查询、虚拟卡申请、额度、冻结/解冻、挂失/解挂 | 申请黄区；安全操作红区 |
-| 密码安全 | 演示凭证版本轮换 | 红区 MFA；不接收或保存明文密码 |
-| 订阅代扣 | 订阅列表、商户匹配、一键取消 | 查询绿区；取消黄区 |
-| 跨场景联动 | 生日锁资、提醒任务、鲜花/蛋糕订单草稿、解锁补偿、人工接管 | 黄区（订单到期需再次确认） |
-| 安全 | HMAC 短时效一次性 nonce、服务端确认/MFA、审计哈希链、熔断、注入防御 | Core API 强制 |
-| 代码沙箱 | 只读 AST 表达式执行器，时间/大小/结果限制 | 禁止写账 |
+---
 
-## 2. 目录
+## 🌟 核心特性
+
+- **三级权限与 Human-in-the-loop 挂起恢复机制**：
+  - 🟢 **绿区（只读直通）**：账户余额、流水明细、理财产品查询与事实对比、卡片/订阅查询及风险评估，Agent 解析后直通调用核心只读接口并引用真实流水号[cite: 1, 3, 4]。
+  - 🟡 **黄区（交互确认）**：小额转账（日累计 $\le 1000$ 元）、预约/AA 分摊发起、跨场景生日资金锁定（$\le 1000$ 元）、虚拟卡申请及订阅代扣取消，状态机触发 `interrupt()` 挂起，前端弹出操作确认卡片，经用户显式确认后恢复执行[cite: 1, 3, 4, 5]。
+  - 🔴 **红区（强因子鉴权）**：大额转账（日累计 $> 1000$ 元）、理财申购与赎回、卡片状态机变更（额度调整/冻结/挂失/解挂）及凭证版本轮换，强制触发服务端 OTP 短信与人脸比对核验，下发绑定父交易 `jti` 的一次性 `mfa_proof` 凭证方可结算[cite: 1, 3, 4, 5]。
+- **账单深度分析与事实聚合**：
+  - 支持普通查账与深度诊断模式解耦，覆盖 TODAY、MONTH、LAST_MONTH、YEAR、ALL 多周期过滤[cite: 1, 3, 4]；
+  - 集成受限只读沙箱进行类目聚合，智能定位深夜大额、境外未知商户等可疑盗刷流水，严格校验数值与流水事实一致性，核心数据不完整时坚决不声称成功[cite: 1, 3, 4, 5]。
+- **跨场景事件联动与资金隔离**：
+  - 智能识别复合意图（如“下周爱人生日预留 1000 元并在前两天提醒订花和蛋糕”），生成带依赖的任务 DAG[cite: 1, 3, 4]；
+  - 联动底层资金池隔离锁定专款（`balance - locked_amount` 硬扣除），任务中心自动生成提前 2 天的备忘提醒与鲜花/蛋糕订单草稿（到期保持 `WAITING_USER` 状态，不自动扣款，必须经用户二次确认）[cite: 1, 3, 4, 5]。
+- **全链路金融级原生安全防御**：
+  - **决策与执行物理分离**：核心结算接口与大模型物理隔离，无底层签发的安全凭证直接请求 API 一律返回 `403 Forbidden`[cite: 3, 5]；
+  - **业务参数强绑定**：签名 Token 内嵌 `context_hash`，覆盖收款人、金额与商户等参数，防止中间人篡改[cite: 5]；
+  - **Prompt 注入拦截**：输入阶段全面消毒净化，有效阻断指令覆盖、层级逃逸与越狱攻击[cite: 4, 5]；
+  - **账户级异常熔断**：MFA 或 Token 连续失败自动触发账户级安全锁定（HTTP 423 + Retry-After）[cite: 3, 4]；
+  - **审计哈希链**：全量关键操作生成结构化审计事件并计算 Hash-chain，支持防篡改自检验证[cite: 3, 4, 5]。
+
+---
+
+## 🏗️ 系统架构设计
+
+系统整体采用 **“感知规划层 $\to$ 安全合规层 $\to$ 确定性执行层”** 的分层流水线设计[cite: 3]：
 
 ```text
-main.py       FastAPI Mock Core：唯一记账边界与策略网关
-agent.py      LangGraph 编排、离线解析、HITL 中断/恢复
-planner.py    意图白名单、槽位校验、风险映射、DAG、事实分析
-security.py   HMAC token、MFA、审计、熔断、注入检测
-scheduler.py  线程安全任务存储（定时/补偿/人工接管）
-sandbox.py    受限只读分析表达式沙箱
-web_app.py    Streamlit 对话与确认/MFA 卡片
-tests/        Core API 安全回归契约
-docs/         架构、安全自评和演示脚本
+[ 用户自然语言输入 (APP / IM / Streamlit) ]
+                      │
+            HTTP / REST (JSON)
+                      ▼
+[ 1. Intent Parser & Sanitizer ] ──► (输入净化、防注入拦截、白名单意图/槽位提取)
+                      │
+                      ▼
+[ 2. Risk Checker & Policy Gateway ] ──► 调用核心风控预检接口 (/risk/precheck)
+                      │
+        ┌─────────────┼─────────────────────────────┐
+        ▼             ▼                             ▼
+  【绿区: 查询】 【黄区: 小额/锁定/申请】       【红区: 超额/理财/挂失】
+        │             │                             │
+        │     interrupt() 挂起状态机        interrupt() 挂起状态机
+        │     等待用户卡片点击确认          服务端强验: 动态 OTP + 人脸比对
+        │             │                             │
+        │             └──────────────┬──────────────┘
+        │                            ▼ 服务端签发短时效 Nonce / MFA Proof
+        ▼                            ▼
+  [ 3. Execution Gateway ] ──► 携带 x-auth-token 请求核心执行端点 (/execute)
+        │                            │
+        │                            ▼ (唯一记账边界: 验签、验可用余额、防重放、记录审计链)
+        ▼                            ▼
+  [ 4. Responder Node ] ──► 整合真实交易凭据 / 流水图表 / 待办卡片输出友好回复
 ```
 
-## 3. 一步一步运行
+---
 
-### 3.1 创建环境
+## 📁 目录结构与模块职责
 
-Python 3.10–3.12（推荐 3.12）：
+```text
+mock-banking-core/
+├── main.py              # FastAPI Mock Core：唯一记账边界、风控策略网关与安全端点
+├── agent.py             # 基于 LangGraph 的业务状态机编排、HITL 中断/恢复与 DeepSeek 节点
+├── planner.py           # 意图白名单、槽位提取、风险路由映射、跨场景任务 DAG 与事实聚合
+├── security.py          # HMAC 凭证签名、MFA 校验、审计哈希链、账户熔断与输入注入防御
+├── scheduler.py         # 线程安全任务中心（定时转账/代扣提醒/订单草稿/人工接管队列）
+├── sandbox.py           # 基于 AST 节点白名单的受限只读表达式安全沙箱（禁止写账）
+├── bank_tools.py        # 编排层调用 Core API 的 HTTP 适配客户端
+├── web_app.py           # Streamlit 前端交互系统（支持卡片挂起、MFA 模态弹窗与实时看板）
+├── tests/               # 自动化测试套件（Core API 契约、金额边界、安全攻击与回归）
+│   ├── test_core_api.py
+│   └── test_security_regressions.py
+├── docs/                # 架构设计、安全自评报告、赛题验收表、演示脚本与答辩提纲
+├── requirements.txt     # 项目运行时依赖清单
+├── requirements-dev.txt # 开发与安全测试依赖清单
+├── docker-compose.yml   # 容器化编排配置文件
+├── Dockerfile           # 镜像构建文件
+├── .env.example         # 环境变量配置模板文件
+└── README.md            # 项目完整技术文档与运行指南
+```
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+---
+
+## 🚀 快速启动指南
+
+### 1. 克隆代码仓库
+
+```bash
+git clone [https://github.com/your-org/ai-banking-agent.git](https://github.com/your-org/ai-banking-agent.git)
+cd ai-banking-agent
+```
+
+### 2. 创建并激活虚拟环境
+
+本项目推荐使用 **Python 3.10–3.12**（推荐 3.12，请勿使用 Python 3.13/3.14）[cite: 1]：
+
+- **Windows (PowerShell)**:
+  ```powershell
+  python -m venv .venv
+  Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+  .\.venv\Scripts\Activate.ps1
+  ```
+- **macOS / Linux**:
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  ```
+
+### 3. 安装依赖组件
+
+```bash
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-# 开发/测试环境再安装：
+# 开发与测试环境补装：
 python -m pip install -r requirements-dev.txt
 ```
 
-### 3.2 配置安全参数
+### 4. 配置环境变量
 
-复制 .env.example 为 .env。至少设置：
+复制环境模板为本地 `.env`[cite: 1]：
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 配置文件[cite: 1]：
 
 ```dotenv
-BANK_AUTH_SECRET=请替换为随机长字符串
+# 必须配置为长随机字符串，用于 HMAC 签名
+BANK_AUTH_SECRET=your_super_secret_key_change_in_production
 BANK_DEMO_MODE=1
 BANK_MFA_TEST_OTP=888888
 BANK_REQUIRE_CLIENT_AUTH=0
-BANK_API_BASE=http://127.0.0.1:8000/api/v1
+BANK_API_BASE=[http://127.0.0.1:8000/api/v1](http://127.0.0.1:8000/api/v1)
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
 ```
 
-共享环境设置 BANK_DEMO_MODE=0、BANK_REQUIRE_CLIENT_AUTH=1 并接入真实 MFA；固定测试码只允许本机沙箱。即使本地演示关闭严格模式，所有写操作和确认/MFA 仍必须携带 `X-User-Id`。
+> **安全须知**：共享演示或容器部署时，建议设置 `BANK_DEMO_MODE=0` 和 `BANK_REQUIRE_CLIENT_AUTH=1`[cite: 1, 5]。本地演示即使关闭严格鉴权，所有写接口与确认/MFA 接口仍必须携带 `X-User-Id`[cite: 1, 5]。若未配置在线模型密钥，系统将自动平滑降级为确定性离线规则解析引擎[cite: 2]。
 
-Compose 默认已打开 `BANK_REQUIRE_CLIENT_AUTH=1`，且不再内置固定签名密钥；启动共享环境前必须显式设置 `BANK_AUTH_SECRET`。
+---
 
-### 3.3 启动核心与前端
+## 🖥️ 运行与交互演示
 
-终端一：
+系统采用前后端解耦架构，请**在两个独立终端窗口**分别启动服务：
+
+### 终端 1：启动 Mock 核心银行沙箱 (Port: 8000)
 
 ```powershell
-python -m uvicorn main:app --host 127.0.0.1 --port 8000
+python -m uvicorn main:app --reload --port 8000
 ```
+> 启动后可直接访问 Swagger 可视化文档进行接口自测：`http://127.0.0.1:8000/docs`；健康检查：`http://127.0.0.1:8000/healthz`[cite: 1, 3]。
 
-检查 /healthz 和 /docs。终端二：
+### 终端 2：启动 Streamlit 智能体交互前端 (Port: 8501)
 
 ```powershell
 python -m streamlit run web_app.py
 ```
+> 启动后浏览器将自动打开交互界面：`http://127.0.0.1:8501`[cite: 1]。
 
-如果出现 `No module named uvicorn`，说明当前解释器没有安装运行依赖。请使用同一个虚拟环境的解释器补装，避免把包装到别的 Python：
+---
+
+## 🧪 演示场景验证指南
+
+在前端输入框中输入以下指令，可直接检验系统的各项风控与业务能力：
+
+| 测试场景            | 推荐测试提示词                                               | 风控级别 | 预期系统表现                                                 |
+| :------------------ | :----------------------------------------------------------- | :------- | :----------------------------------------------------------- |
+| **1. 绿区秒查**     | `帮我查一下现在账户里还有多少钱`                             | 🟢 绿区   | 无需确认直接执行，返回总资产、锁定金额与可用余额三项一致的数据事实[cite: 1, 3, 5]。 |
+| **2. 普通查账**     | `查看今日账单`                                               | 🟢 绿区   | 仅拉取当天的交易流水与支出总计，不虚构数据，严格引用真实流水号[cite: 1, 4]。 |
+| **3. 黄色操作确认** | `给我老婆转账 300 块买菜`                                    | 🟡 黄区   | 自动匹配联系人别名，日累计 $\le 1000$ 元；弹出操作确认卡片，点击确认后出账并生成流水号[cite: 1, 4]。 |
+| **4. 红色大额阻断** | `给李四转 2000 元`                                           | 🔴 红区   | 当日累计超 1000 元触发风控；强制调出人脸核验与动态验证码（测试码：`888888`）弹窗，未验则拒绝[cite: 1, 3, 5]。 |
+| **5. 账单深度排查** | `为什么我上个月花销这么大，有异常交易吗？`                   | 🟢 绿区   | 触发深度诊断模式，只读沙箱定位深夜境外 999 元盗刷流水，生成开销分布可视化图表与建议[cite: 1, 3]。 |
+| **6. 跨场景协同**   | `我爱人生日是下周，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕` | 🟡/🔴 联动 | 确认后可用余额扣减 1000 元，侧边栏锁定资金增加，生成任务 DAG 并在任务中心挂载备忘与草稿[cite: 1, 3, 4]。 |
+| **7. 扩展业务办理** | `帮我对比 MMF001 和 BOND002，并取消 Apple 订阅`              | 🟢/🟡 组合 | 呈现两款理财产品的真实年化与风险对比；取消代扣弹出黄色确认卡，审批后核销并留痕[cite: 1, 3, 4]。 |
+
+---
+
+## 🛡️ 安全合规自评要点
+
+1. **防凭证伪造与参数绑定 (Anti-Forging Token & Context Binding)**：
+   - 核心系统仅认可经过 HMAC 签名的 Nonce 凭证，且凭证内嵌覆盖金额、收款人与商户等参数的 `context_hash`[cite: 5]。任何跳过风控预检、伪造或篡改 Header `x-auth-token` 的请求直接阻断并返回 `403 Forbidden`[cite: 3, 5]。
+2. **状态隔离与幂等性保证 (One-Time Execution & Idempotency)**：
+   - 每个安全 Token 与 MFA Proof 具备单次有效性（结算成功后标记 `used: True`），配合 `Idempotency-Key` 彻底杜绝并发重试与网络重放攻击[cite: 1, 5]。
+3. **资金隔离完整性 (Hard Balance Isolation)**：
+   - 跨场景锁定的资金计入 `locked_amount`，在计算转账限额与可用资金时严格执行 `available_balance = total_balance - locked_amount` 硬扣除，保障款项专款专用，杜绝负锁资[cite: 3, 5]。
+4. **异常熔断与故障原子性 (Circuit Breaker & Rollback)**：
+   - 连续认证失败触发账户级安全锁定（HTTP 423 + Retry-After）[cite: 3, 4]；内存记账配备快照回滚机制，防止任务执行中断留下半笔交易脏数据[cite: 5]。
+
+---
+
+## 📊 自动化测试与质量保障
 
 ```powershell
-.\.venv\Scripts\python.exe --version
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-本项目要求 Python 3.10–3.12；如果版本显示 3.13/3.14，使用 Python 3.12 重新创建 `.venv` 后再安装依赖。
-
-如果启动 Streamlit 时看到 `Importing the numpy C-extensions failed`，并且错误中出现类似
-`_multiarray_umath.cp314-win_amd64.pyd`、`Python 3.12` 或 `platform win32`，说明虚拟环境里混入了其他 Python 版本/架构的二进制包。不要在这个环境里继续覆盖安装，先保留旧环境并重建：
-
-```powershell
-Set-Location 'D:\3.Study\bank-agent\mock-banking-core'
-if (Test-Path -LiteralPath '.venv') {
-    Rename-Item -LiteralPath '.venv' -NewName '.venv-backup-numpy'
-}
-# 官方 64 位 Python 3.12；如果 py 启动器没有该版本，请先安装它
-py -3.12-64 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
-.\.venv\Scripts\python.exe -m pip install --no-cache-dir --only-binary=:all: -r requirements.txt
-.\.venv\Scripts\python.exe -c "import sys,struct,numpy,pandas,uvicorn; print(sys.version); print(struct.calcsize('P')*8); print(numpy.__version__); print(pandas.__version__); print(uvicorn.__version__)"
-```
-
-最后一条命令应显示 `64`，且 NumPy wheel 标签应为 `cp312-cp312-win_amd64`。如果 `py -3.12-64` 不存在，请安装官方 64 位 Python 3.12，不要用 Python 3.14 创建本项目环境。回归测试建议在离线模式运行，避免 `.env` 中的在线模型改变测试输入：
-
-```powershell
+# 切换至离线规则解析模式，排除网络与在线模型干扰
 $env:DEEPSEEK_API_KEY = ''
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest -q
-```
 
-黄色确认卡会先调用 /api/v1/auth/confirm；红色卡会调用 /api/v1/auth/mfa/verify，取得一次性 mfa_proof 后才恢复 LangGraph。浏览器按钮和布尔字段不是授权边界。
+# 运行核心契约与安全漏洞专项测试
+python -m pytest -q tests/test_core_api.py
+python -m pytest -q tests/test_security_regressions.py
 
-## 4. 推荐验收顺序
-
-1. 绿区：查余额；查看今日账单；分析上月账单有没有异常。
-2. 黄区：给我老婆转账 300 元买菜，先取消再重新确认，核对余额和流水号。
-3. 红区：给李四转 2000 元，故意不完成 MFA，确认核心拒绝且余额不变，再完成本地测试验证。
-4. 跨场景：我爱人生日下周，锁定 1000 元并提醒订花和蛋糕，查看 locked_amount、任务 DAG 和任务中心；到期订单草稿需再次确认。
-5. 扩展：做风险评估、比较 MMF001 与 BOND002；申购 MMF001 1000 元；查看我的卡片；取消 Apple 订阅；申请虚拟卡；修改登录密码。
-
-## 5. Core 安全调用顺序
-
-写操作必须先预检，不能直接调用结算接口：
-
-```text
-POST /api/v1/risk/precheck
-  -> POST /api/v1/auth/confirm
-  -> POST /api/v1/transfers/execute
-```
-
-红区在确认后还必须调用 /api/v1/auth/mfa/verify，并将返回 proof 放入 X-MFA-Proof。锁资使用 risk/precheck/lock → auth/confirm → accounts/lock_fund；解锁使用对应 risk/precheck/unlock 流程。所有请求建议带 X-User-Id、X-Request-Id 和 Idempotency-Key。
-
-理财风险评估可通过 `POST /api/v1/wealth/risk-assessment`（Agent 已接入），产品对比使用 `GET /api/v1/wealth/compare?product_ids=MMF001,BOND002`；密码修改和解挂分别走红区 `PASSWORD_CHANGE`、`CARD_UNREPORT_LOST`，仍只轮换演示凭证版本，不保存明文密码。
-
-## 6. 测试、质量与部署
-
-```powershell
-python -m pytest -q
+# 静态语法编译检查
 python -m compileall -q .
+
+# 容器化构建与冒烟验收
 docker compose up --build -d
-python scripts/smoke_test.py http://127.0.0.1:8000
+python scripts/smoke_test.py [http://127.0.0.1:8000](http://127.0.0.1:8000)
+docker compose down
 ```
 
-Smoke check 通过后访问 `http://127.0.0.1:8501`；结束演示时执行 `docker compose down`。
+---
 
-测试覆盖金额边界、NaN/Inf、1000 元累计阈值、伪造/篡改/重放 token、MFA 绕过、负锁资、冻结账户、幂等和对象级授权；CI 见 .github/workflows/ci.yml。
+## 📄 开源许可证与交付物索引
 
-生产替换清单：PostgreSQL/Redis 事务与锁、OIDC/设备绑定、短信/生物供应商、TLS/WAF/限流、KMS 密钥轮换、消息队列调度、OpenTelemetry、SAST/DAST/SBOM 和数据留存策略。
+本项目基于 [MIT License](LICENSE) 协议开源。
 
-## 7. 参赛交付物
-
-- 200 字以内作品简介：docs/作品简介.md
-- 架构图与算法：docs/architecture.md
-- 安全设计与风险清单：docs/security-self-assessment.md
-- 赛题逐项验收表：docs/requirements-audit.md
-- 5 分钟演示脚本：docs/demo-script.md
-- 10 分钟答辩提纲：docs/答辩提纲.md
-- 分步实施与验收指南：docs/implementation-guide.md
-- 源码、部署说明、测试：本 README、Dockerfile、docker-compose.yml、tests/
-
-所有账户、交易、产品和联系人均为虚构；项目不接入真实银行账户，不收集真实生物特征或验证码。参赛前请进行依赖许可证、数据保护、威胁建模和人工安全评审。
+- 作品简介（200 字）：[`docs/作品简介.md`](docs/作品简介.md)[cite: 1]
+- 架构设计说明书：[`docs/architecture.md`](docs/architecture.md)[cite: 1]
+- 安全设计与风险自评：[`docs/security-self-assessment.md`](docs/security-self-assessment.md)[cite: 1]
+- 赛题逐项验收审计表：[`docs/requirements-audit.md`](docs/requirements-audit.md)[cite: 1]
+- 5 分钟演示脚本：[`docs/demo-script.md`](docs/demo-script.md)[cite: 1]
+- 10 分钟答辩提纲：[`docs/答辩提纲.md`](docs/答辩提纲.md)[cite: 1]
+- 分步实施与验收指南：[`docs/implementation-guide.md`](docs/implementation-guide.md)[cite: 1]
