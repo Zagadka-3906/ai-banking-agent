@@ -14,7 +14,6 @@ import math
 import os
 import re
 import uuid
-from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any, Optional, TypedDict
 from urllib.parse import urlencode
@@ -48,6 +47,8 @@ from planner import (
     RED_INTENTS,
     YELLOW_INTENTS,
     Intent,
+    PlanExecutor,
+    TaskPlan,
     analyze_transactions,
     build_task_plan,
     filter_transactions,
@@ -544,37 +545,148 @@ def _error_message(response: requests.Response) -> str:
         return f"核心服务拒绝（HTTP {response.status_code}）"
 
 
-def _plan_status(state: BankingAgentState, status: str, *, error: Optional[str] = None) -> Optional[dict[str, Any]]:
-    """Return an updated serializable plan status for UI/audit consumers."""
+# Task ids consumed by one graph run per intent, in dependency order.  The
+# last entry is the step that settles on the core ledger; downstream tasks
+# that are owned by the core task center (reminders, order drafts, participant
+# notifications) are deliberately left PENDING with an honest note.
+_SETTLE_ORDER: dict[str, list[str]] = {
+    Intent.BALANCE_QUERY.value: ["fetch_balance"],
+    Intent.BILL_QUERY.value: ["fetch_transactions", "compute_facts"],
+    Intent.BILL_ANALYSIS.value: ["fetch_transactions", "compute_facts"],
+    Intent.WEALTH_QUERY.value: ["fetch_products"],
+    Intent.WEALTH_RECOMMEND.value: ["fetch_products"],
+    Intent.WEALTH_RISK_ASSESSMENT.value: ["risk_assessment"],
+    Intent.WEALTH_COMPARE.value: ["compare_products"],
+    Intent.CARD_QUERY.value: ["fetch_cards"],
+    Intent.TRANSFER.value: ["validate_transfer", "execute_transfer"],
+    Intent.SCHEDULED_TRANSFER.value: ["validate_transfer", "schedule_transfer"],
+    Intent.SPLIT_BILL.value: ["validate_split", "create_split_request"],
+    Intent.CROSS_SCENE_LOCK.value: ["validate_event", "reserve_funds"],
+    Intent.WEALTH_PURCHASE.value: ["risk_assessment", "mfa_and_confirm", "settle_wealth"],
+    Intent.WEALTH_REDEEM.value: ["risk_assessment", "mfa_and_confirm", "settle_wealth"],
+    Intent.PASSWORD_CHANGE.value: ["password_change"],
+}
 
+
+def _plan_from_state(state: BankingAgentState) -> Optional[TaskPlan]:
     raw = state.get("plan")
     if not isinstance(raw, dict):
         return None
-    plan = deepcopy(raw)
-    tasks = plan.get("tasks") or []
-    # Mark the first pending task as running/completed.  For a compact demo
-    # this is sufficient; production workers should persist each task event.
-    for task in tasks:
-        if task.get("status") in {"PENDING", "RUNNING"}:
-            task["status"] = status
-            if error:
-                task["error"] = error[:300]
-            break
-    if status == "SUCCEEDED":
-        # A compact demo executor completes the core operation and any
-        # dependency-only bookkeeping nodes that are now unblocked.  This
-        # keeps the displayed DAG truthful without pretending to run arbitrary
-        # model-generated tasks.
-        changed = True
-        while changed:
-            changed = False
-            completed = {task.get("task_id") for task in tasks if task.get("status") == "SUCCEEDED"}
-            for task in tasks:
-                if task.get("status") == "PENDING" and set(task.get("depends_on") or []).issubset(completed):
-                    task["status"] = "SUCCEEDED"
-                    completed.add(task.get("task_id"))
-                    changed = True
-    return plan
+    try:
+        return TaskPlan.from_dict(raw)
+    except Exception:
+        return None
+
+
+def _consumed_task_ids(plan: TaskPlan, intent: str) -> tuple[list[str], Optional[str]]:
+    """Return the task ids one graph run consumes, and the settle task id."""
+
+    if intent in _SETTLE_ORDER:
+        ordered = list(_SETTLE_ORDER[intent])
+    elif intent.startswith("CARD_") or intent == Intent.SUBSCRIPTION_CANCEL.value:
+        ordered = ["card_operation"] if intent.startswith("CARD_") else ["subscription_operation"]
+    else:
+        return [], None
+    available = {task.task_id for task in plan.tasks}
+    consumed = [task_id for task_id in ordered if task_id in available]
+    settle = consumed[-1] if consumed else None
+    return consumed, settle
+
+
+def _advance_plan(state: BankingAgentState, intent: str, *, outcome: str, data: Optional[dict[str, Any]] = None, error: Optional[str] = None, pending_notes: Optional[dict[str, str]] = None) -> Optional[dict[str, Any]]:
+    """Advance the plan ledger truthfully after a run step.
+
+    ``SUCCESS`` marks every consumed step (validation, MFA gate, settle)
+    SUCCEEDED and leaves downstream core-owned tasks PENDING with notes.
+    ``FAILURE`` marks the settle step FAILED and keeps its compensation action
+    readable for the caller.
+    """
+
+    plan = _plan_from_state(state)
+    if plan is None:
+        return None
+    consumed, settle_id = _consumed_task_ids(plan, intent)
+    if not settle_id:
+        return plan.to_dict()
+    notes = pending_notes or {}
+    if outcome == "SUCCESS":
+        for task_id in consumed:
+            PlanExecutor.mark_succeeded(plan, task_id)
+        settle_task = PlanExecutor.find(plan, settle_id)
+        if isinstance(data, dict):
+            settle_task.details["result"] = data
+        for task in plan.tasks:
+            if task.task_id in consumed:
+                continue
+            PlanExecutor.keep_pending(plan, task.task_id, note=notes.get(task.task_id) or "该步骤由核心任务中心接管（到期保持 WAITING_USER，不自动执行）")
+    else:
+        compensation = PlanExecutor.mark_failed(plan, settle_id, error=error or "EXECUTION_FAILED")
+        # Validation/MFA steps before the settle step were genuinely performed.
+        for task_id in consumed[:-1]:
+            PlanExecutor.mark_succeeded(plan, task_id)
+        settle_task = PlanExecutor.find(plan, settle_id)
+        if compensation:
+            settle_task.details["compensation_action"] = compensation
+    return plan.to_dict()
+
+
+def _settle_with_retry(state: BankingAgentState, *, method: str, path: str, json_body: dict[str, Any], headers: dict[str, str], idempotency_key: Optional[str] = None) -> requests.Response:
+    """Send a settle request; retry exactly once on transport errors.
+
+    The retry reuses the same Idempotency-Key, so a response lost after the
+    core settled replays the cached outcome instead of double-settling.  HTTP
+    error responses (policy rejections) are never retried.
+    """
+
+    attempt = 0
+    while True:
+        try:
+            outgoing = {**headers, "Idempotency-Key": idempotency_key} if idempotency_key else dict(headers)
+            return _http(method, path, state=state, json_body=json_body, headers=outgoing)
+        except requests.RequestException:
+            if attempt >= 1 or not idempotency_key:
+                raise
+            attempt += 1
+            audit_event("EXECUTION_RETRY", user_id=state.get("user_id"), decision="RETRY", outcome="RETRY", reason="settle transport failure, idempotent retry", request_id=state.get("request_id"))
+
+
+def _run_compensation(state: BankingAgentState, compensation: Optional[str]) -> Optional[dict[str, Any]]:
+    """Execute the compensation action for a failed settle step.
+
+    The core ledger is atomic, so a rejected settle call leaves no mutation
+    and the compensation is a reconciliation pass, not a reverse transfer:
+    confirm with the core that no reservation was created, otherwise escalate
+    to human takeover.  A genuine reverse operation (UNLOCK_FUND) is executed
+    by the core's own rollback/cancel flows and stays user-authorized.
+    """
+
+    if compensation == "UNLOCK_FUND":
+        user_id = state.get("user_id")
+        try:
+            response = _http("GET", f"accounts/{user_id}/balance", state=state, headers={"X-User-Id": user_id})
+            if response.status_code >= 400:
+                raise RuntimeError(_error_message(response))
+            data = _response_json(response)
+            if _valid_balance_payload(data) and float(data.get("locked_amount") or 0) <= 0:
+                return {"action": compensation, "outcome": "VERIFIED_NO_MUTATION", "message": "已核对核心账本：锁定金额为 0，无需反向解锁（核心原子回滚确认）。"}
+            return {"action": compensation, "outcome": "ESCALATE_HUMAN", "message": "检测到未释放的锁定金额，请人工接管复核。"}
+        except Exception as exc:
+            return {"action": compensation, "outcome": "ESCALATE_HUMAN", "message": f"补偿核对失败（{exc}），请人工接管复核。"}
+    if compensation == "ROLLBACK_WEALTH":
+        return {"action": compensation, "outcome": "ESCALATE_HUMAN", "message": "理财结算由核心原子回滚；如持仓核对异常请人工接管。"}
+    return None
+
+
+def _settle_failure_response(state: BankingAgentState, intent: str, message: str, *, compensation: Optional[str] = None) -> dict[str, Any]:
+    """Build the safe refusal + failed plan ledger + compensation result."""
+
+    plan = _advance_plan(state, intent, outcome="FAILURE", error=message)
+    audit_event("EXECUTION", user_id=state.get("user_id"), decision="ERROR", outcome="FAILURE", reason=message[:200], request_id=state.get("request_id"))
+    compensation_result = _run_compensation(state, compensation)
+    lines = [f"{intent} 未完成：{message}"]
+    if compensation_result:
+        lines.append(f"补偿动作 {compensation_result['action']}：{compensation_result['message']}")
+    return {"final_response": " ".join(lines), "plan": plan}
 
 
 def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
@@ -632,6 +744,24 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
     return {"risk_level": "UNKNOWN", "final_response": "未能理解您的银行业务需求，请重新描述。"}
 
 
+def _missing_required_factors(required_actions: Any, *, confirmed: bool, mfa_proof: Any) -> list[str]:
+    """Return required-action labels not yet satisfied by the resume payload.
+
+    A server-issued MFA proof implies the core validated every red-zone factor
+    (SMS OTP and the signed face attestation), so its presence satisfies all
+    non-confirmation actions.  This agent-side gate is defense in depth: the
+    core still re-verifies everything before settling.
+    """
+
+    satisfied: set[str] = set()
+    if confirmed:
+        satisfied.add("USER_CLICK_CONFIRM")
+    if isinstance(mfa_proof, str) and mfa_proof:
+        satisfied.update({"SMS_OTP", "FACE_RECOGNITION"})
+    required = {str(action) for action in (required_actions or []) if action}
+    return sorted(required - satisfied)
+
+
 def human_review_node(state: BankingAgentState) -> dict[str, Any]:
     risk = state.get("risk_level")
     if risk not in {"YELLOW", "RED"} or state.get("final_response"):
@@ -662,9 +792,35 @@ def human_review_node(state: BankingAgentState) -> dict[str, Any]:
     if isinstance(decision, dict):
         confirmed = bool(decision.get("confirmed", decision.get("resume", False)))
         proof = decision.get("mfa_proof")
-        return {"user_confirmed": confirmed, "mfa_proof": proof, "final_response": None if confirmed else "操作已由您主动取消，核心银行未做任何资金扣减。"}
+        if not confirmed:
+            return {"user_confirmed": False, "mfa_proof": proof, "final_response": "操作已由您主动取消，核心银行未做任何资金扣减。"}
+        missing = _missing_required_factors(state.get("action_requirements") or [], confirmed=True, mfa_proof=proof)
+        if missing:
+            audit_event(
+                "MFA_FACTOR_GATE",
+                user_id=state.get("user_id"),
+                risk_level=str(state.get("risk_level") or "UNKNOWN"),
+                decision="BLOCK",
+                outcome="FAILURE",
+                reason=f"缺少验证因子: {','.join(missing)}",
+                request_id=state.get("request_id"),
+            )
+            return {"user_confirmed": False, "final_response": f"多因子验证未完成（缺少 {'、'.join(missing)}），操作已安全中止，未执行任何资金变更。"}
+        return {"user_confirmed": True, "mfa_proof": proof}
     if not decision:
         return {"user_confirmed": False, "final_response": "操作已由您主动取消，核心银行未做任何资金扣减。"}
+    missing = _missing_required_factors(state.get("action_requirements") or [], confirmed=True, mfa_proof=None)
+    if missing:
+        audit_event(
+            "MFA_FACTOR_GATE",
+            user_id=state.get("user_id"),
+            risk_level=str(state.get("risk_level") or "UNKNOWN"),
+            decision="BLOCK",
+            outcome="FAILURE",
+            reason=f"缺少验证因子: {','.join(missing)}",
+            request_id=state.get("request_id"),
+        )
+        return {"user_confirmed": False, "final_response": f"多因子验证未完成（缺少 {'、'.join(missing)}），操作已安全中止，未执行任何资金变更。"}
     return {"user_confirmed": True}
 
 
@@ -744,6 +900,32 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
     raise RuntimeError("不支持的查询类型")
 
 
+def _settle_compensation(state: BankingAgentState, intent: str) -> Optional[str]:
+    plan = _plan_from_state(state)
+    if plan is None:
+        return None
+    _, settle_id = _consumed_task_ids(plan, intent)
+    if not settle_id:
+        return None
+    try:
+        return PlanExecutor.find(plan, settle_id).compensation
+    except KeyError:
+        return None
+
+
+def _settle_idempotency_key(state: BankingAgentState, intent: str) -> Optional[str]:
+    plan = _plan_from_state(state)
+    if plan is None:
+        return None
+    _, settle_id = _consumed_task_ids(plan, intent)
+    if not settle_id:
+        return None
+    try:
+        return PlanExecutor.find(plan, settle_id).idempotency_key
+    except KeyError:
+        return None
+
+
 def executor_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response"):
         return {"final_response": state.get("final_response")}
@@ -751,17 +933,32 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
     try:
         if intent in GREEN_INTENTS:
             result = _execute_green(state, intent)
-            return {"execution_result": result, "chart_data": result.get("records") if intent == Intent.BILL_ANALYSIS.value else None, "plan": _plan_status(state, "SUCCEEDED")}
+            if result.get("clarification_required") or result.get("final_response"):
+                # Never mark the plan completed for an unperformed query.
+                plan = _plan_from_state(state)
+                return {"final_response": result.get("final_response"), "clarification_required": True, "plan": plan.to_dict() if plan else None}
+            return {"execution_result": result, "chart_data": result.get("records") if intent == Intent.BILL_ANALYSIS.value else None, "plan": _advance_plan(state, intent, outcome="SUCCESS", data=result.get("facts") if isinstance(result.get("facts"), dict) else None)}
         user_id = state["user_id"]
         if intent == Intent.CROSS_SCENE_LOCK.value:
             token = state.get("auth_token")
             if not token:
                 return {"final_response": "资金锁定授权已失效，请重新发起该任务。"}
-            response = _http("POST", "accounts/lock_fund", state=state, json_body={"user_id": user_id, "amount": state.get("amount"), "event_at": state.get("event_at") or state.get("scheduled_at"), "reminder_at": state.get("reminder_at"), "reason": state.get("extra_info") or "跨场景联动储备", "auth_token": token, "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed"))}, headers={"X-User-Id": user_id, "X-Auth-Token": token, "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true"})
+            try:
+                response = _settle_with_retry(
+                    state,
+                    method="POST",
+                    path="accounts/lock_fund",
+                    json_body={"user_id": user_id, "amount": state.get("amount"), "event_at": state.get("event_at") or state.get("scheduled_at"), "reminder_at": state.get("reminder_at"), "reason": state.get("extra_info") or "跨场景联动储备", "auth_token": token, "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed"))},
+                    headers={"X-User-Id": user_id, "X-Auth-Token": token, "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true"},
+                    idempotency_key=_settle_idempotency_key(state, intent),
+                )
+            except requests.RequestException as exc:
+                return _settle_failure_response(state, intent, f"核心服务暂时不可用：{exc}", compensation=_settle_compensation(state, intent))
             if response.status_code >= 400:
-                return {"final_response": f"资金锁定失败：{_error_message(response)}"}
+                return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
             data = _response_json(response)
-            return {"execution_result": {"type": "LOCK_SUCCESS", "data": data}, "todo_card": {"title": "🎂 爱人生日提醒与代订备忘录", "locked_fund": f"¥{float(state.get('amount') or 1000):,.2f}", "schedule": "生日倒计时 2 天自动提醒订购鲜花与蛋糕", "status": "已创建（订单草稿待到期确认）", "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids", [])}, "plan": _plan_status(state, "SUCCEEDED")}
+            pending_notes = {"schedule_orders": f"提醒与订单草稿已挂载核心任务中心（{data.get('reminder_task_id')} / {', '.join(map(str, data.get('order_task_ids') or []))}），到期保持 WAITING_USER，不自动下单"}
+            return {"execution_result": {"type": "LOCK_SUCCESS", "data": data}, "todo_card": {"title": "🎂 爱人生日提醒与代订备忘录", "locked_fund": f"¥{float(state.get('amount') or 1000):,.2f}", "schedule": "生日倒计时 2 天自动提醒订购鲜花与蛋糕", "status": "已创建（订单草稿待到期确认）", "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids", [])}, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"lock_id": data.get("lock_id"), "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids")}, pending_notes=pending_notes)}
         if intent == Intent.TRANSFER.value:
             token = state.get("auth_token")
             if not token:
@@ -770,22 +967,47 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
             headers = {"X-User-Id": user_id, "X-Auth-Token": token, "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"}
             if state.get("mfa_proof"):
                 headers["X-MFA-Proof"] = state["mfa_proof"]  # type: ignore[index]
-            response = _http("POST", "transfers/execute", state=state, json_body={"from_user": user_id, "target_name_or_id": state.get("target"), "amount": state.get("amount"), "remark": remark, "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed"))}, headers=headers)
+            try:
+                response = _settle_with_retry(
+                    state,
+                    method="POST",
+                    path="transfers/execute",
+                    json_body={"from_user": user_id, "target_name_or_id": state.get("target"), "amount": state.get("amount"), "remark": remark, "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed"))},
+                    headers=headers,
+                    idempotency_key=_settle_idempotency_key(state, intent),
+                )
+            except requests.RequestException as exc:
+                return _settle_failure_response(state, intent, f"核心服务暂时不可用：{exc}", compensation=_settle_compensation(state, intent))
             if response.status_code >= 400:
-                return {"final_response": f"转账结算失败：{_error_message(response)}"}
-            return {"execution_result": {"type": "TRANSFER_SUCCESS", "data": _response_json(response)}, "plan": _plan_status(state, "SUCCEEDED")}
+                return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
+            data = _response_json(response)
+            return {"execution_result": {"type": "TRANSFER_SUCCESS", "data": data}, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"transaction_id": data.get("transaction_id"), "transferred_amount": data.get("transferred_amount")})}
         # The remaining write scenarios use explicit mock endpoints.  If an
         # endpoint is not enabled, report a safe refusal rather than claiming
         # completion.
         if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
-            response = _http("POST", "operations/execute", state=state, json_body={"user_id": user_id, "operation": intent, "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": user_id, "X-Auth-Token": state.get("auth_token") or "", "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"})
+            try:
+                response = _settle_with_retry(
+                    state,
+                    method="POST",
+                    path="operations/execute",
+                    json_body={"user_id": user_id, "operation": intent, "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
+                    headers={"X-User-Id": user_id, "X-Auth-Token": state.get("auth_token") or "", "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"},
+                    idempotency_key=_settle_idempotency_key(state, intent),
+                )
+            except requests.RequestException as exc:
+                return _settle_failure_response(state, intent, f"核心服务暂时不可用：{exc}", compensation=_settle_compensation(state, intent))
             if response.status_code >= 400:
-                return {"final_response": f"{intent} 未完成：{_error_message(response)}"}
-            return {"execution_result": {"type": intent, "data": _response_json(response)}, "plan": _plan_status(state, "SUCCEEDED")}
+                return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
+            data = _response_json(response)
+            pending_notes: dict[str, str] = {}
+            if intent == Intent.SPLIT_BILL.value:
+                pending_notes["notify_participants"] = f"分摊请求已登记（{data.get('task_id')}），参与人通知为扩展项，保持待办"
+            return {"execution_result": {"type": intent, "data": data}, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"status": data.get("status"), "task_id": data.get("task_id")}, pending_notes=pending_notes)}
     except (requests.RequestException, RuntimeError, ValueError) as exc:
         audit_event("EXECUTION", user_id=state.get("user_id"), decision="ERROR", outcome="FAILURE", reason=type(exc).__name__, request_id=state.get("request_id"))
-        return {"final_response": f"核心服务暂时不可用，未执行任何资金变更：{exc}", "plan": _plan_status(state, "FAILED", error=str(exc))}
-    return {"execution_result": {"type": "UNKNOWN"}, "plan": _plan_status(state, "FAILED", error="UNKNOWN_OPERATION")}
+        return {"final_response": f"核心服务暂时不可用，未执行任何资金变更：{exc}", "plan": _advance_plan(state, intent, outcome="FAILURE", error=str(exc))}
+    return {"execution_result": {"type": "UNKNOWN"}, "plan": _advance_plan(state, intent, outcome="FAILURE", error="UNKNOWN_OPERATION")}
 
 
 def _response_validation_failure(state: BankingAgentState, reason: str) -> dict[str, str]:

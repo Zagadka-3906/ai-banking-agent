@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures.process import BrokenProcessPool
 import json
 import math
 import os
@@ -91,6 +92,55 @@ _ALLOWED_NODES = {
     ast.NotIn,
 }
 
+def _as_finite_number(value: Any) -> float:
+    """Coerce a JSON scalar to a finite float, otherwise 0.0 (pure)."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
+def _spend_total(items: Any, key: Any) -> float:
+    """Sum positive amounts of a field across JSON objects (pure)."""
+
+    total = 0.0
+    for item in items or []:
+        if isinstance(item, dict):
+            number = _as_finite_number(item.get(key))
+            if number > 0:
+                total += number
+    return round(total, 2)
+
+
+def _refund_total(items: Any, key: Any) -> float:
+    """Sum negative amounts (negated) of a field across JSON objects (pure)."""
+
+    total = 0.0
+    for item in items or []:
+        if isinstance(item, dict):
+            number = _as_finite_number(item.get(key))
+            if number < 0:
+                total -= number
+    return round(total, 2)
+
+
+def _group_spend(items: Any, group_key: Any, value_key: Any) -> dict[str, float]:
+    """Group JSON objects by a key and sum positive values per group (pure)."""
+
+    buckets: dict[str, float] = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        number = _as_finite_number(item.get(value_key))
+        if number <= 0:
+            continue
+        group = str(item.get(group_key) or "其他")
+        buckets[group] = round(buckets.get(group, 0.0) + number, 2)
+    return buckets
+
+
 _SAFE_FUNCTIONS = {
     "abs": abs,
     "min": min,
@@ -100,6 +150,9 @@ _SAFE_FUNCTIONS = {
     "sum": sum,
     "sorted": sorted,
     "isfinite": math.isfinite,
+    "spend_total": _spend_total,
+    "refund_total": _refund_total,
+    "group_spend": _group_spend,
 }
 
 
@@ -160,6 +213,61 @@ def _evaluate_worker(expression: str, data: Any) -> Any:
     return eval(compile(tree, "<bank-sandbox>", "eval"), globals_dict, locals_dict)
 
 
+def _thread_fallback_executor(previous: Any) -> ThreadPoolExecutor:
+    try:
+        previous.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
+    return ThreadPoolExecutor(max_workers=1)
+
+
+def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
+    """Run the validated expression behind a short-lived isolation boundary.
+
+    Prefers a worker process.  When process spawning is denied by the
+    environment, or the worker dies before evaluating (for example a plain
+    script whose ``__main__`` is not spawn-safe on Windows), it retries once
+    with a monitored thread boundary: process isolation is lost, but the
+    AST whitelist, empty builtins and timeout still apply.  Production
+    deployments should retain the process or container isolation instead.
+    """
+
+    executor: Any = ProcessPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(_evaluate_worker, expression, safe_data)
+    except (PermissionError, OSError, RuntimeError):
+        # Managed environments may deny child-process spawning, and Windows
+        # spawn re-imports ``__main__``: a plain script without the
+        # ``if __name__ == "__main__"`` guard fails at submit time.  Retain the
+        # AST/builtins/timeout boundary on a monitored thread instead.
+        executor = _thread_fallback_executor(executor)
+        future = executor.submit(_evaluate_worker, expression, safe_data)
+    try:
+        return future.result(timeout=timeout)
+    except FutureTimeoutError as exc:
+        future.cancel()
+        raise SandboxError("沙箱执行超时") from exc
+    except BrokenProcessPool:
+        executor = _thread_fallback_executor(executor)
+        future = executor.submit(_evaluate_worker, expression, safe_data)
+        try:
+            return future.result(timeout=timeout)
+        except FutureTimeoutError as exc:
+            future.cancel()
+            raise SandboxError("沙箱执行超时") from exc
+        except Exception as exc:
+            raise SandboxError(f"沙箱执行失败: {exc}") from exc
+    except Exception as exc:
+        raise SandboxError(f"沙箱执行失败: {exc}") from exc
+    finally:
+        # ``wait=False`` avoids blocking the agent on a runaway child.  Normal
+        # completed workers exit immediately; timed-out workers are cancelled.
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:  # Python < 3.9 compatibility
+            executor.shutdown(wait=False)
+
+
 def evaluate_expression(expression: str, data: Any, *, timeout_seconds: Optional[float] = None) -> Any:
     """Evaluate a pure expression against JSON-like data with hard bounds."""
 
@@ -184,38 +292,7 @@ def evaluate_expression(expression: str, data: Any, *, timeout_seconds: Optional
         if not math.isfinite(requested_timeout):
             raise SandboxError("沙箱超时时间无效")
         timeout = max(0.1, min(requested_timeout, 10.0))
-    # A one-worker pool is intentionally short lived: no state survives across
-    # calls and a timed-out computation can be terminated by shutting down the
-    # worker process.
-    executor: Any = ProcessPoolExecutor(max_workers=1)
-    try:
-        future = executor.submit(_evaluate_worker, expression, safe_data)
-    except (PermissionError, OSError):
-        # Some managed Windows environments forbid spawning a child process.
-        # Keep the AST/builtins boundary and use a short-lived thread as a
-        # monitored fallback; production deployments should retain the process
-        # or container isolation instead.
-        try:
-            executor.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
-        executor = ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(_evaluate_worker, expression, safe_data)
-    try:
-        result = future.result(timeout=timeout)
-    except FutureTimeoutError as exc:
-        future.cancel()
-        executor.shutdown(wait=False, cancel_futures=True)
-        raise SandboxError("沙箱执行超时") from exc
-    except Exception as exc:
-        raise SandboxError(f"沙箱执行失败: {exc}") from exc
-    finally:
-        # ``wait=False`` avoids blocking the agent on a runaway child.  Normal
-        # completed workers exit immediately; timed-out workers are cancelled.
-        try:
-            executor.shutdown(wait=False, cancel_futures=True)
-        except TypeError:  # Python < 3.9 compatibility
-            executor.shutdown(wait=False)
+    result = _run_in_worker(expression, safe_data, timeout)
     try:
         result_encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
@@ -234,4 +311,5 @@ def sandbox_health() -> dict[str, Any]:
         "timeout_seconds": DEFAULT_TIMEOUT_SECONDS,
         "max_ast_nodes": MAX_AST_NODES,
         "max_power_exponent": MAX_POWER_EXPONENT,
+        "safe_functions": sorted(_SAFE_FUNCTIONS),
     }

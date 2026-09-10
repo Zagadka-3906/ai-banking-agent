@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from enum import Enum
 import math
+import os
 from typing import Any, Iterable, Mapping, Optional
 
 try:  # security.py is available in the application, but keep this module reusable.
@@ -29,6 +30,14 @@ except Exception:  # pragma: no cover - only used when imported in isolation
         if len(text) > max_length:
             raise InjectionError(f"{field}长度超过安全限制")
         return text
+
+try:  # The read-only expression sandbox is optional: bill aggregation prefers it
+    # but deterministically falls back to identical local aggregation when it is
+    # unavailable (e.g. standalone planner usage or a blocked process spawn).
+    from sandbox import SandboxError, evaluate_expression
+except Exception:  # pragma: no cover - only used when imported in isolation
+    SandboxError = ValueError
+    evaluate_expression = None
 
 
 class Intent(str, Enum):
@@ -350,6 +359,32 @@ class TaskPlan:
             "tasks": [task.to_dict() for task in self.tasks],
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "TaskPlan":
+        """Rebuild a plan from its serialized form (round-trip with to_dict)."""
+
+        tasks: list[Task] = []
+        for item in value.get("tasks") or []:
+            tasks.append(
+                Task(
+                    task_id=str(item["task_id"]),
+                    action=str(item.get("action") or ""),
+                    depends_on=list(item.get("depends_on") or []),
+                    risk_level=str(item.get("risk_level") or "GREEN"),
+                    status=TaskStatus(str(item.get("status") or "PENDING")),
+                    idempotency_key=item.get("idempotency_key"),
+                    compensation=item.get("compensation"),
+                    details=dict(item.get("details") or {}),
+                    error=item.get("error"),
+                )
+            )
+        return cls(
+            plan_id=str(value.get("plan_id") or "plan-demo"),
+            intent=str(value.get("intent") or Intent.UNKNOWN.value),
+            tasks=tasks,
+            policy_version=str(value.get("policy_version") or "2026-09-09"),
+        )
+
     def ready_tasks(self) -> list[Task]:
         completed = {task.task_id for task in self.tasks if task.status == TaskStatus.SUCCEEDED}
         return [
@@ -365,6 +400,55 @@ class TaskPlan:
                 task.error = error
                 return
         raise KeyError(task_id)
+
+
+class PlanExecutor:
+    """Deterministic executor for a :class:`TaskPlan`.
+
+    The agent advances the DAG through this class so the plan is a truthful
+    execution ledger: only tasks whose dependencies are SUCCEEDED are eligible,
+    a settled step is marked SUCCEEDED/FAILED, downstream steps that are owned
+    by the core task center stay PENDING with an honest note, and a failed
+    step exposes its compensation action to the caller.
+    """
+
+    @staticmethod
+    def find(plan: TaskPlan, task_id: str) -> Task:
+        for task in plan.tasks:
+            if task.task_id == task_id:
+                return task
+        raise KeyError(task_id)
+
+    @staticmethod
+    def next_ready(plan: TaskPlan) -> Optional[Task]:
+        ready = plan.ready_tasks()
+        return ready[0] if ready else None
+
+    @staticmethod
+    def mark_succeeded(plan: TaskPlan, task_id: str, *, note: Optional[str] = None) -> None:
+        task = PlanExecutor.find(plan, task_id)
+        task.status = TaskStatus.SUCCEEDED
+        task.error = None
+        if note:
+            task.details["note"] = note
+
+    @staticmethod
+    def mark_failed(plan: TaskPlan, task_id: str, *, error: str) -> Optional[str]:
+        """Mark a task FAILED and return its compensation action, if any."""
+
+        task = PlanExecutor.find(plan, task_id)
+        task.status = TaskStatus.FAILED
+        task.error = str(error)[:500]
+        return task.compensation
+
+    @staticmethod
+    def keep_pending(plan: TaskPlan, task_id: str, *, note: str) -> None:
+        """Keep a downstream task PENDING and record why it is not executed yet."""
+
+        task = PlanExecutor.find(plan, task_id)
+        task.status = TaskStatus.PENDING
+        task.error = None
+        task.details["note"] = note
 
 
 def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") -> TaskPlan:
@@ -451,6 +535,56 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
     return None
 
 
+def _local_timezone() -> Any:
+    """Wall-clock timezone used for late-night rules and calendar-day filters.
+
+    Timestamps without timezone info are produced by the mock core in local
+    wall time and are left untouched.  Timestamps carrying a UTC offset are
+    converted to the configured business timezone (default Asia/Shanghai) so
+    that "late night" and monthly buckets are evaluated on the user's clock,
+    not on UTC.
+    """
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(os.getenv("BANK_LOCAL_TZ") or "Asia/Shanghai")
+    except Exception:  # no tz database / invalid name: fall back to system local
+        return datetime.now().astimezone().tzinfo
+
+
+def _local_date(parsed: Optional[datetime]) -> Optional[date]:
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.date()
+    return parsed.astimezone(_local_timezone()).date()
+
+
+def _wall_hour(parsed: Optional[datetime]) -> Optional[int]:
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.hour
+    return parsed.astimezone(_local_timezone()).hour
+
+
+def _row_amount(value: Any) -> float:
+    """Coerce a record amount to a finite rounded float, otherwise 0.0.
+
+    Negative values are preserved so refunds/stornos are not silently counted
+    as zero spending.
+    """
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number):
+        return 0.0
+    return round(number, 2)
+
+
 def date_bounds(scope: str, *, now: Optional[datetime] = None) -> tuple[Optional[date], Optional[date]]:
     """Return inclusive start/exclusive end dates for a bill query."""
 
@@ -476,17 +610,68 @@ def date_bounds(scope: str, *, now: Optional[datetime] = None) -> tuple[Optional
 
 
 def filter_transactions(records: Iterable[Mapping[str, Any]], scope: str, *, now: Optional[datetime] = None) -> list[dict[str, Any]]:
-    """Filter transactions without trusting model-generated dates."""
+    """Filter transactions without trusting model-generated dates.
+
+    Calendar-day comparisons happen in the business timezone so that a UTC
+    timestamp near midnight falls into the correct local day.
+    """
 
     start, end = date_bounds(scope, now=now)
     output: list[dict[str, Any]] = []
     for record in records:
         parsed = _parse_timestamp(record.get("time"))
         if start is not None:
-            if parsed is None or not (start <= parsed.date() < end):
+            local_day = _local_date(parsed)
+            if local_day is None or not (start <= local_day < end):
                 continue
         output.append(dict(record))
     return output
+
+
+_SANDBOX_AGGREGATION_EXPRESSION = (
+    '{"categories": group_spend(data, "category", "amount"), '
+    '"spent": spend_total(data, "amount"), "refunds": refund_total(data, "amount")}'
+)
+
+
+def _aggregate_bill_amounts(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pure local aggregation: spending, refunds and per-category spending."""
+
+    spent = 0.0
+    refunds = 0.0
+    by_category: dict[str, float] = {}
+    for row in rows:
+        amount = _row_amount(row.get("amount"))
+        if amount > 0:
+            spent += amount
+            category = str(row.get("category") or "其他")
+            by_category[category] = round(by_category.get(category, 0.0) + amount, 2)
+        elif amount < 0:
+            refunds -= amount
+    return {"spent": round(spent, 2), "refunds": round(refunds, 2), "categories": by_category}
+
+
+def _aggregate_bill_amounts_sandboxed(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
+    """Run the bill aggregation inside the read-only expression sandbox.
+
+    Returns ``(aggregation, engine)``.  When the sandbox cannot run (standalone
+    planner import, blocked process spawn, timeout) the identical pure-Python
+    aggregation is used and the engine tag reports the downgrade so the audit
+    trail stays honest about where the computation ran.
+    """
+
+    if evaluate_expression is None:
+        return _aggregate_bill_amounts(rows), "sandbox_unavailable"
+    try:
+        result = evaluate_expression(_SANDBOX_AGGREGATION_EXPRESSION, rows)
+        if not isinstance(result, dict) or not isinstance(result.get("categories"), dict):
+            raise SandboxError("沙箱聚合结果结构异常")
+        spent = _row_amount(result.get("spent"))
+        refunds = _row_amount(result.get("refunds"))
+        categories = {str(key): _row_amount(value) for key, value in result["categories"].items() if _row_amount(value) > 0}
+        return {"spent": spent, "refunds": refunds, "categories": categories}, "sandbox"
+    except Exception:
+        return _aggregate_bill_amounts(rows), "sandbox_fallback"
 
 
 def analyze_transactions(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
@@ -495,24 +680,30 @@ def analyze_transactions(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]
     The result contains only values derived from the supplied records.  A
     generative model may phrase these facts, but it must not invent numbers or
     transaction IDs.
+
+    Aggregation (totals + category breakdown) is executed as a whitelisted
+    expression inside the read-only sandbox and falls back to the identical
+    local computation when the sandbox is unavailable; ``analysis_engine``
+    records which path actually ran.  Refunds (negative amounts) are reported
+    separately instead of being rounded to zero, and late-night rules use the
+    business timezone's wall clock.
     """
 
     rows = [dict(r) for r in records]
-    by_category: dict[str, float] = {}
-    total = 0.0
+    aggregation, engine = _aggregate_bill_amounts_sandboxed(rows)
+    spent = aggregation["spent"]
+    refunds = aggregation["refunds"]
+    by_category = aggregation["categories"]
     anomalies: list[dict[str, Any]] = []
     for row in rows:
-        try:
-            amount = parse_amount(row.get("amount"), allow_zero=True) or 0.0
-        except ValueError:
-            amount = 0.0
-        total += amount
-        category = str(row.get("category") or "其他")
-        by_category[category] = round(by_category.get(category, 0.0) + amount, 2)
-        timestamp = _parse_timestamp(row.get("time"))
+        amount = _row_amount(row.get("amount"))
+        if amount <= 0:
+            continue  # refunds/stornos are reported separately, not as anomalies
+        hour = _wall_hour(_parse_timestamp(row.get("time")))
         merchant = str(row.get("merchant") or "")
+        category = str(row.get("category") or "")
         reasons: list[str] = []
-        if timestamp and (timestamp.hour < 6 or timestamp.hour >= 23) and amount >= 500:
+        if hour is not None and (hour < 6 or hour >= 23) and amount >= 500:
             reasons.append("深夜大额")
         if any(word in merchant for word in ("境外", "海外", "国外")):
             reasons.append("境外商户")
@@ -520,14 +711,17 @@ def analyze_transactions(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]
             reasons.append("标记为可疑类别")
         if reasons:
             anomalies.append({"tx_id": row.get("tx_id"), "amount": amount, "merchant": merchant, "reasons": reasons})
-    denominator = total or 1.0
+    denominator = spent or 1.0
     category_breakdown = [
         {"category": category, "amount": amount, "share": round(amount / denominator, 4)}
         for category, amount in sorted(by_category.items(), key=lambda item: item[1], reverse=True)
     ]
     return {
         "record_count": len(rows),
-        "total_spent": round(total, 2),
+        "total_spent": round(spent, 2),
+        "refund_total": round(refunds, 2),
+        "net_spent": round(spent - refunds, 2),
+        "analysis_engine": engine,
         "category_breakdown": category_breakdown,
         "anomalies": anomalies,
         "source_tx_ids": [row.get("tx_id") for row in rows if row.get("tx_id")],
@@ -540,6 +734,10 @@ def safe_analysis_text(facts: Mapping[str, Any]) -> str:
     total = float(facts.get("total_spent") or 0)
     count = int(facts.get("record_count") or 0)
     lines = [f"共核验 {count} 笔交易，支出合计 ¥{total:,.2f}。"]
+    refunds = float(facts.get("refund_total") or 0)
+    if refunds > 0:
+        net = float(facts.get("net_spent") or (total - refunds))
+        lines.append(f"其中退款 ¥{refunds:,.2f}，净支出 ¥{net:,.2f}。")
     breakdown = facts.get("category_breakdown") or []
     if breakdown:
         items = "、".join(f"{x['category']} ¥{float(x['amount']):,.2f}（{float(x['share'])*100:.1f}%）" for x in breakdown)

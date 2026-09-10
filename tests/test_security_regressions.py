@@ -223,6 +223,65 @@ def test_mfa_biometric_flag_must_be_a_json_boolean(client: TestClient):
     assert response.status_code == 422
 
 
+def test_face_attestation_ticket_is_required_and_bound(client: TestClient):
+    """The biometric factor now requires a signed single-use ticket.
+
+    A bare JSON boolean no longer satisfies the factor, forged tickets fail
+    closed, a valid ticket is bound to the token jti, and the challenge is
+    consumed on success so the same attestation cannot open another token.
+    """
+
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 2000},
+        headers=auth(),
+    )
+    assert precheck.status_code == 200
+    token = precheck.json()["auth_token"]
+
+    boolean_only = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=auth(token))
+    assert boolean_only.status_code == 403
+    assert boolean_only.json()["detail"]["code"] == "MFA_FAILED"
+
+    forged = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": "forged.body"}, headers=auth(token))
+    assert forged.status_code == 403
+    assert forged.json()["detail"]["code"] == "MFA_FAILED"
+
+    challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=auth(token))
+    assert challenge.status_code == 200, challenge.text
+    attestation = security.sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    ok = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=auth(token))
+    assert ok.status_code == 200, ok.text
+
+    # The consumed challenge/jti binding must not open a different token.
+    second_precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 2001},
+        headers=auth(),
+    )
+    assert second_precheck.status_code == 200
+    reuse = client.post(
+        "/api/v1/auth/mfa/verify",
+        json={"auth_token": second_precheck.json()["auth_token"], "otp": "888888", "face_attestation": attestation},
+        headers=auth(second_precheck.json()["auth_token"]),
+    )
+    assert reuse.status_code == 403
+
+
+def test_face_challenge_requires_red_token_and_identity(client: TestClient):
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10},
+        headers=auth(),
+    )
+    assert precheck.status_code == 200
+    assert precheck.json()["risk_level"] == "YELLOW"
+    token = precheck.json()["auth_token"]
+    not_red = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=auth(token))
+    assert not_red.status_code == 400
+    assert not_red.json()["detail"]["code"] == "MFA_NOT_REQUIRED"
+
+
 def test_operation_context_cannot_change_after_approval(client: TestClient):
     precheck = client.post(
         "/api/v1/risk/precheck/operation",
@@ -400,7 +459,10 @@ def test_cancelling_scheduled_task_releases_risk_reservation(client: TestClient)
     assert next_pre.status_code == 200 and next_pre.json()["risk_level"] == "YELLOW"
 
 
-def test_birthday_order_drafts_pause_for_confirmation_and_cascade_cancel(client: TestClient):
+def test_birthday_order_drafts_pause_for_confirmation_and_cascade_cancel(client: TestClient, monkeypatch):
+    # Force the user-scoped branch of /tasks/run-due so the test is independent
+    # of whether a deployment configured BANK_ADMIN_AUDIT_TOKEN.
+    monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
     event_at = (datetime.now(timezone.utc) + timedelta(days=4)).isoformat()
     pre = client.post(
         "/api/v1/risk/precheck/lock",
@@ -468,7 +530,10 @@ def test_large_fund_reservation_requires_red_mfa(client: TestClient):
         headers=auth(token),
     )
     assert blocked.status_code == 403
-    mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=auth(token))
+    challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=auth(token))
+    assert challenge.status_code == 200, challenge.text
+    attestation = security.sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=auth(token))
     assert mfa.status_code == 200
     completed = client.post(
         "/api/v1/accounts/lock_fund",
@@ -476,6 +541,58 @@ def test_large_fund_reservation_requires_red_mfa(client: TestClient):
         headers={**auth(token), "X-MFA-Proof": mfa.json()["mfa_proof"]},
     )
     assert completed.status_code == 200, completed.text
+    # The lock audit must record the real (RED) risk level, not a hardcoded one.
+    logs = client.get("/api/v1/security/audit", headers=auth()).json()["data"]
+    lock_events = [event for event in logs if event["action"] == "LOCK_FUND" and event["outcome"] == "SUCCESS"]
+    assert lock_events and lock_events[-1]["risk_level"] == "RED"
+
+
+def test_audit_trace_reconstructs_decision_chain(client: TestClient, monkeypatch):
+    """One X-Request-Id must reconstruct precheck → confirm → settle → consume."""
+
+    request_id = "req_e2e_trace_0001"
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10},
+        headers={**auth(), "X-Request-Id": request_id},
+    )
+    assert precheck.status_code == 200, precheck.text
+    token = precheck.json()["auth_token"]
+    confirm = client.post("/api/v1/auth/confirm", json={}, headers={**auth(token), "X-Request-Id": request_id})
+    assert confirm.status_code == 200
+    settled = client.post(
+        "/api/v1/transfers/execute",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10},
+        headers={**auth(token), "X-Request-Id": request_id},
+    )
+    assert settled.status_code == 200, settled.text
+
+    trace = client.get(f"/api/v1/security/audit/trace/{request_id}", headers=auth())
+    assert trace.status_code == 200, trace.text
+    body = trace.json()
+    assert body["principal"] == "user_zhang"
+    assert body["stages"][0] == "RISK_PRECHECK"
+    # The token is consumed while the authorized mutation block exits, so the
+    # endpoint's own success event is the terminal stage of the chain.
+    assert body["stages"][-1] == "TRANSFER_EXECUTE"
+    assert {"RISK_PRECHECK", "USER_CONFIRMATION", "TRANSFER_EXECUTE", "AUTH_TOKEN_CONSUME"}.issubset(set(body["stages"]))
+    assert body["terminal_outcome"] == "SUCCESS"
+    assert all(event["request_id"] == request_id for event in body["events"])
+
+    # A different subject may not read someone else's decision chain.
+    cross_user = client.get(f"/api/v1/security/audit/trace/{request_id}", headers={"X-User-Id": "user_li"})
+    assert cross_user.status_code == 403
+    # An unknown request id is indistinguishable from someone else's request
+    # for a normal user (no enumeration oracle).
+    missing = client.get("/api/v1/security/audit/trace/req_does_not_exist", headers=auth())
+    assert missing.status_code == 403
+    monkeypatch.setenv("BANK_ADMIN_AUDIT_TOKEN", "admin-audit-token")
+    admin_view = client.get("/api/v1/security/audit/trace/req_does_not_exist", headers={"X-Admin-Token": "admin-audit-token"})
+    assert admin_view.status_code == 200
+    assert admin_view.json()["stage_count"] == 0
+    admin_trace = client.get(f"/api/v1/security/audit/trace/{request_id}", headers={"X-Admin-Token": "admin-audit-token"})
+    assert admin_trace.status_code == 200
+    assert admin_trace.json()["principal"] == "user_zhang"
 
 
 def test_subscription_match_and_card_state_are_fail_closed(client: TestClient):

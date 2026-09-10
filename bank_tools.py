@@ -226,19 +226,44 @@ class BankClient:
             "POST", "risk/confirm", json={}, headers=self._headers(principal=self.user_id, auth_token=auth_token, confirmation=True)
         ).json()
 
-    def verify_mfa(self, auth_token: str, *, otp: str, face_verified: bool) -> dict[str, Any]:
+    def request_face_challenge(self, auth_token: str) -> dict[str, Any]:
+        """Ask the core for a liveness challenge the device SDK must sign."""
+
+        if not self.user_id:
+            raise ValueError("user_id is required for MFA verification")
+        return self._request(
+            "POST",
+            "risk/mfa/face/challenge",
+            json={"auth_token": auth_token},
+            headers=self._headers(principal=self.user_id, auth_token=auth_token),
+        ).json()
+
+    def verify_mfa(self, auth_token: str, *, otp: str, face_attestation: Optional[str] = None, face_verified: Optional[bool] = None) -> dict[str, Any]:
+        """Submit the red-zone factors.
+
+        The biometric factor requires a signed, single-use ``face_attestation``
+        ticket produced from a server-issued challenge; a bare boolean no
+        longer satisfies it.  ``face_verified`` is still accepted for schema
+        parity and must remain a real JSON boolean when supplied.
+        """
+
         if not self.user_id:
             raise ValueError("user_id is required for MFA verification")
         # Keep the client-side contract as strict as the Core API's
         # ``StrictBool`` field.  ``bool("false")`` is ``True`` in Python and
         # would make a malformed integration request look like a successful
         # biometric assertion before it even reaches the server.
-        if not isinstance(face_verified, bool):
+        if face_verified is not None and not isinstance(face_verified, bool):
             raise TypeError("face_verified must be a JSON boolean")
+        body: dict[str, Any] = {"otp": otp}
+        if face_verified is not None:
+            body["face_verified"] = face_verified
+        if face_attestation:
+            body["face_attestation"] = face_attestation
         return self._request(
             "POST",
             "risk/mfa/verify",
-            json={"otp": otp, "face_verified": face_verified},
+            json=body,
             headers=self._headers(principal=self.user_id, auth_token=auth_token),
         ).json()
 

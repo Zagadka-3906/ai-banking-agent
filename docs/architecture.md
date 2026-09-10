@@ -14,7 +14,7 @@
 | 安全组件 | `security.py` | 签名凭证、MFA proof、注入检测、审计链和熔断 | 已实现进程内控制；密钥托管和持久化待补强 |
 | 规划/分析组件 | `planner.py`、`sandbox.py` | 白名单意图、任务 DAG、账单事实聚合、受限只读表达式 | 已接入 Agent；沙箱仅允许分析，不得写账 |
 
-`bank_tools.py` 是供编排层复用的 HTTP 客户端，目前保留为薄适配层；生产实现应统一超时、重试、错误模型和追踪 ID。
+`bank_tools.py` 是薄传输适配层（供外部集成方、CLI 与旧静态调用复用），Agent 运行时使用 `agent.py` 自持的 `_http`；生产实现应统一超时、重试、错误模型和追踪 ID。
 
 ## 2. 请求与状态流
 
@@ -43,6 +43,8 @@ intent_parser -> risk_checker -> (executor | human_review -> executor) -> respon
 ```
 
 `human_review` 使用 `interrupt()` 暂停图；Streamlit 先调用 Core 的确认/MFA 接口，再用 `Command(resume=...)` 恢复。核心只接受服务端签发的 proof，前端布尔字段不能越权。
+
+执行阶段由 `planner.PlanExecutor` 按 DAG 依赖顺序推进计划账本：本回合真实执行的步骤（校验/风控/MFA/结算）标记 SUCCEEDED；由核心任务中心接管的后续步骤（提醒、订单草稿、参与人通知）保持 PENDING 并记录去向；结算失败时把该步骤标记 FAILED 并执行补偿动作（核心账本原子回滚确认，核对异常则升级人工接管）。所有结算请求携带 `Idempotency-Key`（`plan_id:task_id`），传输层失败只重试一次且复用同一键，避免重复记账。
 
 ### 2.2 复杂任务 DAG 的目标模型
 
@@ -77,25 +79,43 @@ available_balance = total_balance - locked_amount
 | --- | --- | --- |
 | `GET /api/v1/accounts/{user_id}/balance` | 余额与锁定资金 | GREEN |
 | `GET /api/v1/accounts/{user_id}/transactions` | 流水查询（TODAY/MONTH/LAST_MONTH/YEAR/ALL） | GREEN |
+| `GET /api/v1/accounts/{user_id}/bill-analysis` | 服务端账单事实聚合（沙箱执行，含退款与异常标记） | GREEN |
+| `GET /api/v1/contacts/{user_id}` | 联系人别名（手机号脱敏） | GREEN |
+| `GET /api/v1/wealth/products` | 理财产品查询 | GREEN |
+| `GET /api/v1/wealth/holdings/{user_id}` | 持仓查询 | GREEN |
+| `GET /api/v1/wealth/recommend` | 按风险档案推荐（带免责声明） | GREEN |
 | `POST /api/v1/wealth/risk-assessment` | 风险评估并保存演示风险档案 | GREEN |
 | `GET /api/v1/wealth/compare` | 多产品事实对比 | GREEN |
+| `GET /api/v1/subscriptions/{user_id}` | 订阅/代扣列表 | GREEN |
+| `GET /api/v1/subscriptions/{user_id}/detect` | 活跃代扣与续费提醒识别 | GREEN |
+| `GET /api/v1/cards/{user_id}` | 卡片列表与状态 | GREEN |
 | `POST /api/v1/risk/precheck` | 计算日累计并发放临时凭证 | 策略网关 |
 | `POST /api/v1/risk/precheck/lock` | 为锁资操作发放凭证（≤1000 黄区，较大金额红区） | 策略网关 |
 | `POST /api/v1/risk/precheck/unlock` | 为解锁/补偿发放凭证（≤1000 黄区，较大金额红区） | 策略网关 |
 | `POST /api/v1/risk/precheck/operation` | 理财、卡片、订阅、预约/AA 操作预检 | 策略网关 |
 | `POST /api/v1/auth/confirm` | 记录用户明确确认（`/auth/confirmation` 为兼容别名） | YELLOW |
-| `POST /api/v1/auth/mfa/verify` | 服务端校验 OTP + 人脸断言并签发 proof | RED |
+| `POST /api/v1/auth/mfa/verify` | 服务端校验 OTP + 签名人脸票据并签发 proof | RED |
+| `POST /api/v1/auth/mfa/face/challenge` | 签发绑定交易 jti 的一次性活体挑战，供模拟设备 SDK 签名 | RED |
 | `POST /api/v1/transfers/execute` | 结算转账 | YELLOW/RED |
 | `POST /api/v1/accounts/lock_fund` | 资金隔离 | YELLOW/RED |
 | `POST /api/v1/accounts/unlock_fund` | 解锁/补偿资金 | YELLOW/RED |
 | `POST /api/v1/operations/execute` | 扩展场景统一执行网关 | YELLOW/RED |
 | `POST /api/v1/auth/password/change` | 演示凭证版本轮换 | RED |
-| `GET/POST /api/v1/tasks...` | 任务查询、取消、人工接管 | GREEN/YELLOW |
-| `GET /api/v1/security/health` | 安全组件健康摘要 | 运维 |
+| 便捷别名 | `/risk/confirm`、`/auth/confirmation`、`/auth/mfa`、`/risk/mfa/verify`、`/accounts/rollback_lock`，以及 `/transfers/schedule`、`/transfers/split`、`/subscriptions/cancel`、`/cards/{apply,limit,freeze,unfreeze,report-lost,unreport-lost}`、`/wealth/{purchase,redeem}`；路径与请求体操作名不一致时返回 `OPERATION_ROUTE_MISMATCH` | 同主端点 |
+| `GET /api/v1/tasks` | 任务查询（仅本人） | GREEN |
+| `GET /api/v1/tasks/{task_id}` | 任务详情（owner 作用域） | GREEN |
+| `POST /api/v1/tasks/{task_id}/cancel` | 取消任务并级联取消依赖项 | YELLOW |
+| `POST /api/v1/tasks/{task_id}/takeover` | 人工接管（owner 作用域，记录理由） | YELLOW |
+| `POST /api/v1/tasks/run-due` | 推进到期任务（定时转账/订单草稿进入 `WAITING_USER`）。配置 `BANK_ADMIN_AUDIT_TOKEN` 时必须带 `X-Admin-Token` 全局推进；未配置时按 `X-User-Id` 仅推进本人任务 | 运维/本人 |
+| `GET /healthz` | 存活探针（不泄露账户信息） | 公开 |
+| `GET/POST /api/v1/tasks...` | 任务查询、取消、人工接管（明细见上表） | GREEN/YELLOW |
+| `GET /api/v1/security/health` | 安全组件健康摘要（含沙箱与审计持久化状态） | 运维 |
 | `GET /api/v1/security/circuit/{user_id}` | 查询指定主体熔断状态 | 运维 |
-| `GET /api/v1/security/audit` | 管理员凭证保护的审计查询 | 管理员 |
+| `GET /api/v1/security/audit`（别名 `/api/v1/audit/logs`） | 审计查询：本人可查自己的脱敏事件，管理员（`BANK_ADMIN_AUDIT_TOKEN`）可查任意主体 | 本人或管理员 |
+| `GET /api/v1/security/audit/verify` | 审计哈希链完整性自检 | 管理员 |
+| `GET /api/v1/security/audit/trace/{request_id}` | 按请求编号还原完整决策链路（预检 → 确认 → MFA → 结算 → 凭证消费） | 本人或管理员 |
 
-执行接口必须重新在服务端校验：调用者身份、凭证与目标/金额绑定、凭证有效期、账户状态、余额、幂等键和所需 MFA。前端展示的“确认”不能作为安全边界。`security.py` 的签名 token、一次性消费和 proof 绑定属于核心控制；调用方应通过 `bank_tools.py` 使用与 API 契约一致的路径。
+执行接口必须重新在服务端校验：调用者身份、凭证与目标/金额绑定、凭证有效期、账户状态、余额、幂等键和所需 MFA。前端展示的“确认”不能作为安全边界。`security.py` 的签名 token、一次性消费和 proof 绑定属于核心控制。主链路 `agent.py` 自持 `_http` 直连核心并注入 `X-Request-Id`/`Idempotency-Key`；`bank_tools.py` 提供等价的传输适配层，供外部集成方或 CLI/旧静态调用复用，不参与 Agent 运行时路径。
 
 ## 4. 权限策略
 
@@ -129,6 +149,6 @@ python -m streamlit run web_app.py
 
 ## 6. 可观测性与交付物
 
-所有请求应携带 `request_id`/`trace_id`，并记录结构化审计事件：解析结果摘要、策略版本、审批者、MFA challenge、执行前后余额摘要、核心返回码和错误原因（禁止记录完整密钥/验证码）。建议提供只读审计查询接口和指标：成功率、拒绝率、连续失败次数、P95 延迟、待人工任务数。
+所有请求携带 `request_id`，核心记录结构化审计事件（策略版本、审批者、MFA challenge、执行前后余额摘要、核心返回码和错误原因，禁止记录完整密钥/验证码），并提供只读审计查询与决策链路还原接口（`/security/audit`、`/security/audit/verify`、`/security/audit/trace/{request_id}`）。Agent 侧事件（意图解析、回复校验）保存在 Agent 进程内，跨进程汇聚属于生产项；建议继续补充指标：成功率、拒绝率、连续失败次数、P95 延迟、待人工任务数。
 
-架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试入口为 `tests/test_core_api.py`。
+架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试为 `tests/` 下 7 个文件（`pytest -q` 全量运行，涵盖契约、安全回归、Agent 工作流、规划、安全原语、扩展场景与并发原子性）。

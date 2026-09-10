@@ -37,8 +37,10 @@ from security import (
     confirm_auth_token,
     ensure_circuit_closed,
     get_audit_logs,
+    get_audit_trace,
     inspect_auth_token,
     issue_auth_token,
+    issue_face_challenge,
     record_security_failure,
     record_security_success,
     security_health,
@@ -50,6 +52,7 @@ from security import (
 from security import STATE_LOCK
 from scheduler import TASK_STORE, TaskState
 from planner import analyze_transactions, filter_transactions
+from sandbox import sandbox_health
 
 
 app = FastAPI(
@@ -318,11 +321,17 @@ class MFAVerifyRequest(StrictModel):
     auth_token: Optional[str] = None
     otp: Optional[str] = None
     sms_code: Optional[str] = None
-    # Do not coerce attacker-controlled strings such as ``"yes"`` or ``"1"``
-    # into a successful biometric assertion.  The demo still accepts the
-    # literal JSON boolean used by the UI; production must replace this with a
-    # real signed device/biometric attestation.
+    # Kept as StrictBool so attacker-controlled strings such as ``"yes"``
+    # still fail schema validation.  The field alone no longer satisfies the
+    # biometric factor: a signed, single-use face attestation ticket bound to
+    # a server-issued challenge is required (``face_attestation``).
     face_verified: StrictBool = False
+    face_attestation: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class FaceChallengeRequest(StrictModel):
+    auth_token: str
     user_id: Optional[str] = None
 
 
@@ -1401,9 +1410,24 @@ def mfa_verify(req: MFAVerifyRequest, x_auth_token: Optional[str] = Header(None,
         if not auth_token:
             raise SecurityError("缺少安全授权凭证", 403, "TOKEN_REQUIRED")
         actor = _require_token_subject(auth_token, body_user=req.user_id, header_user=x_user_id, action="MFA_VERIFY", request_id=request_id)
-        result = verify_mfa(auth_token, otp=otp, face_verified=req.face_verified, user_id=actor, request_id=request_id)
+        result = verify_mfa(auth_token, otp=otp, face_verified=req.face_verified, face_attestation=req.face_attestation, user_id=actor, request_id=request_id)
     except SecurityError as exc:
         _record_failure_and_raise(exc, user_id=actor, action="MFA_VERIFY", request_id=request_id)
+    return {"code": 200, **result}
+
+
+@app.post("/api/v1/auth/mfa/face/challenge")
+@app.post("/api/v1/risk/mfa/face/challenge")
+def mfa_face_challenge(req: FaceChallengeRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Issue a liveness challenge the demo biometric SDK must sign."""
+
+    request_id = _request_id(x_request_id)
+    actor = x_user_id
+    try:
+        actor = _require_token_subject(req.auth_token, body_user=req.user_id, header_user=x_user_id, action="FACE_CHALLENGE", request_id=request_id)
+        result = issue_face_challenge(req.auth_token, user_id=actor, request_id=request_id)
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=actor, action="FACE_CHALLENGE", request_id=request_id)
     return {"code": 200, **result}
 
 
@@ -1521,7 +1545,7 @@ def lock_fund(req: LockFundRequest, x_auth_token: Optional[str] = Header(None, a
         _idempotency_abort(actor, "lock_fund", idempotency_key)
         audit_event("LOCK_FUND", user_id=actor, decision="ERROR", outcome="FAILURE", reason="INTERNAL_ERROR", request_id=request_id)
         raise HTTPException(status_code=500, detail={"code": "CORE_ERROR", "message": "核心记账失败，请稍后重试"}) from exc
-    audit_event("LOCK_FUND", user_id=actor, risk_level="YELLOW", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"amount_cents": int(round(amount * 100)), "reason": reason, "lock_id": lock_id})
+    audit_event("LOCK_FUND", user_id=actor, risk_level=_payload.get("risk_level", "YELLOW"), decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"amount_cents": int(round(amount * 100)), "reason": reason, "lock_id": lock_id})
     response = {"code": 200, "status": "LOCKED", "lock_id": lock_id, "task_id": task.task_id, "reminder_task_id": reminder_task.task_id if reminder_task else None, "order_task_ids": order_task_ids, "event_at": event_at, "reminder_at": reminder_at, "locked_amount": account["locked_amount"], "remaining_available": remaining, "reason": reason}
     _idempotency_complete(actor, "lock_fund", idempotency_key, idem_payload, response)
     return response
@@ -1591,7 +1615,7 @@ def unlock_fund(req: UnlockFundRequest, x_auth_token: Optional[str] = Header(Non
         _idempotency_abort(actor, "unlock_fund", idempotency_key)
         audit_event("UNLOCK_FUND", user_id=actor, decision="ERROR", outcome="FAILURE", reason="INTERNAL_ERROR", request_id=request_id)
         raise HTTPException(status_code=500, detail={"code": "CORE_ERROR", "message": "解除资金失败，请稍后重试"}) from exc
-    audit_event("UNLOCK_FUND", user_id=actor, risk_level="YELLOW", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"amount_cents": int(round(requested_amount * 100)), "lock_ids": released_ids})
+    audit_event("UNLOCK_FUND", user_id=actor, risk_level=_payload.get("risk_level", "YELLOW"), decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"amount_cents": int(round(requested_amount * 100)), "lock_ids": released_ids})
     response = {"code": 200, "status": "RELEASED", "released_amount": requested_amount, "lock_ids": released_ids, "locked_amount": account["locked_amount"], "remaining_available": remaining}
     _idempotency_complete(actor, "unlock_fund", idempotency_key, idem_payload, response)
     return response
@@ -1977,7 +2001,7 @@ def healthz():
 
 @app.get("/api/v1/security/health")
 def security_health_endpoint():
-    return {"code": 200, **security_health()}
+    return {"code": 200, **security_health(), "sandbox": sandbox_health()}
 
 
 @app.get("/api/v1/security/circuit/{user_id}")
@@ -2014,6 +2038,26 @@ def security_audit_verify(x_admin_token: Optional[str] = Header(None, alias="X-A
     if not expected or not x_admin_token or not hmac.compare_digest(expected, x_admin_token):
         raise HTTPException(status_code=403, detail={"code": "ADMIN_AUTH_REQUIRED", "message": "需要审计管理员凭证"})
     return {"code": 200, **verify_audit_chain()}
+
+
+@app.get("/api/v1/security/audit/trace/{request_id}")
+def security_audit_trace(request_id: str, x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    """Return the full decision chain (precheck → confirm → MFA → settle) of one request.
+
+    A user may trace only their own requests; an audit administrator holding
+    ``BANK_ADMIN_AUDIT_TOKEN`` may trace any request.  For a normal user an
+    unknown request id is indistinguishable from someone else's request (no
+    enumeration oracle), while the administrator sees an empty chain.
+    """
+
+    expected = os.getenv("BANK_ADMIN_AUDIT_TOKEN")
+    admin_ok = bool(expected and x_admin_token and hmac.compare_digest(expected, x_admin_token))
+    trace = get_audit_trace(request_id)
+    principal = trace.get("principal")
+    if not admin_ok:
+        if not x_user_id or not principal or x_user_id != principal:
+            raise HTTPException(status_code=403, detail={"code": "ADMIN_AUTH_REQUIRED", "message": "只能查看本人请求的审计链路"})
+    return {"code": 200, **trace}
 
 
 __all__ = ["app", "ACCOUNTS", "CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "reset_state"]

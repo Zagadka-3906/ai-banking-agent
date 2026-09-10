@@ -130,6 +130,23 @@ def _token(response) -> str:
     return token
 
 
+def _face_attest(client: TestClient, token: str, *, user_id: str = "user_zhang") -> str:
+    """Run the challenge → simulated-device-sign flow for red-zone MFA."""
+
+    from security import sign_face_attestation
+
+    challenge = client.post(
+        "/api/v1/auth/mfa/face/challenge",
+        json={"auth_token": token, "user_id": user_id},
+        headers=_auth_headers(token=token),
+    )
+    if challenge.status_code == 404:
+        pytest.skip("legacy core has no face-challenge endpoint")
+    assert challenge.status_code == 200, challenge.text
+    body = challenge.json()
+    return sign_face_attestation(body["challenge_id"], user_id=user_id, token_jti=body["auth_token_jti"])
+
+
 def _operation_precheck(
     client: TestClient,
     operation: str,
@@ -381,7 +398,7 @@ def test_red_transfer_requires_and_accepts_server_mfa(client: TestClient) -> Non
         json={
             "auth_token": token,
             "otp": os.getenv("BANK_MFA_TEST_OTP", "888888"),
-            "face_verified": True,
+            "face_attestation": _face_attest(client, token),
             "user_id": "user_zhang",
         },
         headers=_auth_headers(),
@@ -495,23 +512,26 @@ def test_lock_fund_reduces_available_balance_and_never_overdraws(client: TestCli
 
 
 def test_frozen_account_cannot_move_money(client: TestClient) -> None:
-    """Regression contract for card/account status enforcement.
+    """Status enforcement is asserted on the execute path, not skipped.
 
-    This is marked xfail against the original demo (which never checks
-    ``status``) and becomes a normal passing test once the policy gateway is
-    enforced in the core.
+    A token issued while the account was ACTIVE must no longer settle once the
+    account is frozen, precheck must refuse a frozen account outright, and no
+    balance may move in either case.
     """
 
-    account = getattr(main, "ACCOUNTS", {}).get("user_zhang")
-    if not account:
-        pytest.skip("demo account fixture unavailable")
-    account["status"] = "FROZEN"
+    account = main.ACCOUNTS["user_zhang"]
+    receiver = main.ACCOUNTS["user_li"]
+    sender_before = account["balance"]
+    receiver_before = receiver["balance"]
 
     precheck = _precheck(client, 10.0)
-    if precheck.status_code != 200:
-        return
+    assert precheck.status_code == 200, precheck.text
     token = _token(precheck)
-    response = client.post(
+    assert client.post("/api/v1/auth/confirm", json={}, headers=_auth_headers(token=token)).status_code == 200
+
+    # Freeze *after* authorization: the execute-time guard must still refuse.
+    account["status"] = "FROZEN"
+    blocked = client.post(
         "/api/v1/transfers/execute",
         json={
             "from_user": "user_zhang",
@@ -520,7 +540,37 @@ def test_frozen_account_cannot_move_money(client: TestClient) -> None:
         },
         headers=_auth_headers(token=token),
     )
-    assert response.status_code in {401, 403, 409, 422}
+    assert blocked.status_code == 423, blocked.text
+    assert blocked.json()["detail"]["code"] == "ACCOUNT_LOCKED"
+    assert account["balance"] == sender_before
+    assert receiver["balance"] == receiver_before
+
+    # Precheck refuses a frozen account before any token is issued.
+    frozen_precheck = _precheck(client, 10.0)
+    assert frozen_precheck.status_code == 423
+    assert frozen_precheck.json()["detail"]["code"] == "ACCOUNT_LOCKED"
+
+
+def test_frozen_card_blocks_settlement(client: TestClient) -> None:
+    """A frozen card must block settlement while the account itself is active."""
+
+    card = main.CARDS["user_zhang"]
+    sender_before = main.ACCOUNTS["user_zhang"]["balance"]
+
+    precheck = _precheck(client, 10.0)
+    assert precheck.status_code == 200, precheck.text
+    token = _token(precheck)
+    assert client.post("/api/v1/auth/confirm", json={}, headers=_auth_headers(token=token)).status_code == 200
+
+    card["status"] = "FROZEN"
+    blocked = client.post(
+        "/api/v1/transfers/execute",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10.0},
+        headers=_auth_headers(token=token),
+    )
+    assert blocked.status_code == 423, blocked.text
+    assert blocked.json()["detail"]["code"] == "CARD_BLOCKED"
+    assert main.ACCOUNTS["user_zhang"]["balance"] == sender_before
 
 
 def test_idempotency_key_replays_same_response_without_double_debit(client: TestClient) -> None:

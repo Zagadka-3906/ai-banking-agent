@@ -86,12 +86,28 @@ STRICT_CLIENT_AUTH = os.getenv("BANK_REQUIRE_CLIENT_AUTH", "0").lower() in {
 DEMO_MODE = os.getenv("BANK_DEMO_MODE", "1").lower() in {"1", "true", "yes", "on"}
 MFA_TEST_OTP = os.getenv("BANK_MFA_TEST_OTP", "888888")
 
+# The biometric factor is ticket-based: the server issues a liveness challenge
+# bound to an auth-token jti, and the simulated device SDK (the Streamlit
+# frontend, playing the role of the mobile biometric SDK) signs it with this
+# attestation key.  A deployment must inject a random value and keep it out of
+# the agent/LLM path; the demo fallback only keeps the local demo runnable.
+_configured_face_secret = os.getenv("BANK_FACE_ATTEST_SECRET")
+FACE_ATTEST_SECRET_CONFIGURED = bool(_configured_face_secret)
+FACE_ATTEST_SECRET = (_configured_face_secret or "demo-face-attest-secret-change-me").encode("utf-8")
+FACE_CHALLENGE_TTL_SECONDS = _env_int("BANK_FACE_CHALLENGE_TTL_SECONDS", 60, 10, 300)
+
 
 STATE_LOCK = threading.RLock()
 
 # Public names are kept stable for tests and for the original main.py API.
 AUTH_TOKENS: dict[str, dict[str, Any]] = {}
 MFA_PROOFS: dict[str, dict[str, Any]] = {}
+
+# Server-issued biometric challenges.  Each challenge is bound to a single
+# auth-token jti and user, expires quickly, and can be satisfied at most once;
+# re-issuing a challenge for the same token revokes the previous one.
+FACE_CHALLENGES: dict[str, dict[str, Any]] = {}
+FACE_CHALLENGE_MAX_RECORDS = _env_int("BANK_FACE_CHALLENGE_MAX_RECORDS", 5000, 100, 200_000)
 
 # Per-principal failure windows.  deque values are (monotonic timestamp,
 # reason), which avoids clock rollback issues for lockout decisions.
@@ -307,6 +323,33 @@ def get_audit_logs(*, limit: int = 100, user_id: Optional[str] = None) -> list[d
         return deepcopy(selected[-limit:])
 
 
+def get_audit_trace(request_id: str) -> dict[str, Any]:
+    """Return the ordered decision chain for one request_id.
+
+    The core writes every precheck, confirmation, MFA, settlement and token
+    consumption event with the caller's X-Request-Id, so one id reconstructs
+    the full authoritative decision path of a business request.  Agent-side
+    events (intent parse, responder validation) live in the agent process and
+    are not part of this core-side chain in the demo deployment.
+    """
+
+    with STATE_LOCK:
+        events = [deepcopy(event) for event in AUDIT_LOGS if event.get("request_id") == request_id]
+    if not events:
+        return {"request_id": request_id, "principal": None, "stage_count": 0, "stages": [], "events": []}
+    return {
+        "request_id": request_id,
+        "principal": events[0].get("user_id"),
+        "stage_count": len(events),
+        "stages": [event.get("action") for event in events],
+        "risk_levels": [event.get("risk_level") for event in events],
+        "first_at": events[0].get("timestamp"),
+        "last_at": events[-1].get("timestamp"),
+        "terminal_outcome": events[-1].get("outcome"),
+        "events": events,
+    }
+
+
 def verify_audit_chain() -> dict[str, Any]:
     """Verify the in-memory audit hash chain without exposing credentials."""
 
@@ -325,6 +368,74 @@ def verify_audit_chain() -> dict[str, Any]:
     return {"valid": True, "checked_events": checked, "failed_event_id": None}
 
 
+def load_audit_file(path: Optional[str] = None) -> dict[str, Any]:
+    """Replay an append-only audit file into the in-memory hash chain.
+
+    Configure ``BANK_AUDIT_LOG_PATH`` to keep the audit trail across restarts:
+    each persisted line is re-hashed against the running chain, so a tampered
+    or truncated file is detected instead of being silently trusted.  The
+    function is opt-in and idempotent per process; the in-memory demo stays
+    deterministic when no path is configured.
+    """
+
+    global _AUDIT_PREVIOUS_HASH, _AUDIT_CHAIN_ANCHOR
+    target = path or os.getenv("BANK_AUDIT_LOG_PATH")
+    if not target:
+        return {"loaded_events": 0, "path": None, "message": "BANK_AUDIT_LOG_PATH not configured"}
+    loaded = 0
+    with STATE_LOCK:
+        try:
+            handle = open(target, "r", encoding="utf-8")
+        except FileNotFoundError:
+            return {"loaded_events": 0, "path": target, "message": "审计文件不存在，从空链开始"}
+        except OSError as exc:
+            return {"loaded_events": 0, "path": target, "error": str(exc)}
+        with handle:
+            for raw in handle:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    logger.warning("Skipping malformed audit line")
+                    continue
+                if not isinstance(event, dict) or not isinstance(event.get("integrity_hash"), str):
+                    logger.warning("Skipping audit line without integrity hash")
+                    continue
+                body = {key: value for key, value in event.items() if key != "integrity_hash"}
+                canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                expected = hashlib.sha256((_AUDIT_PREVIOUS_HASH + canonical).encode("utf-8")).hexdigest()
+                if not hmac.compare_digest(expected, event["integrity_hash"]):
+                    return {
+                        "loaded_events": loaded,
+                        "path": target,
+                        "tampered": True,
+                        "error": f"审计文件哈希链校验失败于 {event.get('event_id')}",
+                    }
+                _AUDIT_PREVIOUS_HASH = event["integrity_hash"]
+                AUDIT_LOGS.append(event)
+                loaded += 1
+                if len(AUDIT_LOGS) > AUDIT_MAX_EVENTS:
+                    excess = len(AUDIT_LOGS) - AUDIT_MAX_EVENTS
+                    _AUDIT_CHAIN_ANCHOR = AUDIT_LOGS[excess - 1]["integrity_hash"]
+                    del AUDIT_LOGS[:excess]
+    return {"loaded_events": loaded, "path": target, "tampered": False}
+
+
+def audit_persistence_status() -> dict[str, Any]:
+    """Describe where audit events are stored, without leaking the path secret."""
+
+    configured = bool(os.getenv("BANK_AUDIT_LOG_PATH"))
+    return {
+        "mode": "memory+append_only_file" if configured else "memory_only",
+        "file_configured": configured,
+        "file_loaded_events": _AUDIT_LOAD_SUMMARY.get("loaded_events", 0),
+        "file_tampered": bool(_AUDIT_LOAD_SUMMARY.get("tampered")),
+        "in_memory_events": len(AUDIT_LOGS),
+    }
+
+
 def _b64encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
@@ -335,13 +446,15 @@ def _b64decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def _signed_payload(payload: Mapping[str, Any]) -> str:
+def _signed_payload(payload: Mapping[str, Any], secret: Optional[bytes] = None) -> str:
+    key = AUTH_SECRET if secret is None else secret
     body = _b64encode(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
-    signature = _b64encode(hmac.new(AUTH_SECRET, body.encode("ascii"), hashlib.sha256).digest())
+    signature = _b64encode(hmac.new(key, body.encode("ascii"), hashlib.sha256).digest())
     return f"{body}.{signature}"
 
 
-def _decode_signed(token: str, expected_type: str) -> dict[str, Any]:
+def _decode_signed(token: str, expected_type: str, secret: Optional[bytes] = None) -> dict[str, Any]:
+    key = AUTH_SECRET if secret is None else secret
     if not isinstance(token, str) or len(token) > 8192:
         raise SecurityError("安全凭证格式无效", 403, "INVALID_TOKEN")
     pieces = token.split(".")
@@ -349,7 +462,7 @@ def _decode_signed(token: str, expected_type: str) -> dict[str, Any]:
         raise SecurityError("安全凭证格式无效", 403, "INVALID_TOKEN")
     body, supplied_sig = pieces
     try:
-        expected_sig = _b64encode(hmac.new(AUTH_SECRET, body.encode("ascii"), hashlib.sha256).digest())
+        expected_sig = _b64encode(hmac.new(key, body.encode("ascii"), hashlib.sha256).digest())
         if not hmac.compare_digest(expected_sig, supplied_sig):
             raise SecurityError("安全凭证签名无效", 403, "INVALID_TOKEN_SIGNATURE")
         payload = json.loads(_b64decode(body).decode("utf-8"))
@@ -660,15 +773,152 @@ def _issue_mfa_proof(payload: Mapping[str, Any], auth_token: str) -> str:
     return proof
 
 
+def _purge_face_challenges() -> None:
+    now = time.time()
+    for challenge_id, record in list(FACE_CHALLENGES.items()):
+        if record.get("used") or float(record.get("expires", 0)) <= now:
+            FACE_CHALLENGES.pop(challenge_id, None)
+    if len(FACE_CHALLENGES) > FACE_CHALLENGE_MAX_RECORDS:
+        for challenge_id in sorted(FACE_CHALLENGES, key=lambda item: FACE_CHALLENGES[item].get("issued", 0))[: len(FACE_CHALLENGES) - FACE_CHALLENGE_MAX_RECORDS]:
+            FACE_CHALLENGES.pop(challenge_id, None)
+
+
+def issue_face_challenge(auth_token: str, *, user_id: Optional[str] = None, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Issue a short-lived liveness challenge bound to a RED auth token.
+
+    The returned ``challenge_id`` must be signed by the simulated biometric SDK
+    (``sign_face_attestation``) and presented to :func:`verify_mfa`.  A bare
+    boolean ``face_verified`` flag is no longer an accepted factor.
+    """
+
+    with STATE_LOCK:
+        payload, record = _lookup_auth_locked(auth_token)
+        principal = payload.get("from_user")
+        if user_id and principal != user_id:
+            record_security_failure(user_id, "face_challenge_identity_mismatch", request_id=request_id)
+            raise SecurityError("人脸挑战与身份不一致", 403, "IDENTITY_MISMATCH")
+        if payload.get("risk_level") != "RED":
+            raise SecurityError("当前操作不需要人脸验证", 400, "MFA_NOT_REQUIRED")
+        if record.get("mfa_verified"):
+            raise SecurityError("MFA 凭证已验证，请勿重复发起", 409, "MFA_ALREADY_VERIFIED")
+        now = int(time.time())
+        challenge_id = secrets.token_urlsafe(18)
+        # One outstanding challenge per token: re-issuing revokes the previous.
+        for existing in FACE_CHALLENGES.values():
+            if existing.get("jti") == payload.get("jti") and not existing.get("used"):
+                existing["used"] = True
+        FACE_CHALLENGES[challenge_id] = {
+            "jti": payload.get("jti"),
+            "sub": principal,
+            "issued": now,
+            "expires": now + FACE_CHALLENGE_TTL_SECONDS,
+            "used": False,
+        }
+        _purge_face_challenges()
+        audit_event(
+            "FACE_CHALLENGE_ISSUED",
+            user_id=principal,
+            risk_level="RED",
+            decision="ALLOW",
+            outcome="SUCCESS",
+            request_id=request_id,
+            metadata={"jti": payload.get("jti"), "challenge_hash": credential_fingerprint(challenge_id), "ttl": FACE_CHALLENGE_TTL_SECONDS},
+        )
+        return {"challenge_id": challenge_id, "expires_at": now + FACE_CHALLENGE_TTL_SECONDS, "auth_token_jti": payload.get("jti")}
+
+
+def sign_face_attestation(challenge_id: str, *, user_id: str, token_jti: str) -> str:
+    """Simulated biometric-device SDK used by the demo frontend.
+
+    Production biometric SDKs sign a liveness challenge inside the device
+    secure enclave; this demo helper plays that role and must never be
+    reachable from the agent/LLM path.
+    """
+
+    now = int(time.time())
+    payload = {
+        "typ": "face_attestation",
+        "ver": 1,
+        "challenge_id": str(challenge_id),
+        "jti": str(token_jti),
+        "sub": str(user_id),
+        "liveness": "SIMULATED_DEMO",
+        "nonce": secrets.token_urlsafe(12),
+        "iat": now,
+        "exp": now + FACE_CHALLENGE_TTL_SECONDS,
+    }
+    return _signed_payload(payload, secret=FACE_ATTEST_SECRET)
+
+
+def verify_face_attestation(attestation: Optional[str], *, auth_payload: Mapping[str, Any], user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Validate a face attestation ticket; return its live challenge record.
+
+    Returns ``None`` when any binding fails: signature/type, token jti,
+    subject, challenge existence, single-use status or expiry.
+    """
+
+    if not isinstance(attestation, str) or not attestation:
+        return None
+    try:
+        att = _decode_signed(attestation, "face_attestation", secret=FACE_ATTEST_SECRET)
+    except SecurityError:
+        return None
+    if att.get("jti") != auth_payload.get("jti") or att.get("sub") != auth_payload.get("from_user"):
+        return None
+    if user_id and att.get("sub") != user_id:
+        return None
+    challenge = FACE_CHALLENGES.get(att.get("challenge_id"))
+    if not challenge or challenge.get("used") or challenge.get("jti") != auth_payload.get("jti"):
+        return None
+    if challenge.get("sub") != auth_payload.get("from_user"):
+        return None
+    if float(challenge.get("expires", 0)) <= time.time():
+        return None
+    return challenge
+
+
+def _factor_sms_otp(ctx: dict[str, Any]) -> bool:
+    otp = ctx.get("otp")
+    expected = MFA_TEST_OTP if DEMO_MODE else os.getenv("BANK_MFA_OTP", "")
+    return isinstance(otp, str) and bool(expected) and hmac.compare_digest(otp.strip(), expected)
+
+
+def _factor_face_recognition(ctx: dict[str, Any]) -> bool:
+    challenge = verify_face_attestation(ctx.get("face_attestation"), auth_payload=ctx["auth_payload"], user_id=ctx.get("user_id"))
+    if challenge is not None:
+        ctx["_face_challenge"] = challenge
+        return True
+    return False
+
+
+# Registry of red-zone factor validators keyed by the ``required_actions``
+# labels carried in the precheck token.  ``USER_CLICK_CONFIRM`` is implicit
+# (a successful MFA submission is itself an explicit confirmation).  Extra
+# factors (for example a U-shield challenge signature) can be registered here
+# without touching the verification flow.
+MFA_FACTORS: dict[str, Any] = {
+    "SMS_OTP": _factor_sms_otp,
+    "FACE_RECOGNITION": _factor_face_recognition,
+}
+
+
 def verify_mfa(
     auth_token: str,
     *,
     otp: Optional[str],
-    face_verified: bool,
+    face_verified: Optional[bool] = None,
+    face_attestation: Optional[str] = None,
     user_id: Optional[str] = None,
     request_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Validate demo MFA factors on the server and issue a bound proof."""
+    """Validate red-zone factors on the server and issue a bound proof.
+
+    Factors are derived from the precheck token's ``required_actions`` and
+    resolved through the :data:`MFA_FACTORS` registry.  A bare boolean
+    ``face_verified`` no longer satisfies the biometric factor: a signed,
+    single-use attestation ticket bound to a server-issued challenge and this
+    token's ``jti`` is required.
+    """
 
     with STATE_LOCK:
         payload, record = _lookup_auth_locked(auth_token)
@@ -686,13 +936,29 @@ def verify_mfa(
             raise SecurityError("MFA 尝试次数过多，已触发安全熔断", 423, "MFA_LOCKED")
 
         record["mfa_attempts"] = attempts + 1
-        expected = MFA_TEST_OTP if DEMO_MODE else os.getenv("BANK_MFA_OTP", "")
-        otp_ok = isinstance(otp, str) and bool(expected) and hmac.compare_digest(otp.strip(), expected)
-        # Keep the primitive strict as well as the HTTP schema: callers of the
-        # framework-independent security module must provide an actual boolean,
-        # not a truthy string/object that could bypass the second factor.
-        face_ok = isinstance(face_verified, bool) and face_verified is True
-        if not (otp_ok and face_ok):
+        required = [str(action) for action in (payload.get("required_actions") or [])]
+        factors = [action for action in required if action != "USER_CLICK_CONFIRM"]
+        if not factors:
+            raise SecurityError("该操作未配置可验证的 MFA 因子", 500, "MFA_NOT_CONFIGURED")
+        face_challenge: Optional[dict[str, Any]] = None
+        failed: list[str] = []
+        for action in factors:
+            validator = MFA_FACTORS.get(action)
+            if validator is None:
+                raise SecurityError(f"未知的 MFA 因子: {action}", 500, "MFA_NOT_CONFIGURED")
+            ctx: dict[str, Any] = {
+                "otp": otp,
+                "face_verified": face_verified,
+                "face_attestation": face_attestation,
+                "auth_payload": payload,
+                "user_id": principal,
+            }
+            if validator(ctx):
+                if action == "FACE_RECOGNITION":
+                    face_challenge = ctx.get("_face_challenge")
+            else:
+                failed.append(action)
+        if failed:
             record_security_failure(principal, "mfa_factor_failed", request_id=request_id)
             audit_event(
                 "MFA_VERIFY",
@@ -702,15 +968,17 @@ def verify_mfa(
                 outcome="FAILURE",
                 reason="MFA factor failed",
                 request_id=request_id,
-                metadata={"jti": payload.get("jti"), "otp_present": bool(otp), "face_present": face_ok, "attempt": record["mfa_attempts"]},
+                metadata={"jti": payload.get("jti"), "failed_factors": failed, "attestation_present": bool(face_attestation), "attempt": record["mfa_attempts"]},
             )
-            raise SecurityError("人脸或短信验证码校验失败", 403, "MFA_FAILED")
+            raise SecurityError("多因子验证未通过：短信验证码或人脸票据无效", 403, "MFA_FAILED")
 
         record["mfa_verified"] = True
         record["mfa_verified_at"] = int(time.time())
         # A successful MFA also counts as an explicit confirmation in the
         # high-risk dialog; the user had to submit the verification form.
         record["confirmed"] = True
+        if face_challenge is not None:
+            face_challenge["used"] = True
         proof = _issue_mfa_proof(payload, auth_token)
         audit_event(
             "MFA_VERIFY",
@@ -719,9 +987,9 @@ def verify_mfa(
             decision="ALLOW",
             outcome="SUCCESS",
             request_id=request_id,
-            metadata={"jti": payload.get("jti"), "proof_hash": credential_fingerprint(proof)},
+            metadata={"jti": payload.get("jti"), "proof_hash": credential_fingerprint(proof), "factors": factors},
         )
-        return {"verified": True, "mfa_proof": proof, "expires_at": min(payload["exp"], int(time.time()) + MFA_TTL_SECONDS)}
+        return {"verified": True, "mfa_proof": proof, "expires_at": min(payload["exp"], int(time.time()) + MFA_TTL_SECONDS), "factors": factors}
 
 
 def _validate_mfa_proof_locked(proof: str, payload: Mapping[str, Any], user_id: Optional[str]) -> dict[str, Any]:
@@ -820,6 +1088,14 @@ def security_health() -> dict[str, Any]:
             "active_auth_tokens": sum(1 for rec in AUTH_TOKENS.values() if not rec.get("used") and float(rec.get("expires_at", 0)) > time.time()),
             "audit_events": len(AUDIT_LOGS),
             "open_circuits": locked,
+            "audit_persistence": audit_persistence_status(),
+            "mfa_factors": sorted(MFA_FACTORS),
+            "face_attestation": {
+                "mode": "signed_single_use_ticket",
+                "secret_configured": FACE_ATTEST_SECRET_CONFIGURED,
+                "challenge_ttl_seconds": FACE_CHALLENGE_TTL_SECONDS,
+                "active_challenges": sum(1 for rec in FACE_CHALLENGES.values() if not rec.get("used") and float(rec.get("expires", 0)) > time.time()),
+            },
         }
 
 
@@ -830,7 +1106,16 @@ def reset_security_state() -> None:
     with STATE_LOCK:
         AUTH_TOKENS.clear()
         MFA_PROOFS.clear()
+        FACE_CHALLENGES.clear()
         SECURITY_STATE.clear()
         AUDIT_LOGS.clear()
         _AUDIT_PREVIOUS_HASH = "0" * 64
         _AUDIT_CHAIN_ANCHOR = "0" * 64
+
+
+# Opt-in durability: when a path is configured, the persisted chain is replayed
+# at import time so verification and traces survive a process restart.  With no
+# path configured the in-memory demo remains deterministic and side-effect free.
+_AUDIT_LOAD_SUMMARY: dict[str, Any] = load_audit_file()
+if _AUDIT_LOAD_SUMMARY.get("tampered"):
+    logger.error("审计文件哈希链校验失败，已保留已校验前缀: %s", _AUDIT_LOAD_SUMMARY.get("error"))

@@ -27,6 +27,7 @@ try:
     from langgraph.types import Command
 except Exception:  # pragma: no cover - dependency guidance path
     Command = None
+from security import sign_face_attestation
 
 
 BANK_API_BASE = os.getenv("BANK_API_BASE", "http://127.0.0.1:8000/api/v1").rstrip("/")
@@ -210,23 +211,35 @@ def _render_approval() -> None:
                     _resume({"confirmed": False})
         else:
             # Red operations need two factors verified by the Core API before
-            # the graph is resumed.  The OTP is never sent to the LLM or saved
-            # in session history.
+            # the graph is resumed.  The demo "device SDK" (this process) signs
+            # a server-issued liveness challenge with the attestation key; the
+            # OTP and the signed ticket never reach the LLM or session history.
             st.error("🚨 **红色风险：必须完成服务端多因子认证**")
             st.write(pending.get("message", "高风险操作待验证。"))
-            face = st.checkbox("模拟活体人脸核验通过", key="mfa_face")
+            face = st.checkbox("在设备端完成模拟活体核验并出具人脸票据", key="mfa_face")
             otp = st.text_input("短信验证码（本地演示码见 .env 配置）", type="password", key="mfa_otp")
             col_ok, col_cancel = st.columns(2)
             with col_ok:
                 if st.button("🔐 验证并执行", type="primary", key="mfa_submit", use_container_width=True):
                     if not token:
                         st.error("授权凭证缺失，请重新发起操作。")
+                    elif not face:
+                        st.error("请先完成设备端活体核验（勾选上方复选框后重新提交）。")
                     else:
-                        ok, body = _post("auth/mfa/verify", {"otp": otp, "face_verified": face}, token=token, request_id=request_id)
-                        if ok and isinstance(body, dict) and body.get("mfa_proof"):
-                            _resume({"confirmed": True, "mfa_proof": body["mfa_proof"]})
+                        challenge_ok, challenge_body = _post("auth/mfa/face/challenge", {"auth_token": token}, token=token, request_id=request_id)
+                        if not (challenge_ok and isinstance(challenge_body, dict) and challenge_body.get("challenge_id")):
+                            st.error(f"无法取得人脸挑战：{challenge_body}")
                         else:
-                            st.error(f"MFA 未通过：{body}")
+                            attestation = sign_face_attestation(
+                                challenge_body["challenge_id"],
+                                user_id=DEMO_USER_ID,
+                                token_jti=challenge_body["auth_token_jti"],
+                            )
+                            ok, body = _post("auth/mfa/verify", {"otp": otp, "face_attestation": attestation}, token=token, request_id=request_id)
+                            if ok and isinstance(body, dict) and body.get("mfa_proof"):
+                                _resume({"confirmed": True, "mfa_proof": body["mfa_proof"]})
+                            else:
+                                st.error(f"MFA 未通过：{body}")
             with col_cancel:
                 if st.button("放弃本次交易", key="mfa_cancel", use_container_width=True):
                     _resume({"confirmed": False})

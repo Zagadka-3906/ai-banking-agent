@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from security import (
@@ -7,8 +9,10 @@ from security import (
     audit_event,
     contains_prompt_injection,
     get_audit_logs,
+    get_audit_trace,
     inspect_auth_token,
     issue_auth_token,
+    load_audit_file,
     reset_security_state,
     verify_audit_chain,
 )
@@ -91,3 +95,48 @@ def test_http_client_rejects_non_boolean_mfa_flag():
     client = BankClient(user_id="user_zhang")
     with pytest.raises(TypeError, match="JSON boolean"):
         client.verify_mfa("token", otp="000000", face_verified="false")  # type: ignore[arg-type]
+
+
+def test_audit_trace_links_one_request_chain():
+    audit_event("RISK_PRECHECK", user_id="user_zhang", risk_level="RED", decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id="req_trace_1")
+    audit_event("USER_CONFIRMATION", user_id="user_zhang", risk_level="RED", decision="ALLOW", outcome="CONFIRMED", request_id="req_trace_1")
+    audit_event("MFA_VERIFY", user_id="user_zhang", risk_level="RED", decision="ALLOW", outcome="SUCCESS", request_id="req_trace_1")
+    audit_event("OTHER_REQUEST", user_id="user_zhang", request_id="req_trace_2")
+
+    trace = get_audit_trace("req_trace_1")
+    assert trace["principal"] == "user_zhang"
+    assert trace["stages"] == ["RISK_PRECHECK", "USER_CONFIRMATION", "MFA_VERIFY"]
+    assert trace["stage_count"] == 3
+    assert trace["terminal_outcome"] == "SUCCESS"
+    assert all(event["request_id"] == "req_trace_1" for event in trace["events"])
+    assert get_audit_trace("req_missing")["stage_count"] == 0
+
+
+def test_audit_file_reload_preserves_chain(tmp_path, monkeypatch):
+    path = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("BANK_AUDIT_LOG_PATH", str(path))
+    audit_event("PERSISTED_ONE", user_id="user_zhang", outcome="SUCCESS", request_id="req_persist")
+    audit_event("PERSISTED_TWO", user_id="user_zhang", outcome="SUCCESS", request_id="req_persist")
+    assert path.exists()
+    # Simulate a process restart: memory is cleared, the append-only file stays.
+    reset_security_state()
+    summary = load_audit_file(str(path))
+    assert summary["loaded_events"] == 2
+    assert summary["tampered"] is False
+    assert verify_audit_chain()["valid"] is True
+    assert get_audit_trace("req_persist")["stage_count"] == 2
+    monkeypatch.delenv("BANK_AUDIT_LOG_PATH", raising=False)
+
+
+def test_audit_file_tamper_is_detected(tmp_path, monkeypatch):
+    path = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("BANK_AUDIT_LOG_PATH", str(path))
+    audit_event("PERSISTED_ONE", user_id="user_zhang", outcome="SUCCESS")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"event_id": "FAKE", "action": "EVIL", "integrity_hash": "0" * 64}) + "\n")
+    reset_security_state()
+    summary = load_audit_file(str(path))
+    assert summary["tampered"] is True
+    assert summary["loaded_events"] == 1
+    assert verify_audit_chain()["valid"] is True  # only the verified prefix is kept
+    monkeypatch.delenv("BANK_AUDIT_LOG_PATH", raising=False)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -35,18 +37,40 @@ def approve(client: TestClient, operation: str, **kwargs):
     return token
 
 
+def face_attest(client: TestClient, token: str) -> str:
+    """Run the challenge → simulated-device-sign flow for red-zone MFA."""
+
+    from security import sign_face_attestation
+
+    challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=headers(token))
+    assert challenge.status_code == 200, challenge.text
+    return sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+
+
 def approve_red(client: TestClient, operation: str, **kwargs):
     token = approve(client, operation, **kwargs)
-    mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=headers(token))
+    mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": face_attest(client, token)}, headers=headers(token))
     assert mfa.status_code == 200, mfa.text
     return token, mfa.json()["mfa_proof"]
 
 
 def test_last_month_query_is_filtered(client: TestClient):
+    """Boundary rows are injected relative to today so the test never expires."""
+
+    now = datetime.now()
+    last_month_day = (now.replace(day=1) - timedelta(days=1)).replace(day=15, hour=10, minute=0, second=0, microsecond=0)
+    this_month_day = now.replace(hour=10, minute=0, second=0, microsecond=0)
+    main.TRANSACTIONS.append({"tx_id": "TX-LAST-MONTH", "account_id": "user_zhang", "merchant": "上月商户", "category": "餐饮", "amount": 12.0, "time": last_month_day.strftime("%Y-%m-%d %H:%M:%S")})
+    main.TRANSACTIONS.append({"tx_id": "TX-THIS-MONTH", "account_id": "user_zhang", "merchant": "本月商户", "category": "餐饮", "amount": 13.0, "time": this_month_day.strftime("%Y-%m-%d %H:%M:%S")})
+
     response = client.get("/api/v1/accounts/user_zhang/transactions?date_scope=LAST_MONTH", headers=headers())
     assert response.status_code == 200
     rows = response.json()["data"]
-    assert rows and all(row["time"].startswith("2026-08") for row in rows)
+    assert rows
+    ids = {row["tx_id"] for row in rows}
+    assert "TX-LAST-MONTH" in ids
+    assert "TX-THIS-MONTH" not in ids
+    assert all(row["account_id"] == "user_zhang" for row in rows)
 
 
 def test_subscription_cancel_and_card_apply_use_approval_gate(client: TestClient):
@@ -80,7 +104,11 @@ def test_wealth_purchase_requires_server_mfa(client: TestClient):
     client.post("/api/v1/auth/confirm", json={}, headers=headers(token))
     blocked = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "MMF001", "amount": 1000, "reason": "长期储蓄", "auth_token": token}, headers=headers(token))
     assert blocked.status_code in {403, 428}
-    mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=headers(token))
+    # The red-zone flow now requires a signed face attestation ticket; a bare
+    # boolean must not satisfy the factor (defense in depth).
+    boolean_only = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=headers(token))
+    assert boolean_only.status_code == 403
+    mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": face_attest(client, token)}, headers=headers(token))
     assert mfa.status_code == 200
     completed = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "MMF001", "amount": 1000, "reason": "长期储蓄", "auth_token": token, "mfa_proof": mfa.json()["mfa_proof"]}, headers={**headers(token), "X-MFA-Proof": mfa.json()["mfa_proof"]})
     assert completed.status_code == 200, completed.text
@@ -154,3 +182,18 @@ def test_task_takeover_is_owner_scoped(client: TestClient):
     takeover = client.post(f"/api/v1/tasks/{task_id}/takeover", json={"reason": "需要人工复核"}, headers=headers())
     assert takeover.status_code == 200
     assert takeover.json()["data"]["status"] == "HUMAN_TAKEOVER"
+    # Another subject must not be able to take over (or even see) the task.
+    cross_user = client.post(f"/api/v1/tasks/{task_id}/takeover", json={"reason": "越权接管"}, headers={"X-User-Id": "user_li"})
+    assert cross_user.status_code == 404
+    hidden = client.get(f"/api/v1/tasks/{task_id}", headers={"X-User-Id": "user_li"})
+    assert hidden.status_code == 404
+    assert client.get(f"/api/v1/tasks/{task_id}", headers=headers()).status_code == 200
+
+
+def test_security_health_reports_sandbox(client: TestClient):
+    response = client.get("/api/v1/security/health")
+    assert response.status_code == 200
+    sandbox = response.json()["sandbox"]
+    assert sandbox["mode"] == "read_only_expression"
+    assert sandbox["network"] == "denied_by_api"
+    assert "group_spend" in sandbox["safe_functions"]
