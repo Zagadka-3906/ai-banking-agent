@@ -1,8 +1,9 @@
 .git
 .venv
+.venv-*
 venv
+env
 .runtime
-.runtime2
 __pycache__
 *.pyc
 .env

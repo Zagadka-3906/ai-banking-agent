@@ -30,7 +30,7 @@ addopts = "-ra"
 [tool.ruff]
 line-length = 140
 target-version = "py310"
-exclude = ["venv", ".venv", ".runtime", ".runtime2"]
+exclude = ["venv", ".venv", ".venv-*", "env", ".runtime", ".pytest_cache", ".ruff_cache", ".mypy_cache"]
 
 # Keep the CI gate focused on correctness.  The project intentionally contains
 # long JSON/API payload declarations and supports Python 3.10 syntax; stricter
