@@ -483,6 +483,102 @@ def test_responder_rejects_malformed_read_collections():
     assert "没有声称" in result["final_response"]
 
 
+@pytest.mark.parametrize(
+    ("text", "intent", "target", "scope"),
+    [
+        ("我的卡好像被人盗刷了", "CARD_FREEZE", None, "ALL"),
+        ("钱都花哪儿去了", "BILL_ANALYSIS", None, "MONTH"),
+        ("这个月怎么花了这么多钱", "BILL_ANALYSIS", None, "MONTH"),
+        ("帮我看看有没有乱扣费", "SUBSCRIPTION_QUERY", None, "ALL"),
+        ("我不想再被扣会员费了", "SUBSCRIPTION_CANCEL", None, "ALL"),
+        ("取不出钱来了", "CARD_QUERY", None, "ALL"),
+        ("这个钱放着也是放着", "WEALTH_RECOMMEND", None, "ALL"),
+        ("转点钱给老婆", "TRANSFER", "老婆", "ALL"),
+        ("帮我买点理财", "WEALTH_RECOMMEND", None, "ALL"),
+    ],
+)
+def test_implicit_phrasings_map_to_allowlisted_intents(text, intent, target, scope):
+    """Implicit/vague phrasings resolve deterministically, never to UNKNOWN."""
+
+    parsed = agent._local_parse(text)
+    assert parsed["intent"] == intent, text
+    assert parsed["target"] == target
+    assert parsed["date_scope"] == scope
+
+
+def test_ellipsis_repeat_reuses_request_with_fresh_authorization(wired):
+    config = {"configurable": {"thread_id": "test-agent-ellipsis-repeat"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "给李四转账 100 元"}, config=config, stream_mode="values"))
+    first = agent.app.get_state(config)
+    assert first.values["intent"] == "TRANSFER"
+    first_token = first.tasks[0].interrupts[0].value["auth_token"]
+
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "再转一次"}, config=config, stream_mode="values"))
+    second = agent.app.get_state(config)
+    assert second.values["intent"] == "TRANSFER"
+    assert second.values["target"] == "李四"
+    assert second.values["amount"] == 100.0
+    assert second.next, "a repeat still needs approval"
+    # The repeat is re-authorized: it must not reuse the consumed nonce.
+    assert second.tasks[0].interrupts[0].value["auth_token"] != first_token
+
+
+def test_ellipsis_pronoun_resolves_last_subscription_context(wired):
+    config = {"configurable": {"thread_id": "test-agent-ellipsis-pronoun"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "我有哪些订阅"}, config=config, stream_mode="values"))
+    assert agent.app.get_state(config).values["intent"] == "SUBSCRIPTION_QUERY"
+
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "把它取消掉"}, config=config, stream_mode="values"))
+    values = agent.app.get_state(config).values
+    assert values["intent"] == "SUBSCRIPTION_CANCEL"
+    # Which subscription is genuinely ambiguous, so it must be asked for.
+    assert values["clarification_required"] is True
+    assert "订阅" in values["final_response"]
+
+
+def test_unresolvable_backreference_asks_for_details(wired):
+    config = {"configurable": {"thread_id": "test-agent-ellipsis-unresolvable"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "还是上次那个"}, config=config, stream_mode="values"))
+    values = agent.app.get_state(config).values
+    assert values["intent"] == "UNKNOWN"
+    assert "没有找到可以沿用" in values["final_response"]
+
+
+def test_compound_read_request_becomes_ordered_dag(wired):
+    """“查一下余额，再分析上个月账单” is two ordered sub-tasks, not one."""
+
+    config = {"configurable": {"thread_id": "test-agent-multi-read"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "查一下余额，再分析上个月账单"}, config=config, stream_mode="values"))
+    values = agent.app.get_state(config).values
+    assert [item["intent"] for item in values["sub_requests"]] == ["BALANCE_QUERY", "BILL_ANALYSIS"]
+    assert values["risk_level"] == "GREEN"
+
+    tasks = values["plan"]["tasks"]
+    assert [task["task_id"] for task in tasks] == ["0_fetch_balance", "1_fetch_transactions", "1_compute_facts"]
+    assert tasks[1]["depends_on"] == ["0_fetch_balance"]
+    assert tasks[2]["depends_on"] == ["1_fetch_transactions"]
+    assert all(task["status"] == "SUCCEEDED" for task in tasks)
+    assert tasks[1]["details"]["sub_intent"] == "BILL_ANALYSIS"
+
+    response = values["final_response"]
+    assert "总余额" in response, "first sub-answer missing"
+    assert "笔交易" in response, "second sub-answer missing"
+    assert '"code"' not in response
+
+
+def test_compound_request_with_a_write_is_not_decomposed(wired):
+    """A mutating part must not be silently dropped or auto-split."""
+
+    config = {"configurable": {"thread_id": "test-agent-multi-mixed"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "查一下余额，再给李四转 100 元"}, config=config, stream_mode="values"))
+    snapshot = agent.app.get_state(config)
+    assert not snapshot.values.get("sub_requests")
+    assert snapshot.values["clarification_required"] is True
+    assert "分开逐条办理" in snapshot.values["final_response"]
+    assert not snapshot.next, "nothing may be executed or left pending"
+    assert main.ACCOUNTS["user_zhang"]["balance"] == 15000.0
+
+
 def test_birthday_without_date_is_clarification(wired):
     config = {"configurable": {"thread_id": "test-agent-birthday-clarify"}}
     list(agent.app.stream({"user_id": "user_zhang", "user_input": "我爱人生日，锁定 1000 元并提醒订花"}, config=config, stream_mode="values"))

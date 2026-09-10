@@ -48,6 +48,7 @@ from planner import (
     YELLOW_INTENTS,
     Intent,
     PlanExecutor,
+    Task,
     TaskPlan,
     analyze_transactions,
     build_task_plan,
@@ -91,6 +92,7 @@ class BankingAgentState(TypedDict, total=False):
     request_id: Optional[str]
     action_requirements: list[str]
     execution_result: Optional[dict[str, Any]]
+    execution_results: Optional[list[dict[str, Any]]]
     chart_data: Optional[list[dict[str, Any]]]
     todo_card: Optional[dict[str, Any]]
     final_response: Optional[str]
@@ -104,7 +106,7 @@ class BankingAgentState(TypedDict, total=False):
     scheduled_at: Optional[str]
     event_at: Optional[str]
     reminder_at: Optional[str]
-
+    sub_requests: Optional[list[dict[str, Any]]]
 
 def _empty_state(*, final_response: Optional[str] = None) -> dict[str, Any]:
     return {
@@ -399,7 +401,9 @@ def _local_parse(text: str) -> dict[str, Any]:
         intent = Intent.CARD_LIMIT.value
     elif any(x in text for x in ("卡片状态", "我的卡", "查看卡片", "卡片信息")) and not any(x in text for x in card_action_markers):
         intent = Intent.CARD_QUERY.value
-    elif any(x in text for x in ("异常", "为什么", "分析账单", "花销结构", "支出分析", "年度账单报告", "年度账单分析", "分类统计")):
+    elif any(x in text for x in ("异常", "为什么", "分析账单", "花销结构", "支出分析", "年度账单报告", "年度账单分析", "分类统计")) or (
+        "账单" in text and any(x in text for x in ("分析", "诊断", "排查", "结构", "花在哪", "花哪儿", "怎么花"))
+    ):
         intent = Intent.BILL_ANALYSIS.value
     elif any(x in text for x in ("账单", "流水", "消费记录", "交易记录")):
         intent = Intent.BILL_QUERY.value
@@ -590,6 +594,160 @@ def _slot_answer(text: str, slot: str, parsed: Mapping[str, Any]) -> Any:
     return None
 
 
+_ELLIPSIS_REPEAT = ("再转一次", "再来一次", "再来一笔", "重复上次", "照上次", "和上次一样", "跟上次一样", "同样金额", "一样的金额", "同样的金额")
+_ELLIPSIS_SAME_TARGET = ("上次那个", "还是那个", "还是上次", "原来那个", "同一个", "那个收款人", "那个人")
+_ELLIPSIS_CANCEL_IT = ("取消它", "把它取消", "退掉它", "取消掉", "不要了")
+_ELLIPSIS_SAME_PRODUCT = ("那个产品", "还是那只", "同一只", "换成那个")
+
+
+def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: str) -> dict[str, Any]:
+    """Resolve explicit back-references from the previous turn's context.
+
+    Only phrases that clearly point backwards ("再转一次", "还是上次那个",
+    "把它取消掉") are resolved; a repeated request still goes through a fresh
+    risk precheck and approval card, so nothing is ever silently re-executed.
+    """
+
+    prior_intent = str(prior.get("intent") or "")
+    if not prior_intent or prior_intent == Intent.UNKNOWN.value:
+        return parsed
+    if any(phrase in text for phrase in _ELLIPSIS_REPEAT):
+        return _parsed_payload(
+            prior_intent,
+            text=text,
+            amount=prior.get("amount"),
+            target=prior.get("target"),
+            product_ids=list(prior.get("product_ids") or []),
+            slots=dict(prior.get("slots") or {}),
+            participants=list(prior.get("participants") or []),
+            scope=str(prior.get("date_scope") or "ALL"),
+            scheduled_at=prior.get("scheduled_at"),
+        )
+    updated = dict(parsed)
+    if any(phrase in text for phrase in _ELLIPSIS_SAME_TARGET) and updated.get("target") in (None, "") and prior.get("target"):
+        if updated.get("intent") in (None, Intent.UNKNOWN.value):
+            updated["intent"] = prior_intent
+            updated["confidence"] = 0.86
+        updated["target"] = prior.get("target")
+    if any(phrase in text for phrase in _ELLIPSIS_SAME_PRODUCT) and not updated.get("product_ids") and prior.get("product_ids"):
+        updated["product_ids"] = list(prior.get("product_ids") or [])
+        if updated.get("intent") in (None, Intent.UNKNOWN.value):
+            updated["intent"] = prior_intent
+            updated["confidence"] = 0.86
+    if any(phrase in text for phrase in _ELLIPSIS_CANCEL_IT) and updated.get("intent") in (None, Intent.UNKNOWN.value):
+        if prior_intent in {Intent.SUBSCRIPTION_QUERY.value, Intent.SUBSCRIPTION_CANCEL.value}:
+            updated["intent"] = Intent.SUBSCRIPTION_CANCEL.value
+            updated["confidence"] = 0.86
+        elif prior_intent == Intent.SCHEDULED_TRANSFER.value:
+            updated["intent"] = Intent.SUBSCRIPTION_CANCEL.value
+            updated["confidence"] = 0.86
+    return updated
+
+
+_SPLIT_MARKERS = re.compile(r"(?:然后|接着|之后|，再|,再|；|;|并且|，并|同时|以及|顺便|再帮我|再查一下|再看一下|再分析)")
+
+
+def _split_parts(text: str) -> list[str]:
+    """Split a compound utterance on explicit sequencing markers."""
+
+    parts = [part.strip("，,。；; ") for part in _SPLIT_MARKERS.split(text)]
+    return [part for part in parts if part]
+
+
+def _split_read_requests(text: str) -> list[dict[str, Any]]:
+    """Split one utterance into an ordered list of complete read-only requests.
+
+    Compound requests such as “先看余额，再分析上月账单” are decomposed into
+    sub-tasks that the planner turns into one dependency-ordered DAG.  Only
+    green (read-only) sub-requests are accepted here: a mutating sub-task would
+    need its own approval, so the caller falls back to the single-intent flow.
+    """
+
+    parts = _split_parts(text)
+    if len(parts) < 2:
+        return []
+    requests: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for part in parts:
+        parsed = validate_intent_payload(_local_parse(part))
+        intent = str(parsed.get("intent") or "")
+        if intent not in GREEN_INTENTS or intent in seen or needs_clarification(parsed):
+            return []
+        seen.add(intent)
+        requests.append(parsed)
+    return requests if len(requests) >= 2 else []
+
+
+def _has_mutating_part(text: str) -> bool:
+    """Whether a compound utterance contains a part that changes money/state."""
+
+    parts = _split_parts(text)
+    if len(parts) < 2:
+        return False
+    for part in parts:
+        try:
+            parsed = validate_intent_payload(_local_parse(part))
+        except Exception:
+            continue
+        intent = str(parsed.get("intent") or "")
+        if intent and intent != Intent.UNKNOWN.value and intent not in GREEN_INTENTS:
+            return True
+    return False
+
+
+def _build_multi_read_plan(sub_requests: list[dict[str, Any]], plan_id: str) -> TaskPlan:
+    """Compile several read requests into one dependency-ordered DAG."""
+
+    tasks: list[Task] = []
+    previous_last: Optional[str] = None
+    for index, parsed in enumerate(sub_requests):
+        sub_plan = build_task_plan(parsed, plan_id=f"{plan_id}-{index}")
+        id_map = {task.task_id: f"{index}_{task.task_id}" for task in sub_plan.tasks}
+        for task in sub_plan.tasks:
+            depends = [id_map.get(dep, dep) for dep in task.depends_on]
+            if not depends and previous_last:
+                depends = [previous_last]
+            tasks.append(
+                Task(
+                    id_map[task.task_id],
+                    task.action,
+                    depends,
+                    task.risk_level,
+                    details={**task.details, "sub_intent": parsed.get("intent")},
+                    idempotency_key=f"{plan_id}-{index}:{task.task_id}",
+                )
+            )
+        if sub_plan.tasks:
+            previous_last = id_map[sub_plan.tasks[-1].task_id]
+    return TaskPlan(plan_id=plan_id, intent=str(sub_requests[0].get("intent") or Intent.UNKNOWN.value), tasks=tasks)
+
+
+def _advance_multi_plan(state: BankingAgentState, sub_requests: list[dict[str, Any]], *, error: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Mark the consumed steps of every sub-request in the shared DAG."""
+
+    plan = _plan_from_state(state)
+    if plan is None:
+        return None
+    known = {task.task_id for task in plan.tasks}
+    for index, parsed in enumerate(sub_requests):
+        # Task ids in the combined plan are prefixed per sub-request, so the
+        # consumed/settle ids are derived from that sub-request's own plan.
+        sub_plan = build_task_plan(parsed, plan_id=f"multi-{index}")
+        _, settle = _consumed_task_ids(sub_plan, str(parsed.get("intent") or ""))
+        for task in sub_plan.tasks:
+            prefixed = f"{index}_{task.task_id}"
+            if prefixed not in known:
+                continue
+            if error and settle and task.task_id == settle:
+                PlanExecutor.mark_failed(plan, prefixed, error=error)
+            else:
+                PlanExecutor.mark_succeeded(plan, prefixed)
+    for task in plan.tasks:
+        if task.status.value == "PENDING":
+            PlanExecutor.keep_pending(plan, task.task_id, note=task.details.get("note") or "由核心任务中心接管")
+    return plan.to_dict()
+
+
 def _merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState, text: str) -> dict[str, Any]:
     """Fold a bare slot answer back into the intent that is waiting for it.
 
@@ -662,18 +820,34 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         return _empty_state(final_response="暂时无法安全解析这条指令，请补充业务类型、收款人或金额后重试。").copy()
     # A reply that only answers the previous question belongs to that request.
     parsed = _merge_pending_clarification(parsed, state, text)
+    # Explicit back-references ("再转一次", "还是上次那个") reuse the previous
+    # turn's request; the operation is re-authorized from scratch.
+    prior = state.get("context") if isinstance(state.get("context"), dict) else {}
+    parsed = validate_intent_payload(_resolve_ellipsis(parsed, prior, text))
+    # Several read-only asks in one sentence become one ordered sub-task DAG.
+    sub_requests = _split_read_requests(text)
+    # A compound request that also contains a mutating part is never split and
+    # never silently half-answered: the user is asked to handle it in steps.
+    mixed_write = _has_mutating_part(text) and not sub_requests
     # Resolve only explicit conversational references.  A prior recipient is
     # never silently used for a fresh request; the user must say “同一位/他”
     # and the operation remains behind the normal approval gate.
-    prior = state.get("context") if isinstance(state.get("context"), dict) else {}
     if parsed.get("intent") in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value}:
         if not parsed.get("target") and prior.get("target") and any(word in text for word in ("他", "她", "同一位", "刚才", "继续")):
             parsed["target"] = prior.get("target")
         if parsed.get("amount") in (None, 0) and prior.get("amount") and any(word in text for word in ("同样金额", "一样多", "刚才金额")):
             parsed["amount"] = prior.get("amount")
     parsed["extra_info"] = parsed.get("extra_info") or text
-    plan = build_task_plan(parsed, plan_id=f"plan_{uuid.uuid4().hex[:12]}")
-    clarification = needs_clarification(parsed)
+    if sub_requests:
+        # One utterance, several read-only asks: compile them into a single
+        # dependency-ordered DAG and answer them in sequence.
+        plan = _build_multi_read_plan(sub_requests, plan_id=f"plan_{uuid.uuid4().hex[:12]}")
+        parsed = {**sub_requests[0], "extra_info": text}
+    else:
+        plan = build_task_plan(parsed, plan_id=f"plan_{uuid.uuid4().hex[:12]}")
+    clarification = needs_clarification(parsed) if not sub_requests else False
+    if mixed_write:
+        clarification = True
     # Remember exactly what is still missing so a bare answer on the next turn
     # can be folded back into this intent (see _merge_pending_clarification).
     pending_clarification: Optional[dict[str, Any]] = None
@@ -685,10 +859,15 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             "payload": {key: parsed.get(key) for key in ("intent", "target", "amount", "date_scope", "extra_info", "participants", "product_ids", "slots", "scheduled_at", "event_at")},
         }
     response = None
-    if clarification:
+    if mixed_write:
+        response = "这条消息里既有查询也有需要确认的变更操作。为避免误操作，请分开逐条办理：我还没有执行任何变更。"
+    elif clarification:
         intent = parsed.get("intent")
         if intent == Intent.UNKNOWN.value:
-            response = "我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片或订阅。请告诉我具体要办理什么。"
+            if any(phrase in text for phrase in _ELLIPSIS_REPEAT + _ELLIPSIS_SAME_TARGET + _ELLIPSIS_SAME_PRODUCT + _ELLIPSIS_CANCEL_IT):
+                response = "我没有找到可以沿用的上一次操作，请直接说明要办理的业务、对象和金额。"
+            else:
+                response = "我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片或订阅。请告诉我具体要办理什么。"
         elif intent == Intent.SPLIT_BILL.value:
             response = "请补充分摊总金额和至少一位参与人（例如：和李四、王美 AA 分摊 300 元）。"
         elif intent == Intent.CROSS_SCENE_LOCK.value and not parsed.get("scheduled_at"):
@@ -717,8 +896,26 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             response = "请补充理财产品编号（例如 MMF001），我不会猜测产品。"
         elif intent == Intent.CARD_LIMIT.value and not parsed.get("amount"):
             response = "请补充希望设置的卡片额度（例如 5000 元）。"
+        elif intent == Intent.SUBSCRIPTION_CANCEL.value and not parsed.get("target"):
+            response = "请说明要取消哪个订阅（例如：取消 Apple 订阅）。查看现有订阅可以说“我有哪些订阅”。"
         elif not parsed.get("amount") and intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
             response = "请补充明确的金额（例如 300 元）。"
+        if response is None:
+            # A clarification must always carry a question: derive a targeted
+            # prompt from the missing slots instead of returning nothing.
+            labels = {
+                "amount": "金额",
+                "target": "对象（收款人/产品/订阅）",
+                "scheduled_at": "日期",
+                "event_at": "日期",
+                "participants": "参与人",
+                "product_ids": "产品编号",
+                "loss_tolerance": "风险承受程度",
+                "experience": "投资经验",
+                "horizon_years": "投资期限",
+            }
+            missing_names = [labels.get(item, item) for item in missing_slots(parsed)]
+            response = ("请补充：" + "、".join(missing_names) + "。") if missing_names else "请补充必要信息后我再为您办理。"
     result = {
         **parsed,
         "request_id": f"agent_{uuid.uuid4().hex}",
@@ -751,8 +948,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         },
         "event_at": parsed.get("event_at"),
         "reminder_at": None,
+        "sub_requests": sub_requests or None,
     }
-    audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence")})
+    audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence"), "sub_intents": [item.get("intent") for item in sub_requests] or None})
     return result
 
 
@@ -930,6 +1128,12 @@ def _settle_failure_response(state: BankingAgentState, intent: str, message: str
 def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response") or state.get("clarification_required"):
         return {"risk_level": "UNKNOWN"}
+    sub_requests = state.get("sub_requests") or []
+    if len(sub_requests) > 1 and all(str(item.get("intent")) in GREEN_INTENTS for item in sub_requests):
+        # Every sub-request is read-only (validated at parse time), so the whole
+        # compound request stays green and needs no authorization nonce.
+        audit_event("POLICY_DECISION", user_id=state.get("user_id"), risk_level="GREEN", decision="ALLOW", outcome="AUTO_EXECUTE", request_id=state.get("request_id"), metadata={"sub_intents": [item.get("intent") for item in sub_requests]})
+        return {"risk_level": "GREEN", "auth_token": None, "action_requirements": []}
     intent = state.get("intent", Intent.UNKNOWN.value)
     if intent in GREEN_INTENTS:
         audit_event("POLICY_DECISION", user_id=state.get("user_id"), risk_level="GREEN", decision="ALLOW", outcome="AUTO_EXECUTE", request_id=state.get("request_id"), metadata={"intent": intent})
@@ -1202,6 +1406,23 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response"):
         return {"final_response": state.get("final_response")}
     intent = state.get("intent", Intent.UNKNOWN.value)
+    sub_requests = state.get("sub_requests") or []
+    if len(sub_requests) > 1:
+        # Run the sub-tasks in the order of the plan and validate each result
+        # independently in the responder.
+        try:
+            results: list[dict[str, Any]] = []
+            for item in sub_requests:
+                sub_intent = str(item.get("intent") or "")
+                sub_state: BankingAgentState = {**state, "intent": sub_intent, "final_response": None}  # type: ignore[assignment]
+                for key in ("date_scope", "target", "amount", "product_ids", "participants", "slots"):
+                    sub_state[key] = item.get(key)  # type: ignore[literal-required]
+                results.append(_execute_green(sub_state, sub_intent))
+            chart = next((item.get("records") for item in results if item.get("type") == Intent.BILL_ANALYSIS.value), None)
+            return {"execution_result": results[0], "execution_results": results, "chart_data": chart, "plan": _advance_multi_plan(state, sub_requests)}
+        except (requests.RequestException, RuntimeError, ValueError) as exc:
+            audit_event("EXECUTION", user_id=state.get("user_id"), decision="ERROR", outcome="FAILURE", reason=type(exc).__name__, request_id=state.get("request_id"))
+            return {"final_response": f"核心服务暂时不可用，未执行任何资金变更：{exc}", "plan": _advance_multi_plan(state, sub_requests, error=str(exc))}
     try:
         if intent in GREEN_INTENTS:
             result = _execute_green(state, intent)
@@ -1522,6 +1743,19 @@ def _render_cards(data: Mapping[str, Any]) -> str:
 def responder_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response"):
         return {"final_response": state.get("final_response")}
+    results = state.get("execution_results")
+    if isinstance(results, list) and len(results) > 1:
+        # A compound read request: validate and render every sub-result with the
+        # same single-result rules, then join them.  One unverifiable part makes
+        # the whole answer refuse to claim success.
+        rendered: list[str] = []
+        for item in results:
+            child: BankingAgentState = {**state, "execution_result": item, "execution_results": None, "final_response": None}  # type: ignore[assignment]
+            text = str(responder_node(child).get("final_response") or "")
+            if not text or "没有声称" in text or "未能取得" in text:
+                return _response_validation_failure(state, "MULTI_RESULT_INVALID")
+            rendered.append(text)
+        return {"final_response": "\n\n".join(rendered)}
     result = state.get("execution_result") or {}
     rtype = result.get("type")
     if rtype == "BALANCE":
