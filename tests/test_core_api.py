@@ -40,6 +40,8 @@ def client() -> TestClient:
         "CONTACTS",
         "DAILY_TRANSFERS",
         "DAILY_TRANSFER_DATE",
+        "CARD_DAILY_SPENT",
+        "CARD_DAILY_SPENT_DATE",
         "LOCKS",
         "WEALTH_HOLDINGS",
         "SUBSCRIPTIONS",

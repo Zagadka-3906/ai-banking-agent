@@ -109,6 +109,13 @@ MFA_PROOFS: dict[str, dict[str, Any]] = {}
 FACE_CHALLENGES: dict[str, dict[str, Any]] = {}
 FACE_CHALLENGE_MAX_RECORDS = _env_int("BANK_FACE_CHALLENGE_MAX_RECORDS", 5000, 100, 200_000)
 
+# Reusable, short-lived session credentials.  Unlike the single-use nonce they
+# are not consumed by a settlement, but they expire quickly and are bound to a
+# principal, so a channel no longer has to self-assert X-User-Id.
+SESSION_TOKENS: dict[str, dict[str, Any]] = {}
+SESSION_TTL_SECONDS = _env_int("BANK_SESSION_TTL_SECONDS", 900, 60, 86_400)
+SESSION_MAX_RECORDS = _env_int("BANK_SESSION_MAX_RECORDS", 5000, 100, 200_000)
+
 # Per-principal failure windows.  deque values are (monotonic timestamp,
 # reason), which avoids clock rollback issues for lockout decisions.
 SECURITY_STATE: dict[str, dict[str, Any]] = defaultdict(
@@ -546,8 +553,9 @@ def ensure_circuit_closed(user_id: Optional[str]) -> None:
     status = circuit_status(user_id)
     if status["locked"]:
         retry = max(1, int(status["locked_until_epoch"] - time.monotonic()))
+        reason = status.get("lock_reason") or "连续失败"
         raise SecurityError(
-            f"安全熔断已开启，请在约 {retry} 秒后重试",
+            f"安全熔断已开启，请在约 {retry} 秒后重试（原因：{reason}）",
             423,
             "CIRCUIT_OPEN",
         )
@@ -591,7 +599,10 @@ def record_security_failure(user_id: Optional[str], reason: str, *, request_id: 
             request_id=request_id,
             metadata={"failure_count": len(state["failures"])},
         )
-        return circuit_status(principal)
+        status = circuit_status(principal)
+    # Failed credentials also feed the behaviour engine (credential stuffing).
+    record_behavior_signal(user_id, "AUTH_FAILURE", metadata={"reason": reason_text}, request_id=request_id)
+    return status
 
 
 def record_security_success(user_id: Optional[str]) -> None:
@@ -603,6 +614,275 @@ def record_security_success(user_id: Optional[str]) -> None:
         # never silently clears an active lockout.
         if float(state.get("locked_until", 0.0)) <= time.monotonic():
             state["failures"].clear()
+    # Every successful sensitive operation is also a behaviour signal so that
+    # combinations such as "three failed attempts then one success" can be
+    # recognised.  The signal itself carries no weight.
+    record_behavior_signal(user_id, "SENSITIVE_SUCCESS")
+
+
+# ---------------------------------------------------------------------------
+# Behaviour combination circuit breaker
+#
+# The failure counter above only reacts to *rejected* credentials.  Real fraud
+# often uses valid credentials in a suspicious sequence (transfer then report
+# the card lost, raise the limit then drain the account, change the password
+# right after a large transfer).  Each sensitive operation therefore emits a
+# weighted signal, named combination rules fire on the recent timeline, and a
+# score above the threshold opens the same per-principal lockout used by the
+# failure breaker (423 + Retry-After) with an auditable reason.
+# ---------------------------------------------------------------------------
+BEHAVIOR_WINDOW_SECONDS = _env_int("BANK_BEHAVIOR_WINDOW_SECONDS", 600, 60, 3600)
+BEHAVIOR_RISK_THRESHOLD = _env_int("BANK_BEHAVIOR_RISK_THRESHOLD", 80, 10, 1000)
+BEHAVIOR_LARGE_AMOUNT_CENTS = _env_int("BANK_BEHAVIOR_LARGE_AMOUNT_CENTS", 200_000, 100, 10_000_000_000)
+BEHAVIOR_MAX_SIGNALS = _env_int("BANK_BEHAVIOR_MAX_SIGNALS", 200, 20, 5000)
+
+BEHAVIOR_SIGNAL_WEIGHTS: dict[str, int] = {
+    "SENSITIVE_SUCCESS": 0,
+    # The failure counter above already locks at MAX_FAILURES; this weight only
+    # contributes to the "failures then success" combination.
+    "AUTH_FAILURE": 15,
+    "LARGE_TRANSFER": 30,
+    "LARGE_LOCK": 20,
+    "WEALTH_PURCHASE": 15,
+    "WEALTH_REDEEM": 10,
+    "CARD_LIMIT_CHANGE": 15,
+    "CARD_STATE_CHANGE": 25,
+    "CARD_REPORT_LOST": 30,
+    "PASSWORD_CHANGE": 35,
+}
+
+BEHAVIOR_RULES: tuple[dict[str, Any], ...] = (
+    {
+        "rule_id": "LOST_AFTER_LARGE_TRANSFER",
+        "description": "大额转账后短时间内挂失卡片（典型盗刷后逃逸特征）",
+        "trigger": "CARD_REPORT_LOST",
+        "requires": ("LARGE_TRANSFER",),
+        "weight": 50,
+    },
+    {
+        "rule_id": "PASSWORD_CHANGE_AFTER_LARGE_TRANSFER",
+        "description": "大额转账后短时间内修改密码（账户接管特征）",
+        "trigger": "PASSWORD_CHANGE",
+        "requires": ("LARGE_TRANSFER",),
+        "weight": 50,
+    },
+    {
+        "rule_id": "LARGE_TRANSFER_AFTER_LIMIT_CHANGE",
+        "description": "调整卡片额度后立即大额转出",
+        "trigger": "LARGE_TRANSFER",
+        "requires": ("CARD_LIMIT_CHANGE",),
+        "weight": 40,
+    },
+    {
+        "rule_id": "BURST_LARGE_TRANSFERS",
+        "description": "窗口内连续多笔大额转账",
+        "trigger": "LARGE_TRANSFER",
+        "min_count": 3,
+        "weight": 40,
+    },
+    {
+        "rule_id": "BURST_CARD_CHANGES",
+        "description": "窗口内连续多次卡片安全状态变更",
+        "trigger": "CARD_STATE_CHANGE",
+        "min_count": 3,
+        "weight": 30,
+    },
+    {
+        "rule_id": "FAILURES_THEN_SUCCESS",
+        "description": "多次凭证失败后紧接着一次成功操作（撞库/暴力尝试特征）",
+        "trigger": "SENSITIVE_SUCCESS",
+        "requires_count": {"AUTH_FAILURE": 3},
+        "weight": 40,
+    },
+)
+
+BEHAVIOR_STATE: dict[str, dict[str, Any]] = defaultdict(lambda: {"timeline": deque(maxlen=BEHAVIOR_MAX_SIGNALS), "rule_fires": {}})
+
+
+def behavior_window_seconds() -> int:
+    """Effective signal window (read per call so it stays configurable)."""
+
+    return _env_int("BANK_BEHAVIOR_WINDOW_SECONDS", BEHAVIOR_WINDOW_SECONDS, 60, 3600)
+
+
+def behavior_risk_threshold() -> int:
+    """Effective lockout threshold for the accumulated behaviour score."""
+
+    return _env_int("BANK_BEHAVIOR_RISK_THRESHOLD", BEHAVIOR_RISK_THRESHOLD, 10, 1000)
+
+
+def behavior_large_amount_cents() -> int:
+    """Amount above which a settlement counts as a large-transfer signal."""
+
+    return _env_int("BANK_BEHAVIOR_LARGE_AMOUNT_CENTS", BEHAVIOR_LARGE_AMOUNT_CENTS, 100, 10_000_000_000)
+
+
+def _purge_behavior(state: dict[str, Any], now: float) -> None:
+    window = behavior_window_seconds()
+    timeline: deque = state["timeline"]
+    while timeline and now - float(timeline[0].get("at", 0.0)) > window:
+        timeline.popleft()
+    for rule_id, fired_at in list(state["rule_fires"].items()):
+        if now - float(fired_at) > window:
+            state["rule_fires"].pop(rule_id, None)
+
+
+def _behavior_score(state: dict[str, Any]) -> int:
+    return int(sum(int(entry.get("weight", 0)) for entry in state["timeline"]))
+
+
+def _evaluate_behavior_rules(state: dict[str, Any], trigger: str, now: float) -> list[str]:
+    """Fire named combination rules against the recent signal timeline."""
+
+    fired: list[str] = []
+    timeline: deque = state["timeline"]
+    signals = [entry for entry in timeline if entry.get("kind") == "SIGNAL"]
+    for rule in BEHAVIOR_RULES:
+        if rule["trigger"] != trigger or rule["rule_id"] in state["rule_fires"]:
+            continue
+        if "min_count" in rule and sum(1 for entry in signals if entry.get("name") == trigger) < int(rule["min_count"]):
+            continue
+        if not all(any(entry.get("name") == required for entry in signals) for required in rule.get("requires", ())):
+            continue
+        if not all(
+            sum(1 for entry in signals if entry.get("name") == name) >= int(minimum)
+            for name, minimum in (rule.get("requires_count") or {}).items()
+        ):
+            continue
+        timeline.append({"at": now, "kind": "RULE", "name": rule["rule_id"], "weight": int(rule["weight"]), "metadata": {"description": rule["description"]}})
+        state["rule_fires"][rule["rule_id"]] = now
+        fired.append(rule["rule_id"])
+    return fired
+
+
+def record_behavior_signal(user_id: Optional[str], signal: str, *, metadata: Optional[Mapping[str, Any]] = None, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Record a behaviour signal, evaluate combination rules, maybe lock."""
+
+    principal = _principal_key(user_id)
+    now = time.monotonic()
+    weight = int(BEHAVIOR_SIGNAL_WEIGHTS.get(signal, 0))
+    locked_now = False
+    lock_reason: Optional[str] = None
+    with STATE_LOCK:
+        state = BEHAVIOR_STATE[principal]
+        _purge_behavior(state, now)
+        # Several layers can report the same rejected request (the endpoint
+        # wrapper and the primitive both record a failure).  Deduplicate per
+        # request so one attempt never counts as two signals.
+        if request_id and any(
+            entry.get("kind") == "SIGNAL" and entry.get("name") == signal and entry.get("request_id") == request_id
+            for entry in state["timeline"]
+        ):
+            return {
+                "principal": principal,
+                "signal": signal,
+                "weight": weight,
+                "score": _behavior_score(state),
+                "threshold": behavior_risk_threshold(),
+                "fired_rules": [],
+                "locked": float(SECURITY_STATE[principal].get("locked_until", 0.0)) > now,
+                "just_locked": False,
+                "duplicate": True,
+                "lock_reason": None,
+            }
+        state["timeline"].append({"at": now, "kind": "SIGNAL", "name": signal, "weight": weight, "request_id": redact(request_id), "metadata": redact(dict(metadata or {}))})
+        fired = _evaluate_behavior_rules(state, signal, now)
+        score = _behavior_score(state)
+        security_state = SECURITY_STATE[principal]
+        if score >= behavior_risk_threshold() and float(security_state.get("locked_until", 0.0)) <= now:
+            security_state["locked_until"] = now + LOCKOUT_SECONDS
+            security_state["lock_reason"] = f"BEHAVIOR_RISK:{','.join(fired) or signal}"
+            locked_now = True
+            lock_reason = str(security_state["lock_reason"])
+            audit_event(
+                "BEHAVIOR_RISK_LOCK",
+                user_id=principal,
+                risk_level="RED",
+                decision="BLOCK",
+                outcome="LOCKED",
+                reason=lock_reason,
+                request_id=request_id,
+                metadata={
+                    "score": score,
+                    "threshold": behavior_risk_threshold(),
+                    "rules": fired,
+                    "signals": [entry.get("name") for entry in state["timeline"] if entry.get("kind") == "SIGNAL"],
+                    "lockout_seconds": LOCKOUT_SECONDS,
+                },
+            )
+        elif fired:
+            audit_event(
+                "BEHAVIOR_RULE_FIRED",
+                user_id=principal,
+                risk_level="RED",
+                decision="ALLOW",
+                outcome="OBSERVED",
+                reason=",".join(fired),
+                request_id=request_id,
+                metadata={"score": score, "threshold": behavior_risk_threshold(), "signal": signal},
+            )
+        elif weight >= 20:
+            audit_event(
+                "BEHAVIOR_SIGNAL",
+                user_id=principal,
+                risk_level="YELLOW",
+                decision="ALLOW",
+                outcome="OBSERVED",
+                reason=signal,
+                request_id=request_id,
+                metadata={"signal": signal, "weight": weight, "score": score},
+            )
+        active_lock = float(security_state.get("locked_until", 0.0)) > now
+        return {
+            "principal": principal,
+            "signal": signal,
+            "weight": weight,
+            "score": score,
+            "threshold": behavior_risk_threshold(),
+            "fired_rules": fired,
+            "locked": active_lock,
+            "just_locked": locked_now,
+            "lock_reason": str(security_state.get("lock_reason") or "") if active_lock else None,
+        }
+
+
+def behavior_status(user_id: Optional[str]) -> dict[str, Any]:
+    """Explain the behaviour risk score of one principal (for review/UI)."""
+
+    principal = _principal_key(user_id)
+    now = time.monotonic()
+    with STATE_LOCK:
+        state = BEHAVIOR_STATE.get(principal)
+        security_state = SECURITY_STATE[principal]
+        locked_until = float(security_state.get("locked_until", 0.0))
+        locked = locked_until > now
+        base = {
+            "principal": principal,
+            "score": 0,
+            "threshold": behavior_risk_threshold(),
+            "window_seconds": behavior_window_seconds(),
+            "signals": [],
+            "fired_rules": [],
+            "locked": locked,
+            "lock_reason": security_state.get("lock_reason") if locked else None,
+            "remaining_lock_seconds": max(0, int(locked_until - now)) if locked else 0,
+        }
+        if not state:
+            return base
+        _purge_behavior(state, now)
+        base["score"] = _behavior_score(state)
+        base["fired_rules"] = sorted(state["rule_fires"])
+        base["signals"] = [
+            {
+                "name": entry.get("name"),
+                "kind": entry.get("kind"),
+                "weight": entry.get("weight"),
+                "age_seconds": round(max(0.0, now - float(entry.get("at", now))), 1),
+                **({"metadata": entry.get("metadata")} if entry.get("kind") == "SIGNAL" else {}),
+            }
+            for entry in state["timeline"]
+        ]
+        return base
 
 
 def validate_actor(requested_user: Optional[str], presented_user: Optional[str]) -> str:
@@ -771,6 +1051,65 @@ def _issue_mfa_proof(payload: Mapping[str, Any], auth_token: str) -> str:
         "expires_at": now + MFA_TTL_SECONDS,
     }
     return proof
+
+
+def _purge_sessions() -> None:
+    now = time.time()
+    for token, record in list(SESSION_TOKENS.items()):
+        if float(record.get("expires_at", 0)) <= now:
+            SESSION_TOKENS.pop(token, None)
+    if len(SESSION_TOKENS) > SESSION_MAX_RECORDS:
+        for token in sorted(SESSION_TOKENS, key=lambda item: SESSION_TOKENS[item].get("created_at", 0))[: len(SESSION_TOKENS) - SESSION_MAX_RECORDS]:
+            SESSION_TOKENS.pop(token, None)
+
+
+def issue_session_token(user_id: str, *, ttl_seconds: Optional[int] = None, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Issue a reusable, short-lived session credential for a principal.
+
+    The demo has no password check (identity is self-asserted everywhere); a
+    production deployment must authenticate the subject (OIDC/password) before
+    calling this, then require the session on every write.
+    """
+
+    principal = sanitize_text(user_id, field="用户标识", max_length=128)
+    if not principal:
+        raise SecurityError("缺少用户标识", 400, "INVALID_SESSION_SUBJECT")
+    now = int(time.time())
+    ttl = max(60, min(int(ttl_seconds or SESSION_TTL_SECONDS), 86_400))
+    payload = {"typ": "session", "ver": 1, "jti": secrets.token_urlsafe(18), "sub": principal, "iat": now, "exp": now + ttl}
+    token = _signed_payload(payload)
+    with STATE_LOCK:
+        SESSION_TOKENS[token] = {
+            "jti": payload["jti"],
+            "sub": principal,
+            "token_hash": credential_fingerprint(token),
+            "created_at": now,
+            "expires_at": now + ttl,
+        }
+        _purge_sessions()
+    audit_event("SESSION_ISSUED", user_id=principal, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"jti": payload["jti"], "ttl": ttl})
+    return {"session_token": token, "expires_at": now + ttl, "user_id": principal, "ttl_seconds": ttl}
+
+
+def resolve_session(token: Optional[str]) -> str:
+    """Return the principal bound to a session token, or raise ``SecurityError``."""
+
+    if not isinstance(token, str) or not token:
+        raise SecurityError("缺少会话凭证", 401, "SESSION_REQUIRED")
+    with STATE_LOCK:
+        try:
+            payload = _decode_signed(token, "session")
+        except SecurityError as exc:
+            raise SecurityError("会话凭证无效或已过期", 401, "INVALID_SESSION") from exc
+        record = SESSION_TOKENS.get(token)
+        if not record or record.get("token_hash") != credential_fingerprint(token) or record.get("jti") != payload.get("jti"):
+            raise SecurityError("会话凭证无效", 401, "INVALID_SESSION")
+        if float(record.get("expires_at", 0)) <= time.time():
+            raise SecurityError("会话已过期，请重新登录", 401, "SESSION_EXPIRED")
+    principal = str(payload.get("sub") or "")
+    if not principal:
+        raise SecurityError("会话凭证无效", 401, "INVALID_SESSION")
+    return principal
 
 
 def _purge_face_challenges() -> None:
@@ -1086,10 +1425,20 @@ def security_health() -> dict[str, Any]:
             "auth_secret_configured": AUTH_SECRET_CONFIGURED,
             "demo_mode": DEMO_MODE,
             "active_auth_tokens": sum(1 for rec in AUTH_TOKENS.values() if not rec.get("used") and float(rec.get("expires_at", 0)) > time.time()),
+            "active_sessions": sum(1 for rec in SESSION_TOKENS.values() if float(rec.get("expires_at", 0)) > time.time()),
+            "session_ttl_seconds": SESSION_TTL_SECONDS,
             "audit_events": len(AUDIT_LOGS),
             "open_circuits": locked,
             "audit_persistence": audit_persistence_status(),
             "mfa_factors": sorted(MFA_FACTORS),
+            "behavior_risk": {
+                "threshold": behavior_risk_threshold(),
+                "window_seconds": behavior_window_seconds(),
+                "large_amount_cents": behavior_large_amount_cents(),
+                "rules": [rule["rule_id"] for rule in BEHAVIOR_RULES],
+                "tracked_principals": len(BEHAVIOR_STATE),
+                "locked_principals": sum(1 for state in SECURITY_STATE.values() if float(state.get("locked_until", 0)) > now),
+            },
             "face_attestation": {
                 "mode": "signed_single_use_ticket",
                 "secret_configured": FACE_ATTEST_SECRET_CONFIGURED,
@@ -1107,6 +1456,8 @@ def reset_security_state() -> None:
         AUTH_TOKENS.clear()
         MFA_PROOFS.clear()
         FACE_CHALLENGES.clear()
+        SESSION_TOKENS.clear()
+        BEHAVIOR_STATE.clear()
         SECURITY_STATE.clear()
         AUDIT_LOGS.clear()
         _AUDIT_PREVIOUS_HASH = "0" * 64

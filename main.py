@@ -33,6 +33,8 @@ from security import (
     amount_to_cents,
     audit_event,
     authorize_execution,
+    behavior_large_amount_cents,
+    behavior_status,
     circuit_status,
     confirm_auth_token,
     ensure_circuit_closed,
@@ -41,8 +43,11 @@ from security import (
     inspect_auth_token,
     issue_auth_token,
     issue_face_challenge,
+    issue_session_token,
     record_security_failure,
     record_security_success,
+    record_behavior_signal,
+    resolve_session,
     security_health,
     sanitize_text,
     validate_actor,
@@ -66,7 +71,7 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-User-Id", "X-Auth-Token", "X-MFA-Proof", "X-User-Confirmation", "X-Request-Id", "Idempotency-Key", "X-Admin-Token"],
+    allow_headers=["Content-Type", "X-User-Id", "X-Session-Token", "X-Auth-Token", "X-MFA-Proof", "X-User-Confirmation", "X-Request-Id", "Idempotency-Key", "X-Admin-Token"],
 )
 
 # Keep the HTTP edge defensive even when the mock is run directly under
@@ -78,41 +83,107 @@ try:
 except (TypeError, ValueError):
     _MAX_REQUEST_BYTES = 1_048_576
 
+# Paths that must stay reachable without a session and without rate limiting
+# (container probes and the interactive API docs).
+_HEALTH_PATHS = {"/healthz", "/api/v1/security/health"}
+_DOCS_PREFIXES = ("/docs", "/redoc", "/openapi.json")
+_SESSION_ISSUE_PATH = "/api/v1/auth/session"
+RATE_LIMIT_WINDOW_SECONDS = 60
+# Per-principal request windows.  The demo has no reverse proxy, so a simple
+# in-process fixed window is the cheapest way to blunt accidental or hostile
+# floods; production should also apply an edge/WAF limit.
+RATE_LIMIT_STATE: dict[str, dict[str, Any]] = {}
+
+
+def _rate_limit_exempt(path: str) -> bool:
+    return path in _HEALTH_PATHS or path.startswith(_DOCS_PREFIXES)
+
+
+def _strict_session_required() -> bool:
+    return os.getenv("BANK_REQUIRE_SESSION", "0").lower() in {"1", "true", "yes", "on"}
+
+
+def _rate_limit_check(key: str) -> Optional[int]:
+    """Return ``Retry-After`` seconds when over the per-minute limit, else None."""
+
+    try:
+        limit = int(os.getenv("BANK_RATE_LIMIT_PER_MINUTE", "240"))
+    except (TypeError, ValueError):
+        limit = 240
+    if limit <= 0:
+        return None
+    now = time.monotonic()
+    record = RATE_LIMIT_STATE.get(key)
+    if not record or now - float(record.get("start", 0.0)) >= RATE_LIMIT_WINDOW_SECONDS:
+        RATE_LIMIT_STATE[key] = {"start": now, "count": 1, "notified": False}
+        return None
+    record["count"] = int(record.get("count", 0)) + 1
+    if record["count"] > limit:
+        if not record.get("notified"):
+            record["notified"] = True
+            audit_event("RATE_LIMITED", user_id=key, decision="BLOCK", outcome="RATE_LIMITED", reason="rate limit exceeded", metadata={"limit": limit, "window_seconds": RATE_LIMIT_WINDOW_SECONDS})
+        return max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - float(record.get("start", now)))))
+    return None
+
+
+def _apply_security_headers(response: JSONResponse, path: str) -> JSONResponse:
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 @app.middleware("http")
 async def request_safety_middleware(request: Request, call_next):
+    path = request.url.path
+    # 1) A session token is authoritative over a self-asserted X-User-Id: it is
+    #    verified first and its subject replaces any client-supplied header, so
+    #    a caller can never claim another principal alongside a valid session.
+    session_token = request.headers.get("X-Session-Token")
+    if session_token:
+        try:
+            principal = resolve_session(session_token)
+        except SecurityError as exc:
+            return _apply_security_headers(
+                JSONResponse(status_code=exc.status_code, content={"detail": {"code": exc.code, "message": exc.detail}}),
+                path,
+            )
+        forwarded = [(name, value) for name, value in request.scope["headers"] if name.lower() != b"x-user-id"]
+        forwarded.append((b"x-user-id", principal.encode("utf-8")))
+        request.scope["headers"] = forwarded
+    elif _strict_session_required() and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _rate_limit_exempt(path) and path != _SESSION_ISSUE_PATH:
+        return _apply_security_headers(
+            JSONResponse(status_code=401, content={"detail": {"code": "SESSION_REQUIRED", "message": "写操作需要会话凭证"}}),
+            path,
+        )
+    # 2) Per-principal request window (probes and docs are exempt).
+    if not _rate_limit_exempt(path):
+        rate_key = request.headers.get("X-User-Id") or (request.client.host if request.client else "anonymous")
+        retry_after = _rate_limit_check(str(rate_key))
+        if retry_after is not None:
+            response = _apply_security_headers(
+                JSONResponse(status_code=429, content={"detail": {"code": "RATE_LIMITED", "message": "请求过于频繁，请稍后重试"}}),
+                path,
+            )
+            response.headers["Retry-After"] = str(retry_after)
+            return response
     content_length = request.headers.get("content-length")
     if content_length:
         try:
             if int(content_length) > _MAX_REQUEST_BYTES:
-                response = JSONResponse(
-                    status_code=413,
-                    content={"detail": {"code": "REQUEST_TOO_LARGE", "message": "请求体超过安全限制"}},
+                return _apply_security_headers(
+                    JSONResponse(status_code=413, content={"detail": {"code": "REQUEST_TOO_LARGE", "message": "请求体超过安全限制"}}),
+                    path,
                 )
-                response.headers["X-Content-Type-Options"] = "nosniff"
-                response.headers["X-Frame-Options"] = "DENY"
-                response.headers["Referrer-Policy"] = "no-referrer"
-                response.headers["Cache-Control"] = "no-store"
-                return response
         except ValueError:
-            response = JSONResponse(
-                status_code=400,
-                content={"detail": {"code": "INVALID_CONTENT_LENGTH", "message": "请求长度字段无效"}},
+            return _apply_security_headers(
+                JSONResponse(status_code=400, content={"detail": {"code": "INVALID_CONTENT_LENGTH", "message": "请求长度字段无效"}}),
+                path,
             )
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Frame-Options"] = "DENY"
-            response.headers["Referrer-Policy"] = "no-referrer"
-            response.headers["Cache-Control"] = "no-store"
-            return response
     response = await call_next(request)
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "no-referrer")
-    # Banking responses (including green queries) should not be cached by a
-    # browser or intermediary where a later user could recover account data.
-    if request.url.path.startswith("/api/"):
-        response.headers.setdefault("Cache-Control", "no-store")
-    return response
+    return _apply_security_headers(response, request.url.path)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +229,11 @@ WEALTH_RISK_PROFILES: dict[str, dict[str, Any]] = {
 CARDS: dict[str, dict[str, Any]] = {
     "user_zhang": {"card_id": "CARD-001", "type": "VIRTUAL", "status": "ACTIVE", "daily_limit": 5000.0}
 }
+# Per-card, per-day settled spend.  The card's ``daily_limit`` is enforced on
+# settlement, so lowering a limit (CARD_LIMIT) immediately constrains further
+# payments instead of only being a display field.
+CARD_DAILY_SPENT: dict[str, float] = {}
+CARD_DAILY_SPENT_DATE: dict[str, str] = {}
 SUBSCRIPTIONS: dict[str, list[dict[str, Any]]] = {
     "user_zhang": [
         {"subscription_id": "SUB-APPLE", "merchant": "Apple 订阅", "amount": 15.0, "next_charge": "2026-10-03", "status": "ACTIVE"},
@@ -190,6 +266,8 @@ def _ledger_transaction():
         "ACCOUNTS",
         "DAILY_TRANSFERS",
         "DAILY_TRANSFER_DATE",
+        "CARD_DAILY_SPENT",
+        "CARD_DAILY_SPENT_DATE",
         "LOCKS",
         "WEALTH_HOLDINGS",
         "CARDS",
@@ -333,6 +411,11 @@ class MFAVerifyRequest(StrictModel):
 class FaceChallengeRequest(StrictModel):
     auth_token: str
     user_id: Optional[str] = None
+
+
+class SessionRequest(StrictModel):
+    user_id: str
+    ttl_seconds: Optional[int] = None
 
 
 class LockPrecheckRequest(StrictModel):
@@ -524,6 +607,127 @@ def _daily_spent(user_id: str) -> float:
         DAILY_TRANSFERS[user_id] = 0.0
     return float(DAILY_TRANSFERS.get(user_id, 0.0))
 
+
+def _split_shares(total_cents: int, participant_count: int) -> tuple[int, int]:
+    """Split cents so the parts always add up exactly (no rounding leakage).
+
+    Participants pay an equal floor share; the initiator bears the remainder,
+    so ``participant_share * n + initiator_share == total`` for every amount
+    (for example 100.00 / 3 -> 33.33 + 33.33 + 33.34).
+    """
+
+    divisor = participant_count + 1
+    participant_share = total_cents // divisor
+    initiator_share = total_cents - participant_share * participant_count
+    return participant_share, initiator_share
+
+
+def _collect_split_shares(actor: str, user_id: str, total: float, participants: list[str], target: Optional[str]) -> dict[str, Any]:
+    """Collect each participant's AA share into the initiator's account.
+
+    The demo settles AA requests against the mock accounts of the resolved
+    contacts: each participant's share is debited, the initiator is credited,
+    and both sides get an itemised transaction.  A participant with
+    insufficient funds is reported as failed instead of blocking the others,
+    and the request ends as SETTLED or PARTIAL accordingly.
+    """
+
+    total_cents = int(round(total * 100))
+    participant_share_cents, initiator_share_cents = _split_shares(total_cents, len(participants))
+    initiator = _ensure_account(user_id)
+    collected_cents = 0
+    rows: list[dict[str, Any]] = []
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for name in participants:
+        target_id, account = _resolve_target(name, from_user=user_id)
+        share = participant_share_cents / 100.0
+        status = "COLLECTED"
+        reason: Optional[str] = None
+        if target_id == user_id:
+            status, reason = "SKIPPED", "SELF_PARTICIPANT"
+        elif account.get("status") != "ACTIVE":
+            status, reason = "FAILED", "ACCOUNT_LOCKED"
+        elif round(float(account["balance"]) - float(account.get("locked_amount", 0.0)), 2) < share:
+            status, reason = "FAILED", "INSUFFICIENT_FUNDS"
+        if status == "COLLECTED":
+            account["balance"] = round(float(account["balance"]) - share, 2)
+            initiator["balance"] = round(float(initiator["balance"]) + share, 2)
+            collected_cents += participant_share_cents
+            TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": target_id, "merchant": f"AA 分摊给 {initiator['name']}", "category": "AA 支出", "amount": share, "time": timestamp})
+            TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": user_id, "merchant": f"AA 收款 - {account['name']}", "category": "AA 收款", "amount": share, "time": timestamp})
+        rows.append({"name": name, "account_id": target_id, "display_name": account.get("name"), "share": share, "status": status, "reason": reason})
+    collected = collected_cents / 100.0
+    # Outstanding is what the participants still owe: the initiator's own
+    # share is never "collected", so it must not be reported as arrears.
+    outstanding_cents = max(0, total_cents - collected_cents - initiator_share_cents)
+    outstanding = outstanding_cents / 100.0
+    return {
+        "collection": rows,
+        "collected_amount": collected,
+        "outstanding_amount": outstanding,
+        "participant_share": participant_share_cents / 100.0,
+        "initiator_share": initiator_share_cents / 100.0,
+        "status": "SETTLED" if outstanding <= 0 else "PARTIAL",
+        "collected_at": timestamp,
+        "target": target,
+    }
+
+
+def _card_daily_spent(card_id: str) -> float:
+    today = datetime.now().strftime("%Y-%m-%d")
+    if card_id not in CARD_DAILY_SPENT_DATE:
+        CARD_DAILY_SPENT_DATE[card_id] = today
+        CARD_DAILY_SPENT.setdefault(card_id, 0.0)
+    elif CARD_DAILY_SPENT_DATE.get(card_id) != today:
+        CARD_DAILY_SPENT_DATE[card_id] = today
+        CARD_DAILY_SPENT[card_id] = 0.0
+    return float(CARD_DAILY_SPENT.get(card_id, 0.0))
+
+
+def _card_id_for(user_id: str) -> Optional[str]:
+    card = CARDS.get(user_id)
+    if not card:
+        return None
+    return str(card.get("card_id") or user_id)
+
+
+def _enforce_card_limit(user_id: str, amount: float) -> None:
+    """Refuse a settlement that would exceed the card's daily payment limit."""
+
+    card = CARDS.get(user_id)
+    card_id = _card_id_for(user_id)
+    if not card or not card_id:
+        return
+    limit = card.get("daily_limit")
+    if limit is None:
+        return
+    try:
+        limit_value = float(limit)
+    except (TypeError, ValueError):
+        return
+    spent = _card_daily_spent(card_id)
+    if round(spent + amount, 2) > round(limit_value, 2):
+        raise SecurityError("超出卡片当日支付限额，请调整额度或明日再试", 400, "CARD_LIMIT_EXCEEDED")
+
+
+def _record_card_spend(user_id: str, amount: float) -> None:
+    card_id = _card_id_for(user_id)
+    if not card_id:
+        return
+    CARD_DAILY_SPENT[card_id] = round(_card_daily_spent(card_id) + amount, 2)
+
+
+# Sensitive operations that feed the behaviour-combination breaker.  The
+# signal names line up with ``security.BEHAVIOR_SIGNAL_WEIGHTS``.
+_BEHAVIOR_OPERATION_SIGNALS: dict[str, str] = {
+    "CARD_REPORT_LOST": "CARD_REPORT_LOST",
+    "CARD_FREEZE": "CARD_STATE_CHANGE",
+    "CARD_UNFREEZE": "CARD_STATE_CHANGE",
+    "CARD_LIMIT": "CARD_LIMIT_CHANGE",
+    "PASSWORD_CHANGE": "PASSWORD_CHANGE",
+    "WEALTH_PURCHASE": "WEALTH_PURCHASE",
+    "WEALTH_REDEEM": "WEALTH_REDEEM",
+}
 
 GENERIC_OPERATION_RISK: dict[str, str] = {
     # Yellow: a reversible/low-value action still needs an explicit click.
@@ -1129,14 +1333,78 @@ def detect_subscriptions(user_id: str, x_user_id: Optional[str] = Header(None, a
     return {"code": 200, "data": candidates, "renewal_reminders": [{"subscription_id": row["subscription_id"], "next_charge": row["next_charge"], "message": f"{row['merchant']} 将于 {row['next_charge']} 扣款 ¥{row['amount']:.2f}"} for row in candidates]}
 
 
+@app.post("/api/v1/subscriptions/{user_id}/reminders")
+def create_renewal_reminders(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Create idempotent renewal reminders (two days before the charge).
+
+    No money moves here, so this is a green write: it only materialises the
+    detected renewals as auditable task-center items.  Repeating the call for
+    the same subscription and charge date returns the existing task instead of
+    duplicating it.
+    """
+
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(user_id, x_user_id, action="SUBSCRIPTION_REMINDER", request_id=request_id)
+    _ensure_account(user_id)
+    created: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    with STATE_LOCK:
+        with _ledger_transaction():
+            for row in SUBSCRIPTIONS.get(user_id, []):
+                if row.get("status") != "ACTIVE":
+                    continue
+                try:
+                    charge_date = datetime.strptime(str(row.get("next_charge")), "%Y-%m-%d")
+                except (TypeError, ValueError):
+                    skipped.append({"subscription_id": row.get("subscription_id"), "reason": "INVALID_NEXT_CHARGE"})
+                    continue
+                run_at = (charge_date - timedelta(days=2)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
+                task = TASK_STORE.create(
+                    actor,
+                    "RENEWAL_REMINDER",
+                    {
+                        "subscription_id": row["subscription_id"],
+                        "merchant": row.get("merchant"),
+                        "amount": row.get("amount"),
+                        "next_charge": row.get("next_charge"),
+                        "message": f"{row.get('merchant')} 将于 {row.get('next_charge')} 扣款 ¥{float(row.get('amount') or 0):,.2f}，需要取消请提前操作",
+                    },
+                    run_at=run_at,
+                    idempotency_key=f"renewal:{row['subscription_id']}:{row.get('next_charge')}",
+                )
+                created.append(task.to_dict())
+    audit_event(
+        "SUBSCRIPTION_REMINDER_CREATE",
+        user_id=actor,
+        risk_level="GREEN",
+        decision="ALLOW",
+        outcome="SUCCESS",
+        request_id=request_id,
+        metadata={"created": len(created), "skipped": len(skipped)},
+    )
+    return {"code": 200, "status": "CREATED", "data": created, "skipped": skipped}
+
+
 @app.get("/api/v1/cards/{user_id}")
 def get_cards(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     request_id = _request_id(x_request_id)
     actor = _get_actor(user_id, x_user_id, action="CARD_QUERY", request_id=request_id)
     _ensure_account(user_id)
     card = CARDS.get(user_id)
+    data: list[dict[str, Any]] = []
+    if card:
+        enriched = dict(card)
+        card_id = _card_id_for(user_id)
+        if card_id:
+            spent = _card_daily_spent(card_id)
+            enriched["daily_spent_today"] = spent
+            try:
+                enriched["daily_remaining"] = round(max(0.0, float(card.get("daily_limit") or 0.0) - spent), 2)
+            except (TypeError, ValueError):
+                enriched["daily_remaining"] = None
+        data.append(enriched)
     audit_event("CARD_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id)
-    return {"code": 200, "data": [dict(card)] if card else []}
+    return {"code": 200, "data": data}
 
 
 # ---------------------------------------------------------------------------
@@ -1375,6 +1643,26 @@ def operation_precheck(
     return response
 
 
+@app.post("/api/v1/auth/session")
+def create_session(req: SessionRequest, x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Issue a short-lived session credential bound to an existing account.
+
+    The demo authenticates nobody (it only checks that the account exists), so
+    this endpoint exists to demonstrate the *channel* contract: a channel
+    presents a session token instead of self-asserting X-User-Id.  Production
+    must authenticate the subject first (OIDC/密码) and then set
+    ``BANK_REQUIRE_SESSION=1`` so writes reject bare identity headers.
+    """
+
+    request_id = _request_id(x_request_id)
+    try:
+        _ensure_account(req.user_id)
+        result = issue_session_token(req.user_id, ttl_seconds=req.ttl_seconds, request_id=request_id)
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=req.user_id, action="SESSION_ISSUE", request_id=request_id)
+    return {"code": 200, **result}
+
+
 @app.post("/api/v1/auth/confirm")
 @app.post("/api/v1/auth/confirmation")
 @app.post("/api/v1/risk/confirm")
@@ -1462,12 +1750,18 @@ def execute_transfer(req: TransferExecuteRequest, x_auth_token: Optional[str] = 
                 if card_state and card_state.get("status") != "ACTIVE":
                     raise SecurityError("付款卡片当前不可用于交易", 423, "CARD_BLOCKED")
                 amount = amount_to_cents(req.amount) / 100.0
+                # The card's daily payment limit is enforced on settlement, not
+                # only displayed; lowering the limit constrains later payments.
+                _enforce_card_limit(req.from_user, amount)
                 available = sender["balance"] - sender["locked_amount"]
                 if available < amount:
                     raise SecurityError("可用余额不足（部分资金已被锁定）", 400, "INSUFFICIENT_FUNDS")
                 sender["balance"] = round(sender["balance"] - amount, 2)
                 receiver["balance"] = round(receiver["balance"] + amount, 2)
                 DAILY_TRANSFERS[req.from_user] = round(_daily_spent(req.from_user) + amount, 2)
+                _record_card_spend(req.from_user, amount)
+                if int(round(amount * 100)) >= behavior_large_amount_cents():
+                    record_behavior_signal(req.from_user, "LARGE_TRANSFER", metadata={"amount_cents": int(round(amount * 100)), "target_id": target_id}, request_id=request_id)
                 txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
                 TRANSACTIONS.append({"tx_id": txn_id, "account_id": req.from_user, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": remark, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                 risk_level = payload.get("risk_level")
@@ -1520,8 +1814,7 @@ def lock_fund(req: LockFundRequest, x_auth_token: Optional[str] = Header(None, a
                 reminder_task = None
                 order_task_ids: list[str] = []
                 if event_at and reminder_at:
-                    reminder_task = TASK_STORE.create(actor, "REMINDER", {"lock_id": lock_id, "message": "生日前 2 天提醒订购鲜花与蛋糕", "event_at": event_at, "reminder_at": reminder_at}, run_at=reminder_at, depends_on=[task.task_id], idempotency_key=f"reminder:{lock_id}")
-                    # Keep the two requested purchases as explicit, auditable
+                    reminder_task = TASK_STORE.create(actor, "REMINDER", {"lock_id": lock_id, "message": "生日前 2 天提醒订购鲜花与蛋糕", "event_at": event_at, "reminder_at": reminder_at}, run_at=reminder_at, depends_on=[task.task_id], idempotency_key=f"reminder:{lock_id}")                    # Keep the two requested purchases as explicit, auditable
                     # order drafts.  They are deliberately *not* sent to an
                     # external merchant in the mock; when due they move to
                     # WAITING_USER so a real provider and a fresh approval can
@@ -1537,6 +1830,8 @@ def lock_fund(req: LockFundRequest, x_auth_token: Optional[str] = Header(None, a
                             idempotency_key=f"order-draft:{lock_id}:{item}",
                         )
                         order_task_ids.append(order_task.task_id)
+        if int(round(amount * 100)) >= behavior_large_amount_cents():
+            record_behavior_signal(req.user_id, "LARGE_LOCK", metadata={"amount_cents": int(round(amount * 100)), "lock_id": lock_id}, request_id=request_id)
         record_security_success(actor)
     except SecurityError as exc:
         _idempotency_abort(actor, "lock_fund", idempotency_key)
@@ -1824,6 +2119,16 @@ def execute_operation(
                     if operation_context.get("subscription_id") and selected.get("subscription_id") != operation_context.get("subscription_id"):
                         raise SecurityError("订阅状态在确认后发生变化，请重新预检", 409, "SUBSCRIPTION_CONTEXT_CHANGED")
                     selected["status"] = "CANCELLED"
+                    # A cancelled subscription must not keep nagging: withdraw
+                    # its pending renewal reminders as part of the same step.
+                    for queued in TASK_STORE.list(owner_id=actor):
+                        if queued.task_type != "RENEWAL_REMINDER" or queued.payload.get("subscription_id") != selected.get("subscription_id"):
+                            continue
+                        if queued.status in {TaskState.PENDING, TaskState.WAITING_USER}:
+                            try:
+                                TASK_STORE.transition(queued.task_id, TaskState.CANCELLED, owner_id=actor)
+                            except (KeyError, ValueError):
+                                pass
                     result.update({"status": "CANCELLED", "subscription": selected})
                 elif operation == "SCHEDULED_TRANSFER":
                     scheduled_at = operation_context.get("scheduled_at")
@@ -1839,9 +2144,26 @@ def execute_operation(
                     result.update(schedule, task_id=task.task_id)
                 elif operation == "SPLIT_BILL":
                     participants = list(operation_context.get("participants") or [])
-                    divisor = len(participants) + 1
-                    share = round(amount / divisor, 2)
-                    split = {"split_id": f"SPL{uuid.uuid4().hex[:10].upper()}", "user_id": req.user_id, "amount": amount, "participants": participants, "per_person": share, "participants_total": len(participants), "target": req.target, "status": "OPEN"}
+                    # AA is a real collection in the mock ledger: participants'
+                    # shares are debited and the initiator is credited, with the
+                    # remainder assigned to the initiator so the cents always
+                    # reconcile (100.00 / 3 -> 33.33 + 33.33 + 33.34).
+                    collection = _collect_split_shares(actor, req.user_id, amount, participants, req.target)
+                    split = {
+                        "split_id": f"SPL{uuid.uuid4().hex[:10].upper()}",
+                        "user_id": req.user_id,
+                        "amount": amount,
+                        "participants": participants,
+                        "per_person": collection["participant_share"],
+                        "initiator_share": collection["initiator_share"],
+                        "participants_total": len(participants),
+                        "target": req.target,
+                        "status": collection["status"],
+                        "collected_amount": collection["collected_amount"],
+                        "outstanding_amount": collection["outstanding_amount"],
+                        "collection": collection["collection"],
+                        "collected_at": collection["collected_at"],
+                    }
                     SPLIT_REQUESTS.append(split)
                     # Scope the task to this signed approval.  In particular,
                     # two AA requests for the same total but different
@@ -1850,6 +2172,9 @@ def execute_operation(
                     result.update(split, task_id=task.task_id)
                 else:  # guarded by _validate_operation_name; defensive fallback
                     raise SecurityError("操作未实现", 501, "OPERATION_NOT_IMPLEMENTED")
+        behavior_signal = _BEHAVIOR_OPERATION_SIGNALS.get(operation)
+        if behavior_signal:
+            record_behavior_signal(actor, behavior_signal, metadata={"operation": operation}, request_id=request_id)
         record_security_success(actor)
     except SecurityError as exc:
         if 'idem_payload' in locals():
@@ -2011,6 +2336,17 @@ def security_circuit_endpoint(user_id: str, x_user_id: Optional[str] = Header(No
     return {"code": 200, **circuit_status(user_id)}
 
 
+@app.get("/api/v1/security/behavior/{user_id}")
+def security_behavior_endpoint(user_id: str, x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    """Explain the behaviour-risk score behind a combination lockout."""
+
+    expected = os.getenv("BANK_ADMIN_AUDIT_TOKEN")
+    admin_ok = bool(expected and x_admin_token and hmac.compare_digest(expected, x_admin_token))
+    if not admin_ok and (not x_user_id or x_user_id != user_id):
+        raise HTTPException(status_code=403, detail={"code": "AUTHORIZATION_REQUIRED", "message": "只能查询当前用户的行为风险状态"})
+    return {"code": 200, **behavior_status(user_id)}
+
+
 @app.get("/api/v1/security/audit")
 @app.get("/api/v1/audit/logs")
 def security_audit_endpoint(limit: int = 100, user_id: Optional[str] = None, x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
@@ -2087,6 +2423,11 @@ def reset_state() -> None:
         DAILY_TRANSFERS.clear()
         DAILY_TRANSFERS["user_zhang"] = 0.0
         DAILY_TRANSFER_DATE.clear()
+        if "CARD_DAILY_SPENT" in globals():
+            CARD_DAILY_SPENT.clear()
+        if "CARD_DAILY_SPENT_DATE" in globals():
+            CARD_DAILY_SPENT_DATE.clear()
+        RATE_LIMIT_STATE.clear()
         LOCKS.clear()
         TASK_STORE.reset()
         IDEMPOTENCY_RECORDS.clear()

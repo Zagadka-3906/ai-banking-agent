@@ -44,6 +44,11 @@ intent_parser -> risk_checker -> (executor | human_review -> executor) -> respon
 
 `human_review` 使用 `interrupt()` 暂停图；Streamlit 先调用 Core 的确认/MFA 接口，再用 `Command(resume=...)` 恢复。核心只接受服务端签发的 proof，前端布尔字段不能越权。
 
+**意图解析的两条确定性护栏**（`agent._model_parse`）：
+
+1. **用户明确说出的事实优先于模型输出**：本地规则解析器提取到的日期（"下周六"/"下周"/显式日期）、金额与收款人是策略事实；模型若把这些字段返回为 null、返回冲突日期或把复合请求（生日锁定 + 提醒）简化成单一意图，本地事实会覆盖模型结果；仅当模型输出**完整**而本地输出不完整时才采用模型结果。
+2. **多轮槽位回填**：澄清时把 `missing_slots` 与当时的槽位快照写入 `context.pending_clarification`；用户下一轮只回答一个值时，该答案**按缺失槽位的类型解释**（日期槽 ← “下周六”；金额槽 ← “3000”/“三千”/“¥3,000”；收款人槽 ← 姓名或手机号），并合并回待澄清的意图，而不是被当作全新请求（此前会返回 UNKNOWN 的能力清单）。若用户改说一个**完整的新请求**，则新意图优先；数字答案不会误填日期槽。面向用户的确认卡与回执统一走业务语言（`_human_readable_action` / `_completion_label`），不出现内部意图编码。
+
 执行阶段由 `planner.PlanExecutor` 按 DAG 依赖顺序推进计划账本：本回合真实执行的步骤（校验/风控/MFA/结算）标记 SUCCEEDED；由核心任务中心接管的后续步骤（提醒、订单草稿、参与人通知）保持 PENDING 并记录去向；结算失败时把该步骤标记 FAILED 并执行补偿动作（核心账本原子回滚确认，核对异常则升级人工接管）。所有结算请求携带 `Idempotency-Key`（`plan_id:task_id`），传输层失败只重试一次且复用同一键，避免重复记账。
 
 ### 2.2 复杂任务 DAG 的目标模型
@@ -88,12 +93,14 @@ available_balance = total_balance - locked_amount
 | `GET /api/v1/wealth/compare` | 多产品事实对比 | GREEN |
 | `GET /api/v1/subscriptions/{user_id}` | 订阅/代扣列表 | GREEN |
 | `GET /api/v1/subscriptions/{user_id}/detect` | 活跃代扣与续费提醒识别 | GREEN |
+| `POST /api/v1/subscriptions/{user_id}/reminders` | 把识别到的续费物化为任务中心提醒（扣款前 2 天、幂等） | GREEN（可审计写） |
 | `GET /api/v1/cards/{user_id}` | 卡片列表与状态 | GREEN |
 | `POST /api/v1/risk/precheck` | 计算日累计并发放临时凭证 | 策略网关 |
 | `POST /api/v1/risk/precheck/lock` | 为锁资操作发放凭证（≤1000 黄区，较大金额红区） | 策略网关 |
 | `POST /api/v1/risk/precheck/unlock` | 为解锁/补偿发放凭证（≤1000 黄区，较大金额红区） | 策略网关 |
 | `POST /api/v1/risk/precheck/operation` | 理财、卡片、订阅、预约/AA 操作预检 | 策略网关 |
 | `POST /api/v1/auth/confirm` | 记录用户明确确认（`/auth/confirmation` 为兼容别名） | YELLOW |
+| `POST /api/v1/auth/session` | 签发会话令牌（绑定主体、短时效、可复用），写操作可用其替代自称身份 | 登录/渠道 |
 | `POST /api/v1/auth/mfa/verify` | 服务端校验 OTP + 签名人脸票据并签发 proof | RED |
 | `POST /api/v1/auth/mfa/face/challenge` | 签发绑定交易 jti 的一次性活体挑战，供模拟设备 SDK 签名 | RED |
 | `POST /api/v1/transfers/execute` | 结算转账 | YELLOW/RED |
@@ -111,11 +118,30 @@ available_balance = total_balance - locked_amount
 | `GET/POST /api/v1/tasks...` | 任务查询、取消、人工接管（明细见上表） | GREEN/YELLOW |
 | `GET /api/v1/security/health` | 安全组件健康摘要（含沙箱与审计持久化状态） | 运维 |
 | `GET /api/v1/security/circuit/{user_id}` | 查询指定主体熔断状态 | 运维 |
+| `GET /api/v1/security/behavior/{user_id}` | 行为风险评分、命中规则与信号明细（可解释锁定原因） | 本人或管理员 |
 | `GET /api/v1/security/audit`（别名 `/api/v1/audit/logs`） | 审计查询：本人可查自己的脱敏事件，管理员（`BANK_ADMIN_AUDIT_TOKEN`）可查任意主体 | 本人或管理员 |
 | `GET /api/v1/security/audit/verify` | 审计哈希链完整性自检 | 管理员 |
 | `GET /api/v1/security/audit/trace/{request_id}` | 按请求编号还原完整决策链路（预检 → 确认 → MFA → 结算 → 凭证消费） | 本人或管理员 |
 
 执行接口必须重新在服务端校验：调用者身份、凭证与目标/金额绑定、凭证有效期、账户状态、余额、幂等键和所需 MFA。前端展示的“确认”不能作为安全边界。`security.py` 的签名 token、一次性消费和 proof 绑定属于核心控制。主链路 `agent.py` 自持 `_http` 直连核心并注入 `X-Request-Id`/`Idempotency-Key`；`bank_tools.py` 提供等价的传输适配层，供外部集成方或 CLI/旧静态调用复用，不参与 Agent 运行时路径。
+
+**网关入口控制**（HTTP 中间件，先于业务逻辑执行）：
+
+1. **会话身份**：携带 `X-Session-Token` 时先验证会话，其主体用于覆盖客户端自称的 `X-User-Id`（同一请求不可能既持有效会话又冒充他人）；设置 `BANK_REQUIRE_SESSION=1` 后，写操作（POST/PUT/PATCH/DELETE）必须携带会话令牌，读操作仍可用身份头，签发会话本身不受限。
+2. **每主体限流**：60 秒固定窗口（`BANK_RATE_LIMIT_PER_MINUTE`，0 为关闭），键为身份主体或来源 IP；超限返回 `429 RATE_LIMITED` 与 `Retry-After`，且首次超限写一条审计事件；`/healthz`、`/api/v1/security/health` 与文档路径豁免。
+3. **体积与响应头**：按 `Content-Length` 限制请求体（413/400），并统一补齐 `nosniff` / `X-Frame-Options: DENY` / `Referrer-Policy` / API 响应 `no-store`。
+
+**行为组合熔断**（`security.py`，与失败计数器共用同一锁定状态）：
+
+```text
+敏感操作 → 加权信号(大额转账/LARGE_LOCK/卡片变更/挂失/改密/凭证失败/成功)
+        → 命名规则匹配（大额转账后挂失、大额转账后改密、调额后大额转出、
+          连续大额转账、连续卡片变更、失败后成功）
+        → 滑窗评分(默认 600s) ≥ 阈值(默认 80) → 锁定 LOCKOUT_SECONDS
+        → 审计 BEHAVIOR_RISK_LOCK(评分/规则/信号序列) + 423 CIRCUIT_OPEN(含原因)
+```
+
+阈值与窗口由 `BANK_BEHAVIOR_RISK_THRESHOLD` / `BANK_BEHAVIOR_WINDOW_SECONDS` 配置，大额判定由 `BANK_BEHAVIOR_LARGE_AMOUNT_CENTS` 配置；同一请求内由多层重复上报的同一信号按 `request_id` 去重。读接口同样受锁定约束，锁定到期后自动恢复，不延长；`/security/circuit/{user_id}` 与 `/security/behavior/{user_id}` 在锁定期间仍可访问，保证“为什么被锁”始终可解释。
 
 ## 4. 权限策略
 

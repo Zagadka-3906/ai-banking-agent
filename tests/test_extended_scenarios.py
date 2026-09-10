@@ -197,3 +197,141 @@ def test_security_health_reports_sandbox(client: TestClient):
     assert sandbox["mode"] == "read_only_expression"
     assert sandbox["network"] == "denied_by_api"
     assert "group_spend" in sandbox["safe_functions"]
+
+
+def _transfer(client: TestClient, amount: float, target: str = "李四"):
+    """Run a yellow transfer end to end and return the settle response."""
+
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": target, "amount": amount},
+        headers=headers(),
+    )
+    assert precheck.status_code == 200, precheck.text
+    token = precheck.json()["auth_token"]
+    assert client.post("/api/v1/auth/confirm", json={}, headers=headers(token)).status_code == 200
+    return client.post(
+        "/api/v1/transfers/execute",
+        json={"from_user": "user_zhang", "target_name_or_id": target, "amount": amount, "auth_token": token},
+        headers=headers(token),
+    )
+
+
+def test_card_daily_limit_is_enforced_on_settlement(client: TestClient, monkeypatch):
+    """The card's daily_limit now constrains real payments, not just display."""
+
+    monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
+    card = main.CARDS["user_zhang"]
+    card["daily_limit"] = 100.0
+    balance_before = main.ACCOUNTS["user_zhang"]["balance"]
+
+    at_limit = _transfer(client, 100.0)
+    assert at_limit.status_code == 200, at_limit.text
+    assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before - 100.0
+
+    over_limit = _transfer(client, 0.01)
+    assert over_limit.status_code == 400, over_limit.text
+    assert over_limit.json()["detail"]["code"] == "CARD_LIMIT_EXCEEDED"
+    assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before - 100.0
+
+    cards = client.get("/api/v1/cards/user_zhang", headers=headers()).json()["data"][0]
+    assert cards["daily_spent_today"] == 100.0
+    assert cards["daily_remaining"] == 0.0
+
+    # A new day resets the counter and frees the limit again.
+    main.CARD_DAILY_SPENT_DATE[cards["card_id"]] = "2000-01-01"
+    next_day = _transfer(client, 50.0)
+    assert next_day.status_code == 200, next_day.text
+    assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before - 150.0
+
+
+def test_renewal_reminders_are_idempotent_and_cascade_on_cancel(client: TestClient, monkeypatch):
+    monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
+
+    first = client.post("/api/v1/subscriptions/user_zhang/reminders", headers=headers())
+    assert first.status_code == 200, first.text
+    created = {task["payload"]["subscription_id"]: task for task in first.json()["data"]}
+    assert set(created) == {"SUB-APPLE", "SUB-VIDEO"}
+    # Two days before the charge date, at 09:00 local.
+    assert created["SUB-APPLE"]["run_at"].startswith("2026-10-01T09:00")
+    assert created["SUB-VIDEO"]["run_at"].startswith("2026-09-13T09:00")
+
+    repeat = client.post("/api/v1/subscriptions/user_zhang/reminders", headers=headers())
+    assert repeat.status_code == 200
+    assert {task["task_id"] for task in repeat.json()["data"]} == {task["task_id"] for task in first.json()["data"]}
+
+    # Cancelling the subscription withdraws its pending reminder only.
+    token = approve(client, "SUBSCRIPTION_CANCEL", target="Apple")
+    cancelled = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "SUBSCRIPTION_CANCEL", "target": "Apple", "auth_token": token},
+        headers=headers(token),
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    tasks = {task["task_id"]: task for task in client.get("/api/v1/tasks", headers=headers()).json()["data"]}
+    assert tasks[created["SUB-APPLE"]["task_id"]]["status"] == "CANCELLED"
+    assert tasks[created["SUB-VIDEO"]["task_id"]]["status"] == "PENDING"
+
+    # When due, a reminder is delivered (SUCCEEDED) rather than silently charging.
+    for task in main.TASK_STORE.list(owner_id="user_zhang"):
+        if task.task_id == created["SUB-VIDEO"]["task_id"]:
+            task.run_at = "2000-01-01T00:00:00+00:00"
+    due = client.post("/api/v1/tasks/run-due", headers=headers())
+    assert due.status_code == 200
+    refreshed = {task["task_id"]: task for task in client.get("/api/v1/tasks", headers=headers()).json()["data"]}
+    assert refreshed[created["SUB-VIDEO"]["task_id"]]["status"] == "SUCCEEDED"
+
+
+def test_aa_split_collects_shares_and_reconciles_cents(client: TestClient):
+    """AA debits participants, credits the initiator and never loses a cent."""
+
+    initiator_before = main.ACCOUNTS["user_zhang"]["balance"]
+    li_before = main.ACCOUNTS["user_li"]["balance"]
+    wife_before = main.ACCOUNTS["user_wife"]["balance"]
+
+    token = approve(client, "SPLIT_BILL", amount=100.0, participants=["李四", "王美"])
+    settled = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "SPLIT_BILL", "amount": 100.0, "participants": ["李四", "王美"], "auth_token": token},
+        headers=headers(token),
+    )
+    assert settled.status_code == 200, settled.text
+    data = settled.json()["data"]
+    assert data["status"] == "SETTLED"
+    assert data["per_person"] == 33.33
+    assert data["initiator_share"] == 33.34
+    # 33.33 * 2 + 33.34 == 100.00 exactly.
+    assert round(data["per_person"] * 2 + data["initiator_share"], 2) == 100.0
+    assert data["collected_amount"] == 66.66
+    assert data["outstanding_amount"] == 0.0
+
+    assert main.ACCOUNTS["user_li"]["balance"] == round(li_before - 33.33, 2)
+    assert main.ACCOUNTS["user_wife"]["balance"] == round(wife_before - 33.33, 2)
+    assert main.ACCOUNTS["user_zhang"]["balance"] == round(initiator_before + 66.66, 2)
+    aa_rows = [row for row in main.TRANSACTIONS if str(row.get("category", "")).startswith("AA")]
+    assert len(aa_rows) == 4  # two participants × (debit + credit)
+    assert sum(1 for row in aa_rows if row["account_id"] == "user_zhang") == 2
+
+
+def test_aa_split_reports_partial_collection_when_participant_lacks_funds(client: TestClient):
+    main.ACCOUNTS["user_li"]["balance"] = 10.0
+    li_before = main.ACCOUNTS["user_li"]["balance"]
+    initiator_before = main.ACCOUNTS["user_zhang"]["balance"]
+
+    token = approve(client, "SPLIT_BILL", amount=100.0, participants=["李四", "王美"])
+    settled = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "SPLIT_BILL", "amount": 100.0, "participants": ["李四", "王美"], "auth_token": token},
+        headers=headers(token),
+    )
+    assert settled.status_code == 200, settled.text
+    data = settled.json()["data"]
+    assert data["status"] == "PARTIAL"
+    assert data["collected_amount"] == 33.33
+    # Only the failing participant's share is outstanding; the initiator's own
+    # share is never reported as arrears.
+    assert data["outstanding_amount"] == 33.33
+    failed = [row for row in data["collection"] if row["status"] == "FAILED"]
+    assert failed and failed[0]["account_id"] == "user_li" and failed[0]["reason"] == "INSUFFICIENT_FUNDS"
+    assert main.ACCOUNTS["user_li"]["balance"] == li_before
+    assert main.ACCOUNTS["user_zhang"]["balance"] == round(initiator_before + 33.33, 2)

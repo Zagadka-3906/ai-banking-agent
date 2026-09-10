@@ -250,6 +250,75 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
+    """Slot names a request still needs before it can be executed.
+
+    This mirrors :func:`needs_clarification` but names the gap, so the
+    conversational layer can ask a targeted question and, on the next turn,
+    fold a bare answer ("下周六", "500 元") back into the intent that is still
+    waiting for it instead of starting from UNKNOWN.
+    """
+
+    intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
+    missing: list[str] = []
+    if intent == Intent.WEALTH_RISK_ASSESSMENT.value:
+        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+        tolerance = str(slots.get("loss_tolerance") or "").upper().strip()
+        experience = str(slots.get("experience") or "").upper().strip()
+        horizon = slots.get("horizon_years")
+        try:
+            horizon_value = int(horizon) if horizon is not None and not isinstance(horizon, bool) else None
+        except (TypeError, ValueError):
+            horizon_value = None
+        if tolerance not in {"LOW", "MEDIUM", "HIGH"}:
+            missing.append("loss_tolerance")
+        if experience not in {"NONE", "BASIC", "PROFESSIONAL"}:
+            missing.append("experience")
+        if horizon_value is None or horizon_value < 0 or horizon_value > 100:
+            missing.append("horizon_years")
+        return missing
+    if intent == Intent.SPLIT_BILL.value:
+        # AA 收款不是向一个既定收款账户转账。它必须明确总金额和至少一位
+        # 参与人；强制要求 ``target`` 会让正常的“和 A、B AA 300 元”永远
+        # 停在澄清分支。
+        if parsed.get("amount") in (None, 0):
+            missing.append("amount")
+        participants = parsed.get("participants")
+        if not isinstance(participants, list) or not participants:
+            missing.append("participants")
+        return missing
+    if intent == Intent.CROSS_SCENE_LOCK.value:
+        # A reservation that promises a birthday reminder must carry an
+        # explicit, parseable event date; never silently assume “next week”.
+        if parsed.get("amount") in (None, 0):
+            missing.append("amount")
+        if not (parsed.get("scheduled_at") or parsed.get("event_at")):
+            missing.append("scheduled_at")
+        return missing
+    if intent == Intent.SCHEDULED_TRANSFER.value and not parsed.get("scheduled_at"):
+        missing.append("scheduled_at")
+    if intent == Intent.WEALTH_COMPARE.value:
+        product_ids = parsed.get("product_ids")
+        if not isinstance(product_ids, list) or len(product_ids) < 2:
+            missing.append("product_ids")
+        return missing
+    if intent in {
+        Intent.TRANSFER.value,
+        Intent.SCHEDULED_TRANSFER.value,
+        Intent.SUBSCRIPTION_CANCEL.value,
+        Intent.WEALTH_PURCHASE.value,
+        Intent.WEALTH_REDEEM.value,
+        Intent.CARD_LIMIT.value,
+        Intent.CROSS_SCENE_LOCK.value,
+    }:
+        if intent not in {Intent.CROSS_SCENE_LOCK.value, Intent.CARD_LIMIT.value} and not parsed.get("target"):
+            missing.append("target")
+        if intent not in {Intent.SUBSCRIPTION_CANCEL.value} and parsed.get("amount") in (None, 0):
+            # Some operations (card/report-lost) do not have an amount.
+            missing.append("amount")
+    return missing
+
+
 def needs_clarification(parsed: Mapping[str, Any]) -> bool:
     """Whether a request lacks a required slot or is too uncertain to execute."""
 
@@ -263,58 +332,7 @@ def needs_clarification(parsed: Mapping[str, Any]) -> bool:
                 return True
         except (TypeError, ValueError):
             return True
-    if intent == Intent.WEALTH_RISK_ASSESSMENT.value:
-        # A risk file is a suitability control, not a cosmetic label.  Never
-        # silently fill a missing answer with LOW/NONE (or any other safe
-        # looking default), because that would both mislead the customer and
-        # make a later purchase authorization depend on guessed facts.  The
-        # conversational layer asks for the missing questionnaire answers and
-        # the Core endpoint enforces the same requirement independently.
-        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
-        tolerance = str(slots.get("loss_tolerance") or "").upper().strip()
-        experience = str(slots.get("experience") or "").upper().strip()
-        horizon = slots.get("horizon_years")
-        try:
-            horizon_value = int(horizon) if horizon is not None and not isinstance(horizon, bool) else None
-        except (TypeError, ValueError):
-            horizon_value = None
-        return (
-            tolerance not in {"LOW", "MEDIUM", "HIGH"}
-            or experience not in {"NONE", "BASIC", "PROFESSIONAL"}
-            or horizon_value is None
-            or horizon_value < 0
-            or horizon_value > 100
-        )
-    if intent == Intent.SPLIT_BILL.value:
-        # AA 收款不是向一个既定收款账户转账。它必须明确总金额和至少一位
-        # 参与人；强制要求 ``target`` 会让正常的“和 A、B AA 300 元”永远
-        # 停在澄清分支。
-        participants = parsed.get("participants")
-        return parsed.get("amount") in (None, 0) or not isinstance(participants, list) or not participants
-    if intent == Intent.CROSS_SCENE_LOCK.value:
-        # A reservation that promises a birthday reminder must carry an
-        # explicit, parseable event date; never silently assume “next week”.
-        return parsed.get("amount") in (None, 0) or not (parsed.get("scheduled_at") or parsed.get("event_at"))
-    if intent == Intent.SCHEDULED_TRANSFER.value and not parsed.get("scheduled_at"):
-        return True
-    if intent == Intent.WEALTH_COMPARE.value:
-        product_ids = parsed.get("product_ids")
-        return not isinstance(product_ids, list) or len(product_ids) < 2
-    if intent in {
-        Intent.TRANSFER.value,
-        Intent.SCHEDULED_TRANSFER.value,
-        Intent.SUBSCRIPTION_CANCEL.value,
-        Intent.WEALTH_PURCHASE.value,
-        Intent.WEALTH_REDEEM.value,
-        Intent.CARD_LIMIT.value,
-        Intent.CROSS_SCENE_LOCK.value,
-    }:
-        if intent not in {Intent.CROSS_SCENE_LOCK.value, Intent.CARD_LIMIT.value} and not parsed.get("target"):
-            return True
-        if intent not in {Intent.SUBSCRIPTION_CANCEL.value} and parsed.get("amount") in (None, 0):
-            # Some operations (card/report-lost) do not have an amount.
-            return True
-    return False
+    return bool(missing_slots(parsed))
 
 
 class TaskStatus(str, Enum):

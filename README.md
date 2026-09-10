@@ -15,7 +15,7 @@
 ## 🌟 核心特性
 
 - **三级权限与 Human-in-the-loop 挂起恢复机制**：
-  - 🟢 **绿区（只读直通）**：账户余额、流水明细、理财产品查询与事实对比、卡片/订阅查询及风险评估，Agent 解析后直通调用核心只读接口并引用真实流水号。
+  - 🟢 **绿区（只读直通）**：账户余额、流水明细、理财产品查询与事实对比、卡片/订阅查询及风险评估，Agent 解析后直通调用核心只读接口并引用真实流水号；只读结果由 Agent 渲染为**可读清单**（产品按风险/年化/起购/流动性列示、订阅含下次扣款、卡片含当日已用与剩余额度），不向用户暴露原始 JSON。
   - 🟡 **黄区（交互确认）**：小额转账（日累计 $\le 1000$ 元）、预约/AA 分摊发起、跨场景生日资金锁定（$\le 1000$ 元）、虚拟卡申请及订阅代扣取消，状态机触发 `interrupt()` 挂起，前端弹出操作确认卡片，经用户显式确认后恢复执行。
   - 🔴 **红区（强因子鉴权）**：大额转账（日累计 $> 1000$ 元）、理财申购与赎回、卡片状态机变更（额度调整/冻结/挂失/解挂）及凭证版本轮换，强制触发服务端 OTP 短信与**挑战-签名人脸票据**核验（服务端签发绑定交易 `jti` 的活体挑战，模拟设备 SDK 签名回证，布尔自证不再生效），并下发绑定父交易 `jti` 的一次性 `mfa_proof` 凭证方可结算；Agent 侧同时校验 `required_actions` 因子是否齐备。
 - **账单深度分析与事实聚合**：
@@ -23,6 +23,7 @@
   - 类目聚合在受限只读沙箱内执行（`facts.analysis_engine` 记录实际执行路径，沙箱不可用时确定性降级），退款（负金额）单列统计、深夜规则按业务时区墙钟判定；智能定位深夜大额、境外未知商户等可疑盗刷流水，严格校验数值与流水事实一致性，核心数据不完整时坚决不声称成功。
 - **跨场景事件联动与资金隔离**：
   - 智能识别复合意图（如“下周爱人生日预留 1000 元并在前两天提醒订花和蛋糕”），生成带依赖的任务 DAG，并由 `PlanExecutor` 按依赖顺序真实推进（已执行步骤标记 SUCCEEDED，核心任务中心接管的步骤保持 PENDING）；
+  - **多轮澄清与槽位回填**：澄清后的裸答会按缺失槽位的类型解释（“下周六”→日期、“3000”→金额、“李四”→收款人）并回到上一个待澄清的意图继续办理；用户已明确说出的日期/金额/收款人不会被模型输出抹掉；面向用户的确认卡与回执使用业务语言（如“把卡片 CARD-001 的日限额调整为 ¥3,000.00”），不暴露内部意图编码；
   - 结算请求携带 `Idempotency-Key`（传输失败只幂等重试一次），结算失败时执行补偿动作（核心账本原子回滚确认，异常升级人工接管）；
   - 联动底层资金池隔离锁定专款（`balance - locked_amount` 硬扣除），任务中心自动生成提前 2 天的备忘提醒与鲜花/蛋糕订单草稿（到期保持 `WAITING_USER` 状态，不自动扣款，必须经用户二次确认）。
 - **全链路金融级原生安全防御**：
@@ -30,6 +31,8 @@
   - **业务参数强绑定**：签名 Token 内嵌 `context_hash`，覆盖收款人、金额与商户等参数，防止中间人篡改；
   - **Prompt 注入拦截**：输入阶段全面消毒净化，有效阻断指令覆盖、层级逃逸与越狱攻击；
   - **账户级异常熔断**：MFA 或 Token 连续失败自动触发账户级安全锁定（HTTP 423 + Retry-After）；
+  - **行为组合熔断**：敏感操作产出带权重的行为信号，按滑动窗口累计评分，命中组合规则（大额转账后挂失卡片、大额转账后改密、调额后立即大额转出、连续大额转账/多次卡片变更、多次失败后成功操作）即锁定账户并记录可解释的 `BEHAVIOR_RISK` 原因（`/api/v1/security/behavior/{user_id}` 可查评分明细）；
+  - **网关入口控制**：会话令牌（`POST /auth/session`，可 `BANK_REQUIRE_SESSION=1` 强制写操作使用，且会话主体覆盖客户端自称身份）+ 每主体请求窗口限流（超限 429 + Retry-After，探针豁免）；
   - **审计哈希链与决策链路**：全量关键操作生成结构化审计事件并计算 Hash-chain，支持防篡改自检验证；同一次业务请求由 `request_id` 串联为完整决策链（`/api/v1/security/audit/trace/{request_id}`：预检 → 确认 → MFA → 结算 → 凭证消费），配置 `BANK_AUDIT_LOG_PATH` 时审计文件在重启后按链校验回放续链。
 
 ---
@@ -79,14 +82,16 @@ mock-banking-core/
 ├── sandbox.py           # 受限只读表达式沙箱（AST 白名单 + 进程/线程隔离 + 超时），账单聚合经此执行
 ├── bank_tools.py        # 独立 HTTP 传输适配层（供外部集成方与旧静态调用兼容；主链路 agent.py 自持 _http）
 ├── web_app.py           # Streamlit 前端交互系统（支持卡片挂起、MFA 模态弹窗与实时看板）
-├── tests/               # 自动化测试套件（7 个文件 / 116 个用例）
+├── tests/               # 自动化测试套件（9 个文件 / 150 个用例）
 │   ├── test_core_api.py             # 核心契约、金额与风险边界、状态/卡片拒绝路径
 │   ├── test_security_regressions.py # 身份、票据绑定、上下文篡改、审计、回滚
 │   ├── test_concurrency.py          # 并发幂等、同一 nonce 单次记账、并发锁资
+│   ├── test_gateway_controls.py     # 会话令牌、身份覆盖、限流 429 与豁免
+│   ├── test_behavior_circuit.py     # 行为组合熔断：规则触发、阈值可配、锁定与恢复
 │   ├── test_agent_workflow.py       # LangGraph 中断/恢复、DAG 账本、补偿、幂等重试
 │   ├── test_planner.py              # 意图白名单、风险阈值、账单事实、计划执行器
 │   ├── test_security_primitives.py  # 凭证签名、注入检测、审计链与持久化回放
-│   └── test_extended_scenarios.py   # 理财/卡片/订阅/任务接管与链路还原
+│   └── test_extended_scenarios.py   # 理财/卡片/订阅/AA 收款/任务接管与链路还原
 ├── scripts/
 │   └── smoke_test.py    # 容器冒烟验收（/healthz + 余额可读且非负）
 ├── .github/workflows/
@@ -155,6 +160,10 @@ BANK_MFA_TEST_OTP=888888
 # 人脸票据密钥：模拟设备 SDK 用它对服务端挑战签名（生产必须随机且隔离）
 BANK_FACE_ATTEST_SECRET=demo-face-attest-secret-change-me
 BANK_REQUIRE_CLIENT_AUTH=0
+# 网关控制：会话令牌（1 = 写操作强制要求 POST /auth/session 返回的令牌）与限流窗口
+BANK_REQUIRE_SESSION=0
+BANK_RATE_LIMIT_PER_MINUTE=240
+BANK_SESSION_TTL_SECONDS=900
 BANK_API_BASE=[http://127.0.0.1:8000/api/v1](http://127.0.0.1:8000/api/v1)
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 # 可选：审计追加文件路径；配置后重启会按哈希链校验回放续链
@@ -222,13 +231,15 @@ python -m streamlit run web_app.py
 # 切换至离线规则解析模式，排除网络与在线模型干扰
 $env:DEEPSEEK_API_KEY = ''
 
-# 运行全部测试（契约、安全回归、Agent 工作流、规划、安全原语、扩展场景、并发原子性）
+# 运行全部测试（契约、安全回归、Agent 工作流、规划、安全原语、扩展场景、并发原子性、网关控制、行为熔断）
 python -m pytest -q
 
-# 也可按专项运行（tests/ 共 7 个文件）
+# 也可按专项运行（tests/ 共 9 个文件）
 python -m pytest -q tests/test_core_api.py           # 核心契约与金额/风险边界
 python -m pytest -q tests/test_security_regressions.py  # 安全攻击与回滚回归
 python -m pytest -q tests/test_concurrency.py        # 并发幂等与单次记账
+python -m pytest -q tests/test_gateway_controls.py   # 会话令牌与限流
+python -m pytest -q tests/test_behavior_circuit.py   # 行为组合熔断
 
 # 静态语法编译检查
 python -m compileall -q .
@@ -248,16 +259,17 @@ docker compose down
 | 边界 | 现状 |
 | :--- | :--- |
 | 数据与账本 | 全部为虚构演示数据，保存在进程内存，重启即恢复初始 fixture |
-| 身份认证 | `X-User-Id` 为自称主体，无登录/口令校验；生产需 OIDC 与设备绑定 |
+| 身份认证 | 默认 `X-User-Id` 为自称主体（无登录/口令）；已提供 `POST /auth/session` 会话令牌，设置 `BANK_REQUIRE_SESSION=1` 后写操作强制要求会话令牌。生产仍需 OIDC 与设备绑定 |
 | 短信 OTP | 演示模式为固定测试码（`BANK_MFA_TEST_OTP`）；关闭 `BANK_DEMO_MODE` 后改用 `BANK_MFA_OTP` |
 | 人脸因子 | 已从"布尔自证"升级为**挑战-签名一次性票据**（绑定交易 jti、单次消费、60s 时效），但签名方是模拟设备 SDK，**不具备真实活体识别能力** |
 | 分析沙箱 | AST 白名单 + 空 builtins + 短生命周期进程（受限环境降级为受限线程）+ 超时；非容器/microVM 级隔离，不可用时降级为本地等价聚合并标记 `analysis_engine` |
 | 审计 | 进程内存哈希链 + 可选追加文件（重启按链校验回放）；Agent 侧事件（意图解析、回复校验）留在 Agent 进程，未与核心链路合并 |
-| 并发与部署 | 正确性依赖单进程内的全局锁与快照回滚，**多 worker / 多副本部署不成立**；无 TLS、WAF、限流 |
-| 定时与代扣 | 到期任务停在 `WAITING_USER`，不自动扣款；订单草稿**不向真实商户下单** |
-| AA 分账 | 登记分摊请求与参与人、生成待办，**不向参与人真实收款**（扩展项） |
+| 并发与部署 | 正确性依赖单进程内的全局锁与快照回滚，**多 worker / 多副本部署不成立**；已有进程内每主体限流（`BANK_RATE_LIMIT_PER_MINUTE`），无 TLS/WAF |
+| 行为熔断 | 规则与权重为确定性阈值（可用 `BANK_BEHAVIOR_*` 调整），基于**本进程内的行为时间线**；无设备指纹、地理位置、跨渠道画像等真实风控数据源 |
+| 定时与代扣 | 到期任务停在 `WAITING_USER`，不自动扣款；订单草稿**不向真实商户下单**；订阅续费提醒已落任务中心（提前 2 天、幂等、取消订阅级联撤回） |
+| AA 分账 | 在 Mock 账本内**真实收款**：参与人按分单位精确分摊扣款、发起人收款，尾差归发起人（100.00/3 → 33.33+33.33+33.34），参与人余额不足记 `PARTIAL` 并逐笔列明；真实支付渠道回款为扩展项 |
 | 理财 | 风险测评、适合度校验、申赎与持仓为真实状态流转；年化收益与持仓估值为展示字段，**无净值/收益计算** |
-| 卡片额度 | 卡片状态机（ACTIVE/FROZEN/LOST）参与结算校验；`daily_limit` 目前不参与支付限额校验 |
+| 卡片额度 | 卡片状态机（ACTIVE/FROZEN/LOST）与 `daily_limit` 均参与结算校验（超限 `CARD_LIMIT_EXCEEDED`，跨日重置） |
 
 上述生产化整改项在 [`docs/security-self-assessment.md`](docs/security-self-assessment.md) 的 P0/P1/P2 清单中有对应条目与优先级。
 

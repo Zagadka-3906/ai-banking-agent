@@ -15,7 +15,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Optional, TypedDict
+from typing import Any, Mapping, Optional, TypedDict
 from urllib.parse import urlencode
 
 import requests
@@ -52,6 +52,7 @@ from planner import (
     analyze_transactions,
     build_task_plan,
     filter_transactions,
+    missing_slots,
     needs_clarification,
     safe_analysis_text,
     validate_intent_payload,
@@ -243,6 +244,96 @@ def _target_from_text(text: str) -> Optional[str]:
     return phone.group(1) if phone else None
 
 
+def _scheduled_at_from_text(text: str) -> Optional[str]:
+    """Extract an explicit calendar or relative date as an ISO timestamp."""
+
+    date_match = re.search(r"(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})(?:\s*[日号]?)?", text)
+    if date_match:
+        return date_match.group(1).replace("/", "-").replace(".", "-") + "T09:00:00+08:00"
+    if any(marker in text for marker in ("明天", "后天", "下周")):
+        # Relative dates are accepted only when the user supplied an explicit
+        # marker.  A weekday qualifier (e.g. “下周六”) is resolved exactly;
+        # bare “下周” uses the same weekday in seven days and is auditable in
+        # the resulting event timestamp.
+        now = datetime.now().astimezone()
+        days_ahead = 1 if "明天" in text else (2 if "后天" in text else 7)
+        weekday_match = re.search(r"下周([一二三四五六日天])", text)
+        if weekday_match:
+            weekday = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}[weekday_match.group(1)]
+            days_ahead = 7 + ((weekday - now.weekday()) % 7)
+        return (now + timedelta(days=days_ahead)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
+    return None
+
+
+# Implicit intent phrases.  ``protective`` rules run *before* the keyword chain
+# because a fraud report must never be answered with a plain card listing;
+# the rest are fallbacks used only when no explicit keyword matched.
+_IMPLICIT_PROTECTIVE_INTENTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("盗刷", "被盗刷", "被盗用", "不是本人消费", "有人拿我的卡"), Intent.CARD_FREEZE.value),
+)
+
+_IMPLICIT_FALLBACK_INTENTS: tuple[tuple[tuple[str, ...], str, dict[str, Any]], ...] = (
+    (
+        ("钱都花哪", "花哪儿", "花在哪", "怎么花了这么多", "花超了", "花销", "支出结构", "消费分析", "都花在什么"),
+        Intent.BILL_ANALYSIS.value,
+        {"date_scope": "MONTH"},
+    ),
+    (("乱扣费", "莫名扣费", "莫名扣款", "偷偷扣", "自动续费"), Intent.SUBSCRIPTION_QUERY.value, {}),
+    (("不想再被扣", "不想被扣", "别再扣", "不用了退掉", "退订"), Intent.SUBSCRIPTION_CANCEL.value, {}),
+    (("闲钱", "放着也是放着", "钱放着", "怎么理财", "买点理财", "买一点理财", "投点钱", "想理财"), Intent.WEALTH_RECOMMEND.value, {}),
+    (("买一点稳健", "买点稳健", "稳健的推荐", "保本的", "低风险的推荐"), Intent.WEALTH_RECOMMEND.value, {}),
+    (("卡片的事", "卡片情况", "卡片管理", "卡的事"), Intent.CARD_QUERY.value, {}),
+    (("取不出钱", "取不了钱", "刷不了卡", "卡不能用", "付款失败"), Intent.CARD_QUERY.value, {}),
+)
+
+
+def _implicit_intent(text: str, *, protective: bool) -> Optional[str]:
+    """Map an implicit phrasing to an allow-listed intent (deterministic)."""
+
+    table = _IMPLICIT_PROTECTIVE_INTENTS if protective else _IMPLICIT_FALLBACK_INTENTS
+    for entry in table:
+        patterns, intent = entry[0], entry[1]
+        if any(pattern in text for pattern in patterns):
+            return intent
+    return None
+
+
+def _implicit_slots(text: str) -> dict[str, Any]:
+    for patterns, _intent, slots in _IMPLICIT_FALLBACK_INTENTS:
+        if any(pattern in text for pattern in patterns):
+            return dict(slots)
+    return {}
+
+
+def _parsed_payload(
+    intent: str,
+    *,
+    text: str,
+    amount: Any = None,
+    target: Any = None,
+    product_ids: Optional[list[str]] = None,
+    slots: Optional[dict[str, Any]] = None,
+    participants: Optional[list[str]] = None,
+    scope: str = "ALL",
+    scheduled_at: Optional[str] = None,
+) -> dict[str, Any]:
+    """Build the normalized parser payload shared by every code path."""
+
+    return {
+        "intent": intent,
+        "target": target,
+        "amount": amount,
+        "date_scope": scope,
+        "extra_info": text,
+        "confidence": 0.86 if intent != Intent.UNKNOWN.value else 0.2,
+        "participants": list(participants or []),
+        "product_ids": list(product_ids or []),
+        "slots": dict(slots or {}),
+        "scheduled_at": scheduled_at,
+        "event_at": scheduled_at if intent == Intent.CROSS_SCENE_LOCK.value else None,
+    }
+
+
 def _local_parse(text: str) -> dict[str, Any]:
     """Conservative offline intent parser used when the LLM is unavailable."""
 
@@ -253,6 +344,17 @@ def _local_parse(text: str) -> dict[str, Any]:
         if product_id not in product_ids:
             product_ids.append(product_id)
     slots: dict[str, Any] = {}
+    # A fraud report must lead to a protective action, never to a card listing.
+    protective_intent = _implicit_intent(text, protective=True)
+    if protective_intent is not None:
+        return _parsed_payload(
+            protective_intent,
+            text=text,
+            amount=amount,
+            target=target,
+            product_ids=product_ids,
+            scheduled_at=_scheduled_at_from_text(text),
+        )
     if any(word in text for word in ("低风险", "低等风险", "保守", "稳健", "不能亏", "低损失")):
         slots["loss_tolerance"] = "LOW"
     elif any(word in text for word in ("高风险", "高等风险", "激进", "能承受亏损", "追求高收益")):
@@ -286,22 +388,7 @@ def _local_parse(text: str) -> dict[str, Any]:
         scope = "MONTH"
     elif any(x in text for x in ("今年", "年度", "全年", "年度账单")):
         scope = "YEAR"
-    scheduled_at = None
-    date_match = re.search(r"(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2})(?:\s*[日号]?)?", text)
-    if date_match:
-        scheduled_at = date_match.group(1).replace("/", "-").replace(".", "-") + "T09:00:00+08:00"
-    elif any(marker in text for marker in ("明天", "后天", "下周")):
-        # Relative dates are accepted only when the user supplied an explicit
-        # marker.  A weekday qualifier (e.g. “下周六”) is resolved exactly;
-        # bare “下周” uses the same weekday in seven days and is auditable in
-        # the resulting event timestamp.
-        now = datetime.now().astimezone()
-        days_ahead = 1 if "明天" in text else (2 if "后天" in text else 7)
-        weekday_match = re.search(r"下周([一二三四五六日天])", text)
-        if weekday_match:
-            weekday = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}[weekday_match.group(1)]
-            days_ahead = 7 + ((weekday - now.weekday()) % 7)
-        scheduled_at = (now + timedelta(days=days_ahead)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
+    scheduled_at = _scheduled_at_from_text(text)
 
     card_action_markers = ("调额", "额度调整", "额度调", "提高额度", "降低额度", "挂失", "解挂", "丢了", "遗失", "解锁卡", "解冻", "冻结", "锁卡", "申请虚拟卡", "申请信用卡", "办卡")
     if any(x in text for x in ("密码", "口令")) and any(x in text for x in ("修改", "更改", "重置", "更换")):
@@ -330,7 +417,14 @@ def _local_parse(text: str) -> dict[str, Any]:
         intent = Intent.WEALTH_RISK_ASSESSMENT.value
     elif any(x in text for x in ("对比理财", "比较理财", "产品对比", "比较产品")) or (len(product_ids) >= 2 and any(x in text for x in ("对比", "比较"))):
         intent = Intent.WEALTH_COMPARE.value
-    elif any(x in text for x in ("理财推荐", "理财产品", "收益率", "风险等级")):
+    elif any(x in text for x in ("在售", "理财列表", "理财产品列表")) or (
+        any(x in text for x in ("理财", "产品")) and any(x in text for x in ("查看", "查询", "有哪些", "列表", "在售", "多少钱起"))
+    ):
+        # Listing what the bank offers is a plain fact query; it must not be
+        # silently narrowed to the caller's risk profile (that is what the
+        # recommendation intent is for).
+        intent = Intent.WEALTH_QUERY.value
+    elif any(x in text for x in ("理财推荐", "推荐理财", "理财产品", "收益率", "风险等级", "适合我")):
         intent = Intent.WEALTH_RECOMMEND.value
     elif any(x in text for x in ("订阅", "自动扣费", "代扣")):
         intent = Intent.SUBSCRIPTION_CANCEL.value if any(x in text for x in ("取消", "关闭", "退订")) else Intent.SUBSCRIPTION_QUERY.value
@@ -348,10 +442,20 @@ def _local_parse(text: str) -> dict[str, Any]:
         intent = Intent.CARD_FREEZE.value
     elif any(x in text for x in ("申请虚拟卡", "申请信用卡", "办卡")):
         intent = Intent.CARD_APPLY.value
-    elif any(x in text for x in ("转账", "转给", "汇给")) or re.search(r"(?<![发运])转\s*(?:[0-9]|给)", text):
+    elif any(x in text for x in ("转账", "转给", "汇给", "转点钱", "转钱", "打点钱", "打钱", "汇点钱")) or re.search(r"(?<![发运])转\s*(?:[0-9]|给)", text):
         intent = Intent.TRANSFER.value
     else:
-        intent = Intent.UNKNOWN.value
+        # No explicit keyword matched: consult the implicit-intent table before
+        # giving up, so “钱都花哪儿去了” becomes a bill analysis instead of a
+        # capability list.
+        fallback = _implicit_intent(text, protective=False)
+        if fallback is not None:
+            intent = fallback
+            slots.update(_implicit_slots(text))
+            if slots.get("date_scope"):
+                scope = str(slots.pop("date_scope"))
+        else:
+            intent = Intent.UNKNOWN.value
     if intent == Intent.SPLIT_BILL.value:
         target = None
         participants = []
@@ -416,11 +520,132 @@ def _model_parse(text: str) -> dict[str, Any]:
             # model hallucination could silently schedule the wrong transfer.
             parsed["intent"] = Intent.SCHEDULED_TRANSFER.value
             parsed["scheduled_at"] = local["scheduled_at"]
+        if local.get("intent") == Intent.CROSS_SCENE_LOCK.value:
+            # A compound “birthday + reserve + remind” request is likewise a
+            # deterministic policy fact: the model tends to simplify it and
+            # drop the dates, which used to make the agent re-ask for a date
+            # the user had already given ("下周六").
+            parsed["intent"] = Intent.CROSS_SCENE_LOCK.value
+            for key in ("scheduled_at", "event_at", "reminder_at"):
+                if local.get(key):
+                    parsed[key] = local[key]
+        # An explicitly stated amount or recipient outranks a model omission.
+        for key in ("amount", "target"):
+            if parsed.get(key) in (None, "", 0) and local.get(key) not in (None, "", 0):
+                parsed[key] = local[key]
+        # If the model produced an incomplete request while the deterministic
+        # parser produced a complete one, the complete request wins.
+        try:
+            if needs_clarification(parsed) and not needs_clarification(local):
+                return local
+        except Exception:  # pragma: no cover - defensive
+            pass
         return parsed
     except Exception:
         # A model outage must degrade to the conservative local parser, never
         # to a fabricated success response.
         return local
+
+
+_BARE_AMOUNT_RE = re.compile(r"^\s*[¥￥]?\s*(\d[\d,]*(?:\.\d{1,2})?)\s*(?:元|块|人民币)?\s*$")
+_BARE_CHINESE_AMOUNT_RE = re.compile(r"^\s*([零〇一二两三四五六七八九十百千万亿]+)\s*(?:元|块|人民币)?\s*$")
+
+
+def _slot_answer(text: str, slot: str, parsed: Mapping[str, Any]) -> Any:
+    """Interpret a bare answer in the type of the slot that was asked for.
+
+    After a clarification question the user often replies with only a value:
+    "3000" for a card limit, "下周六" for a date, "李四" for a recipient.  The
+    deterministic parser needs keywords to recognise a bare number as money, so
+    the pending slot supplies the missing context here.
+    """
+
+    if slot == "amount":
+        existing = parsed.get("amount")
+        if existing not in (None, 0):
+            return existing
+        match = _BARE_AMOUNT_RE.match(text)
+        if match:
+            try:
+                value = round(float(match.group(1).replace(",", "")), 2)
+            except ValueError:
+                return None
+            return value if 0 < value <= 100_000_000 else None
+        chinese = _BARE_CHINESE_AMOUNT_RE.match(text)
+        if chinese:
+            value = _chinese_number(chinese.group(1))
+            return value if value and 0 < value <= 100_000_000 else None
+        return None
+    if slot in {"scheduled_at", "event_at"}:
+        return parsed.get("scheduled_at") or parsed.get("event_at")
+    if slot == "target":
+        return parsed.get("target")
+    if slot == "participants":
+        return list(parsed.get("participants") or []) or None
+    if slot == "product_ids":
+        return list(parsed.get("product_ids") or []) or None
+    if slot in {"loss_tolerance", "experience", "horizon_years"}:
+        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+        return slots.get(slot)
+    return None
+
+
+def _merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState, text: str) -> dict[str, Any]:
+    """Fold a bare slot answer back into the intent that is waiting for it.
+
+    After the agent asks for a missing slot the user typically replies with
+    only that value ("下周六", "500 元", "李四").  Parsing it as a brand-new
+    request yields UNKNOWN and silently drops the pending task, so the answer
+    is merged into the pending intent instead.  A complete new request of a
+    different intent always wins over the pending one.
+    """
+
+    prior = state.get("context") if isinstance(state.get("context"), dict) else {}
+    pending = prior.get("pending_clarification")
+    if not isinstance(pending, dict):
+        return parsed
+    pending_intent = str(pending.get("intent") or "")
+    pending_payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
+    if not pending_intent or pending_intent == Intent.UNKNOWN.value or not pending_payload:
+        return parsed
+    incoming_intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
+    if incoming_intent not in {Intent.UNKNOWN.value, pending_intent} and not needs_clarification(parsed):
+        return parsed
+    merged: dict[str, Any] = dict(pending_payload)
+    for key in ("target", "amount", "date_scope", "extra_info", "participants", "product_ids", "scheduled_at", "event_at"):
+        value = parsed.get(key)
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    new_slots = parsed.get("slots")
+    if isinstance(new_slots, dict) and new_slots:
+        merged["slots"] = {**(pending_payload.get("slots") or {}), **new_slots}
+    merged["intent"] = pending_intent
+    # Fill whatever the question asked for.  A short answer carries no intent
+    # keyword, so it is interpreted in the type of the missing slot instead of
+    # asking the same question again ("3000" after a card-limit question).
+    for slot in (pending.get("missing") or []):
+        slot = str(slot)
+        if slot in {"loss_tolerance", "experience", "horizon_years"}:
+            slots = merged.get("slots") if isinstance(merged.get("slots"), Mapping) else {}
+            if slots.get(slot) in (None, "", [], {}):
+                value = _slot_answer(text, slot, parsed)
+                if value is not None:
+                    merged["slots"] = {**dict(slots), slot: value}
+            continue
+        if merged.get(slot) in (None, "", [], {}):
+            value = _slot_answer(text, slot, parsed)
+            if value is not None:
+                merged[slot] = value
+    # A short answer carries no intent confidence of its own; inherit the
+    # confidence of the turn that opened the clarification.
+    try:
+        merged["confidence"] = float(pending.get("confidence") or 0.86)
+    except (TypeError, ValueError):
+        merged["confidence"] = 0.86
+    try:
+        return validate_intent_payload(merged)
+    except Exception:
+        return parsed
 
 
 def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
@@ -435,6 +660,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     except Exception as exc:
         audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="BLOCK", outcome="FAILURE", reason="INVALID_MODEL_OUTPUT", metadata={"error_type": type(exc).__name__})
         return _empty_state(final_response="暂时无法安全解析这条指令，请补充业务类型、收款人或金额后重试。").copy()
+    # A reply that only answers the previous question belongs to that request.
+    parsed = _merge_pending_clarification(parsed, state, text)
     # Resolve only explicit conversational references.  A prior recipient is
     # never silently used for a fresh request; the user must say “同一位/他”
     # and the operation remains behind the normal approval gate.
@@ -447,6 +674,16 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     parsed["extra_info"] = parsed.get("extra_info") or text
     plan = build_task_plan(parsed, plan_id=f"plan_{uuid.uuid4().hex[:12]}")
     clarification = needs_clarification(parsed)
+    # Remember exactly what is still missing so a bare answer on the next turn
+    # can be folded back into this intent (see _merge_pending_clarification).
+    pending_clarification: Optional[dict[str, Any]] = None
+    if clarification and parsed.get("intent") != Intent.UNKNOWN.value:
+        pending_clarification = {
+            "intent": parsed.get("intent"),
+            "missing": missing_slots(parsed),
+            "confidence": parsed.get("confidence"),
+            "payload": {key: parsed.get(key) for key in ("intent", "target", "amount", "date_scope", "extra_info", "participants", "product_ids", "slots", "scheduled_at", "event_at")},
+        }
     response = None
     if clarification:
         intent = parsed.get("intent")
@@ -510,6 +747,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             "scheduled_at": parsed.get("scheduled_at"),
             "event_at": parsed.get("event_at"),
             "date_scope": parsed.get("date_scope"),
+            "pending_clarification": pending_clarification,
         },
         "event_at": parsed.get("event_at"),
         "reminder_at": None,
@@ -762,17 +1000,51 @@ def _missing_required_factors(required_actions: Any, *, confirmed: bool, mfa_pro
     return sorted(required - satisfied)
 
 
+def _human_readable_action(state: BankingAgentState) -> str:
+    """Describe a pending action in business language, never as an intent code."""
+
+    intent = str(state.get("intent") or "")
+    target = state.get("target")
+    try:
+        amount = float(state.get("amount") or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    if intent == Intent.CROSS_SCENE_LOCK.value:
+        return f"锁定活期资金 ¥{amount:,.2f} 用于跨场景任务"
+    if intent == Intent.PASSWORD_CHANGE.value:
+        return "修改登录密码（演示仅轮换凭证版本，不保存明文密码）"
+    if intent == Intent.CARD_LIMIT.value:
+        return f"把卡片 {target or '默认卡片'} 的日限额调整为 ¥{amount:,.2f}"
+    if intent == Intent.CARD_FREEZE.value:
+        return f"冻结卡片 {target or ''} 的交易".strip()
+    if intent == Intent.CARD_UNFREEZE.value:
+        return f"解冻卡片 {target or ''} 的交易".strip()
+    if intent == Intent.CARD_REPORT_LOST.value:
+        return f"挂失卡片 {target or ''}".strip()
+    if intent == Intent.CARD_UNREPORT_LOST.value:
+        return f"解除卡片 {target or ''} 的挂失".strip()
+    if intent == Intent.CARD_APPLY.value:
+        return "申请一张虚拟卡"
+    if intent == Intent.SUBSCRIPTION_CANCEL.value:
+        return f"取消 {target or '该'} 的自动扣费"
+    if intent == Intent.WEALTH_PURCHASE.value:
+        return f"申购理财产品 {target or ''} ¥{amount:,.2f}".strip()
+    if intent == Intent.WEALTH_REDEEM.value:
+        return f"赎回理财产品 {target or ''} ¥{amount:,.2f}".strip()
+    if intent == Intent.SCHEDULED_TRANSFER.value:
+        return f"预约于 {state.get('scheduled_at') or '指定时间'} 向 {target or '指定收款人'} 转账 ¥{amount:,.2f}"
+    if intent == Intent.SPLIT_BILL.value:
+        participants = "、".join(str(item) for item in (state.get("participants") or []))
+        return f"发起 AA 分摊 ¥{amount:,.2f}（参与人：{participants or '待确认'}）"
+    return f"向 {target or '指定收款人'} 转账 ¥{amount:,.2f}"
+
+
 def human_review_node(state: BankingAgentState) -> dict[str, Any]:
     risk = state.get("risk_level")
     if risk not in {"YELLOW", "RED"} or state.get("final_response"):
         return {"user_confirmed": bool(state.get("user_confirmed", False))}
     intent = state.get("intent")
-    if intent == Intent.CROSS_SCENE_LOCK.value:
-        desc = f"锁定活期资金 ¥{float(state.get('amount') or 1000):,.2f} 用于跨场景任务"
-    elif intent == Intent.PASSWORD_CHANGE.value:
-        desc = "修改登录密码（演示仅轮换凭证版本，不保存明文密码）"
-    else:
-        desc = f"办理 {intent}：{state.get('target') or '指定账户'} ¥{float(state.get('amount') or 0):,.2f}"
+    desc = _human_readable_action(state)
     payload = {
         "message": f"您正准备进行：{desc}",
         "risk_level": risk,
@@ -1117,14 +1389,20 @@ def _valid_text_field(value: Any, *, max_length: int = 256) -> bool:
     return not any(ord(char) < 32 and char not in "\t\n\r" for char in value)
 
 
-def _core_success(data: Any, *, nested_status: Optional[str] = None, required: tuple[str, ...] = ()) -> bool:
-    """Validate the envelope and (optionally) a domain result status."""
+def _core_success(data: Any, *, nested_status: Any = None, required: tuple[str, ...] = ()) -> bool:
+    """Validate the envelope and (optionally) a domain result status.
+
+    ``nested_status`` accepts a single status or a collection of acceptable
+    statuses (for example an AA request that settled fully or only partially).
+    """
 
     if not isinstance(data, dict) or str(data.get("status", "")).upper() != "SUCCESS":
         return False
     payload = data.get("data")
     if nested_status is not None:
-        if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != nested_status:
+        accepted = (nested_status,) if isinstance(nested_status, str) else tuple(nested_status)
+        accepted = tuple(str(item).upper() for item in accepted)
+        if not isinstance(payload, dict) or str(payload.get("status", "")).upper() not in accepted:
             return False
         if any(key not in payload for key in required):
             return False
@@ -1171,6 +1449,74 @@ def _valid_bill_facts(facts: Any) -> bool:
         if item.get("tx_id") is not None and not _valid_text_field(item.get("tx_id"), max_length=128):
             return False
     return True
+
+
+def _format_yield(value: Any) -> str:
+    if value is None:
+        return "暂未提供"
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "暂未提供"
+
+
+def _render_product_line(item: Mapping[str, Any]) -> str:
+    return (
+        f"- `{item.get('product_id')}` {item.get('name')} ｜ 风险 {item.get('risk_level')} ｜ "
+        f"参考年化 {_format_yield(item.get('annualized_yield'))} ｜ 起购 ¥{float(item.get('min_amount') or 0):,.2f} ｜ {item.get('liquidity')}"
+    )
+
+
+def _render_wealth(data: Mapping[str, Any], intent: str) -> str:
+    """Render wealth products as a readable list instead of a raw JSON blob."""
+
+    rows = data.get("data") or []
+    if intent == Intent.WEALTH_COMPARE.value:
+        header = f"⚖️ 产品对比（{len(rows)} 款，按您指定的顺序）："
+    elif intent == Intent.WEALTH_RECOMMEND.value:
+        profile = str(data.get("risk_profile") or "")
+        header = f"📈 按风险偏好 **{profile}** 为您匹配到 {len(rows)} 款产品：" if profile else f"📈 为您匹配到 {len(rows)} 款产品："
+    else:
+        header = f"📊 在售理财产品共 {len(rows)} 款："
+    lines = [header]
+    lines.extend(_render_product_line(item) for item in rows)
+    if not rows:
+        lines.append("- 暂无可展示的产品。")
+    disclaimer = data.get("disclaimer")
+    if _valid_text_field(disclaimer, max_length=300):
+        lines.append(f"> {disclaimer}")
+    if intent != Intent.WEALTH_RECOMMEND.value:
+        lines.append("> 年化为产品资料展示值，不代表实际收益；申购前需完成风险测评。")
+    return "\n".join(lines)
+
+
+def _render_subscriptions(data: Mapping[str, Any]) -> str:
+    rows = data.get("data") or []
+    lines = [f"🔁 订阅/代扣共 {len(rows)} 项："]
+    for item in rows:
+        lines.append(
+            f"- {item.get('merchant')} ｜ 每期 ¥{float(item.get('amount') or 0):,.2f} ｜ "
+            f"下次扣款 {item.get('next_charge')} ｜ 状态 {item.get('status')}"
+        )
+    if not rows:
+        lines.append("- 当前没有进行中的订阅。")
+    lines.append('> 如需停用，可以说“取消 Apple 订阅”，取消前会请您确认。')
+    return "\n".join(lines)
+
+
+def _render_cards(data: Mapping[str, Any]) -> str:
+    rows = data.get("data") or []
+    lines = [f"💳 卡片共 {len(rows)} 张："]
+    for item in rows:
+        line = f"- `{item.get('card_id')}`（{item.get('type')}）｜ 状态 {item.get('status')} ｜ 日限额 ¥{float(item.get('daily_limit') or 0):,.2f}"
+        if _finite_number(item.get("daily_spent_today"), nonnegative=True):
+            line += f" ｜ 今日已用 ¥{float(item.get('daily_spent_today')):,.2f}"
+        if _finite_number(item.get("daily_remaining"), nonnegative=True):
+            line += f" ｜ 今日剩余 ¥{float(item.get('daily_remaining')):,.2f}"
+        lines.append(line)
+    if not rows:
+        lines.append("- 当前没有绑定卡片。")
+    return "\n".join(lines)
 
 
 def responder_node(state: BankingAgentState) -> dict[str, Any]:
@@ -1250,7 +1596,14 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
             valid = _valid_card_collection(data)
         if not valid:
             return _response_validation_failure(state, "READ_COLLECTION_INVALID")
-        return {"final_response": "已从核心服务取得最新数据：\n\n" + json.dumps(data, ensure_ascii=False, indent=2)}
+        # Render a readable answer from the verified fields.  The raw payload is
+        # deliberately not shown to a customer; every value below comes from the
+        # validated core response (no invented numbers).
+        if rtype in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_COMPARE.value}:
+            return {"final_response": _render_wealth(data, rtype)}
+        if rtype == Intent.SUBSCRIPTION_QUERY.value:
+            return {"final_response": _render_subscriptions(data)}
+        return {"final_response": _render_cards(data)}
     if rtype == Intent.WEALTH_PURCHASE.value:
         envelope = result.get("data")
         data = envelope.get("data") if isinstance(envelope, dict) else None
@@ -1286,7 +1639,9 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         Intent.CARD_UNREPORT_LOST.value: "ACTIVE",
         Intent.SUBSCRIPTION_CANCEL.value: "CANCELLED",
         Intent.SCHEDULED_TRANSFER.value: "SCHEDULED",
-        Intent.SPLIT_BILL.value: "OPEN",
+        # AA collection settles fully (SETTLED) or partially (PARTIAL) when a
+        # participant lacks funds; both are genuine core outcomes.
+        Intent.SPLIT_BILL.value: ("SETTLED", "PARTIAL", "OPEN"),
         Intent.PASSWORD_CHANGE.value: "PASSWORD_CHANGED",
     }.get(rtype)
     if rtype:
@@ -1329,8 +1684,42 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                     return _response_validation_failure(state, "SPLIT_RESULT_INVALID")
                 if not isinstance(payload.get("participants"), list) or not _finite_number(payload.get("per_person"), nonnegative=True):
                     return _response_validation_failure(state, "SPLIT_RESULT_INVALID")
-        return {"final_response": f"{rtype} 已由核心服务确认完成。"}
+        return {"final_response": _completion_label(state, rtype)}
     return {"final_response": "未能取得核心服务的可核验结果，因此没有声称操作成功。"}
+
+
+def _completion_label(state: BankingAgentState, rtype: str) -> str:
+    """Business-language confirmation, never an internal intent code."""
+
+    payload = (state.get("execution_result") or {}).get("data") or {}
+    inner = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    target = state.get("target")
+    card = inner.get("card") if isinstance(inner.get("card"), dict) else {}
+    card_id = card.get("card_id")
+    labels = {
+        Intent.CARD_APPLY.value: f"✅ 虚拟卡已开立（{card_id}）。" if card_id else "✅ 虚拟卡已开立。",
+        Intent.CARD_FREEZE.value: "✅ 卡片交易已冻结。",
+        Intent.CARD_UNFREEZE.value: "✅ 卡片交易已解冻。",
+        Intent.CARD_REPORT_LOST.value: "✅ 卡片已挂失，后续交易将被拒绝。",
+        Intent.CARD_UNREPORT_LOST.value: "✅ 已解除挂失，卡片恢复可用。",
+        Intent.SUBSCRIPTION_CANCEL.value: f"✅ 已取消 {target or '该'} 的自动扣费。",
+        Intent.SCHEDULED_TRANSFER.value: f"✅ 已登记预约转账，将于 {inner.get('scheduled_at') or state.get('scheduled_at') or '约定时间'} 执行（到期前会再次请您确认）。",
+        Intent.PASSWORD_CHANGE.value: "✅ 登录凭证版本已轮换（演示不保存明文密码）。",
+    }
+    if rtype == Intent.CARD_LIMIT.value:
+        limit = card.get("daily_limit")
+        return f"✅ 卡片日限额已调整为 ¥{float(limit):,.2f}。" if _finite_number(limit, nonnegative=True) else "✅ 卡片日限额已调整。"
+    if rtype == Intent.SPLIT_BILL.value:
+        collected = payload.get("collected_amount")
+        outstanding = payload.get("outstanding_amount")
+        status = str(payload.get("status") or "")
+        if _finite_number(collected, nonnegative=True):
+            detail = f"已收 **¥{float(collected):,.2f}**"
+            if _finite_number(outstanding, nonnegative=True) and float(outstanding) > 0:
+                detail += f"，仍有 ¥{float(outstanding):,.2f} 未收（{status}）"
+            return f"✅ AA 分摊已登记：{detail}，明细已记入流水。"
+        return "✅ AA 分摊已登记。"
+    return f"✅ {labels.get(rtype, rtype)}"
 
 
 def route_after_risk_check(state: BankingAgentState) -> str:

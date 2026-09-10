@@ -14,6 +14,20 @@ from langgraph.types import Command
 
 import agent
 import main
+import security
+
+
+def _approve_red(wired, token: str) -> str:
+    """Confirm + complete the red-zone face ticket, returning the MFA proof."""
+
+    headers = {"X-User-Id": "user_zhang", "X-Auth-Token": token}
+    assert wired.post("/api/v1/auth/confirm", json={}, headers=headers).status_code == 200
+    challenge = wired.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=headers)
+    assert challenge.status_code == 200, challenge.text
+    attestation = security.sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    mfa = wired.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=headers)
+    assert mfa.status_code == 200, mfa.text
+    return mfa.json()["mfa_proof"]
 
 
 @pytest.fixture()
@@ -218,6 +232,144 @@ def test_model_cannot_downgrade_explicit_scheduled_transfer(monkeypatch):
     assert parsed["scheduled_at"] != "2099-01-01T09:00:00+08:00"
 
 
+def test_model_cannot_drop_explicit_birthday_date(monkeypatch):
+    """A simplified model answer must not erase the user's stated date.
+
+    Reported from a live session: the user said “我爱人生日是下周六…”, the model
+    returned the intent without the dates, and the agent asked for the date
+    again even though it had already been given.
+    """
+
+    class FakeResponse:
+        content = json.dumps(
+            {
+                "intent": "CROSS_SCENE_LOCK",
+                "target": None,
+                "amount": None,
+                "date_scope": "ALL",
+                "confidence": 0.9,
+                "participants": [],
+                "product_ids": [],
+                "slots": {},
+                "scheduled_at": None,
+                "event_at": None,
+            }
+        )
+
+    class FakeLLM:
+        def invoke(self, _messages):
+            return FakeResponse()
+
+    monkeypatch.setattr(agent, "llm", FakeLLM())
+    parsed = agent._model_parse("我爱人生日是下周六，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕")
+    assert parsed["intent"] == "CROSS_SCENE_LOCK"
+    assert parsed["scheduled_at"], "the explicit date must survive the model answer"
+    assert parsed["event_at"]
+    assert parsed["amount"] == 1000.0
+    from planner import needs_clarification
+
+    assert needs_clarification(parsed) is False
+
+
+def test_model_incomplete_result_falls_back_to_complete_local_parse(monkeypatch):
+    class FakeResponse:
+        content = json.dumps({"intent": "UNKNOWN", "target": None, "amount": None, "confidence": 0.99})
+
+    class FakeLLM:
+        def invoke(self, _messages):
+            return FakeResponse()
+
+    monkeypatch.setattr(agent, "llm", FakeLLM())
+    parsed = agent._model_parse("给李四转账 10 元")
+    assert parsed["intent"] == "TRANSFER"
+    assert parsed["amount"] == 10.0
+
+
+def test_bare_slot_answer_resumes_pending_clarification(wired):
+    """Answering a clarification with only a date must resume the same task."""
+
+    config = {"configurable": {"thread_id": "test-agent-pending-slot"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "我爱人生日快到了，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕"}, config=config, stream_mode="values"))
+    first = agent.app.get_state(config).values
+    assert first["clarification_required"] is True
+    assert first["intent"] == "CROSS_SCENE_LOCK"
+    pending = (first.get("context") or {}).get("pending_clarification") or {}
+    assert pending.get("missing") == ["scheduled_at"]
+
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "下周六"}, config=config, stream_mode="values"))
+    snapshot = agent.app.get_state(config)
+    values = snapshot.values
+    assert values["intent"] == "CROSS_SCENE_LOCK"
+    assert values["event_at"], "the bare answer must fill the missing date"
+    assert values["amount"] == 1000.0
+    # The request now waits for the normal approval card, not another question.
+    assert snapshot.next
+    assert "锁定活期资金" in snapshot.tasks[0].interrupts[0].value["message"]
+
+
+def test_new_complete_request_overrides_pending_clarification(wired):
+    config = {"configurable": {"thread_id": "test-agent-pending-override"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "我爱人生日快到了，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕"}, config=config, stream_mode="values"))
+    assert agent.app.get_state(config).values["clarification_required"] is True
+
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "给李四转账 10 元"}, config=config, stream_mode="values"))
+    values = agent.app.get_state(config).values
+    assert values["intent"] == "TRANSFER"
+    assert values["target"] == "李四"
+
+
+def test_bare_amount_answer_completes_card_limit_request(wired):
+    """Reported live: answering “额度调整” with “3000” asked the same question again."""
+
+    config = {"configurable": {"thread_id": "test-agent-card-limit-slot"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "额度调整"}, config=config, stream_mode="values"))
+    first = agent.app.get_state(config).values
+    assert first["intent"] == "CARD_LIMIT"
+    assert first["clarification_required"] is True
+
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "3000"}, config=config, stream_mode="values"))
+    snapshot = agent.app.get_state(config)
+    assert snapshot.values["intent"] == "CARD_LIMIT"
+    assert snapshot.values["amount"] == 3000.0
+    assert snapshot.next, "the bare amount must complete the request"
+
+    message = snapshot.tasks[0].interrupts[0].value["message"]
+    assert "日限额" in message and "3,000.00" in message
+    assert "CARD_LIMIT" not in message, "internal intent codes must not reach the user"
+
+    proof = _approve_red(wired, snapshot.values["auth_token"])
+    list(agent.app.stream(Command(resume={"confirmed": True, "mfa_proof": proof}), config=config, stream_mode="values"))
+    final = agent.app.get_state(config).values["final_response"]
+    assert "日限额已调整" in final and "CARD_LIMIT" not in final
+    assert main.CARDS["user_zhang"]["daily_limit"] == 3000.0
+
+
+@pytest.mark.parametrize("answer", ["3000 元", "三千", "¥3,000"])
+def test_bare_amount_variants_fill_the_pending_amount_slot(wired, answer):
+    config = {"configurable": {"thread_id": f"test-agent-limit-variant-{hash(answer)}"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "额度调整"}, config=config, stream_mode="values"))
+    assert agent.app.get_state(config).values["clarification_required"] is True
+
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": answer}, config=config, stream_mode="values"))
+    values = agent.app.get_state(config).values
+    assert values["intent"] == "CARD_LIMIT"
+    assert values["amount"] == 3000.0
+
+
+def test_numeric_answer_does_not_fill_a_date_slot(wired):
+    """A number must never be mistaken for the date that was actually asked for."""
+
+    config = {"configurable": {"thread_id": "test-agent-date-slot-guard"}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "我爱人生日快到了，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕"}, config=config, stream_mode="values"))
+    assert agent.app.get_state(config).values["clarification_required"] is True
+
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": "3000"}, config=config, stream_mode="values"))
+    snapshot = agent.app.get_state(config)
+    assert snapshot.values["clarification_required"] is True
+    assert "生日日期" in snapshot.values["final_response"]
+    assert not snapshot.next
+
+
 def test_offline_parser_reads_card_limit_without_currency_unit():
     parsed = agent._local_parse("把我的卡额度调到 5000")
     assert parsed["intent"] == "CARD_LIMIT"
@@ -263,6 +415,46 @@ def test_offline_parser_supports_annual_bill_report():
     parsed = agent._local_parse("请生成今年年度账单报告")
     assert parsed["intent"] == "BILL_ANALYSIS"
     assert parsed["date_scope"] == "YEAR"
+
+
+@pytest.mark.parametrize(
+    ("text", "intent"),
+    [
+        # Listing products is a fact query; recommending narrows to the profile.
+        ("查看理财产品", "WEALTH_QUERY"),
+        ("有哪些理财产品", "WEALTH_QUERY"),
+        ("推荐稳健理财产品", "WEALTH_RECOMMEND"),
+        ("理财产品收益率", "WEALTH_RECOMMEND"),
+    ],
+)
+def test_wealth_listing_and_recommendation_are_distinguished(text, intent):
+    assert agent._local_parse(text)["intent"] == intent
+
+
+def test_read_collections_are_rendered_readably(wired):
+    """Wealth/subscription/card answers must read like a bank assistant's reply.
+
+    Reported from a live session: asking for a product recommendation returned
+    the raw core JSON blob.
+    """
+
+    cases = [
+        ("推荐稳健理财产品", "WEALTH_RECOMMEND", ("MMF001", "稳健现金管理", "风险 R1", "2.10%", "不构成投资建议")),
+        ("查看理财产品", "WEALTH_QUERY", ("MMF001", "BOND002", "INDEX003", "在售理财产品")),
+        ("比较 MMF001 和 BOND002", "WEALTH_COMPARE", ("产品对比", "MMF001", "BOND002")),
+        ("我有哪些订阅", "SUBSCRIPTION_QUERY", ("Apple 订阅", "视频会员", "下次扣款")),
+        ("我的卡片", "CARD_QUERY", ("CARD-001", "日限额", "状态 ACTIVE")),
+    ]
+    for index, (text, intent, expected) in enumerate(cases):
+        config = {"configurable": {"thread_id": f"test-render-{index}"}}
+        list(agent.app.stream({"user_id": "user_zhang", "user_input": text}, config=config, stream_mode="values"))
+        values = agent.app.get_state(config).values
+        assert values["intent"] == intent, text
+        response = values["final_response"]
+        assert '"code"' not in response, f"{text} leaked the raw payload"
+        assert not response.strip().startswith("{"), f"{text} returned raw JSON"
+        for token in expected:
+            assert token in response, f"{text} missing {token} in:\n{response}"
 
 
 @pytest.mark.parametrize(
