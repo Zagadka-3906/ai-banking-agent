@@ -162,19 +162,30 @@ available_balance = total_balance - locked_amount
 ## 5. 部署拓扑（演示）
 
 ```text
-可接入渠道（APP / IM / Web） ──HTTP──>  Streamlit 演示前端（web_app.py）
-                                      │
-                                      └──HTTP──>  FastAPI Mock Core :8000 (main.py)
-
-当前仓库实际提供的是 Streamlit 文本渠道；APP 原生 SDK、IM webhook、OIDC
-登录回调属于接入层扩展，不能把示意图当作已上线渠道。
+可接入渠道（APP / IM / Web）
+        │
+        ├── HTTP ──> Android 原生客户端（android/，Kotlin + Compose）
+        │                     │
+        │                     └──HTTP──> 渠道网关 :8100 (agent_api.py)
+        │                                        │  会话 / LangGraph 图 / 审批句柄 / SSE
+        │                                        │  （不持有账本，也不签发 nonce）
+        │                                        ▼
+        └── HTTP ──> Streamlit 演示前端（web_app.py, :8501）
+                                             │
+                                             └──HTTP──> FastAPI Mock Core :8000 (main.py)
+                                                          唯一记账边界 + 安全策略网关
 ```
+
+三条入口共享同一套核心与同一条安全边界：网关与前端都不判定身份，会话一律回核心校验；账户变更只能由核心的三段式端点执行。
+
+当前仓库实际提供的是 Streamlit 演示前端与「网关 + Android 原生客户端」两条已实现渠道；IM webhook、OIDC 登录回调、真实支付/短信/人脸供应商属于接入层扩展，不能把示意图当作已上线能力。原生客户端的运行、设备凭据与验收标准见 [`device-verification.md`](device-verification.md)。
 
 启动命令：
 
 ```powershell
-python -m uvicorn main:app --reload --port 8000
-python -m streamlit run web_app.py
+python -m uvicorn main:app      --reload --port 8000
+python -m uvicorn agent_api:app --reload --port 8100   # Android / IM 渠道
+python -m streamlit run web_app.py                     # 可选：演示前端
 ```
 
 演示环境建议增加 `/healthz`、配置化 `BANK_API_BASE`、超时/重试、Docker Compose 和反向代理 TLS。不要把 `127.0.0.1`、测试 OTP 或真实密钥写死在代码中。
@@ -183,4 +194,20 @@ python -m streamlit run web_app.py
 
 所有请求携带 `request_id`，核心记录结构化审计事件（策略版本、审批者、MFA challenge、执行前后余额摘要、核心返回码和错误原因，禁止记录完整密钥/验证码），并提供只读审计查询与决策链路还原接口（`/security/audit`、`/security/audit/verify`、`/security/audit/trace/{request_id}`）。Agent 侧事件（意图解析、回复校验）保存在 Agent 进程内，跨进程汇聚属于生产项；建议继续补充指标：成功率、拒绝率、连续失败次数、P95 延迟、待人工任务数。
 
-架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试为 `tests/` 下 7 个文件（`pytest -q` 全量运行，涵盖契约、安全回归、Agent 工作流、规划、安全原语、扩展场景与并发原子性）。
+架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试为 `tests/` 下 14 个文件 / 265 个用例（`pytest -q` 全量运行，涵盖契约、安全回归、Agent 工作流、规划、安全原语、扩展场景、并发原子性、登录、设备信任根、设备库落盘、渠道网关与推送）。
+
+## 7. 渠道网关与原生客户端
+
+APP 渠道在核心之外单独起一个进程，目的是让「会话与审批」这类渠道状态不与账本混在一起，同时保证客户端**永远拿不到**能直接驱动账本的凭证。
+
+| 关注点 | 设计 | 理由 |
+| --- | --- | --- |
+| 会话 | 网关不维护会话注册表，收到 `X-Session-Token` 就回核心 `GET /api/v1/auth/session` 校验，并区分 401（令牌无效）与 503（核心不可达） | 会话注册表只能有一份，否则网关重启或核心重启后两侧判断会不一致 |
+| 审批 | 网关分发不透明的 `APR…` 句柄（TTL 110s，必须短于核心的 nonce TTL），句柄指向的签名 nonce 与 MFA proof 只留在服务端 | 客户端若能拿到 nonce，就等于绕过了审批环节 |
+| 回复 | `POST /api/v1/agent/messages/stream` 先推阶段帧，最后**恰好一个**终态帧（`result` / `approval` / `error`）；每轮对话在一个专属工作线程里跑，串行消费事件队列 | SSE 需要真实流式；LangGraph 的 ContextVar 有线程亲和性，跨线程会丢上下文 |
+| 身份传递 | 调用核心时通过 ContextVar 注入会话，**不写进 checkpointer** | 会话是每次请求的输入，不是对话状态的一部分；持久化它会让旧会话在重启后被复用 |
+| 设备信任根 | App 在 Keystore 内生成 P-256 密钥并注册公钥；服务端按公钥验签绑定交易 `jti` 的活体挑战。设备编号由公钥派生（`DEV` + `sha256(SPKI)` 前 24 位） | 共享 HMAC 密钥必须随客户端分发，等于人人可伪造；公钥模型下私钥不出设备 |
+| 推送 | 设备注册投递令牌 → 核心按主体派发；未注册设备记 `NO_DEVICE`，缺凭据记 `NOT_SENT` 并附原因，送达记 `SENT` | 投递结果必须可审计；静默失效会让「用户没收到」变成无法定位的问题 |
+| 持久化 | 会话 checkpoint 落 SQLite（`BANK_CONVERSATION_DB`）；设备注册表可选落盘（`BANK_DEVICE_STORE_PATH`），带完整性摘要，校验失败则拒绝加载并冻结写入 | 不落盘时核心一重启就丢失全部设备与投递令牌，推送静默失效；而无条件信任磁盘文件又会让攻击者能注入设备公钥 |
+
+原生客户端的代码组织：`data/` 放 Retrofit 接口与仓库，`security/` 放 Keystore 密钥与生物识别门，`push/` 放 FCM 服务与通知，`ui/` 放 Compose 界面与 `testTag`。插桩测试用 Compose 语义驱动界面——**`adb shell input text` 只支持 ASCII，而本应用的指令都是中文**，所以 UI 验收只能靠插桩测试（见 [`device-verification.md`](device-verification.md)）。
