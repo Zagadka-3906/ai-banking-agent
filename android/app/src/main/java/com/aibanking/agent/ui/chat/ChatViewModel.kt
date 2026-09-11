@@ -12,6 +12,7 @@ import com.aibanking.agent.data.DeviceRepository
 import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.GatewayException
 import com.aibanking.agent.data.LoginRepository
+import com.aibanking.agent.data.SessionCheck
 import com.aibanking.agent.data.SessionStore
 import com.aibanking.agent.data.TaskRepository
 import com.aibanking.agent.data.TaskView
@@ -131,6 +132,40 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     authenticated = true,
                     messages = if (restored.isNotEmpty()) restored else listOf(welcome()),
                 )
+            }
+            verifyRestoredSession(storedToken)
+        }
+    }
+
+    /**
+     * Confirm with the core that a restored credential is still honoured.
+     *
+     * Sessions live in the core's memory, so a core restart invalidates every one
+     * of them while this device still holds a perfectly readable copy.  Showing
+     * the chat screen in that state is a lie the user only discovers *after*
+     * typing an instruction: the first turn returns 401, the app wipes the
+     * session and the login form appears with the request already lost.  Checking
+     * once at start-up costs one round-trip and turns that into an honest login
+     * screen.  An unreachable core is deliberately *not* treated as expiry.
+     */
+    private fun verifyRestoredSession(token: String) {
+        viewModelScope.launch {
+            when (withContext(Dispatchers.IO) { login.check(token) }) {
+                is SessionCheck.Expired -> {
+                    sessionToken = null
+                    sessionStore.clear()
+                    _state.update {
+                        it.copy(
+                            authenticated = false,
+                            principal = "",
+                            busy = false,
+                            messages = listOf(welcome()),
+                            error = "登录状态已失效，请重新登录",
+                        )
+                    }
+                }
+                // Still valid, or the core could not be reached: keep it either way.
+                else -> Unit
             }
         }
     }

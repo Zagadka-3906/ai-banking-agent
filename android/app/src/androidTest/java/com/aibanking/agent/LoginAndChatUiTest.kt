@@ -16,7 +16,6 @@ import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.ui.UiTags
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -82,11 +81,36 @@ class LoginAndChatUiTest {
     private fun moneyIsVisible(): Boolean =
         ui.onAllNodesWithText("¥", substring = true).fetchSemanticsNodes().isNotEmpty()
 
-    /** The audit trace id the app prints under the newest reply. */
-    private fun visibleTraceId(): String? {
-        val node = ui.onAllNodesWithText(TRACE_PREFIX, substring = true).fetchSemanticsNodes().lastOrNull() ?: return null
-        val text = node.config.getOrNull(SemanticsProperties.Text)?.joinToString("") { it.text } ?: return null
-        return text.substringAfter(TRACE_PREFIX).trim().ifBlank { null }
+    /**
+     * Every audit trace id currently on screen, oldest first.
+     *
+     * The transcript is deliberately persistent, so a test that ran earlier in
+     * the same class leaves its own reply - and its own ¥ figure and trace id -
+     * on screen.  JUnit does not order methods, so reading "the newest thing on
+     * screen" made a test assert against the *previous* test's turn: the
+     * read-only case fetched the yellow transfer's trace and failed looking for
+     * BALANCE_QUERY.  Capture what is there before sending, then wait for
+     * something that was not.
+     */
+    private fun visibleTraceIds(): List<String> =
+        ui.onAllNodesWithText(TRACE_PREFIX, substring = true)
+            .fetchSemanticsNodes()
+            .mapNotNull { node ->
+                node.config.getOrNull(SemanticsProperties.Text)
+                    ?.joinToString("") { it.text }
+                    ?.substringAfter(TRACE_PREFIX)
+                    ?.trim()
+                    ?.ifBlank { null }
+            }
+
+    /** Wait for the trace id of *this* turn: the first one that was not there before. */
+    private fun awaitNewTraceId(previous: List<String>): String {
+        var found: String? = null
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+            found = visibleTraceIds().lastOrNull { it !in previous }
+            found != null
+        }
+        return checkNotNull(found) { "no new audit trace id appeared for this turn" }
     }
 
     /** Ask the core what it recorded for one correlation id. */
@@ -104,19 +128,22 @@ class LoginAndChatUiTest {
     @Test
     fun a_read_only_turn_returns_a_verified_reply_with_structured_facts() {
         ensureLoggedIn()
+        val before = visibleTraceIds()
         send("查一下余额")
 
-        // The reply travels back as Server-Sent Events and the structured half is
-        // what renders the amount, so seeing a ¥ figure proves login, the
-        // streamed turn, the core round-trip and the result view all worked.
+        // A trace id that was not on screen before is this turn's reply: it proves
+        // login, the streamed turn, the core round-trip and the result view all
+        // worked - without depending on which test ran first.
+        val traceId = awaitNewTraceId(before)
+
+        // The structured half is what renders the amount, so a ¥ figure must be
+        // there too.
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { moneyIsVisible() }
 
         // ...and the core must be able to answer for the id the app shows.  That
         // is what "one audit trace across app and core" means in practice: the
         // correlation id survives the channel hop and still resolves.
-        val traceId = visibleTraceId()
-        assertNotNull("the reply must surface its audit trace id", traceId)
-        val trace = fetchCoreTrace(traceId!!)
+        val trace = fetchCoreTrace(traceId)
         assertTrue("core trace for $traceId was: $trace", trace.contains("BALANCE_QUERY"))
     }
 
