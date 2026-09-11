@@ -92,7 +92,10 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             TopAppBar(
                 title = { Text("AI 银行助手") },
                 actions = {
-                    Text(state.principal, style = MaterialTheme.typography.labelMedium)
+                    TextButton(
+                        onClick = viewModel::openCards,
+                        modifier = Modifier.testTag(UiTags.OPEN_CARDS),
+                    ) { Text("卡片") }
                     TextButton(
                         onClick = viewModel::openWealth,
                         modifier = Modifier.testTag(UiTags.OPEN_WEALTH),
@@ -215,6 +218,10 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     if (state.showWealth) {
         // 银行风格理财页（产品超市/详情），申购预填回聊天走红色审批流。
         WealthUi(state, viewModel)
+    }
+    if (state.showCards) {
+        // 银行风格银行卡管理页（卡面/余额/操作/添加）。
+        CardsUi(state, viewModel)
     }
 }
 

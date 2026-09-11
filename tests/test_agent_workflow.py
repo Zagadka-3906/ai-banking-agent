@@ -341,7 +341,7 @@ def test_bare_amount_answer_completes_card_limit_request(wired):
     list(agent.app.stream(Command(resume={"confirmed": True, "mfa_proof": proof}), config=config, stream_mode="values"))
     final = agent.app.get_state(config).values["final_response"]
     assert "日限额已调整" in final and "CARD_LIMIT" not in final
-    assert main.CARDS["user_zhang"]["daily_limit"] == 3000.0
+    assert main.CARDS["user_zhang"][0]["daily_limit"] == 3000.0
 
 
 @pytest.mark.parametrize("answer", ["3000 元", "三千", "¥3,000"])

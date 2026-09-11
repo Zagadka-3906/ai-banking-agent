@@ -4,6 +4,8 @@ import android.app.Application
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.aibanking.agent.data.CardView
+import com.aibanking.agent.data.CardsRepository
 import com.aibanking.agent.data.AgentRepository
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.ContactRepository
@@ -97,6 +99,11 @@ data class ChatUiState(
     val profileResult: Map<String, Any>? = null,
     /** 回复末尾的快捷输入建议（点击填入输入框）。 */
     val suggestions: List<String> = emptyList(),
+    /** 银行卡管理页：卡片列表 + 添加表单。 */
+    val showCards: Boolean = false,
+    val cards: List<CardView> = emptyList(),
+    val cardType: String = "借记卡",
+    val cardLabel: String = "",
     /** 理财页：银行风格产品超市 → 详情。 */
     val showWealth: Boolean = false,
     val wealthScreen: WealthScreen = WealthScreen.LIST,
@@ -159,6 +166,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val tasks = TaskRepository.create()
     private val contacts = ContactRepository.create()
     private val wealth = WealthRepository.create()
+    private val cardsRepo = CardsRepository.create()
     private val gson = Gson()
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -554,7 +562,63 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false) }
+    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false, showCards = false) }
+
+    // -- bank cards (银行卡管理) ----------------------------------------------
+
+    fun openCards() {
+        _state.update { it.copy(showCards = true, showWealth = false, showContacts = false, showDevices = false, showTasks = false, panelBusy = true) }
+        refreshCards()
+    }
+
+    fun closeCards() = _state.update { it.copy(showCards = false) }
+
+    fun refreshCards() {
+        val principal = _state.value.principal
+        viewModelScope.launch {
+            try {
+                val rows = withContext(Dispatchers.IO) { cardsRepo.list(principal, sessionToken ?: "") }
+                _state.update { it.copy(cards = rows, panelBusy = false) }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    fun onCardFormChange(cardType: String? = null, label: String? = null) {
+        _state.update { it.copy(cardType = cardType ?: it.cardType, cardLabel = label?.take(40) ?: it.cardLabel) }
+    }
+
+    /** 自行添加银行卡：绿区操作，核心开立即生效并审计。 */
+    fun addCard() {
+        val principal = _state.value.principal
+        val form = _state.value
+        if (form.panelBusy) return
+        _state.update { it.copy(panelBusy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val created = withContext(Dispatchers.IO) {
+                    cardsRepo.add(principal, sessionToken ?: "", form.cardType, form.cardLabel)
+                }
+                _state.update { it.copy(panelBusy = false, cardLabel = "", notice = "银行卡 ${created.numberMasked} 已添加") }
+                refreshCards()
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    /** 冻结/挂失/调额等红色操作：预填话术回对话，走短信+设备签名审批。 */
+    fun startCardAction(action: String, card: CardView) {
+        val phrase = when (action) {
+            "freeze" -> "冻结卡片 ${card.cardId}"
+            "unfreeze" -> "解冻卡片 ${card.cardId}"
+            "report_lost" -> "挂失卡片 ${card.cardId}"
+            else -> return
+        }
+        onInputChange(phrase)
+        closeCards()
+    }
 
     // -- wealth (银行风格理财页) ----------------------------------------------
 

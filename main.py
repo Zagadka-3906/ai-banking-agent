@@ -15,6 +15,7 @@ import logging
 import math
 import os
 import re
+import secrets
 import time
 import uuid
 from copy import deepcopy
@@ -419,9 +420,39 @@ def profile_rank(profile: Optional[str]) -> Optional[int]:
         "AGGRESSIVE": 4, "C4": 4,
         "C5": 5,
     }.get(str(profile or "").upper())
-CARDS: dict[str, dict[str, Any]] = {
-    "user_zhang": {"card_id": "CARD-001", "type": "VIRTUAL", "status": "ACTIVE", "daily_limit": 5000.0}
+# 每用户卡片列表（支持一户多卡）。卡号是虚构演示号段，接口只回传脱敏形式；
+# 卡余额与所属账户共享（借记卡语义），转账日限额按卡生效。
+CARDS: dict[str, list[dict[str, Any]]] = {
+    "user_zhang": [
+        {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "工资卡"}
+    ]
 }
+
+
+def _user_cards(user_id: str) -> list[dict[str, Any]]:
+    return CARDS.get(user_id, [])
+
+
+def _first_active_card(user_id: str) -> Optional[dict[str, Any]]:
+    cards = _user_cards(user_id)
+    return next((card for card in cards if card.get("status") == "ACTIVE"), None)
+
+
+def _find_card(user_id: str, card_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """按卡号找卡；未给卡号时回退第一张 ACTIVE 卡（演示单卡语义兼容）。"""
+
+    cards = _user_cards(user_id)
+    if card_id:
+        card_id = str(card_id)
+        return next((card for card in cards if str(card.get("card_id")) == card_id), None)
+    return _first_active_card(user_id) or (cards[0] if cards else None)
+
+
+def _mock_card_masked() -> str:
+    """虚构借记卡的脱敏卡号（62 开头 16 位，仅回传掩码形式）。"""
+
+    digits = "622202" + "".join(str(secrets.randbelow(10)) for _ in range(10))
+    return "**** **** **** " + digits[-4:]
 # Per-card, per-day settled spend.  The card's ``daily_limit`` is enforced on
 # settlement, so lowering a limit (CARD_LIMIT) immediately constrains further
 # payments instead of only being a display field.
@@ -606,8 +637,12 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
         if not isinstance(record, dict) or record.get("risk_profile") not in valid_profiles:
             return False
     cards = state.get("CARDS")
-    if not isinstance(cards, dict) or any(not isinstance(record, dict) for record in cards.values()):
+    if not isinstance(cards, dict) or any(not isinstance(rows, list) for rows in cards.values()):
         return False
+    for rows in cards.values():
+        for record in rows:
+            if not isinstance(record, dict) or not isinstance(record.get("card_id"), str) or not record["card_id"]:
+                return False
     for name in ("SUBSCRIPTIONS", "WEALTH_HOLDINGS"):
         container = state.get(name)
         if not isinstance(container, dict):
@@ -1073,6 +1108,7 @@ _WRITE_ACTIONS_REQUIRING_HEADER = {
     # caller seed (or clear) somebody else's payee list.
     "CONTACT_ADD",
     "CONTACT_DELETE",
+    "CARD_ADD",
 }
 
 
@@ -1248,16 +1284,16 @@ def _card_daily_spent(card_id: str) -> float:
 
 
 def _card_id_for(user_id: str) -> Optional[str]:
-    card = CARDS.get(user_id)
-    if not card:
+    cards = _user_cards(user_id)
+    if not cards:
         return None
-    return str(card.get("card_id") or user_id)
+    return str(cards[0].get("card_id") or user_id)
 
 
 def _enforce_card_limit(user_id: str, amount: float) -> None:
     """Refuse a settlement that would exceed the card's daily payment limit."""
 
-    card = CARDS.get(user_id)
+    card = _first_active_card(user_id)
     card_id = _card_id_for(user_id)
     if not card or not card_id:
         return
@@ -2205,12 +2241,12 @@ def create_renewal_reminders(user_id: str, x_user_id: Optional[str] = Header(Non
 def get_cards(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     request_id = _request_id(x_request_id)
     actor = _get_actor(user_id, x_user_id, action="CARD_QUERY", request_id=request_id)
-    _ensure_account(user_id)
-    card = CARDS.get(user_id)
+    account = _ensure_account(user_id)
+    available = round(float(account["balance"]) - float(account.get("locked_amount", 0.0)), 2)
     data: list[dict[str, Any]] = []
-    if card:
+    for card in _user_cards(user_id):
         enriched = dict(card)
-        card_id = _card_id_for(user_id)
+        card_id = str(card.get("card_id") or "")
         if card_id:
             spent = _card_daily_spent(card_id)
             enriched["daily_spent_today"] = spent
@@ -2218,9 +2254,61 @@ def get_cards(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-Use
                 enriched["daily_remaining"] = round(max(0.0, float(card.get("daily_limit") or 0.0) - spent), 2)
             except (TypeError, ValueError):
                 enriched["daily_remaining"] = None
+        # 借记卡语义：卡余额 = 所属账户可用余额。
+        enriched["available_balance"] = available
         data.append(enriched)
-    audit_event("CARD_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id)
+    audit_event("CARD_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(data)})
     return {"code": 200, "data": data}
+
+
+class CardAddRequest(StrictModel):
+    card_type: str = "借记卡"
+    label: Optional[str] = None
+
+
+@app.post("/api/v1/cards/{user_id}/add")
+def add_card(
+    user_id: str,
+    req: CardAddRequest,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
+    """自行添加一张银行卡（演示：开立即生效，虚构卡号仅回传脱敏形式）。"""
+
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(user_id, x_user_id, action="CARD_ADD", request_id=request_id)
+    idem_payload = {"user_id": user_id, "card_type": req.card_type, "label": req.label}
+    cached = _idempotency_begin(actor, "card_add", idempotency_key, idem_payload, request_id=request_id)
+    if cached is not None:
+        return cached
+    try:
+        _ensure_account(user_id)
+        card_type_raw = sanitize_text(req.card_type or "借记卡", field="卡片类型", max_length=20)
+        card_type = {"借记卡": "借记卡", "虚拟卡": "虚拟卡"}.get(card_type_raw, card_type_raw.upper() if card_type_raw.upper() in {"DEBIT", "VIRTUAL"} else None)
+        if card_type is None:
+            raise SecurityError("卡片类型仅支持：借记卡/虚拟卡", 400, "INVALID_CARD_TYPE")
+        label = sanitize_text(req.label, field="卡片别名", max_length=40) if req.label else None
+    except SecurityError as exc:
+        _idempotency_abort(actor, "card_add", idempotency_key)
+        _record_failure_and_raise(exc, user_id=actor, action="CARD_ADD", request_id=request_id)
+
+    with STATE_LOCK:
+        with _ledger_transaction():
+            card = {
+                "card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}",
+                "number_masked": _mock_card_masked(),
+                "type": card_type,
+                "status": "ACTIVE",
+                "daily_limit": 5000.0,
+                "label": label,
+            }
+            CARDS.setdefault(user_id, []).append(card)
+    persist_ledger()
+    response = {"code": 200, "status": "ISSUED", "data": dict(card)}
+    _idempotency_complete(actor, "card_add", idempotency_key, idem_payload, response)
+    audit_event("CARD_ADD", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"card_id": card["card_id"], "card_type": card_type})
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -2391,10 +2479,11 @@ def operation_precheck(
             elif not any(p["product_id"] == req.product_id for p in WEALTH_PRODUCTS):
                 raise SecurityError("理财产品不存在", 404, "PRODUCT_NOT_FOUND")
         if operation.startswith("CARD_"):
-            card = CARDS.get(req.user_id)
-            if operation != "CARD_APPLY" and not card:
+            cards = _user_cards(req.user_id)
+            if operation != "CARD_APPLY" and not cards:
                 raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
-            if req.card_id and (not card or req.card_id != card.get("card_id")):
+            card = _find_card(req.user_id, req.card_id) if req.card_id else (_first_active_card(req.user_id) or (cards[0] if cards else None))
+            if req.card_id and not card:
                 raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
             if card:
                 current_status = str(card.get("status") or "")
@@ -2411,9 +2500,9 @@ def operation_precheck(
                     raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
             if operation != "CARD_APPLY" and card:
                 # Bind the signed approval to the concrete card even when the
-                # conversational request omitted a card id (the demo user has
-                # one active card).  This prevents a card replacement between
-                # precheck and execution from redirecting the action.
+                # conversational request omitted a card id.  This prevents a
+                # card replacement between precheck and execution from
+                # redirecting the action.
                 target = req.card_id or card.get("card_id")
     except SecurityError as exc:
         _record_failure_and_raise(exc, user_id=actor, action="OPERATION_PRECHECK", request_id=request_id)
@@ -2772,8 +2861,8 @@ def execute_transfer(req: TransferExecuteRequest, x_auth_token: Optional[str] = 
         with _ledger_transaction():
             with authorize_execution(token, from_user=req.from_user, target_id=target_id, amount=req.amount, remark=remark, confirmation=confirmation, mfa_proof=proof, operation="TRANSFER", request_id=request_id) as (payload, _record):
                 sender = ACCOUNTS[req.from_user]
-                card_state = CARDS.get(req.from_user)
-                if card_state and card_state.get("status") != "ACTIVE":
+                user_cards = _user_cards(req.from_user)
+                if user_cards and not _first_active_card(req.from_user):
                     raise SecurityError("付款卡片当前不可用于交易", 423, "CARD_BLOCKED")
                 amount = amount_to_cents(req.amount) / 100.0
                 # The card's daily payment limit is enforced on settlement, not
@@ -3029,10 +3118,11 @@ def execute_operation(
         if operation == "WEALTH_PURCHASE" and req.user_id not in WEALTH_RISK_PROFILES:
             raise SecurityError("申购前请先完成风险评估", 428, "RISK_ASSESSMENT_REQUIRED")
         if operation.startswith("CARD_"):
-            card = CARDS.get(req.user_id)
-            if operation != "CARD_APPLY" and not card:
+            cards = _user_cards(req.user_id)
+            if operation != "CARD_APPLY" and not cards:
                 raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
-            if req.card_id and (not card or req.card_id != card.get("card_id")):
+            card = _find_card(req.user_id, req.card_id) if req.card_id else (_first_active_card(req.user_id) or (cards[0] if cards else None))
+            if req.card_id and not card:
                 raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
             if card:
                 current_status = str(card.get("status") or "")
@@ -3104,7 +3194,8 @@ def execute_operation(
                             holdings.pop(index)
                         result.update({"status": "REDEEMED", "product": product, "redeemed_amount": amount})
                 elif operation == "CARD_APPLY":
-                    card = CARDS.setdefault(req.user_id, {"card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}", "type": "VIRTUAL", "status": "ACTIVE", "daily_limit": 5000.0})
+                    card = {"card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}", "number_masked": _mock_card_masked(), "type": "VIRTUAL", "status": "ACTIVE", "daily_limit": 5000.0}
+                    CARDS.setdefault(req.user_id, []).append(card)
                     result.update({"status": "ISSUED", "card": card})
                 elif operation == "CARD_LIMIT":
                     # ``amount`` is already normalized to cents before the
@@ -3114,11 +3205,13 @@ def execute_operation(
                     new_limit = amount
                     if not math.isfinite(float(new_limit)) or float(new_limit) <= 0:
                         raise SecurityError("卡片额度必须为正数", 400, "INVALID_CARD_LIMIT")
-                    card = CARDS.setdefault(req.user_id, {"card_id": "CARD-001", "type": "VIRTUAL", "status": "ACTIVE", "daily_limit": 5000.0})
+                    card = _find_card(req.user_id, req.card_id) or _first_active_card(req.user_id)
+                    if not card:
+                        raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
                     card["daily_limit"] = round(float(new_limit), 2)
                     result.update({"status": "LIMIT_UPDATED", "card": card})
                 elif operation in {"CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST"}:
-                    card = CARDS.get(req.user_id)
+                    card = _find_card(req.user_id, req.card_id) or _first_active_card(req.user_id)
                     if not card:
                         raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
                     current_status = str(card.get("status") or "")

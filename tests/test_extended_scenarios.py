@@ -238,7 +238,7 @@ def test_card_daily_limit_is_enforced_on_settlement(client: TestClient, monkeypa
     """The card's daily_limit now constrains real payments, not just display."""
 
     monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
-    card = main.CARDS["user_zhang"]
+    card = main.CARDS["user_zhang"][0]
     card["daily_limit"] = 100.0
     balance_before = main.ACCOUNTS["user_zhang"]["balance"]
 

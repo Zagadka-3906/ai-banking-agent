@@ -556,7 +556,7 @@ def test_frozen_account_cannot_move_money(client: TestClient) -> None:
 def test_frozen_card_blocks_settlement(client: TestClient) -> None:
     """A frozen card must block settlement while the account itself is active."""
 
-    card = main.CARDS["user_zhang"]
+    card = main.CARDS["user_zhang"][0]
     sender_before = main.ACCOUNTS["user_zhang"]["balance"]
 
     precheck = _precheck(client, 10.0)
