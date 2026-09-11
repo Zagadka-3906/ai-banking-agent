@@ -62,4 +62,4 @@ python scripts/smoke_test.py http://127.0.0.1:8000
 docker compose down
 ```
 
-参赛提交时附上 `作品简介.md`、`architecture.md`、`security-self-assessment.md`、演示脚本和答辩提纲，并由团队补填真实 GitHub 地址、PPT 和录屏视频。Android 端的真机/模拟器验收步骤（按需启动模拟器、设备凭据、插桩测试、通过标准）见 `device-verification.md`。当前仓库仍是虚构数据的内存 Mock；生产化必须迁移数据库/Redis、OIDC、真实 MFA、TLS/WAF、限流、消息队列、KMS 和合规审查。
+参赛提交时附上 `作品简介.md`、`architecture.md`、`security-self-assessment.md`、演示脚本和答辩提纲，并由团队补填真实 GitHub 地址、PPT 和录屏视频。Android 端的真机/模拟器验收步骤（按需启动模拟器、设备凭据、插桩测试、通过标准）见 `device-verification.md`。当前仓库默认仍是虚构数据的内存 Mock（账本/审批/设备库/审计链可经环境变量选配 HMAC 校验落盘，见 `.env.example`）；生产化必须迁移数据库/Redis、OIDC、真实 MFA、TLS/WAF、限流、消息队列、KMS 和合规审查。

@@ -133,4 +133,4 @@ python scripts/fcm_delivery_e2e.py           # 真实推送投递（需要 FCM �
 * 模拟器不常驻，按需启动（原因见开头）。
 * 设备注册表默认只在内存里：不配 `BANK_DEVICE_STORE_PATH`，核心一重启设备与推送令牌就都没了，推送会静默失效直到用户重新登录。本仓库已支持落盘，见 `.env.example`。
 * 日累计风控是累计的，同一核心进程里反复做敏感操作会升级风险档位；验收时按测试类切分并重启核心。
-* 当前仍是虚构数据的内存 Mock，未做生产化改造（数据库、OIDC、真实 MFA、TLS/WAF、KMS 等），见 `docs/security-self-assessment.md`。
+* 当前仍是虚构数据的演示 Mock（账本/审批/设备库可经环境变量选配落盘），未做生产化改造（数据库、OIDC、真实 MFA、TLS/WAF、KMS 等），见 `docs/security-self-assessment.md`。

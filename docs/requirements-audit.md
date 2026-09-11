@@ -32,4 +32,4 @@ docker compose up --build -d
 python scripts/smoke_test.py http://127.0.0.1:8000
 ```
 
-当前仓库的演示账户、联系人、产品、交易和 MFA 因子均为虚构数据。正式上线前必须替换内存账本，接入 OIDC/设备绑定、真实 MFA、数据库事务、TLS/WAF/限流、KMS、消息队列及合规审查。报名材料中的 GitHub URL、PPT 和演示视频需由参赛团队补充真实地址和文件，不能把本地占位配置当作生产凭证。
+当前仓库的演示账户、联系人、产品、交易和 MFA 因子均为虚构数据。核心账本、待审批注册表、设备注册表和审计链均已支持可选落盘（HMAC 完整性校验、篡改即拒载并冻结写入，见 `.env.example` 的 `BANK_LEDGER_STORE_PATH` / `BANK_APPROVAL_STORE_PATH` / `BANK_DEVICE_STORE_PATH` / `BANK_AUDIT_LOG_PATH`），重启不再丢失已提交状态；但运行时仍是单进程沙箱，正式上线前必须替换为数据库事务，并接入 OIDC/设备绑定、真实 MFA、TLS/WAF/限流、KMS、消息队列及合规审查。报名材料中的 GitHub URL、PPT 和演示视频需由参赛团队补充真实地址和文件，不能把本地占位配置当作生产凭证。

@@ -204,10 +204,16 @@ DEEPSEEK_API_KEY=your_deepseek_api_key_here
 BANK_AUDIT_LOG_PATH=
 # 可选：设备注册表落盘文件；不配置则设备公钥与推送令牌只存在内存里，重启即丢
 BANK_DEVICE_STORE_PATH=
+# 可选：核心账本落盘文件；配置后每笔已提交变更原子快照并在启动时重放，
+# 账户/流水/锁定/风控累计跨重启保留（HMAC 完整性校验，校验失败拒载并冻结写入）
+BANK_LEDGER_STORE_PATH=
 # 可选：审计管理员令牌；同时决定 /tasks/run-due 是否要求管理员身份
 BANK_ADMIN_AUDIT_TOKEN=
 # 渠道网关（agent_api.py）
 BANK_CONVERSATION_DB=agent_conversations.sqlite3
+# 待审批注册表：默认随会话库落盘（<BANK_CONVERSATION_DB>.approvals.json），
+# 网关重启后待审批仍可决策；设为 memory 可关闭，或指定其他文件路径
+BANK_APPROVAL_STORE_PATH=
 BANK_APPROVAL_TTL_SECONDS=110
 BANK_AGENT_RATE_LIMIT_PER_MINUTE=60
 # 推送（服务端一半）：Firebase 服务账号私钥路径，放在仓库之外
@@ -400,8 +406,8 @@ docker compose config --quiet        # 编排文件仍然有效
 
 | 边界 | 现状 |
 | :--- | :--- |
-| 数据与账本 | 全部为虚构演示数据，账本保存在进程内存，重启即恢复初始 fixture |
-| 身份认证 | 已有**真实登录**：`POST /api/v1/auth/login` 用 argon2id 校验口令（演示账户口令 `Bank@2026`），可要求短信 OTP，签发带 `jti` 的会话令牌；`BANK_REQUIRE_SESSION=1` 时写操作强制要求该令牌，且**会话主体覆盖客户端自称的 `X-User-Id`**。生产仍需接 OIDC/统一认证 |
+| 数据与账本 | 全部为虚构演示数据；账本默认在进程内存（重启恢复初始 fixture），配置 `BANK_LEDGER_STORE_PATH` 后每笔已提交变更原子快照落盘并在启动时重放（完整性摘要配了 `BANK_AUTH_SECRET` 时为 HMAC，校验失败拒载并冻结写入）；任务队列仍在进程内存 |
+| 身份认证 | 已有**真实登录**：`POST /api/v1/auth/login` 用 argon2id 校验口令（演示账户口令 `Bank@2026`），可要求短信 OTP，签发带 `jti` 的会话令牌；`BANK_REQUIRE_SESSION=1` 时写操作强制要求该令牌，且**会话主体覆盖客户端自称的 `X-User-Id`**；`POST /api/v1/auth/logout` 在服务端吊销**当前这一个**会话（登出不牵连其他设备）。生产仍需接 OIDC/统一认证 |
 | 设备信任根 | 红区人脸因子由**设备自己的密钥**签名：App 在 Android Keystore 生成 P-256 密钥并注册公钥，服务端按公钥验签绑定 `jti` 的活体挑战（单次消费、60s 时效）。共享 HMAC 票据仅保留在 `BANK_DEMO_MODE` 下作演示捷径，非演示模式一律拒绝 |
 | 推送 | 服务端到设备的投递链路是真实的（服务账号 → OAuth2 → FCM HTTP v1），但需要 `BANK_FCM_CREDENTIALS` 与客户端 `google-services.json`；缺任一项时**不假装成功**，健康端点报 `push.configured=false`，派发审计记 `NOT_SENT` 并附原因 |
 | 设备注册表 | 设备公钥与推送令牌默认只在内存，可选落盘（`BANK_DEVICE_STORE_PATH`）；落盘文件带完整性摘要，配了 `BANK_AUTH_SECRET` 时为 HMAC（可防伪造），否则仅防损坏并在健康端点如实标注 |
@@ -415,7 +421,7 @@ docker compose config --quiet        # 编排文件仍然有效
 | AA 分账 | 在 Mock 账本内**真实收款**：参与人按分单位精确分摊扣款、发起人收款，尾差归发起人（100.00/3 → 33.33+33.33+33.34），参与人余额不足记 `PARTIAL` 并逐笔列明；真实支付渠道回款为扩展项 |
 | 理财 | 风险测评、适合度校验、申赎与持仓为真实状态流转；年化收益与持仓估值为展示字段，**无净值/收益计算** |
 | 卡片额度 | 卡片状态机（ACTIVE/FROZEN/LOST）与 `daily_limit` 均参与结算校验（超限 `CARD_LIMIT_EXCEEDED`，跨日重置） |
-| 渠道网关 | 会话 checkpoint 落 SQLite（`BANK_CONVERSATION_DB`），可跨重启恢复待审批；但网关与核心是**两个进程**，会话注册表以核心为准（网关通过 HTTP 回问核心，不自行维护副本） |
+| 渠道网关 | 会话 checkpoint 落 SQLite（`BANK_CONVERSATION_DB`）；待审批句柄默认随其落盘（`<db>.approvals.json`，同款完整性摘要，`BANK_APPROVAL_STORE_PATH` 可重定位或设 `memory` 关闭），**网关重启后待审批仍可继续决策**；但网关与核心是**两个进程**，会话注册表以核心为准（网关通过 HTTP 回问核心，不自行维护副本） |
 
 上述生产化整改项在 [`docs/security-self-assessment.md`](docs/security-self-assessment.md) 的 P0/P1/P2 清单中有对应条目与优先级。
 
