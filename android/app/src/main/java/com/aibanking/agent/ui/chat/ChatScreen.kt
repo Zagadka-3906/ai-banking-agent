@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -27,6 +29,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -42,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -151,6 +155,15 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                 Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
+            }
+            // 逐题风险测评：固定出现在输入框上端，点选即进下一题。
+            state.quiz?.let { quiz ->
+                RiskQuizPanel(
+                    quiz = quiz,
+                    busy = state.busy,
+                    onAnswer = viewModel::onQuizAnswer,
+                    onGiveUp = viewModel::giveUpQuiz,
+                )
             }
             InputRow(
                 value = state.input,
@@ -308,14 +321,77 @@ private fun ApprovalCard(
     }
 }
 
+/**
+ * 逐题风险测评组件：固定出现在输入框上端，一题一屏、点选即进下一题；
+ * 答满 8 题自动汇成一条作答消息提交（评分与定档都在服务端）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RiskQuizPanel(
+    quiz: RiskQuizUi,
+    busy: Boolean,
+    onAnswer: (QuizQuestionUi, String) -> Unit,
+    onGiveUp: () -> Unit,
+) {
+    val question = quiz.currentQuestion ?: return
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "风险测评 ${quiz.answered + 1}/${quiz.questions.size}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                TextButton(onClick = onGiveUp, enabled = !busy) { Text("放弃") }
+            }
+            LinearProgressIndicator(
+                progress = { quiz.answered.toFloat() / quiz.questions.size },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(question.text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            question.options.forEach { option ->
+                Surface(
+                    onClick = { onAnswer(question, option.key) },
+                    enabled = !busy,
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            option.key,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(24.dp),
+                        )
+                        Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            Text(
+                "完成全部 8 题后自动提交，测评结果决定可申购的产品风险等级。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 @Composable
 private fun InputRow(
     value: String,
     enabled: Boolean,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
-) {
-    Row(
+) {    Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)

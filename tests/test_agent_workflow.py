@@ -640,11 +640,16 @@ def _turn(wired, text: str, thread_id: str) -> dict:
 
 def test_first_wealth_inquiry_triggers_the_quiz(wired):
     values = _turn(wired, "这个钱放着也是放着", "quiz-start")
+    # 触发回复是短引导语；完整题目以结构化载荷下发，供 App 逐题渲染。
     assert values["clarification_required"] is True
-    assert "风险测评问卷" in values["final_response"]
-    assert "1A 2B" in values["final_response"]  # 有作答示例
-    # 题面不出现分值
-    assert "5分" not in values["final_response"] and "（1分）" not in values["final_response"]
+    assert "风险测评" in values["final_response"]
+    assert len(values["final_response"]) < 120
+    quiz = values["risk_quiz"]
+    assert quiz["active"] is True
+    assert [q["number"] for q in quiz["questions"]] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert all(4 <= len(q["options"]) <= 5 for q in quiz["questions"])
+    joined = repr(quiz["questions"])
+    assert "5分" not in joined and "（1分）" not in joined  # 题面不出现分值
     # 档案仍未建立
     assert main.WEALTH_RISK_PROFILES.get("user_zhang") is None
 
@@ -665,6 +670,7 @@ def test_quiz_collects_answers_and_recommends_matching_products(wired):
     assert stored["answers"]["8"] == "C"
     # 匹配产品随结构化结果下发，App 渲染为理财卡片
     assert values["execution_result"]["type"] == "WEALTH_RECOMMEND"
+    assert values["risk_quiz"]["active"] is False  # 完成后载荷关闭
     ids = {item["product_id"] for item in values["execution_result"]["data"]["data"]}
     assert ids == {"CJ01002", "AY90204", "ZY18031"}
 

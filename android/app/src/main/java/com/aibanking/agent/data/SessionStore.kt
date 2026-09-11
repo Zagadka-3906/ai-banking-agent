@@ -54,6 +54,17 @@ class SessionStore(context: Context) {
 
     fun messages(): String? = open(KEY_MESSAGES)
 
+    /** Persist the in-progress risk quiz (question bank JSON) so a restart restores the widget. */
+    fun saveQuiz(json: String) {
+        preferences.edit().putString(KEY_QUIZ, seal(json)).apply()
+    }
+
+    fun quiz(): String? = open(KEY_QUIZ)
+
+    fun clearQuiz() {
+        preferences.edit().remove(KEY_QUIZ).apply()
+    }
+
     /**
      * Drop the credential material.
      *
@@ -69,6 +80,7 @@ class SessionStore(context: Context) {
             .remove(KEY_PRINCIPAL)
             .remove(KEY_CONVERSATION)
             .remove(KEY_MESSAGES)
+            .remove(KEY_QUIZ)
             .apply()
     }
 
@@ -117,6 +129,7 @@ class SessionStore(context: Context) {
         const val KEY_CONVERSATION = "conversation_id"
         const val KEY_DEVICE = "device_id"
         const val KEY_MESSAGES = "chat_messages"
+        const val KEY_QUIZ = "risk_quiz"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val IV_BYTES = 12

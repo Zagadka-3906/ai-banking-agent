@@ -59,6 +59,19 @@ data class ChatMessage(
     val traceId: String? = null,
 )
 
+data class QuizOptionUi(val key: String, val label: String)
+
+data class QuizQuestionUi(val number: Int, val text: String, val options: List<QuizOptionUi>)
+
+/** 逐题作答的问卷组件状态：answers.size 即当前题号。 */
+data class RiskQuizUi(
+    val questions: List<QuizQuestionUi>,
+    val answers: Map<Int, String> = emptyMap(),
+) {
+    val answered: Int get() = answers.size
+    val currentQuestion: QuizQuestionUi? get() = questions.getOrNull(answered)
+}
+
 data class ChatUiState(
     val principal: String = "",
     val authenticated: Boolean = false,
@@ -78,6 +91,8 @@ data class ChatUiState(
     /** Task-centre panel visibility and its server-backed rows. */
     val showTasks: Boolean = false,
     val tasks: List<TaskView> = emptyList(),
+    /** 逐题风险测评组件（输入框上方）：非空即展示。 */
+    val quiz: RiskQuizUi? = null,
     /** 理财页：银行风格产品超市 → 详情。 */
     val showWealth: Boolean = false,
     val wealthScreen: WealthScreen = WealthScreen.LIST,
@@ -168,6 +183,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     authenticated = true,
                     messages = if (restored.isNotEmpty()) restored else listOf(welcome()),
                 )
+            }
+            // 未答完的问卷组件一并恢复，不然重装/重启会把它弄丢。
+            sessionStore.quiz()?.let { json ->
+                runCatching {
+                    val questions = gson.fromJson(json, Array<QuizQuestionUi>::class.java).toList()
+                    if (questions.size == 8) _state.update { it.copy(quiz = RiskQuizUi(questions)) }
+                }
             }
             verifyRestoredSession(storedToken)
         }
@@ -578,10 +600,67 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Exposed so the device panel can mark "this is this phone" honestly. */
     fun currentDeviceId(): String? = deviceId
 
+    /** 点选一个选项：记录并推进；答完第 8 题自动汇成一条消息提交。 */
+    fun onQuizAnswer(question: QuizQuestionUi, key: String) {
+        val quiz = _state.value.quiz ?: return
+        if (question.number != quiz.currentQuestion?.number) return
+        val answers = quiz.answers + (question.number to key)
+        if (answers.size < quiz.questions.size) {
+            _state.update { it.copy(quiz = quiz.copy(answers = answers)) }
+            persistQuiz(_state.value.quiz)
+            return
+        }
+        val combined = quiz.questions.mapNotNull { it.number.toString() + answers[it.number] }
+            .joinToString(" ")
+        _state.update { it.copy(quiz = null, input = "") }
+        persistQuiz(null)
+        sendInternal(combined)
+    }
+
+    /** 放弃测评：把放弃意图发出去，让服务端把问卷状态一并关闭。 */
+    fun giveUpQuiz() {
+        if (_state.value.quiz == null) return
+        _state.update { it.copy(quiz = null) }
+        persistQuiz(null)
+        sendInternal("退出测评")
+    }
+
+    /** 问卷组件状态随手持久化：重装/重启后组件自动恢复，不困在文字兜底里。 */
+    private fun persistQuiz(quiz: RiskQuizUi?) {
+        if (quiz == null) {
+            sessionStore.clearQuiz()
+            return
+        }
+        runCatching { gson.toJson(quiz.questions) }.getOrNull()?.let { sessionStore.saveQuiz(it) }
+    }
+
+    private fun parseQuiz(result: Map<String, Any>?): RiskQuizUi? {
+        val payload = result?.get("risk_quiz") as? Map<*, *> ?: return null
+        if (payload["active"] != true) return null
+        val questions = (payload["questions"] as? List<*>)?.mapNotNull { q ->
+            val m = q as? Map<*, *> ?: return@mapNotNull null
+            val number = (m["number"] as? Number)?.toInt() ?: return@mapNotNull null
+            val text = m["text"]?.toString() ?: return@mapNotNull null
+            val options = (m["options"] as? List<*>)?.mapNotNull { option ->
+                val om = option as? Map<*, *> ?: return@mapNotNull null
+                val key = om["key"]?.toString() ?: return@mapNotNull null
+                QuizOptionUi(key, om["label"]?.toString() ?: "")
+            } ?: emptyList()
+            if (options.isEmpty()) null else QuizQuestionUi(number, text, options)
+        } ?: emptyList()
+        if (questions.size != 8) return null
+        return RiskQuizUi(questions)
+    }
+
     fun send() {
         val current = _state.value
         if (!current.canSend) return
-        val text = current.input.trim()
+        sendInternal(current.input.trim())
+        _state.update { it.copy(input = "") }
+    }
+
+    private fun sendInternal(text: String) {
+        val current = _state.value
         val principal = current.principal
         // A placeholder assistant bubble carries the live stage label and is then
         // replaced by the real answer, so progress appears where the reply will.
@@ -589,7 +668,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 messages = it.messages + ChatMessage(role = ChatRole.USER, text = text) + placeholder,
-                input = "",
                 busy = true,
             )
         }
@@ -628,6 +706,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         },
                         pending = envelope.approval,
                         otp = "",
+                        quiz = parseQuiz(envelope.result),
                     )
                 }
                 persistMessages()
@@ -751,6 +830,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         busy = false,
                         pending = null,
                         otp = "",
+                        quiz = parseQuiz(envelope.result),
                         messages = state.messages + ChatMessage(
                             role = ChatRole.ASSISTANT,
                             text = displayText(envelope.reply, envelope.result),

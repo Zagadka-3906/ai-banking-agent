@@ -524,7 +524,7 @@ class ConversationService:
         request_id: Optional[str],
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
-        for key in ("execution_result", "execution_results", "chart_data", "todo_card", "plan"):
+        for key in ("execution_result", "execution_results", "chart_data", "todo_card", "plan", "risk_quiz"):
             value = state.get(key)
             if value not in (None, [], {}):
                 result[key] = value
