@@ -1401,6 +1401,9 @@ def attach_push_token(device_id: str, token: str, *, user_id: str, request_id: O
             raise SecurityError("该设备已被停用", 403, "DEVICE_REVOKED")
         record["push_token"] = safe_token
         record["push_token_updated_at"] = int(time.time())
+        # Durable immediately, not on the next restart: a token that only exists
+        # in memory is exactly the state that made a restart silently break push.
+        _persist_devices_locked()
     audit_event(
         "PUSH_TOKEN_REGISTERED",
         user_id=principal,
@@ -1470,6 +1473,7 @@ def enroll_device(
                 existing["label"] = safe_label
             if safe_version:
                 existing["app_version"] = safe_version
+            _persist_devices_locked()
             audit_event(
                 "DEVICE_SEEN",
                 user_id=principal,
@@ -1494,6 +1498,7 @@ def enroll_device(
         }
         DEVICES[device_id] = record
         _purge_devices()
+        _persist_devices_locked()
 
     audit_event(
         "DEVICE_ENROLLED",
@@ -1532,6 +1537,9 @@ def revoke_device(device_id: str, *, user_id: str, request_id: Optional[str] = N
             raise SecurityError("设备不存在", 404, "DEVICE_NOT_FOUND")
         record["status"] = DEVICE_STATUS_REVOKED
         record["revoked_at"] = int(time.time())
+        # A revocation that a restart forgets would silently re-arm a device the
+        # user just disabled.
+        _persist_devices_locked()
     audit_event(
         "DEVICE_REVOKED",
         user_id=principal,
@@ -1541,6 +1549,196 @@ def revoke_device(device_id: str, *, user_id: str, request_id: Optional[str] = N
         metadata={"device_id": candidate},
     )
     return _device_summary(record)
+
+
+# ---------------------------------------------------------------------------
+# Device-registry durability
+#
+# The registry is in memory by default, so a restart forgets every enrolled
+# device *and* every delivery token: the phone then cannot be notified until its
+# owner signs in again, and nothing says so.  Point ``BANK_DEVICE_STORE_PATH`` at
+# a file to keep it across restarts.
+#
+# What is stored is security-sensitive.  Device public keys are what a liveness
+# signature is checked against, and a delivery token is an address the server
+# will push to, so the file carries an integrity digest.  With a configured
+# ``BANK_AUTH_SECRET`` the digest is keyed and a forged file cannot be produced
+# without the server secret; without one it only detects corruption, and
+# ``device_store_status`` reports that rather than implying protection that is
+# not there.
+#
+# A file that fails its digest, or that holds a structurally invalid record, is
+# neither loaded nor overwritten: nothing in it is trusted, and writes are frozen
+# so a later enrollment cannot quietly destroy the evidence.
+# ---------------------------------------------------------------------------
+
+DEVICE_STORE_VERSION = 1
+_DEVICE_STORE_BLOCKED = False
+
+
+def _device_store_target(path: Optional[str] = None) -> Optional[str]:
+    """The configured store path, or None when durability is off."""
+
+    target = (path if path is not None else os.getenv("BANK_DEVICE_STORE_PATH")) or ""
+    return target.strip() or None
+
+
+def _device_store_digest(canonical: str, *, keyed: bool) -> dict[str, str]:
+    if keyed:
+        value = hmac.new(AUTH_SECRET, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+        return {"alg": "hmac-sha256", "value": value}
+    return {"alg": "sha256", "value": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+
+
+def _device_record_valid(device_id: str, record: Any) -> bool:
+    """Re-validate one persisted record before it is trusted again.
+
+    A file is only as trustworthy as its digest, so this is a second line of
+    defence: the id must still be the one *derived from the key it carries*, the
+    key must still be P-256, and the status must still be one we understand.
+    """
+
+    if not isinstance(record, dict):
+        return False
+    if str(record.get("device_id") or "") != device_id:
+        return False
+    if not isinstance(record.get("user_id"), str) or not record["user_id"].strip():
+        return False
+    if record.get("status") not in {DEVICE_STATUS_ACTIVE, DEVICE_STATUS_REVOKED}:
+        return False
+    for stamp in ("created_at", "last_seen_at"):
+        if not isinstance(record.get(stamp), (int, float)):
+            return False
+    try:
+        raw, _key = _decode_device_public_key(str(record.get("public_key") or ""))
+    except Exception:
+        return False
+    return "DEV" + hashlib.sha256(raw).hexdigest()[:24].upper() == device_id
+
+
+def _persist_devices_locked() -> None:
+    """Write the registry atomically.  Assumes ``STATE_LOCK`` is held."""
+
+    target = _device_store_target()
+    if not target or _DEVICE_STORE_BLOCKED:
+        return
+    devices = {device_id: deepcopy(DEVICES[device_id]) for device_id in sorted(DEVICES)}
+    canonical = json.dumps(devices, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    snapshot = {
+        "version": DEVICE_STORE_VERSION,
+        "updated_at": int(time.time()),
+        "devices": devices,
+        "integrity": _device_store_digest(canonical, keyed=AUTH_SECRET_CONFIGURED),
+    }
+    temporary = f"{target}.tmp"
+    try:
+        directory = os.path.dirname(os.path.abspath(target))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass  # best effort; Windows ACLs are not POSIX modes
+        # Replace, never truncate: a crash mid-write must not leave a half file
+        # that the next start would refuse as tampered.
+        os.replace(temporary, target)
+    except OSError:
+        logger.exception("Unable to persist the device store")
+
+
+def persist_devices() -> dict[str, Any]:
+    """Persist on demand; a no-op when durability is off or writes are frozen."""
+
+    with STATE_LOCK:
+        _persist_devices_locked()
+    return device_store_status()
+
+
+def load_device_store(path: Optional[str] = None) -> dict[str, Any]:
+    """Load a persisted registry, refusing anything that fails validation.
+
+    Opt-in and idempotent per process: with no ``BANK_DEVICE_STORE_PATH`` the
+    in-memory demo stays deterministic and side-effect free.
+    """
+
+    global _DEVICE_STORE_LOAD_SUMMARY
+    _DEVICE_STORE_LOAD_SUMMARY = _load_device_store(path)
+    return _DEVICE_STORE_LOAD_SUMMARY
+
+
+def _load_device_store(path: Optional[str] = None) -> dict[str, Any]:
+
+    global _DEVICE_STORE_BLOCKED
+    target = _device_store_target(path)
+    if not target:
+        return {"loaded_devices": 0, "path": None, "message": "BANK_DEVICE_STORE_PATH not configured"}
+    try:
+        with open(target, "r", encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+    except FileNotFoundError:
+        return {"loaded_devices": 0, "path": target, "message": "设备库不存在，从空库开始"}
+    except OSError as exc:
+        _DEVICE_STORE_BLOCKED = True
+        return {"loaded_devices": 0, "path": target, "rejected": True, "error": f"设备库无法读取: {type(exc).__name__}"}
+    except json.JSONDecodeError:
+        _DEVICE_STORE_BLOCKED = True
+        return {"loaded_devices": 0, "path": target, "rejected": True, "error": "设备库不是合法 JSON"}
+
+    if not isinstance(snapshot, dict) or snapshot.get("version") != DEVICE_STORE_VERSION:
+        _DEVICE_STORE_BLOCKED = True
+        return {"loaded_devices": 0, "path": target, "rejected": True, "error": "设备库版本不受支持"}
+    devices = snapshot.get("devices")
+    integrity = snapshot.get("integrity")
+    if not isinstance(devices, dict) or not isinstance(integrity, dict):
+        _DEVICE_STORE_BLOCKED = True
+        return {"loaded_devices": 0, "path": target, "rejected": True, "error": "设备库结构无效"}
+
+    canonical = json.dumps(devices, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    algorithm = str(integrity.get("alg") or "")
+    if algorithm == "hmac-sha256":
+        expected = _device_store_digest(canonical, keyed=True)["value"]
+    elif algorithm == "sha256":
+        expected = _device_store_digest(canonical, keyed=False)["value"]
+    else:
+        _DEVICE_STORE_BLOCKED = True
+        return {"loaded_devices": 0, "path": target, "rejected": True, "error": f"设备库摘要算法未知: {algorithm}"}
+    if not hmac.compare_digest(expected, str(integrity.get("value") or "")):
+        _DEVICE_STORE_BLOCKED = True
+        return {"loaded_devices": 0, "path": target, "rejected": True, "error": "设备库完整性校验失败"}
+
+    for device_id, record in devices.items():
+        if not _device_record_valid(str(device_id), record):
+            _DEVICE_STORE_BLOCKED = True
+            return {"loaded_devices": 0, "path": target, "rejected": True, "error": f"设备记录无效: {device_id}"}
+
+    with STATE_LOCK:
+        for device_id, record in devices.items():
+            DEVICES[str(device_id)] = deepcopy(record)
+        _purge_devices()
+    return {
+        "loaded_devices": len(devices),
+        "path": target,
+        "rejected": False,
+        "keyed": algorithm == "hmac-sha256",
+    }
+
+
+def device_store_status() -> dict[str, Any]:
+    """Describe registry durability without leaking the configured path."""
+
+    configured = bool(_device_store_target())
+    return {
+        "mode": "memory+file" if configured else "memory_only",
+        "file_configured": configured,
+        "file_loaded_devices": _DEVICE_STORE_LOAD_SUMMARY.get("loaded_devices", 0),
+        "file_rejected": bool(_DEVICE_STORE_LOAD_SUMMARY.get("rejected")),
+        "writes_frozen": _DEVICE_STORE_BLOCKED,
+        # False means the file carries a plain checksum: whoever can write it can
+        # also forge it.  Configure BANK_AUTH_SECRET to make the digest keyed.
+        "integrity_keyed": AUTH_SECRET_CONFIGURED,
+    }
 
 
 def _verify_device_attestation(
@@ -1607,6 +1805,7 @@ def _verify_device_attestation(
         except Exception:
             return None
         device["last_seen_at"] = int(now)
+        _persist_devices_locked()
     return challenge
 
 
@@ -1941,6 +2140,7 @@ def security_health() -> dict[str, Any]:
                 "enrolled": len(DEVICES),
                 "active": sum(1 for item in DEVICES.values() if item.get("status") == DEVICE_STATUS_ACTIVE),
                 "revoked": sum(1 for item in DEVICES.values() if item.get("status") == DEVICE_STATUS_REVOKED),
+                "persistence": device_store_status(),
             },
             "push": push_health(),
             "login": {
@@ -1956,7 +2156,7 @@ def security_health() -> dict[str, Any]:
 def reset_security_state() -> None:
     """Test helper; never expose this through the public API."""
 
-    global _AUDIT_PREVIOUS_HASH, _AUDIT_CHAIN_ANCHOR
+    global _AUDIT_PREVIOUS_HASH, _AUDIT_CHAIN_ANCHOR, _DEVICE_STORE_BLOCKED
     with STATE_LOCK:
         AUTH_TOKENS.clear()
         MFA_PROOFS.clear()
@@ -1968,6 +2168,9 @@ def reset_security_state() -> None:
         AUDIT_LOGS.clear()
         _AUDIT_PREVIOUS_HASH = "0" * 64
         _AUDIT_CHAIN_ANCHOR = "0" * 64
+    # A rejected file freezes writes for the life of the process, so a test that
+    # deliberately feeds a forged store must not leave every later test frozen.
+    _DEVICE_STORE_BLOCKED = False
 
 
 # Opt-in durability: when a path is configured, the persisted chain is replayed
@@ -1976,3 +2179,13 @@ def reset_security_state() -> None:
 _AUDIT_LOAD_SUMMARY: dict[str, Any] = load_audit_file()
 if _AUDIT_LOAD_SUMMARY.get("tampered"):
     logger.error("审计文件哈希链校验失败，已保留已校验前缀: %s", _AUDIT_LOAD_SUMMARY.get("error"))
+
+# Same opt-in shape for the device registry: without a path the demo keeps
+# devices in memory only, and without persistence a restart silently drops every
+# enrollment and delivery token.
+load_device_store()
+if _DEVICE_STORE_LOAD_SUMMARY.get("rejected"):
+    logger.error(
+        "设备库未通过校验，已拒绝加载并冻结写入（设备需重新登录注册）: %s",
+        _DEVICE_STORE_LOAD_SUMMARY.get("error"),
+    )

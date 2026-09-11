@@ -26,6 +26,10 @@ agent_conversations.sqlite3*
 *.sqlite3-wal
 .tmp-conversations.sqlite3*
 
+# 设备注册表落盘文件：内容是设备公钥与推送令牌，属敏感材料，不入库
+agent_devices.json*
+devices.json.tmp
+
 # Android 客户端构建产物
 android/.gradle/
 android/.kotlin/

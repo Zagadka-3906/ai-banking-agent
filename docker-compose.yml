@@ -34,6 +34,12 @@ services:
       # server degrades honestly: /api/v1/security/health reports
       # push.configured=false and dispatches audit NOT_SENT with the reason.
       BANK_FCM_CREDENTIALS: /run/secrets/fcm-service-account.json
+      # Durable device registry.  Without it a container recreate forgets every
+      # enrolled device and every delivery token, and push stops working until
+      # each user signs in again.  Its integrity digest is keyed by the
+      # BANK_AUTH_SECRET set above; with no secret it only detects corruption,
+      # which /api/v1/security/health reports as integrity_keyed=false.
+      BANK_DEVICE_STORE_PATH: /data/devices.json
     ports:
       - "8000:8000"
     volumes:
@@ -43,6 +49,7 @@ services:
       # file inside must be named fcm-service-account.json.  ./secrets is
       # git-ignored.
       - ${BANK_FCM_CREDENTIALS_DIR:-./secrets}:/run/secrets:ro
+      - device-store:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 10s
@@ -123,3 +130,6 @@ volumes:
   # Conversation checkpoints, so a pending approval survives a container
   # recreate instead of evaporating with the process.
   agent-conversations:
+  # Enrolled device keys and delivery tokens.  Keep this volume: dropping it
+  # silently disables push for every user until they sign in again.
+  device-store:

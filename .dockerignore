@@ -19,3 +19,6 @@ android
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
+# 设备注册表落盘文件（设备公钥 + 推送令牌）：属于运行期状态，不该被烤进镜像。
+agent_devices.json*
+devices.json.tmp
