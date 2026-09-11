@@ -485,17 +485,28 @@ private fun groupContacts(contacts: List<ContactView>, query: String): List<Cont
     return sections
 }
 
-// 中文 Collator 的顺序就是拼音序，所以首字母不需要拼音库：拿姓名与 A..Z 逐个
-// 比较，最后一个“不晚于该字母”的字母就是分组头。分组与排序同源，永远不会失配。
+// 中文 Collator 的顺序就是拼音序，列表排序直接用它。首字母不能用“与 A..Z
+// 比较”推导：不同 ICU 版本里汉字与 Latin 字母的相对次序不一致（真机上汉字
+// 可能整体排在 A 之前）。改用经典“边界字”法——每个拼音首字母取一个最小
+// 常用字作哨兵，姓名落在哪个哨兵之后（且未到下一个）就归入该字母；哨兵
+// 比较与列表排序用同一个 Collator，永远不会失配。
 private val chinaCollator: java.text.Collator = java.text.Collator.getInstance(java.util.Locale.CHINA)
-private val ALPHABET: List<String> = ('A'..'Z').map { it.toString() }
+private val LETTER_BOUNDARIES: List<Pair<Char, String>> = listOf(
+    'A' to "啊", 'B' to "巴", 'C' to "擦", 'D' to "搭", 'E' to "鹅", 'F' to "发",
+    'G' to "噶", 'H' to "哈", 'J' to "击", 'K' to "喀", 'L' to "拉", 'M' to "妈",
+    'N' to "拿", 'O' to "哦", 'P' to "趴", 'Q' to "七", 'R' to "然", 'S' to "撒",
+    'T' to "塌", 'W' to "挖", 'X' to "西", 'Y' to "压", 'Z' to "杂",
+)
 
 private fun contactLetter(name: String): String {
     val probe = name.trim()
     if (probe.isEmpty()) return "#"
+    val first = probe.first()
+    if (first in 'A'..'Z' || first in 'a'..'z') return first.uppercaseChar().toString()
+    if (first.isDigit()) return "#"
     var letter = "#"
-    for (candidate in ALPHABET) {
-        if (chinaCollator.compare(probe, candidate) >= 0) letter = candidate else break
+    for ((boundaryLetter, boundaryChar) in LETTER_BOUNDARIES) {
+        if (chinaCollator.compare(boundaryChar, probe) <= 0) letter = boundaryLetter.toString() else break
     }
     return letter
 }
