@@ -91,7 +91,10 @@ available_balance = total_balance - locked_amount
 | `GET /api/v1/accounts/{user_id}/balance` | 余额与锁定资金 | GREEN |
 | `GET /api/v1/accounts/{user_id}/transactions` | 流水查询（TODAY/MONTH/LAST_MONTH/YEAR/ALL） | GREEN |
 | `GET /api/v1/accounts/{user_id}/bill-analysis` | 服务端账单事实聚合（沙箱执行，含退款与异常标记） | GREEN |
-| `GET /api/v1/contacts/{user_id}` | 联系人别名（手机号脱敏） | GREEN |
+| `GET /api/v1/contacts/{user_id}` | 内置收款人白名单（手机号脱敏） | GREEN |
+| `GET /api/v1/contacts/{user_id}/book` | 本人联系人簿：姓名、电话、关系、生日 | GREEN |
+| `POST /api/v1/contacts/{user_id}/book` | 新增联系人；电话命中既有账户即关联，否则开立零余额影子收款账户（口令摘要不可用，不可登录），成为一等收款人 | GREEN（强制身份头，幂等，审计） |
+| `POST /api/v1/contacts/{user_id}/book/{contact_id}/remove` | 删除联系人（影子账户保留以对账） | GREEN（强制身份头，审计） |
 | `GET /api/v1/wealth/products` | 理财产品查询 | GREEN |
 | `GET /api/v1/wealth/holdings/{user_id}` | 持仓查询 | GREEN |
 | `GET /api/v1/wealth/recommend` | 按风险档案推荐（带免责声明） | GREEN |
@@ -106,7 +109,9 @@ available_balance = total_balance - locked_amount
 | `POST /api/v1/risk/precheck/unlock` | 为解锁/补偿发放凭证（≤1000 黄区，较大金额红区） | 策略网关 |
 | `POST /api/v1/risk/precheck/operation` | 理财、卡片、订阅、预约/AA 操作预检 | 策略网关 |
 | `POST /api/v1/auth/confirm` | 记录用户明确确认（`/auth/confirmation` 为兼容别名） | YELLOW |
-| `POST /api/v1/auth/session` | 签发会话令牌（绑定主体、短时效、可复用），写操作可用其替代自称身份 | 登录/渠道 |
+| `POST /api/v1/auth/login` | argon2id 口令校验（可选登录 OTP）后签发会话令牌；失败响应不区分账号不存在与口令错误 | 登录 |
+| `POST /api/v1/auth/logout` | 吊销当前出示的会话凭证（不牵连该主体其他会话），审计留痕 | 登录/本人 |
+| `POST /api/v1/auth/session` | 签发会话令牌（绑定主体、短时效、可复用），写操作可用其替代自称身份；`BANK_DEMO_MODE` 门控 | 登录/渠道 |
 | `POST /api/v1/auth/mfa/verify` | 服务端校验 OTP + 签名人脸票据并签发 proof | RED |
 | `POST /api/v1/auth/mfa/face/challenge` | 签发绑定交易 jti 的一次性活体挑战，供模拟设备 SDK 签名 | RED |
 | `POST /api/v1/transfers/execute` | 结算转账 | YELLOW/RED |

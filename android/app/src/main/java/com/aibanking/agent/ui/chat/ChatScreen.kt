@@ -20,6 +20,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.aibanking.agent.data.ApprovalView
+import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.security.BiometricGate
@@ -95,6 +97,10 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                         onClick = viewModel::openDevices,
                         modifier = Modifier.testTag(UiTags.OPEN_DEVICES),
                     ) { Text("设备") }
+                    TextButton(
+                        onClick = viewModel::openContacts,
+                        modifier = Modifier.testTag(UiTags.OPEN_CONTACTS),
+                    ) { Text("联系人") }
                     TextButton(onClick = viewModel::logout) { Text("退出") }
                 },
             )
@@ -167,6 +173,21 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             tasks = state.tasks,
             busy = state.panelBusy,
             onCancel = viewModel::cancelTask,
+            onDismiss = viewModel::dismissPanels,
+        )
+    }
+    if (state.showContacts) {
+        ContactPanel(
+            contacts = state.contacts,
+            busy = state.panelBusy,
+            name = state.contactName,
+            phone = state.contactPhone,
+            relationship = state.contactRelationship,
+            birthday = state.contactBirthday,
+            canAdd = state.canAddContact,
+            onFieldChange = viewModel::onContactFormChange,
+            onAdd = viewModel::addContact,
+            onRemove = viewModel::removeContact,
             onDismiss = viewModel::dismissPanels,
         )
     }
@@ -467,3 +488,115 @@ private fun formatEpochSeconds(epochSeconds: Long): String =
             .withZone(ZoneId.systemDefault())
             .format(Instant.ofEpochSecond(epochSeconds))
     }.getOrDefault("")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ContactPanel(
+    contacts: List<ContactView>,
+    busy: Boolean,
+    name: String,
+    phone: String,
+    relationship: String,
+    birthday: String,
+    canAdd: Boolean,
+    onFieldChange: (String?, String?, String?, String?) -> Unit,
+    onAdd: () -> Unit,
+    onRemove: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("联系人", style = MaterialTheme.typography.titleMedium)
+            if (busy) {
+                CircularProgressIndicator()
+            }
+            if (!busy && contacts.isEmpty()) {
+                Text("还没有联系人。添加后可直接说“给 <姓名> 转 300 元”。", style = MaterialTheme.typography.bodyMedium)
+            }
+            contacts.forEach { contact ->
+                Card(Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(contact.name, style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                contact.phone,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                            Text(
+                                buildString {
+                                    append(contact.relationshipLabel.ifBlank { contact.relationship })
+                                    contact.birthday?.let { append(" · 生日 $it") }
+                                    when {
+                                        contact.linkedExisting -> append(" · 本行账户${contact.accountName?.let { "（$it）" } ?: ""}")
+                                        else -> append(" · 收款账户已就绪")
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { onRemove(contact.contactId) },
+                            enabled = !busy,
+                            modifier = Modifier.testTag(UiTags.CONTACT_REMOVE),
+                        ) { Text("删除") }
+                    }
+                }
+            }
+
+            // The add form lives at the bottom so the list stays the first thing
+            // the eye lands on; the server re-validates every field.
+            Text("添加联系人", style = MaterialTheme.typography.titleSmall)
+            OutlinedTextField(
+                value = name,
+                onValueChange = { onFieldChange(it, null, null, null) },
+                label = { Text("姓名") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = phone,
+                onValueChange = { onFieldChange(null, it, null, null) },
+                label = { Text("电话") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RELATIONSHIP_OPTIONS.forEach { option ->
+                    FilterChip(
+                        selected = relationship == option,
+                        onClick = { onFieldChange(null, null, option, null) },
+                        label = { Text(option) },
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = birthday,
+                onValueChange = { onFieldChange(null, null, null, it) },
+                label = { Text("生日（可选，YYYY-MM-DD）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = onAdd,
+                enabled = canAdd && !busy,
+                modifier = Modifier.fillMaxWidth().testTag(UiTags.CONTACT_ADD),
+            ) { Text(if (busy) "保存中…" else "添加联系人") }
+        }
+    }
+}
+
+/** Small fixed vocabulary so the relationship field is data, not free text. */
+private val RELATIONSHIP_OPTIONS = listOf("家人", "朋友", "同事", "其他")

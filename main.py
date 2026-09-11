@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 import uuid
 from copy import deepcopy
@@ -233,6 +234,18 @@ CONTACTS: dict[str, str] = {
     "13700137000": "user_wife",
 }
 
+# Per-user contact book: contacts the user added through the app (name, phone,
+# relationship, birthday).  A contact whose phone matches an existing account is
+# *linked* to it; anything else gets a zero-balance shadow payee account so a
+# transfer to the new contact settles end to end in the mock.  Shadow accounts
+# carry an unusable password digest, so enrollment can never become a login.
+USER_CONTACTS: dict[str, list[dict[str, Any]]] = {}
+
+CONTACT_RELATIONSHIPS = {"家人": "FAMILY", "亲人": "FAMILY", "朋友": "FRIEND", "好友": "FRIEND", "同事": "COLLEAGUE", "其他": "OTHER"}
+CONTACT_RELATIONSHIP_LABELS = {"FAMILY": "家人", "FRIEND": "朋友", "COLLEAGUE": "同事", "OTHER": "其他"}
+CONTACT_PHONE_RE = re.compile(r"^\d{5,20}$")
+CONTACT_BIRTHDAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 DAILY_TRANSFERS: dict[str, float] = {"user_zhang": 0.0}
 DAILY_TRANSFER_DATE: dict[str, str] = {}
 # Individual lock records make rollback/unlock auditable and prevent a caller
@@ -352,6 +365,7 @@ _LEDGER_STORE_LOAD_SUMMARY: dict[str, Any] = {}
 LEDGER_STATE_NAMES = (
     "ACCOUNTS",
     "CONTACTS",
+    "USER_CONTACTS",
     "DAILY_TRANSFERS",
     "DAILY_TRANSFER_DATE",
     "CARD_DAILY_SPENT",
@@ -451,6 +465,22 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
     for row in state.get("TRANSACTIONS") or []:
         if not isinstance(row, dict) or not isinstance(row.get("account_id"), str) or not _finite_nonnegative(row.get("amount", 0.0)):
             return False
+    # Contact book rows feed the payee allow-list, so a half-written row must
+    # not come back from a restart: name/phone/contact_id are the resolution
+    # keys and every row needs all three.
+    book = state.get("USER_CONTACTS")
+    if not isinstance(book, dict):
+        return False
+    for rows in book.values():
+        if not isinstance(rows, list):
+            return False
+        for row in rows:
+            if not isinstance(row, dict):
+                return False
+            if not all(isinstance(row.get(key), str) and row.get(key) for key in ("contact_id", "name", "phone")):
+                return False
+            if not CONTACT_PHONE_RE.fullmatch(str(row.get("phone"))):
+                return False
     return True
 
 
@@ -881,6 +911,11 @@ _WRITE_ACTIONS_REQUIRING_HEADER = {
     # be attributed to an authenticated principal so another account cannot be
     # overwritten by a forged body user id.
     "WEALTH_RISK_ASSESSMENT",
+    # The contact book is per-user data that feeds the payee allow-list: adding
+    # or removing entries without a presented principal would let an anonymous
+    # caller seed (or clear) somebody else's payee list.
+    "CONTACT_ADD",
+    "CONTACT_DELETE",
 }
 
 
@@ -909,6 +944,21 @@ def _get_actor(requested_user: str, presented_user: Optional[str], *, action: st
 
 def _resolve_target(value: str, *, from_user: Optional[str] = None) -> tuple[str, dict[str, Any]]:
     safe_value = sanitize_text(value, field="收款人", max_length=128)
+    # The caller's own contact book is the first payee allow-list: a name or
+    # phone the user saved through the app resolves to the account it is linked
+    # to (an existing account, or the shadow payee provisioned on enrollment).
+    if from_user:
+        with STATE_LOCK:
+            contact = next(
+                (row for row in USER_CONTACTS.get(from_user, []) if safe_value in {str(row.get("name") or ""), str(row.get("phone") or "")}),
+                None,
+            )
+        if contact and contact.get("account_id"):
+            receiver = ACCOUNTS.get(str(contact["account_id"]))
+            if receiver and receiver.get("status") == "ACTIVE":
+                if str(contact["account_id"]) == from_user:
+                    raise SecurityError("不允许向本人账户转账", 400, "SELF_TRANSFER")
+                return str(contact["account_id"]), receiver
     target_id = CONTACTS.get(safe_value, safe_value)
     receiver = ACCOUNTS.get(target_id)
     if not receiver:
@@ -1479,6 +1529,193 @@ def get_contacts(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-
         seen.add(target_id)
     audit_event("CONTACT_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
     return {"code": 200, "data": rows}
+
+
+class ContactAddRequest(StrictModel):
+    name: str
+    phone: str
+    relationship: str
+    # A birthday is optional display/reminder data, not an authorization input;
+    # it is validated as a plain calendar date and never accepted in the future.
+    birthday: Optional[str] = None
+
+
+def _contact_public_view(row: dict[str, Any]) -> dict[str, Any]:
+    """Client-safe projection of one contact-book row (no account internals)."""
+
+    account_id = str(row.get("account_id") or "")
+    linked_name = ACCOUNTS.get(account_id, {}).get("name") if account_id else None
+    return {
+        "contact_id": row.get("contact_id"),
+        "name": row.get("name"),
+        "phone": row.get("phone"),
+        "relationship": row.get("relationship"),
+        "relationship_label": CONTACT_RELATIONSHIP_LABELS.get(str(row.get("relationship")), str(row.get("relationship"))),
+        "birthday": row.get("birthday"),
+        "account_id": account_id or None,
+        "linked_existing": bool(row.get("linked_existing")),
+        "account_name": linked_name,
+        "created_at": row.get("created_at"),
+    }
+
+
+def _resolve_contact_account(name: str, phone: str) -> tuple[str, bool]:
+    """Return the payee account a contact points at, provisioning one if needed.
+
+    A phone that already belongs to a demo account links to it.  Anything else
+    gets a zero-balance shadow payee account so the transfer settles end to
+    end; its password digest is deliberately unusable, so a contact can never
+    be turned into a login.
+    """
+
+    with STATE_LOCK:
+        linked = next(
+            (uid for uid, account in ACCOUNTS.items() if str(account.get("phone") or "") == phone and str(account.get("status")) == "ACTIVE"),
+            None,
+        )
+        if linked:
+            return linked, True
+        account_id = f"ext{uuid.uuid4().hex[:12]}"
+        ACCOUNTS[account_id] = {
+            "card_no": "----",
+            "name": name,
+            "phone": phone,
+            "balance": 0.0,
+            "locked_amount": 0.0,
+            "status": "ACTIVE",
+            "credential_version": 1,
+            # Unusable digest: argon2 verification fails on it, so the shadow
+            # payee cannot be logged into; a bare ``""`` would trip the ledger
+            # store's structural validation instead.
+            "password_hash": "!contact-book-no-login",
+            "source": "CONTACT_BOOK",
+        }
+        return account_id, False
+
+
+@app.get("/api/v1/contacts/{user_id}/book")
+def list_contact_book(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """The caller's own contact book (distinct from the built-in payee allow-list)."""
+
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(user_id, x_user_id, action="CONTACT_QUERY", request_id=request_id)
+    _ensure_account(user_id)
+    with STATE_LOCK:
+        rows = [_contact_public_view(dict(row)) for row in USER_CONTACTS.get(user_id, [])]
+    audit_event("CONTACT_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows), "source": "contact_book"})
+    return {"code": 200, "data": rows}
+
+
+@app.post("/api/v1/contacts/{user_id}/book")
+def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+    """Add one contact (name, phone, relationship, birthday) for the caller.
+
+    The contact becomes a first-class payee: by name or phone it resolves in
+    ``_resolve_target`` like any built-in contact.  Everything is validated at
+    the boundary - the relationship against a small allow-list, the phone as
+    digits, the birthday as a real (not future) calendar date.
+    """
+
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(user_id, x_user_id, action="CONTACT_ADD", request_id=request_id)
+    idem_payload = {"user_id": user_id, "name": req.name, "phone": req.phone, "relationship": req.relationship, "birthday": req.birthday}
+    cached = _idempotency_begin(actor, "contact_add", idempotency_key, idem_payload, request_id=request_id)
+    if cached is not None:
+        return cached
+    try:
+        _ensure_account(user_id)
+        name = sanitize_text(req.name, field="联系人姓名", max_length=120)
+        if not name:
+            raise SecurityError("联系人姓名不能为空", 400, "CONTACT_NAME_REQUIRED")
+        phone = sanitize_text(req.phone, field="联系电话", max_length=20)
+        if not CONTACT_PHONE_RE.fullmatch(phone or ""):
+            raise SecurityError("联系电话格式无效", 400, "INVALID_CONTACT_PHONE")
+        relationship_raw = sanitize_text(req.relationship, field="与联系人关系", max_length=20)
+        # Accept the Chinese label ("家人") or the canonical code ("FAMILY");
+        # anything else is refused rather than stored as free text.
+        relationship = CONTACT_RELATIONSHIPS.get(relationship_raw)
+        if relationship is None and relationship_raw.upper() in CONTACT_RELATIONSHIP_LABELS:
+            relationship = relationship_raw.upper()
+        if relationship is None:
+            raise SecurityError("关系仅支持：家人/朋友/同事/其他", 400, "INVALID_RELATIONSHIP")
+        birthday: Optional[str] = None
+        if req.birthday:
+            birthday_value = sanitize_text(req.birthday, field="生日", max_length=10)
+            if not CONTACT_BIRTHDAY_RE.fullmatch(birthday_value or ""):
+                raise SecurityError("生日格式应为 YYYY-MM-DD", 400, "INVALID_BIRTHDAY")
+            try:
+                parsed = datetime.strptime(birthday_value, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise SecurityError("生日不是有效日期", 400, "INVALID_BIRTHDAY") from exc
+            if parsed > datetime.now().date():
+                raise SecurityError("生日不能是未来日期", 400, "INVALID_BIRTHDAY")
+            birthday = birthday_value
+    except SecurityError as exc:
+        _idempotency_abort(actor, "contact_add", idempotency_key)
+        _record_failure_and_raise(exc, user_id=actor, action="CONTACT_ADD", request_id=request_id)
+
+    with STATE_LOCK:
+        with _ledger_transaction():
+            existing = USER_CONTACTS.get(user_id, [])
+            if any(row.get("name") == name and row.get("phone") == phone for row in existing):
+                raise SecurityError("该联系人已存在", 409, "CONTACT_EXISTS")
+            account_id, linked_existing = _resolve_contact_account(name, phone)
+            row = {
+                "contact_id": f"CTT{uuid.uuid4().hex[:10].upper()}",
+                "name": name,
+                "phone": phone,
+                "relationship": relationship,
+                "birthday": birthday,
+                "account_id": account_id,
+                "linked_existing": linked_existing,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            USER_CONTACTS.setdefault(user_id, []).append(row)
+    persist_ledger()
+    response = {"code": 200, "status": "CREATED", "data": _contact_public_view(dict(row))}
+    _idempotency_complete(actor, "contact_add", idempotency_key, idem_payload, response)
+    audit_event(
+        "CONTACT_ADD",
+        user_id=actor,
+        risk_level="GREEN",
+        decision="ALLOW",
+        outcome="SUCCESS",
+        request_id=request_id,
+        metadata={"contact_id": row["contact_id"], "name": name, "phone_masked": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else "****", "relationship": relationship, "linked_existing": linked_existing},
+    )
+    return response
+
+
+@app.post("/api/v1/contacts/{user_id}/book/{contact_id}/remove")
+def remove_contact(user_id: str, contact_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Remove one contact from the caller's book.
+
+    Only the book entry goes; a provisioned shadow account stays so past
+    transfers and its received funds remain reconcilable.
+    """
+
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(user_id, x_user_id, action="CONTACT_DELETE", request_id=request_id)
+    _ensure_account(user_id)
+    safe_contact_id = sanitize_text(contact_id, field="联系人编号", max_length=64)
+    with STATE_LOCK:
+        with _ledger_transaction():
+            rows = USER_CONTACTS.get(user_id, [])
+            index = next((i for i, row in enumerate(rows) if row.get("contact_id") == safe_contact_id), None)
+            if index is None:
+                raise SecurityError("联系人不存在", 404, "CONTACT_NOT_FOUND")
+            removed = rows.pop(index)
+    persist_ledger()
+    audit_event(
+        "CONTACT_DELETE",
+        user_id=actor,
+        risk_level="GREEN",
+        decision="ALLOW",
+        outcome="SUCCESS",
+        request_id=request_id,
+        metadata={"contact_id": safe_contact_id, "name": str(removed.get("name") or "")},
+    )
+    return {"code": 200, "status": "REMOVED", "data": {"contact_id": safe_contact_id}}
 
 
 @app.get("/api/v1/accounts/{user_id}/bill-analysis")
@@ -2969,7 +3206,7 @@ def security_audit_trace(request_id: str, x_admin_token: Optional[str] = Header(
     return {"code": 200, **trace}
 
 
-__all__ = ["app", "ACCOUNTS", "CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "DEVICES", "reset_state"]
+__all__ = ["app", "ACCOUNTS", "CONTACTS", "USER_CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "DEVICES", "reset_state"]
 
 
 # Test/demo reset helper.  It is intentionally not exposed as an HTTP route;
@@ -3002,6 +3239,7 @@ def reset_state() -> None:
         ACCOUNTS.update(deepcopy(_INITIAL_ACCOUNTS))
         CONTACTS.clear()
         CONTACTS.update(deepcopy(_INITIAL_CONTACTS))
+        USER_CONTACTS.clear()
         TRANSACTIONS[:] = deepcopy(_INITIAL_TRANSACTIONS)
         DAILY_TRANSFERS.clear()
         DAILY_TRANSFERS["user_zhang"] = 0.0

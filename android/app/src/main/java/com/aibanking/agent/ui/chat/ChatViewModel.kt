@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibanking.agent.data.AgentRepository
 import com.aibanking.agent.data.ApprovalView
+import com.aibanking.agent.data.ContactRepository
+import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.data.DeviceRepository
 import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.GatewayException
@@ -65,9 +67,22 @@ data class ChatUiState(
     /** Task-centre panel visibility and its server-backed rows. */
     val showTasks: Boolean = false,
     val tasks: List<TaskView> = emptyList(),
+    /** Contact-book panel visibility, its rows, and the add form. */
+    val showContacts: Boolean = false,
+    val contacts: List<ContactView> = emptyList(),
+    val contactName: String = "",
+    val contactPhone: String = "",
+    val contactRelationship: String = "朋友",
+    val contactBirthday: String = "",
     val panelBusy: Boolean = false,
 ) {
     val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy && pending == null
+
+    /** The add form is only complete when the server-mandated fields make sense. */
+    val canAddContact: Boolean
+        get() = contactName.isNotBlank() &&
+            contactPhone.filter(Char::isDigit).length in 5..20 &&
+            (contactBirthday.isBlank() || contactBirthday.matches(Regex("""\d{4}-\d{2}-\d{2}""")))
 }
 
 /**
@@ -87,6 +102,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val login = LoginRepository.create()
     private val devices = DeviceRepository.create()
     private val tasks = TaskRepository.create()
+    private val contacts = ContactRepository.create()
     private val gson = Gson()
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -312,7 +328,93 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false) }
+    // -- contact book panel --------------------------------------------------
+
+    fun openContacts() {
+        _state.update { it.copy(showContacts = true, showDevices = false, showTasks = false, panelBusy = true) }
+        refreshContacts()
+    }
+
+    fun refreshContacts() {
+        val principal = _state.value.principal
+        viewModelScope.launch {
+            try {
+                val rows = withContext(Dispatchers.IO) { contacts.list(principal, sessionToken ?: "") }
+                _state.update { it.copy(contacts = rows, panelBusy = false) }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    fun onContactFormChange(name: String? = null, phone: String? = null, relationship: String? = null, birthday: String? = null) {
+        _state.update { current ->
+            current.copy(
+                contactName = name ?: current.contactName,
+                // The phone field keeps digits only, mirroring the server rule.
+                contactPhone = phone?.filter(Char::isDigit)?.take(20) ?: current.contactPhone,
+                contactRelationship = relationship ?: current.contactRelationship,
+                // Birthday is typed as YYYY-MM-DD digits with dashes preserved.
+                contactBirthday = birthday?.filter { it.isDigit() || it == '-' }?.take(10) ?: current.contactBirthday,
+            )
+        }
+    }
+
+    /**
+     * Save one contact (name, phone, relationship, birthday).
+     *
+     * The core validates everything again; whatever it returns, the local form
+     * is only cleared when the server actually accepted the row, so a refusal
+     * never silently eats what the user typed.
+     */
+    fun addContact() {
+        val principal = _state.value.principal
+        val form = _state.value
+        if (!form.canAddContact || form.panelBusy) return
+        _state.update { it.copy(panelBusy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val created = withContext(Dispatchers.IO) {
+                    contacts.add(
+                        principal = principal,
+                        sessionToken = sessionToken ?: "",
+                        name = form.contactName.trim(),
+                        phone = form.contactPhone,
+                        relationship = form.contactRelationship,
+                        birthday = form.contactBirthday.takeIf { it.isNotBlank() },
+                    )
+                }
+                _state.update {
+                    it.copy(
+                        panelBusy = false,
+                        contactName = "",
+                        contactPhone = "",
+                        contactBirthday = "",
+                        notice = "联系人 ${created.name} 已添加，可以直接转账",
+                    )
+                }
+                refreshContacts()
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    fun removeContact(contactId: String) {
+        val principal = _state.value.principal
+        _state.update { it.copy(panelBusy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { contacts.remove(contactId, principal, sessionToken ?: "") }
+                _state.update { it.copy(panelBusy = false, notice = "联系人已删除") }
+                refreshContacts()
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false) }
 
     /** Exposed so the device panel can mark "this is this phone" honestly. */
     fun currentDeviceId(): String? = deviceId

@@ -17,8 +17,11 @@ object UiTags {
 
     const val OPEN_DEVICES = "open_devices"
     const val OPEN_TASKS = "open_tasks"
+    const val OPEN_CONTACTS = "open_contacts"
     const val DEVICE_REVOKE = "device_revoke"
     const val TASK_CANCEL = "task_cancel"
+    const val CONTACT_ADD = "contact_add"
+    const val CONTACT_REMOVE = "contact_remove"
 
     const val APPROVAL_APPROVE = "approval_approve"
     const val APPROVAL_REJECT = "approval_reject"
