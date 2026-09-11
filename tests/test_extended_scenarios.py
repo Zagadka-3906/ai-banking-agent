@@ -97,13 +97,13 @@ def test_subscription_cancel_and_card_apply_use_approval_gate(client: TestClient
 def test_wealth_purchase_requires_server_mfa(client: TestClient):
     pre = client.post(
         "/api/v1/risk/precheck/operation",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "MMF001", "amount": 1000, "reason": "长期储蓄"},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄"},
         headers=headers(),
     )
     assert pre.status_code == 200 and pre.json()["risk_level"] == "RED"
     token = pre.json()["auth_token"]
     client.post("/api/v1/auth/confirm", json={}, headers=headers(token))
-    blocked = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "MMF001", "amount": 1000, "reason": "长期储蓄", "auth_token": token}, headers=headers(token))
+    blocked = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄", "auth_token": token}, headers=headers(token))
     assert blocked.status_code in {403, 428}
     # The red-zone flow now requires a signed face attestation ticket; a bare
     # boolean must not satisfy the factor (defense in depth).
@@ -111,7 +111,7 @@ def test_wealth_purchase_requires_server_mfa(client: TestClient):
     assert boolean_only.status_code == 403
     mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": face_attest(client, token)}, headers=headers(token))
     assert mfa.status_code == 200
-    completed = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "MMF001", "amount": 1000, "reason": "长期储蓄", "auth_token": token, "mfa_proof": mfa.json()["mfa_proof"]}, headers={**headers(token), "X-MFA-Proof": mfa.json()["mfa_proof"]})
+    completed = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄", "auth_token": token, "mfa_proof": mfa.json()["mfa_proof"]}, headers={**headers(token), "X-MFA-Proof": mfa.json()["mfa_proof"]})
     assert completed.status_code == 200, completed.text
 
 
@@ -126,18 +126,18 @@ def test_risk_assessment_is_available_to_agent_and_compare_is_source_bound(clien
     assert main.WEALTH_RISK_PROFILES["user_zhang"]["risk_profile"] == "BALANCED"
 
     comparison = client.get(
-        "/api/v1/wealth/compare?product_ids=MMF001,BOND002",
+        "/api/v1/wealth/compare?product_ids=CJ01002,AY90204",
         headers=headers(),
     )
     assert comparison.status_code == 200, comparison.text
-    assert [item["product_id"] for item in comparison.json()["data"]] == ["MMF001", "BOND002"]
+    assert [item["product_id"] for item in comparison.json()["data"]] == ["CJ01002", "AY90204"]
 
 
 def test_purchase_requires_a_recorded_risk_assessment(client: TestClient):
     main.WEALTH_RISK_PROFILES.pop("user_zhang", None)
     blocked = client.post(
         "/api/v1/risk/precheck/operation",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "MMF001", "amount": 100},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 100},
         headers=headers(),
     )
     assert blocked.status_code == 428

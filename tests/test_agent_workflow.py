@@ -196,8 +196,8 @@ def test_incomplete_transfer_is_clarification(wired):
 
 
 def test_product_id_is_not_parsed_as_amount():
-    parsed = agent._local_parse("申购 MMF001 1000 元")
-    assert parsed["target"] == "MMF001"
+    parsed = agent._local_parse("申购 CJ01002 1000 元")
+    assert parsed["target"] == "CJ01002"
     assert parsed["amount"] == 1000.0
 
 
@@ -439,9 +439,9 @@ def test_read_collections_are_rendered_readably(wired):
     """
 
     cases = [
-        ("推荐稳健理财产品", "WEALTH_RECOMMEND", ("MMF001", "稳健现金管理", "风险 R1", "2.10%", "不构成投资建议")),
-        ("查看理财产品", "WEALTH_QUERY", ("MMF001", "BOND002", "INDEX003", "在售理财产品")),
-        ("比较 MMF001 和 BOND002", "WEALTH_COMPARE", ("产品对比", "MMF001", "BOND002")),
+        ("推荐稳健理财产品", "WEALTH_RECOMMEND", ("CJ01002", "稳健添利", "风险 R1", "2.20%", "不构成投资建议")),
+        ("查看理财产品", "WEALTH_QUERY", ("CJ01002", "AY90204", "ZY18031", "QK36509", "在售理财产品")),
+        ("比较 CJ01002 和 AY90204", "WEALTH_COMPARE", ("产品对比", "CJ01002", "AY90204")),
         ("我有哪些订阅", "SUBSCRIPTION_QUERY", ("Apple 订阅", "视频会员", "下次扣款")),
         ("我的卡片", "CARD_QUERY", ("CARD-001", "日限额", "状态 ACTIVE")),
     ]
@@ -461,7 +461,7 @@ def test_read_collections_are_rendered_readably(wired):
     ("text", "intent"),
     [
         ("帮我做风险评估，我是新手，低风险", "WEALTH_RISK_ASSESSMENT"),
-        ("比较 MMF001 和 BOND002", "WEALTH_COMPARE"),
+        ("比较 CJ01002 和 AY90204", "WEALTH_COMPARE"),
         ("修改我的登录密码", "PASSWORD_CHANGE"),
     ],
 )

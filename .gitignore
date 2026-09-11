@@ -53,3 +53,4 @@ android/app/google-services.json
 # docker compose 的只读挂载源：放进去的服务账号私钥同样不入库。
 secrets/
 
+.tmp-screenshots/

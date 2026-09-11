@@ -277,10 +277,62 @@ LOCKS: dict[str, dict[str, Any]] = {}
 # without pretending that a real bank is connected.  These records are
 # deterministic fixtures; all writes still pass through the same authorization
 # gateway used by transfers.
+# 演示产品货架：四款虚构产品覆盖 R1-R4 完整风险谱系。除旧字段外新增
+# category/benchmark/term/underlying/target_clients，供理财页展示完整要素；
+# 全部为虚构演示数据，业绩比较基准不是收益承诺。
 WEALTH_PRODUCTS: list[dict[str, Any]] = [
-    {"product_id": "MMF001", "name": "稳健现金管理", "risk_level": "R1", "annualized_yield": 0.021, "min_amount": 100.0, "liquidity": "T+0"},
-    {"product_id": "BOND002", "name": "短债增强", "risk_level": "R2", "annualized_yield": 0.034, "min_amount": 1000.0, "liquidity": "T+1"},
-    {"product_id": "INDEX003", "name": "宽基指数基金", "risk_level": "R3", "annualized_yield": None, "min_amount": 100.0, "liquidity": "T+2"},
+    {
+        "product_id": "CJ01002",
+        "name": "稳健添利·日日盈",
+        "category": "现金管理类",
+        "risk_level": "R1",
+        "benchmark": "2.05% ~ 2.35%（7日年化）",
+        "annualized_yield": 0.022,
+        "min_amount": 1.0,
+        "liquidity": "T+0 快速赎回/T+1 确认",
+        "term": "灵活申赎（工作日 T+1 确认，单日快速赎回最高 1 万元）",
+        "underlying": "高流动性资产：银行存款、同业存单、高信用评级短期债券",
+        "target_clients": "追求资金高流动性、主要存放日常零花与备用金的保守型投资者",
+    },
+    {
+        "product_id": "AY90204",
+        "name": "安逸安享·季季丰90天",
+        "category": "固定收益类",
+        "risk_level": "R2",
+        "benchmark": "2.75% ~ 3.10%（年化）",
+        "annualized_yield": 0.029,
+        "min_amount": 1000.0,
+        "liquidity": "90 天封闭",
+        "term": "90 天封闭运作，到期自动滚存或转出",
+        "underlying": "80% 以上配置国债、政策性金融债、AAA 级企业信用债，其余投资货币市场工具",
+        "target_clients": "有短期闲置资金，希望收益高于活期存款且能接受固定锁定期限的用户",
+    },
+    {
+        "product_id": "ZY18031",
+        "name": "智远创赢·成长平衡180天",
+        "category": "固收+混合类",
+        "risk_level": "R3",
+        "benchmark": "3.60% ~ 4.80%（年化）",
+        "annualized_yield": 0.042,
+        "min_amount": 10000.0,
+        "liquidity": "180 天定开",
+        "term": "180 天定期开放",
+        "underlying": "主仓位（70%~85%）投资中高等级固定收益证券筑底；副仓位（15%~30%）参与沪深300成分股打新、高股息红利资产及量化中性策略",
+        "target_clients": "具有一定风险承受能力，希望在债底防守基础上争取权益市场超额收益的稳健进取型客户",
+    },
+    {
+        "product_id": "QK36509",
+        "name": "乾坤进取·产业智选封闭1年",
+        "category": "权益类",
+        "risk_level": "R4",
+        "benchmark": "沪深300指数收益率×70% + 中债综合财富指数收益率×30%",
+        "annualized_yield": None,
+        "min_amount": 50000.0,
+        "liquidity": "365 天封闭",
+        "term": "365 天全封闭运行",
+        "underlying": "不低于 80% 资产直接或间接投资于 A 股及港股通标的，重点布局半导体、先进制造与高端装备等成长行业",
+        "target_clients": "能够承受本金波动、看好产业转型长期红利的高净值积极型投资者",
+    },
 ]
 WEALTH_HOLDINGS: dict[str, list[dict[str, Any]]] = {"user_zhang": []}
 # A demo risk profile is stored separately from the account and contains no
@@ -1422,7 +1474,8 @@ def _ensure_product_suitable(user_id: str, product_id: str) -> dict[str, Any]:
         product_rank = int(str(product.get("risk_level", "R9")).lstrip("R"))
     except (TypeError, ValueError):
         raise SecurityError("理财产品风险等级无效", 500, "PRODUCT_RISK_INVALID")
-    max_rank = {"CONSERVATIVE": 1, "BALANCED": 2, "AGGRESSIVE": 3}[profile]
+    # 最高问卷档（进取型）解锁全部 R1-R4：货架最右列的权益类产品只对它开放。
+    max_rank = {"CONSERVATIVE": 1, "BALANCED": 2, "AGGRESSIVE": 4}[profile]
     if product_rank > max_rank:
         raise SecurityError("当前风险档案不适合该产品，请先重新评估", 403, "RISK_PROFILE_MISMATCH")
     return product
@@ -1814,10 +1867,28 @@ def recommend_wealth(user_id: Optional[str] = None, risk_profile: str = "CONSERV
     profile = str(risk_profile or "CONSERVATIVE").upper()
     if profile not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_RISK_PROFILE", "message": "风险偏好无效"})
-    max_risk = {"CONSERVATIVE": 1, "BALANCED": 2, "AGGRESSIVE": 3}[profile]
+    max_risk = {"CONSERVATIVE": 1, "BALANCED": 2, "AGGRESSIVE": 4}[profile]
     products = [p for p in WEALTH_PRODUCTS if int(str(p.get("risk_level", "R3")).lstrip("R")) <= max_risk]
     audit_event("WEALTH_RECOMMEND", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"risk_profile": profile, "count": len(products)})
     return {"code": 200, "risk_profile": profile, "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [dict(p) for p in products]}
+
+
+@app.get("/api/v1/wealth/risk-profile")
+def get_risk_profile(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """GREEN: the caller's own stored suitability profile (or none yet).
+
+    The wealth page reads this to decide whether to show "去测评" instead of
+    letting a purchase die later at precheck with 428.
+    """
+
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(x_user_id, x_user_id, action="WEALTH_QUERY", request_id=request_id)
+    _ensure_account(actor)
+    profile = deepcopy(WEALTH_RISK_PROFILES.get(actor))
+    audit_event("WEALTH_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"source": "risk_profile", "present": profile is not None})
+    return {"code": 200, "data": profile}
 
 
 @app.post("/api/v1/wealth/risk-assessment")

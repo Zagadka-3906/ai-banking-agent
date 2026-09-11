@@ -86,7 +86,11 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             TopAppBar(
                 title = { Text("AI 银行助手") },
                 actions = {
-                    Text("已登录：${state.principal}", style = MaterialTheme.typography.labelMedium)
+                    Text(state.principal, style = MaterialTheme.typography.labelMedium)
+                    TextButton(
+                        onClick = viewModel::openWealth,
+                        modifier = Modifier.testTag(UiTags.OPEN_WEALTH),
+                    ) { Text("理财") }
                     TextButton(
                         onClick = viewModel::openTasks,
                         modifier = Modifier.testTag(UiTags.OPEN_TASKS),
@@ -177,6 +181,10 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     if (state.showContacts) {
         // 通讯录式全屏界面（列表/详情/新增），覆盖聊天页。
         ContactsUi(state, viewModel)
+    }
+    if (state.showWealth) {
+        // 银行风格理财页（产品超市/详情），申购预填回聊天走红色审批流。
+        WealthUi(state, viewModel)
     }
 }
 

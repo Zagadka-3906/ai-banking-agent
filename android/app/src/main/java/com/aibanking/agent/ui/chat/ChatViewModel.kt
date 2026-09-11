@@ -14,8 +14,12 @@ import com.aibanking.agent.data.GatewayException
 import com.aibanking.agent.data.LoginRepository
 import com.aibanking.agent.data.SessionCheck
 import com.aibanking.agent.data.SessionStore
+import com.aibanking.agent.data.HoldingView
+import com.aibanking.agent.data.ProductView
+import com.aibanking.agent.data.RiskProfileView
 import com.aibanking.agent.data.TaskRepository
 import com.aibanking.agent.data.TaskView
+import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.push.PushNotifications
 import com.aibanking.agent.security.DeviceKeyManager
 import com.google.gson.Gson
@@ -32,6 +36,9 @@ enum class ChatRole { USER, ASSISTANT }
 
 /** 通讯录式联系人界面的三个页面：列表 → 详情 → 新增。 */
 enum class ContactsScreen { LIST, DETAIL, ADD }
+
+/** 理财页两个页面：产品超市 → 产品详情（申购预填回聊天）。 */
+enum class WealthScreen { LIST, DETAIL }
 
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
@@ -71,6 +78,14 @@ data class ChatUiState(
     /** Task-centre panel visibility and its server-backed rows. */
     val showTasks: Boolean = false,
     val tasks: List<TaskView> = emptyList(),
+    /** 理财页：银行风格产品超市 → 详情。 */
+    val showWealth: Boolean = false,
+    val wealthScreen: WealthScreen = WealthScreen.LIST,
+    val wealthProducts: List<ProductView> = emptyList(),
+    val wealthHoldings: List<HoldingView> = emptyList(),
+    val riskProfile: RiskProfileView? = null,
+    val selectedProductId: String? = null,
+    val buyAmount: String = "",
     /** 联系人簿：全屏通讯录式界面（列表 → 详情 → 新增）。 */
     val showContacts: Boolean = false,
     val contactsScreen: ContactsScreen = ContactsScreen.LIST,
@@ -84,6 +99,20 @@ data class ChatUiState(
     val panelBusy: Boolean = false,
 ) {
     val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy && pending == null
+
+    /** 当前打开的理财详情产品。 */
+    val selectedProduct: ProductView?
+        get() = wealthProducts.firstOrNull { it.productId == selectedProductId }
+
+    /** 金额合法且风险档案等级不低于产品风险时才允许发起申购。 */
+    val canBuySelected: Boolean
+        get() {
+            val product = selectedProduct ?: return false
+            val amount = buyAmount.toDoubleOrNull() ?: return false
+            if (amount < product.minAmount || amount <= 0.0) return false
+            val profileRank = profileRank(riskProfile?.riskProfile) ?: return false
+            return profileRank >= productRank(product.riskLevel)
+        }
 
     /** The add form is only complete when the server-mandated fields make sense. */
     val canAddContact: Boolean
@@ -110,6 +139,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val devices = DeviceRepository.create()
     private val tasks = TaskRepository.create()
     private val contacts = ContactRepository.create()
+    private val wealth = WealthRepository.create()
     private val gson = Gson()
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -498,7 +528,52 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false) }
+    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false) }
+
+    // -- wealth (银行风格理财页) ----------------------------------------------
+
+    fun openWealth() {
+        _state.update { it.copy(showWealth = true, showContacts = false, showDevices = false, showTasks = false, wealthScreen = WealthScreen.LIST, panelBusy = true) }
+        refreshWealth()
+    }
+
+    fun closeWealth() = _state.update { it.copy(showWealth = false) }
+
+    fun showProductDetail(productId: String) =
+        _state.update { it.copy(wealthScreen = WealthScreen.DETAIL, selectedProductId = productId, buyAmount = "") }
+
+    fun backToWealthList() =
+        _state.update { it.copy(wealthScreen = WealthScreen.LIST, selectedProductId = null, buyAmount = "") }
+
+    fun onBuyAmountChange(value: String) =
+        _state.update { it.copy(buyAmount = value.filter { ch -> ch.isDigit() || ch == '.' }.take(12)) }
+
+    fun refreshWealth() {
+        val principal = _state.value.principal
+        viewModelScope.launch {
+            try {
+                val products = withContext(Dispatchers.IO) { wealth.products(principal, sessionToken ?: "") }
+                val holdings = withContext(Dispatchers.IO) { wealth.holdings(principal, sessionToken ?: "") }
+                val profile = withContext(Dispatchers.IO) { wealth.riskProfile(principal, sessionToken ?: "") }
+                _state.update { it.copy(wealthProducts = products, wealthHoldings = holdings, riskProfile = profile, panelBusy = false) }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    /**
+     * 申购不在页面里发生：预填聊天话术并回到对话，金额与产品代码由 Agent
+     * 重新解析、核心按红色风险流程（短信 + 设备签名）最终授权。客户端只是
+     * 把用户的意图送到那条安全链路的入口。
+     */
+    fun startPurchase(product: ProductView, amountText: String) {
+        val amount = amountText.toDoubleOrNull() ?: return
+        if (amount < product.minAmount || amount <= 0.0) return
+        val display = if (amount == amount.toLong().toDouble()) amount.toLong().toString() else amount.toString()
+        onInputChange("申购 ${product.productId} $display 元")
+        closeWealth()
+    }
 
     /** Exposed so the device panel can mark "this is this phone" honestly. */
     fun currentDeviceId(): String? = deviceId
@@ -711,3 +786,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_PERSISTED_MESSAGES = 100
     }
 }
+
+/** 风险档案 → 可购买的最高产品等级（与服务端适当性规则一致：进取型解锁 R4）。 */
+internal fun profileRank(profile: String?): Int? = when (profile) {
+    "CONSERVATIVE" -> 1
+    "BALANCED" -> 2
+    "AGGRESSIVE" -> 4
+    else -> null
+}
+
+internal fun productRank(riskLevel: String): Int = riskLevel.removePrefix("R").toIntOrNull() ?: 9

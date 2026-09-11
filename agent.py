@@ -237,7 +237,7 @@ def _amount_from_text(text: str) -> Optional[float]:
     # common Chinese numerals are handled explicitly; unknown wording remains
     # empty and triggers clarification rather than an invented amount.
     # Prefer a number followed by an explicit yuan unit.  The negative
-    # boundaries avoid interpreting product IDs such as ``MMF001`` as the
+    # boundaries avoid interpreting product IDs such as ``CJ01002`` as the
     # amount ``1``.
     match = re.search(r"(?<![A-Za-z0-9])(?:¥|￥|元|块|人民币)?\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s*(?:元|块|人民币|元钱)(?![A-Za-z0-9])", text)
     if not match:
@@ -270,10 +270,18 @@ def _target_from_text(text: str) -> Optional[str]:
         "老婆", "爱人", "媳妇", "妻子", "丈夫", "老公", "夫人",
         "儿子", "女儿", "闺女", "兄弟", "兄妹", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",
         "爸爸", "妈妈", "父亲", "母亲", "父母",
-        "王美", "李四", "张三", "Apple", "苹果", "视频会员", "稳健现金管理", "短债增强", "宽基指数基金", "MMF001", "BOND002", "INDEX003",
+        "王美", "李四", "张三", "Apple", "苹果", "视频会员",
+        "稳健添利", "日日盈", "季季丰", "安逸安享", "成长平衡", "智远创赢", "产业智选", "乾坤进取",
+        "CJ01002", "AY90204", "ZY18031", "QK36509",
     ):
         if alias in text:
-            return {"苹果": "Apple", "稳健现金管理": "MMF001", "短债增强": "BOND002", "宽基指数基金": "INDEX003"}.get(alias, alias)
+            return {
+                "苹果": "Apple",
+                "稳健添利": "CJ01002", "日日盈": "CJ01002",
+                "季季丰": "AY90204", "安逸安享": "AY90204",
+                "成长平衡": "ZY18031", "智远创赢": "ZY18031",
+                "产业智选": "QK36509", "乾坤进取": "QK36509",
+            }.get(alias, alias)
     phone = re.search(r"(?<!\d)(1\d{10})(?!\d)", text)
     return phone.group(1) if phone else None
 
@@ -374,7 +382,7 @@ def _local_parse(text: str) -> dict[str, Any]:
     amount = _amount_from_text(text)
     target = _target_from_text(text)
     product_ids = []
-    for product_id in re.findall(r"\b(?:MMF001|BOND002|INDEX003)\b", text.upper()):
+    for product_id in re.findall(r"\b(?:CJ01002|AY90204|ZY18031|QK36509)\b", text.upper()):
         if product_id not in product_ids:
             product_ids.append(product_id)
     slots: dict[str, Any] = {}
@@ -914,7 +922,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         elif intent == Intent.CROSS_SCENE_LOCK.value and not parsed.get("amount"):
             response = "请补充需要锁定的金额和生日日期，我不会替您猜测预算或日期。"
         elif intent == Intent.WEALTH_COMPARE.value:
-            response = "请至少提供两个理财产品编号（例如：比较 MMF001 和 BOND002）。"
+            response = "请至少提供两个理财产品编号（例如：比较 CJ01002 和 AY90204）。"
         elif intent == Intent.WEALTH_RISK_ASSESSMENT.value:
             slots = parsed.get("slots") if isinstance(parsed.get("slots"), dict) else {}
             missing: list[str] = []
