@@ -374,7 +374,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = withContext(Dispatchers.IO) { devices.list(principal, sessionToken ?: "") }
                 _state.update { it.copy(devices = rows, panelBusy = false) }
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -395,7 +395,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (targetId == deviceId) deviceId = null
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -414,7 +414,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
                 _state.update { it.copy(tasks = rows, panelBusy = false) }
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -428,7 +428,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
                 _state.update { it.copy(tasks = rows, panelBusy = false, notice = "任务已取消") }
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -482,7 +482,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = withContext(Dispatchers.IO) { contacts.list(principal, sessionToken ?: "") }
                 _state.update { it.copy(contacts = rows, panelBusy = false) }
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -536,7 +536,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 refreshContacts()
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -557,7 +557,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 refreshContacts()
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -580,7 +580,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = withContext(Dispatchers.IO) { cardsRepo.list(principal, sessionToken ?: "") }
                 _state.update { it.copy(cards = rows, panelBusy = false) }
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -603,7 +603,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(panelBusy = false, cardLabel = "", notice = "银行卡 ${created.numberMasked} 已添加") }
                 refreshCards()
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -647,7 +647,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val profile = withContext(Dispatchers.IO) { wealth.riskProfile(principal, sessionToken ?: "") }
                 _state.update { it.copy(wealthProducts = products, wealthHoldings = holdings, riskProfile = profile, panelBusy = false) }
             } catch (failure: GatewayException) {
-                _state.update { it.copy(panelBusy = false, error = failure.message) }
+                applyPanelFailure(failure)
             }
         }
     }
@@ -937,6 +937,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * A panel failure is a chat failure that clears a different flag.
+     *
+     * The card / wealth / contact / device / task panels used to report the
+     * message and stop there, so a routine session expiry - sessions are
+     * short-lived and live in the core's memory - left the user "logged in" on a
+     * page where every action then failed.  Sharing the chat path's session check
+     * means an expiry always lands back on the login screen.
+     */
+    private fun applyPanelFailure(failure: GatewayException) {
+        _state.update { state ->
+            if (failure.sessionExpired) {
+                sessionToken = null
+                sessionStore.clear()
+                ChatUiState(error = "登录状态已失效，请重新登录")
+            } else {
+                state.copy(panelBusy = false, error = failure.message)
+            }
+        }
+    }
+
     private fun welcome() = ChatMessage(
         role = ChatRole.ASSISTANT,
         text = "您好！我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片和订阅。高风险操作需要您完成短信验证与设备签名。",
@@ -948,11 +969,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-/** 风险档案 → 可购买的最高产品等级（与服务端适当性规则一致：进取型解锁 R4）。 */
+/**
+ * 风险档案 → 可购买的最高产品等级，与服务端 `profile_rank` 保持一致。
+ *
+ * 服务端有两套词汇：老表单产出 CONSERVATIVE/BALANCED/AGGRESSIVE，8 题问卷产出
+ * C1–C5。只认前者会把刚做完问卷的用户判成"未测评"——详情页一边显示"激进型"、
+ * 一边说"不适合 R1"，购买入口永远不可用。
+ */
 internal fun profileRank(profile: String?): Int? = when (profile) {
-    "CONSERVATIVE" -> 1
-    "BALANCED" -> 2
-    "AGGRESSIVE" -> 4
+    "CONSERVATIVE", "C1" -> 1
+    "BALANCED", "C2" -> 2
+    "C3" -> 3
+    "AGGRESSIVE", "C4" -> 4
+    "C5" -> 5
     else -> null
 }
 

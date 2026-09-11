@@ -151,6 +151,102 @@ def test_purchase_requires_a_recorded_risk_assessment(client: TestClient):
     assert blocked.json()["detail"]["code"] == "RISK_ASSESSMENT_REQUIRED"
 
 
+def test_reading_the_risk_profile_never_echoes_the_score_or_the_answers(client: TestClient):
+    """The questionnaire grades server-side; the scoring key must not travel.
+
+    ``score`` plus the answer sheet is exactly the mapping the suitability gate
+    is built on.  A client holding both can compute the cheapest answer set for
+    any grade and grant itself whatever products it likes, so the read path has
+    to withhold them the same way the submit path does.
+    """
+
+    answers = {"1": "A", "2": "D", "3": "D", "4": "E", "5": "D", "6": "E", "7": "E", "8": "E"}
+    submitted = client.post(
+        "/api/v1/wealth/risk-assessment",
+        json={"user_id": "user_zhang", "answers": answers},
+        headers=headers(),
+    )
+    assert submitted.status_code == 200, submitted.text
+    assert "score" not in submitted.json(), "the submit response must not carry the score either"
+    stored = main.WEALTH_RISK_PROFILES["user_zhang"]
+    assert stored["risk_profile"] == "C5", stored
+    assert "score" in stored and "answers" in stored, "the server still keeps them on file"
+
+    fetched = client.get("/api/v1/wealth/risk-profile", headers=headers())
+    assert fetched.status_code == 200, fetched.text
+    profile = fetched.json()["data"]
+    assert profile["risk_profile"] == stored["risk_profile"]
+    assert "score" not in profile, profile
+    assert "answers" not in profile, profile
+    # The fields the client actually renders must survive the projection.
+    assert profile["assessed_at"] and profile["source"] == "QUESTIONNAIRE"
+
+
+def test_a_questionnaire_grade_can_actually_buy(client: TestClient):
+    """The quiz grades C1-C5; the purchase gate must accept those codes.
+
+    It used to accept only the older CONSERVATIVE/BALANCED/AGGRESSIVE vocabulary,
+    so a user who had just finished the questionnaire was told to go and complete
+    the assessment - the flow the quiz exists for was unreachable.
+    """
+
+    answers = {"1": "A", "2": "D", "3": "D", "4": "E", "5": "D", "6": "E", "7": "E", "8": "E"}
+    graded = client.post(
+        "/api/v1/wealth/risk-assessment",
+        json={"user_id": "user_zhang", "answers": answers},
+        headers=headers(),
+    )
+    assert graded.status_code == 200, graded.text
+    assert main.WEALTH_RISK_PROFILES["user_zhang"]["risk_profile"] == "C5"
+
+    # An R4 product is within a C5 file's reach; the precheck must not answer 428.
+    allowed = client.post(
+        "/api/v1/risk/precheck/operation",
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "QK36509", "amount": 100},
+        headers=headers(),
+    )
+    assert allowed.status_code != 428, allowed.text
+
+    # A conservative file must still be refused an aggressive product.
+    main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C1", "source": "QUESTIONNAIRE"}
+    refused = client.post(
+        "/api/v1/risk/precheck/operation",
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "QK36509", "amount": 100},
+        headers=headers(),
+    )
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"]["code"] == "RISK_PROFILE_MISMATCH"
+
+    # No assessment at all is still a 428, not a silent allow.
+    main.WEALTH_RISK_PROFILES.pop("user_zhang", None)
+    missing = client.post(
+        "/api/v1/risk/precheck/operation",
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "QK36509", "amount": 100},
+        headers=headers(),
+    )
+    assert missing.status_code == 428, missing.text
+
+
+def test_self_service_card_issuance_is_capped_per_user(client: TestClient, monkeypatch):
+    """Cards are ledger state and the snapshot is rewritten in full, so an
+    un-capped add is unbounded growth with quadratic disk work - and every card
+    carries its own daily spending limit."""
+
+    monkeypatch.setattr(main, "CARD_MAX_PER_USER", 3)
+    main.CARDS["user_zhang"] = []
+
+    codes = [
+        client.post("/api/v1/cards/user_zhang/add", json={"card_type": "借记卡"}, headers=headers()).status_code
+        for _ in range(5)
+    ]
+
+    assert codes[:3] == [200, 200, 200], codes
+    assert codes[3:] == [409, 409], codes
+    assert len(main.CARDS["user_zhang"]) == 3
+    refused = client.post("/api/v1/cards/user_zhang/add", json={"card_type": "借记卡"}, headers=headers())
+    assert refused.json()["detail"]["code"] == "CARD_LIMIT_REACHED"
+
+
 def test_password_change_is_red_and_card_lost_state_has_explicit_unreport(client: TestClient):
     token, proof = approve_red(client, "PASSWORD_CHANGE")
     version_before = main.ACCOUNTS["user_zhang"]["credential_version"]

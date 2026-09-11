@@ -427,6 +427,11 @@ CARDS: dict[str, list[dict[str, Any]]] = {
         {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "工资卡"}
     ]
 }
+# Self-service issuance needs a ceiling like every other collection here.  Cards
+# are part of the persisted ledger and the snapshot is rewritten in full on each
+# mutation, so an un-capped add is both unbounded growth and quadratic disk work
+# - and each card carries its own daily spending limit.
+CARD_MAX_PER_USER = max(1, int(os.getenv("BANK_MAX_CARDS_PER_USER", "10")))
 
 
 def _user_cards(user_id: str) -> list[dict[str, Any]]:
@@ -1587,14 +1592,19 @@ def _ensure_product_suitable(user_id: str, product_id: str) -> dict[str, Any]:
     if not product:
         raise SecurityError("理财产品不存在", 404, "PRODUCT_NOT_FOUND")
     profile = (WEALTH_RISK_PROFILES.get(user_id) or {}).get("risk_profile")
-    if profile not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}:
+    # Gate on the rank helper rather than a hand-written set of codes.  The
+    # 8-question questionnaire grades C1-C5 while the older form produced
+    # CONSERVATIVE/BALANCED/AGGRESSIVE, and a literal set here silently answered
+    # "please complete the assessment first" to every user who had *just*
+    # completed it - the purchase path was unreachable for them.  ``profile_rank``
+    # already knows both vocabularies; unknown/absent means "not assessed".
+    max_rank = profile_rank(profile)
+    if max_rank is None:
         raise SecurityError("申购前请先完成风险评估", 428, "RISK_ASSESSMENT_REQUIRED")
     try:
         product_rank = int(str(product.get("risk_level", "R9")).lstrip("R"))
     except (TypeError, ValueError):
         raise SecurityError("理财产品风险等级无效", 500, "PRODUCT_RISK_INVALID")
-    # 最高问卷档（进取型）解锁全部 R1-R4：货架最右列的权益类产品只对它开放。
-    max_rank = profile_rank(profile)
     if product_rank > max_rank:
         raise SecurityError("当前风险档案不适合该产品，请先重新评估", 403, "RISK_PROFILE_MISMATCH")
     return product
@@ -1992,12 +2002,38 @@ def recommend_wealth(user_id: Optional[str] = None, risk_profile: str = "CONSERV
     return {"code": 200, "risk_profile": profile, "risk_profile_label": PROFILE_LABELS.get(profile, profile), "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [dict(p) for p in products]}
 
 
+# The stored suitability profile is written with the questionnaire's raw score
+# and the answer sheet that produced it.  Both stay server-side: together they
+# are the scoring key, so a client that can read them can derive the minimum
+# answer set for any grade and walk straight through the suitability gate that
+# decides what it is allowed to buy.  The assessment endpoint already withholds
+# the score ("The score stays on file; the investor sees the type and its
+# meaning") - this projection keeps the read path consistent with it.
+RISK_PROFILE_CLIENT_FIELDS = (
+    "risk_profile",
+    "assessed_at",
+    "source",
+    "horizon_years",
+    "loss_tolerance",
+    "experience",
+)
+
+
+def risk_profile_view(profile: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Client-safe projection of one stored risk profile."""
+
+    if not profile:
+        return None
+    return {key: deepcopy(profile[key]) for key in RISK_PROFILE_CLIENT_FIELDS if key in profile}
+
+
 @app.get("/api/v1/wealth/risk-profile")
 def get_risk_profile(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     """GREEN: the caller's own stored suitability profile (or none yet).
 
     The wealth page reads this to decide whether to show "去测评" instead of
-    letting a purchase die later at precheck with 428.
+    letting a purchase die later at precheck with 428.  Only the client-safe
+    projection is returned - never the score or the answers behind it.
     """
 
     if not x_user_id:
@@ -2005,7 +2041,7 @@ def get_risk_profile(x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     request_id = _request_id(x_request_id)
     actor = _get_actor(x_user_id, x_user_id, action="WEALTH_QUERY", request_id=request_id)
     _ensure_account(actor)
-    profile = deepcopy(WEALTH_RISK_PROFILES.get(actor))
+    profile = risk_profile_view(WEALTH_RISK_PROFILES.get(actor))
     attempts = risk_assessment_attempts(actor)
     audit_event("WEALTH_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"source": "risk_profile", "present": profile is not None})
     return {"code": 200, "data": profile, "attempts": {"allowed": attempts["allowed"], "message": attempts["message"], "today": attempts["counts"].get("今日", 0), "month": attempts["counts"].get("近 1 个月", 0), "year": attempts["counts"].get("近 1 年", 0)}}
@@ -2295,6 +2331,15 @@ def add_card(
 
     with STATE_LOCK:
         with _ledger_transaction():
+            held = CARDS.setdefault(user_id, [])
+            # Inside the lock on purpose: two concurrent adds must not both see
+            # room and push the account past the ceiling.
+            if len(held) >= CARD_MAX_PER_USER:
+                raise SecurityError(
+                    f"每人最多持有 {CARD_MAX_PER_USER} 张卡片，请先注销不再使用的卡",
+                    409,
+                    "CARD_LIMIT_REACHED",
+                )
             card = {
                 "card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}",
                 "number_masked": _mock_card_masked(),
