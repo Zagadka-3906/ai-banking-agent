@@ -244,6 +244,10 @@ def _amount_from_text(text: str) -> Optional[float]:
         match = re.search(r"(?<![A-Za-z0-9])(?:¥|￥)\s*([0-9][0-9,]*(?:\.\d{1,2})?)(?![A-Za-z0-9])", text)
     if not match and any(word in text for word in ("转账", "转给", "汇给", "申购", "赎回", "锁定", "预留", "分摊", "调额", "额度")):
         match = re.search(r"(?<![A-Za-z0-9])([0-9][0-9,]*(?:\.\d{1,2})?)(?![A-Za-z0-9])", text)
+    if not match:
+        # “给爱人转200”这类口语：动词“转”直接贴着金额，没有单位也没有
+        # “转账/转给”等关键词。只认“转”后紧跟的数字，避免误抓其他数字。
+        match = re.search(r"转\s*([0-9][0-9,]*(?:\.\d{1,2})?)(?![0-9])", text)
     if match:
         try:
             value = round(float(match.group(1).replace(",", "")), 2)
@@ -260,7 +264,14 @@ def _amount_from_text(text: str) -> Optional[float]:
 def _target_from_text(text: str) -> Optional[str]:
     # Preserve the original alias; the core resolves it against a contact
     # allow-list.  Never default to a person when the user omitted one.
-    for alias in ("老婆", "爱人", "王美", "李四", "张三", "Apple", "苹果", "视频会员", "稳健现金管理", "短债增强", "宽基指数基金", "MMF001", "BOND002", "INDEX003"):
+    # 亲属称呼（爱人/儿子/兄弟…）是“关系引用”：原样传给核心，由核心到
+    # 联系人簿里解析成具体收款人，离线解析器不猜测具体是谁。
+    for alias in (
+        "老婆", "爱人", "媳妇", "妻子", "丈夫", "老公", "夫人",
+        "儿子", "女儿", "闺女", "兄弟", "兄妹", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",
+        "爸爸", "妈妈", "父亲", "母亲", "父母",
+        "王美", "李四", "张三", "Apple", "苹果", "视频会员", "稳健现金管理", "短债增强", "宽基指数基金", "MMF001", "BOND002", "INDEX003",
+    ):
         if alias in text:
             return {"苹果": "Apple", "稳健现金管理": "MMF001", "短债增强": "BOND002", "宽基指数基金": "INDEX003"}.get(alias, alias)
     phone = re.search(r"(?<!\d)(1\d{10})(?!\d)", text)

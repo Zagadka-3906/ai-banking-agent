@@ -31,13 +31,17 @@ def _add(client, payload, user_id="user_zhang"):
     )
 
 
-def _transfer(client, target, amount=300, user_id="user_zhang"):
-    headers = {"X-User-Id": user_id}
-    precheck = client.post(
+def _precheck(client, target, amount=300, user_id="user_zhang"):
+    return client.post(
         "/api/v1/risk/precheck",
         json={"from_user": user_id, "target_name_or_id": target, "amount": amount},
-        headers=headers,
+        headers={"X-User-Id": user_id},
     )
+
+
+def _transfer(client, target, amount=300, user_id="user_zhang"):
+    headers = {"X-User-Id": user_id}
+    precheck = _precheck(client, target, amount, user_id)
     assert precheck.status_code == 200, precheck.text
     token = precheck.json()["auth_token"]
     confirmed = client.post("/api/v1/auth/confirm", json={}, headers={**headers, "X-Auth-Token": token})
@@ -169,3 +173,63 @@ def test_the_book_survives_a_restart(tmp_path, monkeypatch):
     assert rows[0]["name"] == "王五"
     # The provisioned shadow payee account came back with it.
     assert main.ACCOUNTS[rows[0]["account_id"]]["balance"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 亲属称呼转账：“给我爱人转 200” 由核心把称呼解析成联系人簿里的具体收款人
+# ---------------------------------------------------------------------------
+
+
+def test_kinship_word_resolves_to_the_book_contact(client):
+    added = _add(client, {"name": "王小虎", "phone": "13911112222", "relationship": "儿子"})
+    assert added.status_code == 200, added.text
+    account_id = added.json()["data"]["account_id"]
+
+    settled = _transfer(client, "儿子", amount=200)
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["receiver_name"] == "王小虎"
+    assert main.ACCOUNTS[account_id]["balance"] == 200.0
+
+
+def test_a_spouse_in_the_book_overrides_the_builtin_wife(client):
+    # 内置白名单里“爱人/老婆”指向王美；联系人簿里的爱人应优先。
+    added = _add(client, {"name": "小美", "phone": "13922223333", "relationship": "爱人"})
+    assert added.status_code == 200, added.text
+
+    settled = _transfer(client, "老婆", amount=200)
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["receiver_name"] == "小美"
+
+
+def test_kinship_word_without_a_book_entry_falls_back_to_the_builtin(client):
+    # 未添加爱人时，“爱人”仍走内置白名单 → 王美（原有演示行为保持）。
+    settled = _transfer(client, "爱人", amount=200)
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["receiver_name"] == "王美（爱人）"
+
+
+def test_multiple_contacts_with_the_same_relationship_are_ambiguous(client):
+    assert _add(client, {"name": "张大胆", "phone": "13611112222", "relationship": "兄弟"}).status_code == 200
+    assert _add(client, {"name": "张小胆", "phone": "13633334444", "relationship": "哥哥"}).status_code == 200
+
+    # 歧义在预检阶段就拒绝，并列出重名候选人，不猜人。
+    refused = _precheck(client, "兄弟", amount=200)
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["code"] == "CONTACT_TARGET_AMBIGUOUS"
+    assert "张大胆" in refused.json()["detail"]["message"]
+
+
+def test_missing_relation_says_so_instead_of_a_generic_error(client):
+    refused = _precheck(client, "女儿", amount=200)
+    assert refused.status_code == 404
+    assert "联系人簿中没有关系" in refused.json()["detail"]["message"]
+
+
+def test_family_subcategories_round_trip_through_the_api(client):
+    cases = (("小芳", "爱人", "SPOUSE"), ("大姐", "姐姐", "SIBLING"), ("小虎", "儿子", "SON"))
+    for index, (name, label, code) in enumerate(cases):
+        added = _add(client, {"name": name, "phone": f"1391111000{index}", "relationship": label})
+        assert added.status_code == 200, added.text
+        row = added.json()["data"]
+        assert row["relationship"] == code
+        assert row["relationship_label"] == {"SPOUSE": "爱人", "SIBLING": "兄弟", "SON": "儿子"}[code]

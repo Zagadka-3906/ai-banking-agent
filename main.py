@@ -241,8 +241,30 @@ CONTACTS: dict[str, str] = {
 # carry an unusable password digest, so enrollment can never become a login.
 USER_CONTACTS: dict[str, list[dict[str, Any]]] = {}
 
-CONTACT_RELATIONSHIPS = {"家人": "FAMILY", "亲人": "FAMILY", "朋友": "FRIEND", "好友": "FRIEND", "同事": "COLLEAGUE", "其他": "OTHER"}
-CONTACT_RELATIONSHIP_LABELS = {"FAMILY": "家人", "FRIEND": "朋友", "COLLEAGUE": "同事", "OTHER": "其他"}
+# 关系词表：家人细分为爱人/兄弟/儿子/女儿/父母。录入接受中文标签或规范码，
+# 存储统一为规范码；同一张表也用于“按称呼转账”时的称呼归一。
+CONTACT_RELATIONSHIPS = {
+    "爱人": "SPOUSE", "老婆": "SPOUSE", "媳妇": "SPOUSE", "妻子": "SPOUSE", "夫人": "SPOUSE", "丈夫": "SPOUSE", "老公": "SPOUSE",
+    "兄弟": "SIBLING", "兄妹": "SIBLING", "姐妹": "SIBLING", "哥哥": "SIBLING", "弟弟": "SIBLING", "姐姐": "SIBLING", "妹妹": "SIBLING",
+    "儿子": "SON",
+    "女儿": "DAUGHTER",
+    "父亲": "PARENT", "爸爸": "PARENT", "母亲": "PARENT", "妈妈": "PARENT", "父母": "PARENT",
+    "家人": "FAMILY", "亲人": "FAMILY",
+    "朋友": "FRIEND", "好友": "FRIEND",
+    "同事": "COLLEAGUE",
+    "其他": "OTHER",
+}
+CONTACT_RELATIONSHIP_LABELS = {"SPOUSE": "爱人", "SIBLING": "兄弟", "SON": "儿子", "DAUGHTER": "女儿", "PARENT": "父母", "FAMILY": "家人", "FRIEND": "朋友", "COLLEAGUE": "同事", "OTHER": "其他"}
+
+# 转账称呼比录入更宽：用户嘴里说出来的亲属叫法都要能归到关系类别。
+CONTACT_RELATION_SYNONYMS: dict[str, str] = dict(CONTACT_RELATIONSHIPS)
+CONTACT_RELATION_SYNONYMS.update({
+    "太太": "SPOUSE", "先生": "SPOUSE", "内人": "SPOUSE",
+    "兄": "SIBLING", "弟": "SIBLING", "姐": "SIBLING", "妹": "SIBLING",
+    "闺女": "DAUGHTER",
+    "爸": "PARENT", "妈": "PARENT",
+    "家里": "FAMILY",
+})
 CONTACT_PHONE_RE = re.compile(r"^\d{5,20}$")
 CONTACT_BIRTHDAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -944,15 +966,31 @@ def _get_actor(requested_user: str, presented_user: Optional[str], *, action: st
 
 def _resolve_target(value: str, *, from_user: Optional[str] = None) -> tuple[str, dict[str, Any]]:
     safe_value = sanitize_text(value, field="收款人", max_length=128)
-    # The caller's own contact book is the first payee allow-list: a name or
-    # phone the user saved through the app resolves to the account it is linked
-    # to (an existing account, or the shadow payee provisioned on enrollment).
+    # The caller's own contact book is the first payee allow-list.  A name or
+    # phone resolves directly; a kinship word ("爱人"/"儿子"/"兄弟"…) resolves
+    # to the contact carrying that relationship - exactly one, otherwise the
+    # ambiguity is named instead of guessing.
     if from_user:
+        contact: Optional[dict[str, Any]] = None
         with STATE_LOCK:
+            rows = USER_CONTACTS.get(from_user, [])
             contact = next(
-                (row for row in USER_CONTACTS.get(from_user, []) if safe_value in {str(row.get("name") or ""), str(row.get("phone") or "")}),
+                (row for row in rows if safe_value in {str(row.get("name") or ""), str(row.get("phone") or "")}),
                 None,
             )
+            if contact is None:
+                category = CONTACT_RELATION_SYNONYMS.get(safe_value) or (safe_value if safe_value in CONTACT_RELATIONSHIP_LABELS else None)
+                if category:
+                    matches = [row for row in rows if row.get("relationship") == category]
+                    if len(matches) > 1:
+                        names = "、".join(str(row.get("name")) for row in matches[:5])
+                        label = CONTACT_RELATIONSHIP_LABELS.get(category, category)
+                        raise SecurityError(
+                            f"有多个关系为“{label}”的联系人（{names}），请说明具体姓名",
+                            409,
+                            "CONTACT_TARGET_AMBIGUOUS",
+                        )
+                    contact = matches[0] if matches else None
         if contact and contact.get("account_id"):
             receiver = ACCOUNTS.get(str(contact["account_id"]))
             if receiver and receiver.get("status") == "ACTIVE":
@@ -962,6 +1000,12 @@ def _resolve_target(value: str, *, from_user: Optional[str] = None) -> tuple[str
     target_id = CONTACTS.get(safe_value, safe_value)
     receiver = ACCOUNTS.get(target_id)
     if not receiver:
+        if safe_value in CONTACT_RELATION_SYNONYMS or safe_value in CONTACT_RELATIONSHIP_LABELS:
+            raise SecurityError(
+                f"联系人簿中没有关系为“{safe_value}”的联系人，请先添加或直接说明姓名",
+                404,
+                "TARGET_NOT_FOUND",
+            )
         raise SecurityError("收款方账户不存在或未登记为联系人", 404, "TARGET_NOT_FOUND")
     if from_user and target_id == from_user:
         raise SecurityError("不允许向本人账户转账", 400, "SELF_TRANSFER")

@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -404,7 +406,12 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel, snack
                 modifier = Modifier.fillMaxWidth(),
             )
             Text("关系", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 家人细分后选项变多，FlowRow 自动换行而不是挤在一行或溢出。
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 RELATIONSHIP_OPTIONS.forEach { option ->
                     FilterChip(
                         selected = state.contactRelationship == option,
@@ -439,7 +446,9 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel, snack
 // shared pieces
 // ---------------------------------------------------------------------------
 
-private val RELATIONSHIP_OPTIONS = listOf("家人", "朋友", "同事", "其他")
+// 关系选项与核心词表一致：家人细分为爱人/兄弟/儿子/女儿/父母；
+// 直接说“给我爱人转 200”时，核心把称呼解析成联系人簿里对应关系的人。
+private val RELATIONSHIP_OPTIONS = listOf("爱人", "兄弟", "儿子", "女儿", "父母", "家人", "朋友", "同事", "其他")
 
 private val AVATAR_COLORS = listOf(
     Color(0xFF1565C0),
