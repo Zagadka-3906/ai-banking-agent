@@ -30,6 +30,9 @@ import java.util.UUID
 
 enum class ChatRole { USER, ASSISTANT }
 
+/** 通讯录式联系人界面的三个页面：列表 → 详情 → 新增。 */
+enum class ContactsScreen { LIST, DETAIL, ADD }
+
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val role: ChatRole,
@@ -68,9 +71,12 @@ data class ChatUiState(
     /** Task-centre panel visibility and its server-backed rows. */
     val showTasks: Boolean = false,
     val tasks: List<TaskView> = emptyList(),
-    /** Contact-book panel visibility, its rows, and the add form. */
+    /** 联系人簿：全屏通讯录式界面（列表 → 详情 → 新增）。 */
     val showContacts: Boolean = false,
+    val contactsScreen: ContactsScreen = ContactsScreen.LIST,
     val contacts: List<ContactView> = emptyList(),
+    val contactSearch: String = "",
+    val selectedContactId: String? = null,
     val contactName: String = "",
     val contactPhone: String = "",
     val contactRelationship: String = "朋友",
@@ -363,11 +369,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // -- contact book panel --------------------------------------------------
+    // -- contact book (通讯录式全屏界面) ---------------------------------------
 
     fun openContacts() {
-        _state.update { it.copy(showContacts = true, showDevices = false, showTasks = false, panelBusy = true) }
+        _state.update {
+            it.copy(
+                showContacts = true,
+                showDevices = false,
+                showTasks = false,
+                contactsScreen = ContactsScreen.LIST,
+                panelBusy = true,
+            )
+        }
         refreshContacts()
+    }
+
+    fun closeContacts() = _state.update { it.copy(showContacts = false) }
+
+    fun showContactDetail(contactId: String) =
+        _state.update { it.copy(contactsScreen = ContactsScreen.DETAIL, selectedContactId = contactId) }
+
+    fun openContactEditor() =
+        _state.update { it.copy(contactsScreen = ContactsScreen.ADD, error = null) }
+
+    fun backToContactList() =
+        _state.update { it.copy(contactsScreen = ContactsScreen.LIST, selectedContactId = null) }
+
+    fun onContactSearchChange(value: String) =
+        _state.update { it.copy(contactSearch = value.take(50)) }
+
+    /** Selected contact for the detail page, resolved from the loaded book. */
+    fun selectedContact(): ContactView? =
+        _state.value.contacts.firstOrNull { it.contactId == _state.value.selectedContactId }
+
+    /**
+     * 从联系人详情直接发起转账：把输入框预填成“给 <姓名> 转”，
+     * 金额留给用户填写——Agent 收到不完整请求会按规矩澄清，不编造金额。
+     */
+    fun startTransferTo(name: String) {
+        onInputChange("给${name}转")
+        closeContacts()
     }
 
     fun refreshContacts() {
@@ -422,6 +463,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update {
                     it.copy(
                         panelBusy = false,
+                        contactsScreen = ContactsScreen.LIST,
                         contactName = "",
                         contactPhone = "",
                         contactBirthday = "",
@@ -441,7 +483,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { contacts.remove(contactId, principal, sessionToken ?: "") }
-                _state.update { it.copy(panelBusy = false, notice = "联系人已删除") }
+                _state.update {
+                    it.copy(
+                        panelBusy = false,
+                        contactsScreen = ContactsScreen.LIST,
+                        selectedContactId = null,
+                        notice = "联系人已删除",
+                    )
+                }
                 refreshContacts()
             } catch (failure: GatewayException) {
                 _state.update { it.copy(panelBusy = false, error = failure.message) }
