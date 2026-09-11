@@ -3,8 +3,8 @@ package com.aibanking.agent.ui.chat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,6 +28,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -164,6 +166,21 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                     onAnswer = viewModel::onQuizAnswer,
                     onGiveUp = viewModel::giveUpQuiz,
                 )
+            }
+            // 快捷输入建议：点击填入输入框（可修改后再发送）。
+            if (state.suggestions.isNotEmpty() && state.quiz == null) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                ) {
+                    items(state.suggestions.size) { index ->
+                        SuggestionChip(
+                            onClick = { viewModel.onSuggestionClick(state.suggestions[index]) },
+                            label = { Text(state.suggestions[index]) },
+                        )
+                    }
+                }
             }
             InputRow(
                 value = state.input,

@@ -340,6 +340,39 @@ WEALTH_HOLDINGS: dict[str, list[dict[str, Any]]] = {"user_zhang": []}
 # 服务端定档，不对用户展示）。空档案让演示能完整走一遍"首次触发测评"。
 WEALTH_RISK_PROFILES: dict[str, dict[str, Any]] = {}
 
+# 风险测评重做限次（用户 -> 完成时间戳列表）：当日 ≤2 次、近 1 月 ≤4 次、
+# 近 1 年 ≤8 次。滚动窗口按完成时刻计，随账本快照持久化。
+RISK_ASSESSMENT_LIMITS: tuple[tuple[float, int, str], ...] = (
+    (86400.0, 2, "今日"),
+    (30 * 86400.0, 4, "近 1 个月"),
+    (365 * 86400.0, 8, "近 1 年"),
+)
+RISK_ATTEMPTS: dict[str, list[float]] = {}
+
+
+def risk_assessment_attempts(user_id: str) -> dict[str, Any]:
+    """某用户当前的重做余量（供触发侧在出卷前拒绝，而非交卷时才失败）。"""
+
+    now = time.time()
+    history = [ts for ts in RISK_ATTEMPTS.get(user_id, []) if now - ts < 365 * 86400.0]
+    counts = {}
+    for window, _limit, label in RISK_ASSESSMENT_LIMITS:
+        counts[label] = sum(1 for ts in history if now - ts < window)
+    allowed, message = True, ""
+    for window, limit, label in RISK_ASSESSMENT_LIMITS:
+        used = sum(1 for ts in history if now - ts < window)
+        if used >= limit:
+            allowed, message = False, f"风险测评重做次数已达上限：{label}最多 {limit} 次，请稍后再试"
+            break
+    return {"allowed": allowed, "message": message, "history": history, "counts": counts}
+
+
+def record_risk_assessment(user_id: str) -> None:
+    now = time.time()
+    history = [ts for ts in RISK_ATTEMPTS.get(user_id, []) if now - ts < 365 * 86400.0]
+    history.append(now)
+    RISK_ATTEMPTS[user_id] = history
+
 # 8 题问卷评分表（题目编号 -> 选项得分），服务端定档唯一权威。
 RISK_QUIZ_SCORES: dict[int, dict[str, int]] = {
     1: {"A": 5, "B": 4, "C": 3, "D": 1},
@@ -493,6 +526,7 @@ LEDGER_STATE_NAMES = (
     "WEALTH_PRODUCTS",
     "WEALTH_HOLDINGS",
     "WEALTH_RISK_PROFILES",
+    "RISK_ATTEMPTS",
     "CARDS",
     "SUBSCRIPTIONS",
     "SCHEDULED_TRANSFERS",
@@ -1936,8 +1970,9 @@ def get_risk_profile(x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     actor = _get_actor(x_user_id, x_user_id, action="WEALTH_QUERY", request_id=request_id)
     _ensure_account(actor)
     profile = deepcopy(WEALTH_RISK_PROFILES.get(actor))
+    attempts = risk_assessment_attempts(actor)
     audit_event("WEALTH_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"source": "risk_profile", "present": profile is not None})
-    return {"code": 200, "data": profile}
+    return {"code": 200, "data": profile, "attempts": {"allowed": attempts["allowed"], "message": attempts["message"], "today": attempts["counts"].get("今日", 0), "month": attempts["counts"].get("近 1 个月", 0), "year": attempts["counts"].get("近 1 年", 0)}}
 
 
 @app.post("/api/v1/wealth/risk-assessment")
@@ -2028,11 +2063,15 @@ def wealth_risk_assessment(
                 "experience": experience,
                 "source": "AGENT_OR_API",
             }
+        attempts = risk_assessment_attempts(req.user_id)
+        if not attempts["allowed"]:
+            raise SecurityError(attempts["message"], 429, "ASSESSMENT_LIMIT_REACHED")
         cached = _idempotency_begin(actor, "wealth_risk_assessment", idempotency_key, idem_payload, request_id=request_id)
         if cached is not None:
             return cached
         with STATE_LOCK:
             WEALTH_RISK_PROFILES[req.user_id] = profile_payload
+        record_risk_assessment(req.user_id)
     except SecurityError as exc:
         _idempotency_abort(actor, "wealth_risk_assessment", idempotency_key)
         _record_failure_and_raise(exc, user_id=actor, action="WEALTH_RISK_ASSESSMENT", request_id=request_id)
@@ -3463,6 +3502,7 @@ def reset_state() -> None:
         if "WEALTH_RISK_PROFILES" in globals():
             WEALTH_RISK_PROFILES.clear()
             WEALTH_RISK_PROFILES.update(deepcopy(_INITIAL_WEALTH_RISK_PROFILES))
+        RISK_ATTEMPTS.clear()
         if "CARDS" in globals():
             CARDS.clear()
             CARDS.update(deepcopy(_INITIAL_CARDS))

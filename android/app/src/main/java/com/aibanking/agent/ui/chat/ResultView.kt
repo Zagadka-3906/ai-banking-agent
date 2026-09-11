@@ -58,8 +58,59 @@ fun ResultExtras(result: Map<String, Any?>?) {
             execution.child("facts")?.let { BillFacts(it) }
             execution.child("data")?.let { KeyValues(it, title = "核心返回") }
         }
+        result.child("profile_result")?.let { RiskProfileCard(it) }
         result.child("todo_card")?.let { TodoCard(it) }
         result.child("plan")?.let { PlanCard(it) }
+    }
+}
+
+/** 测评结果卡：按等级配色的彩色气泡，替代文本三行说明。 */
+@Composable
+private fun RiskProfileCard(profile: Map<String, Any?>) {
+    val grade = profile.text("grade") ?: return
+    val typeName = profile.text("type") ?: ""
+    val traits = profile.text("traits") ?: ""
+    val levels = profile.text("matching_levels") ?: ""
+    val accent = when (grade) {
+        "C1" -> Color(0xFF1565C0)
+        "C2" -> Color(0xFF2E7D32)
+        "C3" -> Color(0xFFE65100)
+        "C4" -> Color(0xFFC62828)
+        else -> Color(0xFF6A1B9A)
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.12f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .background(accent, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        grade,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                }
+                Text(
+                    typeName,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = accent,
+                )
+            }
+            if (traits.isNotBlank()) Text("特点：$traits", style = MaterialTheme.typography.bodyMedium)
+            if (levels.isNotBlank()) Text("匹配理财产品级别：$levels", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "测评结果已记录；重做测评有次数限制（当日 2 次、近 1 月 4 次、近 1 年 8 次）。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

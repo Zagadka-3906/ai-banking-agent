@@ -220,9 +220,12 @@ private fun RiskProfileBanner(state: ChatUiState, viewModel: ChatViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            if (profile == null) {
-                TextButton(onClick = { viewModel.onInputChange("我想做风险测评"); viewModel.closeWealth() }) { Text("去测评") }
-            }
+            TextButton(
+                onClick = {
+                    viewModel.onInputChange(if (profile == null) "我想做风险测评" else "我想重新做风险测评")
+                    viewModel.closeWealth()
+                },
+            ) { Text(if (profile == null) "去测评" else "重新测评") }
         }
     }
 }

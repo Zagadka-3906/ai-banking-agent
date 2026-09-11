@@ -93,6 +93,10 @@ data class ChatUiState(
     val tasks: List<TaskView> = emptyList(),
     /** 逐题风险测评组件（输入框上方）：非空即展示。 */
     val quiz: RiskQuizUi? = null,
+    /** 测评完成后的档案结果（渲染彩色结果卡）。 */
+    val profileResult: Map<String, Any>? = null,
+    /** 回复末尾的快捷输入建议（点击填入输入框）。 */
+    val suggestions: List<String> = emptyList(),
     /** 理财页：银行风格产品超市 → 详情。 */
     val showWealth: Boolean = false,
     val wealthScreen: WealthScreen = WealthScreen.LIST,
@@ -614,7 +618,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .joinToString(" ")
         _state.update { it.copy(quiz = null, input = "") }
         persistQuiz(null)
-        sendInternal(combined)
+        // 答案只在后台存档：不显示作答消息，直接呈现测评结果。
+        sendInternal(combined, echoUser = false)
     }
 
     /** 放弃测评：把放弃意图发出去，让服务端把问卷状态一并关闭。 */
@@ -655,11 +660,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun send() {
         val current = _state.value
         if (!current.canSend) return
-        sendInternal(current.input.trim())
+        val text = current.input.trim()
         _state.update { it.copy(input = "") }
+        sendInternal(text)
     }
 
-    private fun sendInternal(text: String) {
+    /** 点击快捷建议：填入输入框，用户可修改后自行发送。 */
+    fun onSuggestionClick(suggestion: String) = onInputChange(suggestion)
+
+    private fun sendInternal(text: String, echoUser: Boolean = true) {
         val current = _state.value
         val principal = current.principal
         // A placeholder assistant bubble carries the live stage label and is then
@@ -667,7 +676,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val placeholder = ChatMessage(role = ChatRole.ASSISTANT, text = "正在处理…")
         _state.update {
             it.copy(
-                messages = it.messages + ChatMessage(role = ChatRole.USER, text = text) + placeholder,
+                // 问卷作答在后台提交：答案不进对话，直接等待结果。
+                messages = if (echoUser) it.messages + ChatMessage(role = ChatRole.USER, text = text) + placeholder
+                else it.messages + placeholder,
                 busy = true,
             )
         }
@@ -707,6 +718,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         pending = envelope.approval,
                         otp = "",
                         quiz = parseQuiz(envelope.result),
+                        profileResult = envelope.result?.get("profile_result") as? Map<String, Any>,
+                        suggestions = (envelope.result?.get("suggestions") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList(),
                     )
                 }
                 persistMessages()
@@ -831,6 +844,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         pending = null,
                         otp = "",
                         quiz = parseQuiz(envelope.result),
+                        profileResult = envelope.result?.get("profile_result") as? Map<String, Any>,
+                        suggestions = (envelope.result?.get("suggestions") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList(),
                         messages = state.messages + ChatMessage(
                             role = ChatRole.ASSISTANT,
                             text = displayText(envelope.reply, envelope.result),
@@ -884,7 +899,16 @@ internal fun productRank(riskLevel: String): Int = riskLevel.removePrefix("R").t
  * 风险提示等说明，去掉会重复的“- `代码` …”清单行。
  */
 private fun displayText(reply: String, result: Map<String, Any>?): String {
+    var lines = reply.lines()
     val type = (result?.get("execution_result") as? Map<*, *>)?.get("type")?.toString()
-    if (type !in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE")) return reply
-    return reply.lines().filterNot { it.trimStart().startsWith("- `") }.joinToString("\n")
+    if (type in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE")) {
+        lines = lines.filterNot { it.trimStart().startsWith("- `") }
+    }
+    // 测评结果的三行说明渲染成彩色结果卡，文本里不再重复。
+    if (result?.get("profile_result") != null) {
+        lines = lines.filterNot {
+            it.startsWith("✅ 风险测评完成") || it.startsWith("特点：") || it.startsWith("匹配理财产品级别：")
+        }
+    }
+    return lines.filter { it.isNotBlank() }.joinToString("\n")
 }

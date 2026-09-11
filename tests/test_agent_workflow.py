@@ -657,6 +657,9 @@ def test_first_wealth_inquiry_triggers_the_quiz(wired):
 def test_quiz_collects_answers_and_recommends_matching_products(wired):
     _turn(wired, "这个钱放着也是放着", "quiz-complete")  # 先触发问卷
     values = _turn(wired, "1B 2B 3C 4D 5C 6C 7C 8C", "quiz-complete")
+    # 档案结果与快捷输入建议随信封下发
+    assert values["profile_result"]["grade"] == "C3"
+    assert values["suggestions"] == ["查看理财产品", "申购 CJ01002 500 元", "查看我的持仓"]
     # 4+3+4+4+3+3+3+3 = 27 → C3 平衡型
     assert "C3 平衡型" in values["final_response"]
     assert "追求收益与风险平衡" in values["final_response"]
@@ -713,3 +716,39 @@ def test_offline_parser_feeds_the_quiz_trigger(wired):
     values = _turn(wired, "给我儿子转200", "quiz-transfer")
     # 转账不触发测评：直接走转账流程（缺收款人解析或正常黄区）
     assert values["intent"] in {"TRANSFER", "SCHEDULED_TRANSFER"} or values["clarification_required"]
+
+
+def test_retake_quiz_uses_retake_wording(wired):
+    main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C2", "source": "TEST"}
+    values = _turn(wired, "我想重新做一下风险测评", "quiz-retake")
+    assert "重新完成风险评估" in values["final_response"]
+    assert "首次咨询" not in values["final_response"]
+
+
+def test_assessment_retries_are_limited_per_day(wired):
+    client = wired
+    answers = {"1": "B", "2": "B", "3": "C", "4": "D", "5": "C", "6": "C", "7": "C", "8": "C"}
+    for _ in range(2):
+        ok = client.post(
+            "/api/v1/wealth/risk-assessment",
+            json={"user_id": "user_zhang", "answers": answers},
+            headers={"X-User-Id": "user_zhang"},
+        )
+        assert ok.status_code == 200, ok.text
+    third = client.post(
+        "/api/v1/wealth/risk-assessment",
+        json={"user_id": "user_zhang", "answers": answers},
+        headers={"X-User-Id": "user_zhang"},
+    )
+    assert third.status_code == 429
+    assert third.json()["detail"]["code"] == "ASSESSMENT_LIMIT_REACHED"
+    assert "今日" in third.json()["detail"]["message"]
+
+
+def test_quiz_start_is_refused_when_retake_limit_reached(wired):
+    import time as _time
+    main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C2", "source": "TEST"}
+    main.RISK_ATTEMPTS["user_zhang"] = [_time.time(), _time.time()]  # 今日已两次
+    values = _turn(wired, "我想重新做一下风险测评", "quiz-limit")
+    assert "次数已达上限" in values["final_response"]
+    assert values.get("risk_quiz", {"active": False})["active"] is False

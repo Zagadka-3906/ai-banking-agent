@@ -122,6 +122,9 @@ class BankingAgentState(TypedDict, total=False):
     context: Optional[dict[str, Any]]
     # 顶层问卷载荷（题目结构），渠道信封据此打开逐题作答组件；完成后为 None。
     risk_quiz: Optional[dict[str, Any]]
+    # 测评完成后的档案结果（类型/特点/匹配级别）与快捷输入建议，随信封下发。
+    profile_result: Optional[dict[str, Any]]
+    suggestions: Optional[list[str]]
     participants: Optional[list[str]]
     product_ids: Optional[list[str]]
     slots: Optional[dict[str, Any]]
@@ -413,13 +416,13 @@ def _parse_quiz_answers(text: str, answers: Mapping[str, Any]) -> tuple[dict[str
 
 
 def _fetch_risk_profile(state: BankingAgentState) -> Optional[dict[str, Any]]:
-    """读取核心里该用户的风险档案；读不到按未测评处理（申购预检仍会兜底）。"""
+    """读取核心里该用户的风险档案与测评余量；读不到按未测评处理。"""
 
     try:
         response = _http("GET", "wealth/risk-profile", state=state, headers={"X-User-Id": state.get("user_id")})
         if response.status_code >= 400:
             return None
-        return _response_json(response).get("data") or None
+        return _response_json(response)
     except (requests.RequestException, RuntimeError, ValueError):
         return None
 
@@ -454,9 +457,14 @@ def _quiz_result(
     return result
 
 
-def _start_risk_quiz(state: BankingAgentState) -> dict[str, Any]:
-    audit_event("RISK_QUIZ", user_id=state.get("user_id"), decision="CHALLENGE", outcome="STARTED", request_id=f"agent_{uuid.uuid4().hex}")
-    result = _quiz_result(state, "【风险测评】您首次咨询理财业务，请先完成风险评估（共 8 题），逐题选择即可；完成后将为您推荐匹配的产品。", {"answers": {}})
+def _start_risk_quiz(state: BankingAgentState, retake: bool = False) -> dict[str, Any]:
+    lead = (
+        "您可以重新完成风险评估以更新您的风险档案"
+        if retake
+        else "您首次咨询理财业务，请先完成风险评估"
+    )
+    audit_event("RISK_QUIZ", user_id=state.get("user_id"), decision="CHALLENGE", outcome="STARTED", request_id=f"agent_{uuid.uuid4().hex}", metadata={"retake": retake})
+    result = _quiz_result(state, f"【风险测评】{lead}（共 8 题），逐题选择即可；完成后将为您更新匹配的产品。", {"answers": {}})
     # 顶层载荷：渠道信封据此在输入框上方打开逐题作答组件。
     result["risk_quiz"] = RISK_QUIZ_PAYLOAD
     return result
@@ -512,13 +520,24 @@ def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any])
     except (requests.RequestException, RuntimeError, ValueError):
         product_text = ""
     audit_event("RISK_QUIZ", user_id=user_id, decision="ALLOW", outcome="COMPLETED", request_id=request_id, metadata={"grade": grade})
+    profile_result = {
+        "grade": grade,
+        "type": str(graded.get("risk_type") or ""),
+        "traits": str(graded.get("traits") or ""),
+        "matching_levels": str(graded.get("matching_levels") or ""),
+    }
+    suggestions = ["查看理财产品", "申购 CJ01002 500 元", "查看我的持仓"]
     reply = (
         f"✅ 风险测评完成，您的投资者风险类型为 **{grade} {graded.get('risk_type', '')}**。\n\n"
         f"特点：{graded.get('traits', '')}\n\n"
         f"匹配理财产品级别：{graded.get('matching_levels', '')}。以下是与您风险等级匹配的在售产品："
         f"{product_text}\n\n现在可以直接说出需求（例如“查看理财产品”或“申购 CJ01002 500 元”）。"
     )
-    return _quiz_result(state, reply, None, execution_result=execution_result)
+    result = _quiz_result(state, reply, None, execution_result=execution_result)
+    # 档案结果卡片与快捷输入建议随信封下发，由客户端渲染。
+    result["profile_result"] = profile_result
+    result["suggestions"] = suggestions
+    return result
 
 
 def _format_hint(missing: list[int]) -> str:
@@ -1094,9 +1113,14 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     # 首次咨询理财（推荐/申购/赎回）或显式要求测评且尚无风险档案：
     # 触发 8 题问卷（C1-C5），完成后再继续办理；浏览类查询不强制。
     if parsed.get("intent") in RISK_QUIZ_INTENTS:
-        profile = _fetch_risk_profile(state)
-        if parsed.get("intent") == Intent.WEALTH_RISK_ASSESSMENT.value or profile is None:
-            return _start_risk_quiz(state)
+        profile_response = _fetch_risk_profile(state)
+        has_profile = bool(profile_response and profile_response.get("data"))
+        if parsed.get("intent") == Intent.WEALTH_RISK_ASSESSMENT.value or not has_profile:
+            # 重做（已有档案）与首测话术不同；重做前先看余量，避免出卷后交卷失败。
+            attempts = (profile_response or {}).get("attempts") or {}
+            if has_profile and attempts.get("allowed") is False:
+                return _empty_state(final_response=attempts.get("message") or "风险测评次数已达上限，请稍后再试。")
+            return _start_risk_quiz(state, retake=has_profile)
     # Several read-only asks in one sentence become one ordered sub-task DAG.
     sub_requests = _split_read_requests(text)
     # A compound request that also contains a mutating part is never split and
