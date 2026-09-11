@@ -28,7 +28,7 @@ from typing import Any, Mapping, Optional, Protocol
 
 import requests
 
-from security import audit_event, push_tokens_for
+from security import audit_event, detach_push_token, push_tokens_for
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -51,10 +51,63 @@ class PushResult:
     failed: int = 0
     detail: str = ""
     provider: str = "none"
+    # Tokens the provider says are dead for good (see ``_refusal_is_permanent``).
+    # Kept separate from ``failed``: a throttled or unreachable device must not be
+    # pruned, or a bad afternoon at Google would silently unsubscribe users.
+    dead_tokens: tuple[str, ...] = ()
 
     @property
     def sent_anything(self) -> bool:
         return self.delivered > 0
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    """Why one token was refused, and whether retrying could ever help."""
+
+    reason: str
+    permanent: bool
+
+
+def _error_code(body: str) -> str:
+    """FCM's machine-readable reason (``error.details[].errorCode``), if present."""
+
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return ""
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return ""
+    for detail in error.get("details") or []:
+        if isinstance(detail, dict) and detail.get("errorCode"):
+            return str(detail["errorCode"]).strip().upper()
+    return ""
+
+
+def _refusal_is_permanent(status_code: int, body: str) -> bool:
+    """Whether an FCM error means "this token will never work" - or just "not now".
+
+    Deliberately narrow, because the cost is asymmetric: pruning a live device's
+    address unsubscribes a user who did nothing wrong, while a token that really
+    is dead keeps producing the same answer until it is pruned.
+
+    * ``404`` is FCM's documented "registration token is not registered" - the app
+      was uninstalled or the token rotated.  Permanent.
+    * ``403`` counts only when the body names ``SENDER_ID_MISMATCH``, i.e. the
+      token was minted for a different Firebase project.  Any other 403 is a
+      permissions problem on our side.
+    * ``400`` is deliberately *not* permanent.  It is also what FCM returns when
+      the message we built is malformed, and that is our bug to fix - deleting the
+      user's delivery address over it would be the wrong repair.
+    * Throttling, an outage, and our own credential expiring are all transient.
+    """
+
+    if status_code == 404:
+        return True
+    if status_code != 403:
+        return False
+    return _error_code(body) == "SENDER_ID_MISMATCH"
 
 
 class PushTransport(Protocol):
@@ -183,18 +236,29 @@ class FcmTransport:
         endpoint = f"{self.base_url}/v1/projects/{self.project_id}/messages:send"
         delivered = 0
         failures: list[str] = []
+        dead: list[str] = []
         for token in tokens:
-            outcome = self._send_one(endpoint, token, title=title, body=body, data=data)
-            if outcome is None:
+            refusal = self._send_one(endpoint, token, title=title, body=body, data=data)
+            if refusal is None:
                 delivered += 1
-            else:
-                failures.append(outcome)
+                continue
+            failures.append(refusal.reason)
+            if refusal.permanent:
+                dead.append(token)
 
         detail = "ok" if not failures else f"{len(failures)} device(s) refused: {failures[0]}"
-        return PushResult(delivered=delivered, failed=len(failures), detail=detail, provider=self.name)
+        if dead:
+            detail = f"{detail}; {len(dead)} token(s) reported unusable"
+        return PushResult(
+            delivered=delivered,
+            failed=len(failures),
+            detail=detail,
+            provider=self.name,
+            dead_tokens=tuple(dead),
+        )
 
-    def _send_one(self, endpoint: str, token: str, *, title: str, body: str, data: Mapping[str, Any]) -> Optional[str]:
-        """Send to one token; return None on success or a short reason."""
+    def _send_one(self, endpoint: str, token: str, *, title: str, body: str, data: Mapping[str, Any]) -> Optional[_Refusal]:
+        """Send to one token; return None on success or why it was refused."""
 
         message = {
             "message": {
@@ -215,14 +279,18 @@ class FcmTransport:
                     timeout=self.timeout,
                 )
             except requests.RequestException as exc:
-                return f"{type(exc).__name__}"
+                return _Refusal(f"{type(exc).__name__}", permanent=False)
             if response.status_code == 401 and attempt == 0:
                 # The access token expired between issue and use; refresh once.
                 continue
             if response.status_code >= 400:
-                return f"HTTP {response.status_code}: {response.text[:120]}"
+                snippet = response.text[:160]
+                # A 401 that survived the refresh is our credential's problem, not
+                # the device's, so it must never count as a dead token.
+                permanent = response.status_code != 401 and _refusal_is_permanent(response.status_code, snippet)
+                return _Refusal(f"HTTP {response.status_code}: {snippet}", permanent=permanent)
             return None
-        return "unauthorized after refresh"
+        return _Refusal("unauthorized after refresh", permanent=False)
 
 
 def resolve_transport() -> PushTransport:
@@ -272,6 +340,17 @@ def dispatch_to_user(
 
     transport = resolve_transport()
     result = transport.send([row["token"] for row in tokens], title=title, body=body, data=payload)
+    # A token the provider calls dead is dropped here rather than retried forever:
+    # otherwise every reinstall leaves an address behind, each notification fans
+    # out to all of them, and the failure count stops meaning anything.
+    pruned: list[str] = []
+    for token in result.dead_tokens:
+        try:
+            dropped = detach_push_token(token, reason=result.detail, request_id=request_id)
+        except Exception:  # pragma: no cover - registry maintenance must not break dispatch
+            logger.exception("Unable to drop a token the provider reported as unusable")
+            continue
+        pruned.extend(dropped.get("dropped") or [])
     audit_event(
         "PUSH_DISPATCHED",
         user_id=user_id,
@@ -286,6 +365,8 @@ def dispatch_to_user(
             "detail": result.detail,
             "title": title,
             "data": payload,
+            # Only non-empty when the provider named tokens as permanently dead.
+            "pruned_devices": pruned,
         },
     )
     return result

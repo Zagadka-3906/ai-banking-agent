@@ -1458,6 +1458,68 @@ def push_tokens_for(user_id: str) -> list[dict[str, str]]:
     return rows
 
 
+def _bounded_reason(value: Any, *, limit: int = 120) -> str:
+    """Bound and sanitize provider-supplied text for the audit trail.
+
+    A push provider's error body is untrusted input of arbitrary length, and
+    ``sanitize_text`` *raises* on over-length or injection-shaped text.  Letting
+    that propagate would mean the text describing a failed delivery could abort
+    the registry maintenance it was meant to trigger, so a summary that cannot be
+    sanitized degrades to a fixed label instead.
+    """
+
+    collapsed = " ".join(str(value or "").split())
+    try:
+        return sanitize_text(collapsed[:limit], field="原因", max_length=limit)
+    except SecurityError:
+        return "服务端判定该推送令牌不可用"
+
+
+def detach_push_token(token: str, *, reason: str, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Forget a delivery token the provider says will never work again.
+
+    Called by the dispatcher when FCM answers with a *permanent* refusal
+    (``UNREGISTERED`` after a reinstall, or a token minted for another project).
+    Without this the registry only grows: every reinstall leaves a dead token
+    behind, every notification fans out to all of them, and the failure count
+    turns into noise that hides a real delivery problem.  Google's own guidance
+    is to delete the token at that point.
+
+    No principal is required - this is server-side registry maintenance driven by
+    the provider's answer, not a user-initiated change.  The *device record* is
+    kept (an uninstalled app can come back with the same key); only the delivery
+    address is dropped.
+    """
+
+    candidate = sanitize_text(token, field="推送令牌", max_length=PUSH_TOKEN_MAX_LENGTH)
+    fingerprint = credential_fingerprint(candidate) if candidate else None
+    safe_reason = _bounded_reason(reason)
+    dropped: list[str] = []
+    if candidate:
+        with STATE_LOCK:
+            for record in DEVICES.values():
+                if record.get("push_token") != candidate:
+                    continue
+                record.pop("push_token", None)
+                record.pop("push_token_updated_at", None)
+                record["push_token_dropped_at"] = int(time.time())
+                record["push_token_dropped_reason"] = safe_reason
+                dropped.append(str(record.get("device_id")))
+            if dropped:
+                _persist_devices_locked()
+    audit_event(
+        "PUSH_TOKEN_UNREGISTERED",
+        user_id=None,
+        decision="ALLOW" if dropped else "SKIP",
+        outcome="DROPPED" if dropped else "NO_MATCH",
+        request_id=request_id,
+        # Same rule as registration: the trail records a fingerprint, never the
+        # delivery address itself.
+        metadata={"devices": dropped, "token_fingerprint": fingerprint, "reason": safe_reason},
+    )
+    return {"dropped": dropped, "token_fingerprint": fingerprint}
+
+
 def enroll_device(
     public_key_b64: str,
     *,

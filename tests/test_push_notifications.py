@@ -521,3 +521,201 @@ def test_the_health_endpoint_exposes_the_push_capability(client, monkeypatch):
 
     assert body["push"]["configured"] is False
     assert body["push"]["devices_with_tokens"] == 0
+
+
+# ---------------------------------------------------------------------------
+# tokens the provider says are dead
+#
+# Every reinstall mints a new registration token and orphans the old one.  Left
+# alone the registry only grows: each notification fans out to addresses nobody
+# owns any more, `failed` counts climb for reasons that have nothing to do with
+# the current phone, and a real delivery problem hides inside that noise.
+#
+# The narrowness matters as much as the pruning: only the provider naming a
+# *token* as unusable may unsubscribe a device.  Throttling, an outage, or our
+# own credential expiring must leave it alone.
+# ---------------------------------------------------------------------------
+
+SEND_PATH = "/v1/projects/bank-agent-demo/messages:send"
+
+
+def _ready_to_send(client, tmp_path, fcm_server, monkeypatch, *, token: str = "fcm-token-1"):
+    """A configured dispatcher with one enrolled device holding one token.
+
+    ``resolve_transport`` is pointed at the mock deliberately.  The transport it
+    builds by default targets the real ``fcm.googleapis.com``, so a test that
+    only sets the credential file would quietly exercise Google instead of the
+    code under test - and get a perfectly convincing 401 for its fake access
+    token, which is exactly how a "transient failure" assertion passes without
+    testing anything.
+    """
+
+    path, _ = _service_account(tmp_path, fcm_server)
+    monkeypatch.setenv("BANK_FCM_CREDENTIALS", str(path))
+    monkeypatch.setattr(
+        notifications,
+        "resolve_transport",
+        lambda: notifications.FcmTransport(credentials_path=str(path), base_url=fcm_server.base_url),
+    )
+    fcm_server.responses["/token"] = [(200, {"access_token": "ya29.test", "expires_in": 3600})]
+    headers = session_headers(client, "user_zhang")
+    device_id = enroll(client, headers)
+    attach(client, headers, device_id, token=token)
+    return device_id
+
+
+def test_a_token_the_provider_calls_unregistered_is_dropped(client, tmp_path, fcm_server, monkeypatch):
+    device_id = _ready_to_send(client, tmp_path, fcm_server, monkeypatch)
+    fcm_server.responses[SEND_PATH] = [
+        (404, {"error": {"status": "NOT_FOUND", "details": [{"errorCode": "UNREGISTERED"}]}}),
+    ]
+
+    result = notifications.dispatch_to_user("user_zhang", title="t", body="b")
+
+    assert result.failed == 1
+    assert result.dead_tokens == ("fcm-token-1",), result.detail
+    assert security.push_tokens_for("user_zhang") == [], "the dead address must not be retried"
+    assert "push_token" not in security.DEVICES[device_id], "the device itself is kept"
+    dropped = [event for event in security.AUDIT_LOGS if event["action"] == "PUSH_TOKEN_UNREGISTERED"]
+    assert dropped and dropped[-1]["outcome"] == "DROPPED"
+    assert dropped[-1]["metadata"]["devices"] == [device_id]
+    # The trail records the fingerprint, never the delivery address.
+    assert "fcm-token-1" not in json.dumps(dropped[-1]["metadata"])
+    dispatched = [event for event in security.AUDIT_LOGS if event["action"] == "PUSH_DISPATCHED"]
+    assert dispatched[-1]["metadata"]["pruned_devices"] == [device_id]
+
+
+def test_the_prune_is_persisted_not_just_in_memory(client, tmp_path, fcm_server, monkeypatch):
+    """A restart must not resurrect an address the provider already rejected."""
+
+    store = tmp_path / "devices.json"
+    monkeypatch.setenv("BANK_DEVICE_STORE_PATH", str(store))
+    _ready_to_send(client, tmp_path, fcm_server, monkeypatch)
+    fcm_server.responses[SEND_PATH] = [(404, {"error": {"details": [{"errorCode": "UNREGISTERED"}]}})]
+
+    notifications.dispatch_to_user("user_zhang", title="t", body="b")
+
+    assert "fcm-token-1" not in store.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("status", "payload"),
+    [
+        (429, {"error": {"status": "RESOURCE_EXHAUSTED"}}),
+        (500, {"error": {"status": "INTERNAL"}}),
+        (503, {"error": {"status": "UNAVAILABLE"}}),
+        (401, {"error": {"status": "UNAUTHENTICATED"}}),
+    ],
+)
+def test_a_transient_refusal_never_unsubscribes_the_device(client, tmp_path, fcm_server, monkeypatch, status, payload):
+    """Throttled, broken or mis-authenticated must not look like "gone"."""
+
+    _ready_to_send(client, tmp_path, fcm_server, monkeypatch)
+    fcm_server.responses[SEND_PATH] = [(status, payload)]
+
+    result = notifications.dispatch_to_user("user_zhang", title="t", body="b")
+
+    assert result.failed == 1
+    assert result.dead_tokens == ()
+    assert [row["token"] for row in security.push_tokens_for("user_zhang")] == ["fcm-token-1"]
+    assert not [event for event in security.AUDIT_LOGS if event["action"] == "PUSH_TOKEN_UNREGISTERED"]
+
+
+def test_a_token_minted_for_another_project_is_dropped(client, tmp_path, fcm_server, monkeypatch):
+    _ready_to_send(client, tmp_path, fcm_server, monkeypatch)
+    fcm_server.responses[SEND_PATH] = [
+        (403, {"error": {"status": "PERMISSION_DENIED", "details": [{"errorCode": "SENDER_ID_MISMATCH"}]}}),
+    ]
+
+    result = notifications.dispatch_to_user("user_zhang", title="t", body="b")
+
+    assert result.dead_tokens == ("fcm-token-1",), result.detail
+    assert security.push_tokens_for("user_zhang") == []
+
+
+def test_a_payload_we_got_wrong_does_not_prune_the_device(client, tmp_path, fcm_server, monkeypatch):
+    """A 400 is also what FCM says when *our* message is malformed.
+
+    Deleting the user's delivery address would repair the wrong thing: the token
+    is fine, the request was not.  A token that really is dead keeps answering
+    404 until it is pruned, so waiting costs nothing.
+    """
+
+    _ready_to_send(client, tmp_path, fcm_server, monkeypatch)
+    fcm_server.responses[SEND_PATH] = [(400, {"error": {"status": "INVALID_ARGUMENT", "message": "bad data field"}})]
+
+    result = notifications.dispatch_to_user("user_zhang", title="t", body="b")
+
+    assert result.dead_tokens == (), result.detail
+    assert security.push_tokens_for("user_zhang") != []
+
+
+def test_a_permission_error_without_a_token_verdict_is_not_pruned(client, tmp_path, fcm_server, monkeypatch):
+    """Only the provider naming the token counts; a bare 403 is our problem."""
+
+    _ready_to_send(client, tmp_path, fcm_server, monkeypatch)
+    fcm_server.responses[SEND_PATH] = [(403, {"error": {"status": "PERMISSION_DENIED", "message": "caller lacks permission"}})]
+
+    result = notifications.dispatch_to_user("user_zhang", title="t", body="b")
+
+    assert result.dead_tokens == (), result.detail
+    assert security.push_tokens_for("user_zhang") != []
+
+
+def test_a_verbose_provider_error_still_prunes(client, tmp_path, fcm_server, monkeypatch):
+    """The text describing a dead token must not be able to abort its removal.
+
+    FCM bodies are long and untrusted, and ``sanitize_text`` *raises* on
+    over-length input.  An earlier version passed the raw body straight through,
+    so the exception escaped and the reason string silently prevented the very
+    cleanup it was reporting - the token stayed and kept failing forever.
+    """
+
+    _ready_to_send(client, tmp_path, fcm_server, monkeypatch)
+    fcm_server.responses[SEND_PATH] = [
+        (404, {"error": {"status": "NOT_FOUND", "message": "y" * 4000, "details": [{"errorCode": "UNREGISTERED"}]}}),
+    ]
+
+    result = notifications.dispatch_to_user("user_zhang", title="t", body="b")
+
+    assert result.dead_tokens == ("fcm-token-1",), result.detail
+    assert security.push_tokens_for("user_zhang") == []
+    dropped = [event for event in security.AUDIT_LOGS if event["action"] == "PUSH_TOKEN_UNREGISTERED"]
+    assert dropped[-1]["outcome"] == "DROPPED"
+    assert 0 < len(dropped[-1]["metadata"]["reason"]) <= 120
+
+
+def test_dropping_an_unknown_token_is_recorded_rather_than_guessed(client):
+    outcome = security.detach_push_token("nobody-has-this", reason="test")
+
+    assert outcome["dropped"] == []
+    events = [event for event in security.AUDIT_LOGS if event["action"] == "PUSH_TOKEN_UNREGISTERED"]
+    assert events and events[-1]["outcome"] == "NO_MATCH"
+
+
+def test_pruning_one_device_leaves_the_others_alone(client, tmp_path, fcm_server, monkeypatch):
+    """Two phones, one dead address: only the dead one loses its token."""
+
+    path, _ = _service_account(tmp_path, fcm_server)
+    monkeypatch.setenv("BANK_FCM_CREDENTIALS", str(path))
+    fcm_server.responses["/token"] = [(200, {"access_token": "ya29.test", "expires_in": 3600})]
+    headers = session_headers(client, "user_zhang")
+    first = enroll(client, headers)
+    attach(client, headers, first, token="fcm-token-1")
+    second = enroll(client, headers)
+    attach(client, headers, second, token="fcm-token-2")
+    # The mock answers per path, so drive one token through the transport
+    # directly rather than fanning out and having both refused.
+    fcm_server.responses[SEND_PATH] = [(404, {"error": {"details": [{"errorCode": "UNREGISTERED"}]}})]
+
+    # Pointed at the mock explicitly: the default transport targets the real
+    # fcm.googleapis.com, where a fake access token earns a convincing 401.
+    transport = notifications.FcmTransport(credentials_path=str(path), base_url=fcm_server.base_url)
+    result = transport.send(["fcm-token-1"], title="t", body="b", data={})
+    for token in result.dead_tokens:  # what dispatch_to_user does with the answer
+        security.detach_push_token(token, reason=result.detail)
+
+    assert result.dead_tokens == ("fcm-token-1",), result.detail
+    assert "push_token" not in security.DEVICES[first]
+    assert security.DEVICES[second]["push_token"] == "fcm-token-2", "the live phone must keep its address"
+    assert [row["device_id"] for row in security.push_tokens_for("user_zhang")] == [second]
