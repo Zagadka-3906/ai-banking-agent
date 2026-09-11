@@ -438,6 +438,8 @@ def test_read_collections_are_rendered_readably(wired):
     the raw core JSON blob.
     """
 
+    # 推荐按风险档案过滤：先给 user_zhang 建档，避免被“首次咨询触发测评”拦截。
+    main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C3", "source": "TEST"}
     cases = [
         ("推荐稳健理财产品", "WEALTH_RECOMMEND", ("CJ01002", "稳健添利", "风险 R1", "2.20%", "不构成投资建议")),
         ("查看理财产品", "WEALTH_QUERY", ("CJ01002", "AY90204", "ZY18031", "QK36509", "在售理财产品")),
@@ -623,3 +625,81 @@ def test_birthday_reminder_has_verified_run_at(wired):
 )
 def test_offline_parser_covers_transfer_variants(text, intent):
     assert agent._local_parse(text)["intent"] == intent
+
+
+# ---------------------------------------------------------------------------
+# 8 题风险测评问卷：首次咨询理财触发、分次作答、完成后推荐匹配产品
+# ---------------------------------------------------------------------------
+
+
+def _turn(wired, text: str, thread_id: str) -> dict:
+    config = {"configurable": {"thread_id": thread_id}}
+    list(agent.app.stream({"user_id": "user_zhang", "user_input": text}, config=config, stream_mode="values"))
+    return agent.app.get_state(config).values
+
+
+def test_first_wealth_inquiry_triggers_the_quiz(wired):
+    values = _turn(wired, "这个钱放着也是放着", "quiz-start")
+    assert values["clarification_required"] is True
+    assert "风险测评问卷" in values["final_response"]
+    assert "1A 2B" in values["final_response"]  # 有作答示例
+    # 题面不出现分值
+    assert "5分" not in values["final_response"] and "（1分）" not in values["final_response"]
+    # 档案仍未建立
+    assert main.WEALTH_RISK_PROFILES.get("user_zhang") is None
+
+
+def test_quiz_collects_answers_and_recommends_matching_products(wired):
+    _turn(wired, "这个钱放着也是放着", "quiz-complete")  # 先触发问卷
+    values = _turn(wired, "1B 2B 3C 4D 5C 6C 7C 8C", "quiz-complete")
+    # 4+3+4+4+3+3+3+3 = 27 → C3 平衡型
+    assert "C3 平衡型" in values["final_response"]
+    assert "追求收益与风险平衡" in values["final_response"]
+    assert "R1 ~ R3" in values["final_response"]
+    assert "稳健添利" in values["final_response"]  # R1 匹配
+    assert "乾坤进取" not in values["final_response"]  # R4 超出匹配级别
+    assert "得分" not in values["final_response"]  # 分数不对用户展示
+    stored = main.WEALTH_RISK_PROFILES["user_zhang"]
+    assert stored["risk_profile"] == "C3"
+    assert stored["score"] == 27
+    assert stored["answers"]["8"] == "C"
+
+
+def test_quiz_supports_partial_answers_then_completion(wired):
+    thread = "quiz-partial"
+    values = _turn(wired, "这个钱放着也是放着", thread)
+    values = _turn(wired, "1A 2B", thread)
+    assert "还差第 3、4、5、6、7、8 题" in values["final_response"]
+    # 剩余 6 题按顺序给裸字母序列
+    values = _turn(wired, "C D C C C C", thread)
+    assert "C3 平衡型" in values["final_response"]
+    assert main.WEALTH_RISK_PROFILES["user_zhang"]["answers"]["4"] == "D"
+
+
+def test_quiz_rejects_invalid_option_and_keeps_state(wired):
+    thread = "quiz-invalid"
+    _turn(wired, "帮我买点理财", thread)
+    values = _turn(wired, "1E 2B", thread)
+    assert "第 1 题没有 E 选项" in values["final_response"]
+    assert main.WEALTH_RISK_PROFILES.get("user_zhang") is None
+
+
+def test_quiz_can_be_abandoned(wired):
+    thread = "quiz-exit"
+    _turn(wired, "帮我买点理财", thread)
+    values = _turn(wired, "退出测评", thread)
+    assert "已退出风险测评" in values["final_response"]
+    assert main.WEALTH_RISK_PROFILES.get("user_zhang") is None
+
+
+def test_existing_profile_skips_the_quiz(wired):
+    main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C2", "source": "TEST"}
+    values = _turn(wired, "这个钱放着也是放着", "quiz-skip")
+    assert values["clarification_required"] is False
+    assert "风险测评问卷" not in values["final_response"]
+
+
+def test_offline_parser_feeds_the_quiz_trigger(wired):
+    values = _turn(wired, "给我儿子转200", "quiz-transfer")
+    # 转账不触发测评：直接走转账流程（缺收款人解析或正常黄区）
+    assert values["intent"] in {"TRANSFER", "SCHEDULED_TRANSFER"} or values["clarification_required"]

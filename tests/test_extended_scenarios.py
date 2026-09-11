@@ -95,6 +95,13 @@ def test_subscription_cancel_and_card_apply_use_approval_gate(client: TestClient
 
 
 def test_wealth_purchase_requires_server_mfa(client: TestClient):
+    # 账户初始未测评：先完成风险测评（演示用旧三要素路径），才能申购。
+    assessed = client.post(
+        "/api/v1/wealth/risk-assessment",
+        json={"user_id": "user_zhang", "horizon_years": 3, "loss_tolerance": "MEDIUM", "experience": "BASIC"},
+        headers=headers(),
+    )
+    assert assessed.status_code == 200, assessed.text
     pre = client.post(
         "/api/v1/risk/precheck/operation",
         json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄"},

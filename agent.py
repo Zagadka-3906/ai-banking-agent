@@ -310,6 +310,161 @@ def _scheduled_at_from_text(text: str) -> Optional[str]:
 # Implicit intent phrases.  ``protective`` rules run *before* the keyword chain
 # because a fraud report must never be answered with a plain card listing;
 # the rest are fallbacks used only when no explicit keyword matched.
+# ---------------------------------------------------------------------------
+# 8 题风险测评问卷（C1-C5）：用户首次咨询理财业务时自动触发。
+# 评分与定档在核心服务端完成（客户端/Agent 只提交选项字母，绝不展示分数）；
+# Agent 只负责展示题目、收集答案、呈现类型与匹配产品。
+# ---------------------------------------------------------------------------
+
+RISK_QUIZ_INTENTS = {
+    Intent.WEALTH_RECOMMEND.value,
+    Intent.WEALTH_PURCHASE.value,
+    Intent.WEALTH_REDEEM.value,
+    Intent.WEALTH_RISK_ASSESSMENT.value,
+}
+RISK_QUIZ_OPTIONS = {1: "ABCD", 2: "ABCD", 3: "ABCD", 4: "ABCDE", 5: "ABCD", 6: "ABCDE", 7: "ABCDE", 8: "ABCDE"}
+
+RISK_QUIZ_QUESTIONS = """【风险测评问卷】您首次咨询理财业务，请先完成风险评估（共 8 题）。
+可一次性回复全部答案（例如：1A 2B 3C 4D 5C 6C 7C 8C），也可分次作答；回复“退出测评”可随时放弃。
+
+1. 您的年龄处于以下哪个区间？
+A. 18~30岁  B. 31~50岁  C. 51~60岁  D. 60岁以上
+2. 您的家庭年收入状况大致为？
+A. 10万元以下  B. 10万~30万元  C. 30万~100万元  D. 100万元以上
+3. 在您目前的总资产中，可用于金融投资（扣除自住用房及应急金）的比例约为？
+A. 小于10%  B. 10%~30%  C. 30%~50%  D. 50%以上
+4. 您过往的主要投资经验是？
+A. 除存款/国债外基本无  B. 低风险银行理财、货币基金  C. 债券基金、黄金、固收+  D. 股票基金、A股、港股、外汇  E. 期货、期权、私募股权等复杂衍生品
+5. 您计划进行理财投资的主要期限通常是多久？
+A. 3个月以内  B. 3个月至1年  C. 1年至3年  D. 3年以上
+6. 您的首要投资目标通常是什么？
+A. 确保资产安全，本金不能有损失  B. 稳定增值，能承受极小波动  C. 控制下行风险下追求平衡增值  D. 追求较高长期增值，愿承担显著波动  E. 追求超额高回报，愿承担本金大比例亏损
+7. 假设持有10万元投资，半年内出现浮亏，您能接受的最大亏损幅度是？
+A. 无法容忍任何亏损  B. 5%以内  C. 5%~15%  D. 15%~30%  E. 30%以上
+8. 当投资短期下跌超过预期时，您通常会？
+A. 立即全部赎回止损  B. 减仓一半以上  C. 保持观望  D. 分批逢低加仓  E. 大幅加仓博取反弹"""
+
+
+def _quiz_question_text(number: int) -> str:
+    start = RISK_QUIZ_QUESTIONS.index(f"{number}. ")
+    end = RISK_QUIZ_QUESTIONS.find("\n\n", start)
+    return RISK_QUIZ_QUESTIONS[start:end if end > 0 else len(RISK_QUIZ_QUESTIONS)]
+
+
+def _parse_quiz_answers(text: str, answers: Mapping[str, Any]) -> tuple[dict[str, str], list[str]]:
+    """从回复里抽取题号->选项。支持“1A 2B”式成对写法和按未答题顺序的裸字母序列。"""
+
+    found: dict[str, str] = {}
+    invalid: list[str] = []
+    for match in re.finditer(r"(?:第\s*)?([1-8])\s*[、.．,:：\)）]?\s*([A-Ea-e])(?![A-Za-z0-9])", text):
+        question, letter = match.group(1), match.group(2).upper()
+        if letter in RISK_QUIZ_OPTIONS[int(question)]:
+            found[question] = letter
+        else:
+            invalid.append(f"第 {question} 题没有 {letter} 选项")
+    if not found:
+        letters = [item.upper() for item in re.findall(r"[A-Ea-e]", text)]
+        missing = [str(q) for q in range(1, 9) if str(q) not in answers]
+        if letters and len(letters) == len(missing) and re.fullmatch(r"[\s,，、A-Ea-e]+", text.strip() or " "):
+            for question, letter in zip(missing, letters):
+                if letter in RISK_QUIZ_OPTIONS[int(question)]:
+                    found[question] = letter
+                else:
+                    invalid.append(f"第 {question} 题没有 {letter} 选项")
+    return found, invalid
+
+
+def _fetch_risk_profile(state: BankingAgentState) -> Optional[dict[str, Any]]:
+    """读取核心里该用户的风险档案；读不到按未测评处理（申购预检仍会兜底）。"""
+
+    try:
+        response = _http("GET", "wealth/risk-profile", state=state, headers={"X-User-Id": state.get("user_id")})
+        if response.status_code >= 400:
+            return None
+        return _response_json(response).get("data") or None
+    except (requests.RequestException, RuntimeError, ValueError):
+        return None
+
+
+def _quiz_result(state: BankingAgentState, response_text: str, quiz: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """问卷回合的统一出口：quiz 为 None 表示已结束（完成或放弃）。"""
+
+    result = _empty_state(final_response=response_text)
+    result.update({
+        "intent": Intent.WEALTH_RISK_ASSESSMENT.value,
+        "request_id": f"agent_{uuid.uuid4().hex}",
+        "clarification_required": quiz is not None,
+        "plan": build_task_plan({"intent": Intent.WEALTH_RISK_ASSESSMENT.value, "date_scope": "ALL"}).to_dict(),
+        "context": {"risk_quiz": quiz},
+        "sub_requests": None,
+    })
+    return result
+
+
+def _start_risk_quiz(state: BankingAgentState) -> dict[str, Any]:
+    audit_event("RISK_QUIZ", user_id=state.get("user_id"), decision="CHALLENGE", outcome="STARTED", request_id=f"agent_{uuid.uuid4().hex}")
+    return _quiz_result(state, RISK_QUIZ_QUESTIONS, {"answers": {}})
+
+
+def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any]) -> dict[str, Any]:
+    user_id = state.get("user_id")
+    request_id = f"agent_{uuid.uuid4().hex}"
+    answers: dict[str, str] = {str(k): str(v).upper() for k, v in (quiz.get("answers") or {}).items()}
+    if any(word in text for word in ("退出测评", "取消测评", "暂不测评", "不测了")):
+        audit_event("RISK_QUIZ", user_id=user_id, decision="ALLOW", outcome="CANCELLED", request_id=request_id)
+        return _quiz_result(state, "已退出风险测评，本次未记录任何答案。需要时再说“我想做风险测评”即可。", None)
+
+    found, invalid = _parse_quiz_answers(text, answers)
+    answers.update(found)
+    if invalid:
+        return _quiz_result(state, "以下答案无效：" + "；".join(invalid) + "。请检查后重新回复该题。", {**quiz, "answers": answers})
+    missing = [q for q in range(1, 9) if str(q) not in answers]
+    if missing:
+        numbers = "、".join(str(q) for q in missing)
+        remaining = "\n\n".join(_quiz_question_text(q) for q in missing)
+        reply = (
+            f"已记录 {len(answers)}/8 题，还差第 {numbers} 题：\n\n"
+            f"{remaining}\n\n可继续作答（如 {_format_hint(missing)}），或回复“退出测评”。"
+        )
+        audit_event("RISK_QUIZ", user_id=user_id, decision="ALLOW", outcome="PARTIAL", request_id=request_id, metadata={"answered": len(answers)})
+        return _quiz_result(state, reply, {**quiz, "answers": answers})
+
+    # 全部作答：提交核心评分定档（服务端是唯一权威），完成后推荐匹配产品
+    try:
+        response = _http(
+            "POST", "wealth/risk-assessment", state=state,
+            json_body={"user_id": user_id, "answers": answers},
+            headers={"X-User-Id": user_id},
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(_error_message(response))
+        graded = _response_json(response)
+    except (requests.RequestException, RuntimeError) as exc:
+        retry = " ".join(f"{q}{letter}" for q, letter in sorted(answers.items()))
+        return _quiz_result(state, f"测评结果暂时无法保存（{exc}）。您的答案已保留，稍后可重新发送：{retry}", {**quiz, "answers": answers})
+
+    grade = str(graded.get("risk_profile") or "")
+    product_text = ""
+    try:
+        rec = _http("GET", f"wealth/recommend?user_id={user_id}&risk_profile={grade}", state=state, headers={"X-User-Id": user_id})
+        if rec.status_code < 400:
+            product_text = "\n\n" + _render_wealth(_response_json(rec), Intent.WEALTH_RECOMMEND.value)
+    except (requests.RequestException, RuntimeError, ValueError):
+        product_text = ""
+    audit_event("RISK_QUIZ", user_id=user_id, decision="ALLOW", outcome="COMPLETED", request_id=request_id, metadata={"grade": grade})
+    reply = (
+        f"✅ 风险测评完成，您的投资者风险类型为 **{grade} {graded.get('risk_type', '')}**。\n\n"
+        f"特点：{graded.get('traits', '')}\n\n"
+        f"匹配理财产品级别：{graded.get('matching_levels', '')}。以下是与您风险等级匹配的在售产品："
+        f"{product_text}\n\n现在可以直接说出需求（例如“查看理财产品”或“申购 CJ01002 500 元”）。"
+    )
+    return _quiz_result(state, reply, None)
+
+
+def _format_hint(missing: list[int]) -> str:
+    return " ".join(f"{q}A" for q in missing[:3]) + (" …" if len(missing) > 3 else "")
+
+
 _IMPLICIT_PROTECTIVE_INTENTS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("盗刷", "被盗刷", "被盗用", "不是本人消费", "有人拿我的卡"), Intent.CARD_FREEZE.value),
 )
@@ -860,6 +1015,11 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     except InjectionError as exc:
         audit_event("PROMPT_INJECTION_BLOCKED", user_id=state.get("user_id"), decision="BLOCK", outcome="FAILURE", reason=exc.code)
         return _empty_state(final_response="检测到疑似提示词注入或不安全控制指令，已阻止本次操作。请直接描述银行业务。").copy()
+    # 问卷进行中：本回合输入按答题处理，不走常规意图解析。
+    prior_context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    active_quiz = prior_context.get("risk_quiz") if isinstance(prior_context.get("risk_quiz"), dict) else None
+    if active_quiz is not None:
+        return _handle_risk_quiz(state, text, active_quiz)
     try:
         parsed = validate_intent_payload(_model_parse(text))
     except Exception as exc:
@@ -871,6 +1031,12 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     # turn's request; the operation is re-authorized from scratch.
     prior = state.get("context") if isinstance(state.get("context"), dict) else {}
     parsed = validate_intent_payload(_resolve_ellipsis(parsed, prior, text))
+    # 首次咨询理财（推荐/申购/赎回）或显式要求测评且尚无风险档案：
+    # 触发 8 题问卷（C1-C5），完成后再继续办理；浏览类查询不强制。
+    if parsed.get("intent") in RISK_QUIZ_INTENTS:
+        profile = _fetch_risk_profile(state)
+        if parsed.get("intent") == Intent.WEALTH_RISK_ASSESSMENT.value or profile is None:
+            return _start_risk_quiz(state)
     # Several read-only asks in one sentence become one ordered sub-task DAG.
     sub_requests = _split_read_requests(text)
     # A compound request that also contains a mutating part is never split and
@@ -992,6 +1158,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             "event_at": parsed.get("event_at"),
             "date_scope": parsed.get("date_scope"),
             "pending_clarification": pending_clarification,
+            "risk_quiz": None,
         },
         "event_at": parsed.get("event_at"),
         "reminder_at": None,

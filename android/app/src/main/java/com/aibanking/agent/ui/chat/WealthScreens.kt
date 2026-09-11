@@ -418,8 +418,10 @@ private fun DetailRow(label: String, value: String) {
 }
 
 private fun profileLabel(profile: String): String = when (profile) {
-    "CONSERVATIVE" -> "保守型"
-    "BALANCED" -> "平衡型"
-    "AGGRESSIVE" -> "进取型"
+    "CONSERVATIVE", "C1" -> "保守型"
+    "C2" -> "稳健型"
+    "BALANCED", "C3" -> "平衡型"
+    "C4" -> "进取型"
+    "AGGRESSIVE", "C5" -> "激进型"
     else -> profile
 }

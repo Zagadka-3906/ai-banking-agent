@@ -335,12 +335,49 @@ WEALTH_PRODUCTS: list[dict[str, Any]] = [
     },
 ]
 WEALTH_HOLDINGS: dict[str, list[dict[str, Any]]] = {"user_zhang": []}
-# A demo risk profile is stored separately from the account and contains no
-# sensitive questionnaire answers.  It lets the purchase flow demonstrate the
-# dependency while keeping the profile queryable and auditable.
-WEALTH_RISK_PROFILES: dict[str, dict[str, Any]] = {
-    "user_zhang": {"risk_profile": "CONSERVATIVE", "assessed_at": "2026-09-01T00:00:00+00:00", "source": "DEMO_SEED"}
+# 风险档案与账户分开存储，初始为空：用户首次咨询理财业务时由 Agent 触发
+# 8 题风险测评问卷（C1-C5），结果与原始答案一起记录在此（测评得分仅供
+# 服务端定档，不对用户展示）。空档案让演示能完整走一遍"首次触发测评"。
+WEALTH_RISK_PROFILES: dict[str, dict[str, Any]] = {}
+
+# 8 题问卷评分表（题目编号 -> 选项得分），服务端定档唯一权威。
+RISK_QUIZ_SCORES: dict[int, dict[str, int]] = {
+    1: {"A": 5, "B": 4, "C": 3, "D": 1},
+    2: {"A": 1, "B": 3, "C": 4, "D": 5},
+    3: {"A": 1, "B": 2, "C": 4, "D": 5},
+    4: {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5},
+    5: {"A": 1, "B": 2, "C": 3, "D": 5},
+    6: {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5},
+    7: {"A": 0, "B": 2, "C": 3, "D": 4, "E": 5},
+    8: {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5},
 }
+# 总分 -> 投资者类型（类型名/特点/匹配产品级别）。得分不对用户展示。
+RISK_GRADE_TABLE: tuple[tuple[int, str], ...] = ((36, "C5"), (30, "C4"), (23, "C3"), (15, "C2"), (8, "C1"))
+RISK_GRADE_META: dict[str, tuple[str, str, str]] = {
+    "C1": ("保守型", "风险厌恶度极高，首要目标为资产保全", "R1（低风险：现金管理类、存款）"),
+    "C2": ("稳健型", "偏好本金相对安全，可承受极小净值波动", "R1、R2（中低风险：纯债类、稳健固收）"),
+    "C3": ("平衡型", "追求收益与风险平衡，兼顾债底与权益增厚", "R1 ~ R3（中等风险：固收+、平衡混合）"),
+    "C4": ("进取型", "具备较强抗风险能力，主张长期资本增值", "R1 ~ R4（中高风险：权益类、股票型基金）"),
+    "C5": ("激进型", "追求高收益，能承受本金重大损失", "R1 ~ R5（高风险：高杠杆、衍生品、行业主题）"),
+}
+
+
+def risk_grade_for_score(score: int) -> str:
+    for threshold, grade in RISK_GRADE_TABLE:
+        if score >= threshold:
+            return grade
+    return "C1"
+
+
+def profile_rank(profile: Optional[str]) -> Optional[int]:
+    # 档案代码 -> 可购买的最高产品风险等级（R 几）。
+    return {
+        "CONSERVATIVE": 1, "C1": 1,
+        "BALANCED": 2, "C2": 2,
+        "C3": 3,
+        "AGGRESSIVE": 4, "C4": 4,
+        "C5": 5,
+    }.get(str(profile or "").upper())
 CARDS: dict[str, dict[str, Any]] = {
     "user_zhang": {"card_id": "CARD-001", "type": "VIRTUAL", "status": "ACTIVE", "daily_limit": 5000.0}
 }
@@ -522,8 +559,9 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
     profiles = state.get("WEALTH_RISK_PROFILES")
     if not isinstance(profiles, dict):
         return False
+    valid_profiles = {"CONSERVATIVE", "BALANCED", "AGGRESSIVE", "C1", "C2", "C3", "C4", "C5"}
     for record in profiles.values():
-        if not isinstance(record, dict) or record.get("risk_profile") not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}:
+        if not isinstance(record, dict) or record.get("risk_profile") not in valid_profiles:
             return False
     cards = state.get("CARDS")
     if not isinstance(cards, dict) or any(not isinstance(record, dict) for record in cards.values()):
@@ -936,6 +974,9 @@ class RiskAssessmentRequest(StrictModel):
     horizon_years: Optional[int] = None
     loss_tolerance: Optional[str] = None
     experience: Optional[str] = None
+    # 8 题问卷模式：{"1": "B", ..., "8": "C"}。提供 answers 时服务端是唯一
+    # 评分权威（客户端只提交选项字母，不提交分数），并按总分定 C1-C5 档。
+    answers: Optional[dict[str, str]] = None
 
 
 def _request_id(value: Optional[str]) -> str:
@@ -1475,7 +1516,7 @@ def _ensure_product_suitable(user_id: str, product_id: str) -> dict[str, Any]:
     except (TypeError, ValueError):
         raise SecurityError("理财产品风险等级无效", 500, "PRODUCT_RISK_INVALID")
     # 最高问卷档（进取型）解锁全部 R1-R4：货架最右列的权益类产品只对它开放。
-    max_rank = {"CONSERVATIVE": 1, "BALANCED": 2, "AGGRESSIVE": 4}[profile]
+    max_rank = profile_rank(profile)
     if product_rank > max_rank:
         raise SecurityError("当前风险档案不适合该产品，请先重新评估", 403, "RISK_PROFILE_MISMATCH")
     return product
@@ -1865,9 +1906,9 @@ def recommend_wealth(user_id: Optional[str] = None, risk_profile: str = "CONSERV
     actor = _get_actor(requested, x_user_id, action="WEALTH_RECOMMEND", request_id=request_id)
     _ensure_account(requested)
     profile = str(risk_profile or "CONSERVATIVE").upper()
-    if profile not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}:
+    if profile not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE", "C1", "C2", "C3", "C4", "C5"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_RISK_PROFILE", "message": "风险偏好无效"})
-    max_risk = {"CONSERVATIVE": 1, "BALANCED": 2, "AGGRESSIVE": 4}[profile]
+    max_risk = profile_rank(profile) or 1
     products = [p for p in WEALTH_PRODUCTS if int(str(p.get("risk_level", "R3")).lstrip("R")) <= max_risk]
     audit_event("WEALTH_RECOMMEND", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"risk_profile": profile, "count": len(products)})
     return {"code": 200, "risk_profile": profile, "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [dict(p) for p in products]}
@@ -1900,73 +1941,114 @@ def wealth_risk_assessment(
 ):
     """Record an explicit suitability questionnaire for the authenticated user.
 
-    The profile is a persisted (in this demo, in-memory) authorization input,
-    so this endpoint is treated as a write even though its risk tier is green.
-    Missing answers are rejected rather than replaced with a conservative
-    looking default.  An optional idempotency key makes client retries safe.
+    Two request shapes share this endpoint.  ``answers`` carries the 8-question
+    C1-C5 quiz: the server is the only scoring authority (the client submits
+    option letters, never points), and the resulting grade is stored with the
+    raw answers for audit.  Without ``answers`` the legacy three-field
+    questionnaire (horizon/tolerance/experience) still works unchanged.
+    Missing or invalid inputs are rejected rather than replaced with a
+    conservative-looking default.  An optional idempotency key makes client
+    retries safe.  The numeric score is stored server-side and never echoed to
+    the investor - they see the type, its traits and the matching levels.
     """
 
     request_id = _request_id(x_request_id)
     actor = _get_actor(req.user_id, x_user_id, action="WEALTH_RISK_ASSESSMENT", request_id=request_id)
+    quiz_mode = isinstance(req.answers, dict) and len(req.answers) > 0
+    grade: str
+    profile_payload: dict[str, Any]
     try:
         _ensure_account(req.user_id)
-        if req.horizon_years is None or isinstance(req.horizon_years, bool) or req.horizon_years < 0 or req.horizon_years > 100:
-            raise SecurityError("请填写 0 到 100 年之间的投资期限", 400, "INVALID_HORIZON")
-        if req.loss_tolerance is None or req.experience is None:
-            raise SecurityError("风险承受程度和投资经验不能为空", 400, "ASSESSMENT_INCOMPLETE")
-        tolerance_raw = sanitize_text(req.loss_tolerance, field="风险承受程度", max_length=40).upper().strip()
-        experience_raw = sanitize_text(req.experience, field="投资经验", max_length=40).upper().strip()
-        # Accept a small, explicit set of Chinese labels at the API boundary;
-        # arbitrary model-generated labels are still rejected.
-        tolerance = {
-            "低": "LOW", "低风险": "LOW", "保守": "LOW",
-            "中": "MEDIUM", "中风险": "MEDIUM", "中等风险": "MEDIUM", "平衡": "MEDIUM",
-            "高": "HIGH", "高风险": "HIGH", "激进": "HIGH",
-        }.get(tolerance_raw, tolerance_raw)
-        experience = {
-            "无": "NONE", "无经验": "NONE", "没有经验": "NONE", "新手": "NONE",
-            "基础": "BASIC", "基础经验": "BASIC", "一般": "BASIC",
-            "专业": "PROFESSIONAL", "专业经验": "PROFESSIONAL",
-        }.get(experience_raw, experience_raw)
-        if tolerance not in {"LOW", "MEDIUM", "HIGH"} or experience not in {"NONE", "BASIC", "PROFESSIONAL"}:
-            raise SecurityError("风险评估选项无效", 400, "INVALID_ASSESSMENT")
-        # Suitability is bounded by both loss tolerance and demonstrated
-        # experience.  A high tolerance from a novice cannot silently unlock a
-        # high-risk product.
-        tolerance_rank = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}[tolerance]
-        experience_cap = {"NONE": 1, "BASIC": 2, "PROFESSIONAL": 3}[experience]
-        effective_rank = min(tolerance_rank, experience_cap)
-        profile = {1: "CONSERVATIVE", 2: "BALANCED", 3: "AGGRESSIVE"}[effective_rank]
-        idem_payload = {
-            "user_id": req.user_id,
-            "horizon_years": int(req.horizon_years),
-            "loss_tolerance": tolerance,
-            "experience": experience,
-        }
-        cached = _idempotency_begin(actor, "wealth_risk_assessment", idempotency_key, idem_payload, request_id=request_id)
-        if cached is not None:
-            return cached
-        with STATE_LOCK:
-            WEALTH_RISK_PROFILES[req.user_id] = {
-                "risk_profile": profile,
+        if quiz_mode:
+            answers_norm: dict[str, str] = {}
+            for number in map(str, range(1, 9)):
+                letter = str(req.answers.get(number) or "").strip().upper()
+                if letter not in RISK_QUIZ_SCORES[int(number)]:
+                    allowed = "/".join(sorted(RISK_QUIZ_SCORES[int(number)]))
+                    raise SecurityError(f"第 {number} 题答案无效（仅支持 {allowed}）", 400, "INVALID_ASSESSMENT")
+                answers_norm[number] = letter
+            score = sum(RISK_QUIZ_SCORES[int(q)][letter] for q, letter in answers_norm.items())
+            grade = risk_grade_for_score(score)
+            type_name, _traits, _levels = RISK_GRADE_META[grade]
+            idem_payload = {"user_id": req.user_id, "answers": answers_norm}
+            profile_payload = {
+                "risk_profile": grade,
+                "score": score,
+                "answers": dict(answers_norm),
+                "assessed_at": datetime.now(timezone.utc).isoformat(),
+                "source": "QUESTIONNAIRE",
+            }
+        else:
+            if req.horizon_years is None or isinstance(req.horizon_years, bool) or req.horizon_years < 0 or req.horizon_years > 100:
+                raise SecurityError("请填写 0 到 100 年之间的投资期限", 400, "INVALID_HORIZON")
+            if req.loss_tolerance is None or req.experience is None:
+                raise SecurityError("风险承受程度和投资经验不能为空", 400, "ASSESSMENT_INCOMPLETE")
+            tolerance_raw = sanitize_text(req.loss_tolerance, field="风险承受程度", max_length=40).upper().strip()
+            experience_raw = sanitize_text(req.experience, field="投资经验", max_length=40).upper().strip()
+            # Accept a small, explicit set of Chinese labels at the API boundary;
+            # arbitrary model-generated labels are still rejected.
+            tolerance = {
+                "低": "LOW", "低风险": "LOW", "保守": "LOW",
+                "中": "MEDIUM", "中风险": "MEDIUM", "中等风险": "MEDIUM", "平衡": "MEDIUM",
+                "高": "HIGH", "高风险": "HIGH", "激进": "HIGH",
+            }.get(tolerance_raw, tolerance_raw)
+            experience = {
+                "无": "NONE", "无经验": "NONE", "没有经验": "NONE", "新手": "NONE",
+                "基础": "BASIC", "基础经验": "BASIC", "一般": "BASIC",
+                "专业": "PROFESSIONAL", "专业经验": "PROFESSIONAL",
+            }.get(experience_raw, experience_raw)
+            if tolerance not in {"LOW", "MEDIUM", "HIGH"} or experience not in {"NONE", "BASIC", "PROFESSIONAL"}:
+                raise SecurityError("风险评估选项无效", 400, "INVALID_ASSESSMENT")
+            # Suitability is bounded by both loss tolerance and demonstrated
+            # experience.  A high tolerance from a novice cannot silently unlock a
+            # high-risk product.
+            tolerance_rank = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}[tolerance]
+            experience_cap = {"NONE": 1, "BASIC": 2, "PROFESSIONAL": 3}[experience]
+            effective_rank = min(tolerance_rank, experience_cap)
+            grade = {1: "CONSERVATIVE", 2: "BALANCED", 3: "AGGRESSIVE"}[effective_rank]
+            idem_payload = {
+                "user_id": req.user_id,
+                "horizon_years": int(req.horizon_years),
+                "loss_tolerance": tolerance,
+                "experience": experience,
+            }
+            profile_payload = {
+                "risk_profile": grade,
                 "assessed_at": datetime.now(timezone.utc).isoformat(),
                 "horizon_years": int(req.horizon_years),
                 "loss_tolerance": tolerance,
                 "experience": experience,
                 "source": "AGENT_OR_API",
             }
+        cached = _idempotency_begin(actor, "wealth_risk_assessment", idempotency_key, idem_payload, request_id=request_id)
+        if cached is not None:
+            return cached
+        with STATE_LOCK:
+            WEALTH_RISK_PROFILES[req.user_id] = profile_payload
     except SecurityError as exc:
         _idempotency_abort(actor, "wealth_risk_assessment", idempotency_key)
         _record_failure_and_raise(exc, user_id=actor, action="WEALTH_RISK_ASSESSMENT", request_id=request_id)
-    response = {
-        "code": 200,
-        "risk_profile": profile,
-        "horizon_years": int(req.horizon_years),
-        "disclaimer": "风险评估仅供演示，不构成投资建议。",
-    }
+    if quiz_mode:
+        type_name, traits, levels = RISK_GRADE_META[grade]
+        # The score stays on file; the investor sees the type and its meaning.
+        response = {
+            "code": 200,
+            "risk_profile": grade,
+            "risk_type": type_name,
+            "traits": traits,
+            "matching_levels": levels,
+            "disclaimer": "风险评估仅供演示，不构成投资建议。",
+        }
+    else:
+        response = {
+            "code": 200,
+            "risk_profile": grade,
+            "horizon_years": int(req.horizon_years),
+            "disclaimer": "风险评估仅供演示，不构成投资建议。",
+        }
     _idempotency_complete(actor, "wealth_risk_assessment", idempotency_key, idem_payload, response)
     persist_ledger()
-    audit_event("WEALTH_RISK_ASSESSMENT", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"profile": profile, "horizon_years": int(req.horizon_years)})
+    audit_event("WEALTH_RISK_ASSESSMENT", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"profile": grade, "mode": "questionnaire" if quiz_mode else "legacy"})
     return response
 
 
