@@ -271,6 +271,14 @@ def _target_from_text(text: str) -> Optional[str]:
     # allow-list.  Never default to a person when the user omitted one.
     # 亲属称呼（爱人/儿子/兄弟…）是“关系引用”：原样传给核心，由核心到
     # 联系人簿里解析成具体收款人，离线解析器不猜测具体是谁。
+    #
+    # A card id is an object reference, not an alias: it must be recognised before
+    # the alias table, otherwise "冻结卡片 CARD-002" parses to no target at all and
+    # the core, seeing an empty card_id, applies the operation to whichever card
+    # it lists first - freezing the salary card when the user pointed at another.
+    card = re.search(r"(?i)\b(card-[0-9a-z]{2,})\b", text)
+    if card:
+        return card.group(1).upper()
     for alias in (
         "老婆", "爱人", "媳妇", "妻子", "丈夫", "老公", "夫人",
         "儿子", "女儿", "闺女", "兄弟", "兄妹", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",

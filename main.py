@@ -453,6 +453,59 @@ def _find_card(user_id: str, card_id: Optional[str]) -> Optional[dict[str, Any]]
     return _first_active_card(user_id) or (cards[0] if cards else None)
 
 
+def _select_card(user_id: str, card_id: Optional[str], *, allowed_states: Optional[set[str]] = None) -> dict[str, Any]:
+    """Resolve the card one operation applies to, refusing to guess.
+
+    Two ways this used to pick the wrong card, both reachable from the app:
+
+    * an **omitted** id fell back to "the first ACTIVE card", so a multi-card user
+      who pointed at their second card could have the first one frozen;
+    * a **wrong** id fell back the same way (``_find_card(...) or
+      _first_active_card(...)``), so a typo - or another account's id - silently
+      retargeted the operation at whatever card came first.
+
+    Ambiguity is therefore judged against the states this operation can actually
+    act on: un-reporting a lost card considers lost cards, freezing considers
+    active ones.  A named id that does not resolve is always an error, never a
+    fallback.
+    """
+
+    cards = _user_cards(user_id)
+    if not cards:
+        raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
+    if card_id:
+        found = _find_card(user_id, card_id)
+        if found is None:
+            raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
+        return found
+    candidates = [item for item in cards if allowed_states is None or str(item.get("status")) in allowed_states]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
+    names = "、".join(str(item.get("card_id")) for item in candidates[:5])
+    raise SecurityError(f"您有多张可选的卡片（{names}），请指定要操作的那一张", 409, "CARD_ID_REQUIRED")
+
+
+# The single source of truth for what each card operation may act on, as
+# source-state -> next-state.  It used to exist as three near-copies (a precheck
+# map, an executor map and the selector's implicit "ACTIVE only"), which is how a
+# card could be validated against one table and executed against another.
+CARD_TRANSITIONS: dict[str, dict[str, str]] = {
+    "CARD_FREEZE": {"ACTIVE": "FROZEN"},
+    "CARD_UNFREEZE": {"FROZEN": "ACTIVE"},
+    "CARD_REPORT_LOST": {"ACTIVE": "LOST", "FROZEN": "LOST"},
+    "CARD_UNREPORT_LOST": {"LOST": "ACTIVE"},
+}
+
+
+def _card_source_states(operation: str) -> Optional[set[str]]:
+    """States ``operation`` can act on, or None when it has no state restriction."""
+
+    transitions = CARD_TRANSITIONS.get(operation)
+    return set(transitions) if transitions else None
+
+
 def _mock_card_masked() -> str:
     """虚构借记卡的脱敏卡号（62 开头 16 位，仅回传掩码形式）。"""
 
@@ -2524,24 +2577,16 @@ def operation_precheck(
             elif not any(p["product_id"] == req.product_id for p in WEALTH_PRODUCTS):
                 raise SecurityError("理财产品不存在", 404, "PRODUCT_NOT_FOUND")
         if operation.startswith("CARD_"):
-            cards = _user_cards(req.user_id)
-            if operation != "CARD_APPLY" and not cards:
-                raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
-            card = _find_card(req.user_id, req.card_id) if req.card_id else (_first_active_card(req.user_id) or (cards[0] if cards else None))
-            if req.card_id and not card:
-                raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
+            # CARD_APPLY opens a *new* card, so it is the one operation with no
+            # card to resolve; everything else must name an unambiguous one.
+            card = None if operation == "CARD_APPLY" else _select_card(req.user_id, req.card_id, allowed_states=_card_source_states(operation))
             if card:
                 current_status = str(card.get("status") or "")
-                required_state = {
-                    "CARD_FREEZE": "ACTIVE",
-                    "CARD_UNFREEZE": "FROZEN",
-                    "CARD_REPORT_LOST": {"ACTIVE", "FROZEN"},
-                    "CARD_UNREPORT_LOST": "LOST",
-                }.get(operation)
-                if isinstance(required_state, set):
-                    if current_status not in required_state:
-                        raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
-                elif required_state and current_status != required_state:
+                # Same table the executor and the selector use, so a card can no
+                # longer be validated against one copy of the rules and executed
+                # against another.
+                required_states = _card_source_states(operation)
+                if required_states and current_status not in required_states:
                     raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
             if operation != "CARD_APPLY" and card:
                 # Bind the signed approval to the concrete card even when the
@@ -3163,24 +3208,16 @@ def execute_operation(
         if operation == "WEALTH_PURCHASE" and req.user_id not in WEALTH_RISK_PROFILES:
             raise SecurityError("申购前请先完成风险评估", 428, "RISK_ASSESSMENT_REQUIRED")
         if operation.startswith("CARD_"):
-            cards = _user_cards(req.user_id)
-            if operation != "CARD_APPLY" and not cards:
-                raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
-            card = _find_card(req.user_id, req.card_id) if req.card_id else (_first_active_card(req.user_id) or (cards[0] if cards else None))
-            if req.card_id and not card:
-                raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
+            # CARD_APPLY opens a *new* card, so it is the one operation with no
+            # card to resolve; everything else must name an unambiguous one.
+            card = None if operation == "CARD_APPLY" else _select_card(req.user_id, req.card_id, allowed_states=_card_source_states(operation))
             if card:
                 current_status = str(card.get("status") or "")
-                required_state = {
-                    "CARD_FREEZE": "ACTIVE",
-                    "CARD_UNFREEZE": "FROZEN",
-                    "CARD_REPORT_LOST": {"ACTIVE", "FROZEN"},
-                    "CARD_UNREPORT_LOST": "LOST",
-                }.get(operation)
-                if isinstance(required_state, set):
-                    if current_status not in required_state:
-                        raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
-                elif required_state and current_status != required_state:
+                # Same table the executor and the selector use, so a card can no
+                # longer be validated against one copy of the rules and executed
+                # against another.
+                required_states = _card_source_states(operation)
+                if required_states and current_status not in required_states:
                     raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
             if operation != "CARD_APPLY" and card:
                 target = req.card_id or card.get("card_id")
@@ -3250,23 +3287,13 @@ def execute_operation(
                     new_limit = amount
                     if not math.isfinite(float(new_limit)) or float(new_limit) <= 0:
                         raise SecurityError("卡片额度必须为正数", 400, "INVALID_CARD_LIMIT")
-                    card = _find_card(req.user_id, req.card_id) or _first_active_card(req.user_id)
-                    if not card:
-                        raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
+                    card = _select_card(req.user_id, req.card_id)
                     card["daily_limit"] = round(float(new_limit), 2)
                     result.update({"status": "LIMIT_UPDATED", "card": card})
                 elif operation in {"CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST"}:
-                    card = _find_card(req.user_id, req.card_id) or _first_active_card(req.user_id)
-                    if not card:
-                        raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
+                    card = _select_card(req.user_id, req.card_id)
                     current_status = str(card.get("status") or "")
-                    transitions = {
-                        "CARD_FREEZE": {"ACTIVE": "FROZEN"},
-                        "CARD_UNFREEZE": {"FROZEN": "ACTIVE"},
-                        "CARD_REPORT_LOST": {"ACTIVE": "LOST", "FROZEN": "LOST"},
-                        "CARD_UNREPORT_LOST": {"LOST": "ACTIVE"},
-                    }
-                    next_status = transitions[operation].get(current_status)
+                    next_status = CARD_TRANSITIONS[operation].get(current_status)
                     if not next_status:
                         raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
                     card["status"] = next_status

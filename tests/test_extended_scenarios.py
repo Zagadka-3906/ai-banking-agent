@@ -227,6 +227,73 @@ def test_a_questionnaire_grade_can_actually_buy(client: TestClient):
     assert missing.status_code == 428, missing.text
 
 
+def test_a_card_operation_never_guesses_which_card(client: TestClient):
+    """Two cards plus no explicit id is ambiguous, and must be refused as such.
+
+    The core used to fall back to "the first ACTIVE card" both when the id was
+    missing *and* when it did not resolve, so a two-card user who pointed at their
+    second card could freeze their salary card instead - and a typo retargeted the
+    operation at whatever card happened to be first.
+    """
+
+    main.CARDS["user_zhang"] = [
+        {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "工资卡"},
+        {"card_id": "CARD-002", "number_masked": "**** **** **** 9999", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "副卡"},
+    ]
+
+    ambiguous = client.post(
+        "/api/v1/risk/precheck/operation",
+        json={"user_id": "user_zhang", "operation": "CARD_FREEZE"},
+        headers=headers(),
+    )
+    assert ambiguous.status_code == 409, ambiguous.text
+    assert ambiguous.json()["detail"]["code"] == "CARD_ID_REQUIRED"
+    assert all(card["status"] == "ACTIVE" for card in main.CARDS["user_zhang"]), "nothing may be frozen by a guess"
+
+    # A named card resolves, and freezing it must freeze *that* card.
+    token, proof = approve_red(client, "CARD_FREEZE", card_id="CARD-002")
+    frozen = client.post(
+        "/api/v1/cards/freeze",
+        json={"user_id": "user_zhang", "auth_token": token, "card_id": "CARD-002"},
+        headers={**headers(token), "X-MFA-Proof": proof},
+    )
+    assert frozen.status_code == 200, frozen.text
+    assert frozen.json()["data"]["card"]["card_id"] == "CARD-002", frozen.text
+    statuses = {card["card_id"]: card["status"] for card in main.CARDS["user_zhang"]}
+    assert statuses == {"CARD-001": "ACTIVE", "CARD-002": "FROZEN"}, statuses
+
+    # An id that does not resolve is an error, never a silent fallback.
+    unknown = client.post(
+        "/api/v1/risk/precheck/operation",
+        json={"user_id": "user_zhang", "operation": "CARD_FREEZE", "card_id": "CARD-404"},
+        headers=headers(),
+    )
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["detail"]["code"] == "CARD_NOT_FOUND"
+
+    # A single eligible card still resolves without an id (the common case).
+    main.CARDS["user_zhang"] = [{"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0}]
+    only = client.post(
+        "/api/v1/risk/precheck/operation",
+        json={"user_id": "user_zhang", "operation": "CARD_FREEZE"},
+        headers=headers(),
+    )
+    assert only.status_code == 200, only.text
+
+    # Un-reporting targets LOST cards, so ambiguity must be judged against the
+    # states the operation can act on - not against ACTIVE alone.
+    main.CARDS["user_zhang"] = [
+        {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0},
+        {"card_id": "CARD-002", "number_masked": "**** **** **** 9999", "type": "借记卡", "status": "LOST", "daily_limit": 5000.0},
+    ]
+    lost = client.post(
+        "/api/v1/risk/precheck/operation",
+        json={"user_id": "user_zhang", "operation": "CARD_UNREPORT_LOST"},
+        headers=headers(),
+    )
+    assert lost.status_code == 200, lost.text
+
+
 def test_self_service_card_issuance_is_capped_per_user(client: TestClient, monkeypatch):
     """Cards are ledger state and the snapshot is rewritten in full, so an
     un-capped add is unbounded growth with quadratic disk work - and every card

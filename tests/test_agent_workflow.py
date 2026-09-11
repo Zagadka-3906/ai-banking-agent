@@ -752,3 +752,23 @@ def test_quiz_start_is_refused_when_retake_limit_reached(wired):
     values = _turn(wired, "我想重新做一下风险测评", "quiz-limit")
     assert "次数已达上限" in values["final_response"]
     assert values.get("risk_quiz", {"active": False})["active"] is False
+
+
+# ---------------------------------------------------------------------------
+# card references in an instruction
+# ---------------------------------------------------------------------------
+
+
+def test_a_card_id_in_the_instruction_is_extracted_as_the_target():
+    """A card id is an object reference, so it must survive parsing.
+
+    It used to be invisible to the offline parser: "冻结卡片 CARD-002" produced no
+    target, and the core - seeing an empty card_id - applied the operation to
+    whichever card it listed first.  On a two-card account that means freezing the
+    salary card while the user pointed at the other one.
+    """
+
+    assert agent._target_from_text("冻结卡片 CARD-002") == "CARD-002"
+    assert agent._target_from_text("把 card-001 挂失") == "CARD-001"
+    assert agent._target_from_text("给李四转 200 元") == "李四"
+    assert agent._target_from_text("查一下余额") is None
