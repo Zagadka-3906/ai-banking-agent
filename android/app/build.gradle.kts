@@ -20,6 +20,22 @@ if (googleServicesConfig.exists()) {
     logger.lifecycle("google-services.json not found: building without Firebase push.")
 }
 
+// Endpoints are resolved at build time so a checkout can target something other
+// than the emulator loopback without editing sources: pass -PbankGatewayUrl=... /
+// -PbankCoreUrl=..., or set them in android/gradle.properties or
+// ~/.gradle/gradle.properties.  The defaults keep the docker-compose stack
+// (core :8000, gateway :8100) reachable from an emulator through 10.0.2.2.
+// Anything other than loopback should be TLS: network_security_config.xml only
+// permits cleartext for 10.0.2.2/localhost/127.0.0.1.
+fun resolvedEndpoint(property: String, fallback: String): String {
+    val value = (project.findProperty(property) as String?)?.trim().orEmpty()
+    if (value.isEmpty()) return fallback
+    require(value.startsWith("http")) { "$property must be an http(s) URL" }
+    return if (value.endsWith("/")) value else "$value/"
+}
+val gatewayUrl = resolvedEndpoint("bankGatewayUrl", "http://10.0.2.2:8100/")
+val coreUrl = resolvedEndpoint("bankCoreUrl", "http://10.0.2.2:8000/")
+
 android {
     namespace = "com.aibanking.agent"
     compileSdk = 35
@@ -34,9 +50,10 @@ android {
         // The emulator reaches the developer machine through 10.0.2.2, so the
         // two backends defined in docker-compose (core :8000, gateway :8100)
         // are addressable without a reverse proxy during development.  A real
-        // deployment overrides these with its TLS endpoints.
-        buildConfigField("String", "GATEWAY_BASE_URL", "\"http://10.0.2.2:8100/\"")
-        buildConfigField("String", "CORE_BASE_URL", "\"http://10.0.2.2:8000/\"")
+        // deployment overrides these with its TLS endpoints (see
+        // resolvedEndpoint above).
+        buildConfigField("String", "GATEWAY_BASE_URL", "\"$gatewayUrl\"")
+        buildConfigField("String", "CORE_BASE_URL", "\"$coreUrl\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

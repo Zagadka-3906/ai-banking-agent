@@ -7,11 +7,15 @@ import androidx.lifecycle.viewModelScope
 import com.aibanking.agent.data.AgentRepository
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.DeviceRepository
+import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.GatewayException
 import com.aibanking.agent.data.LoginRepository
 import com.aibanking.agent.data.SessionStore
+import com.aibanking.agent.data.TaskRepository
+import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.push.PushNotifications
 import com.aibanking.agent.security.DeviceKeyManager
+import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -55,6 +59,13 @@ data class ChatUiState(
     val otpRequiredAtLogin: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
+    /** Device-management panel visibility and its server-backed rows. */
+    val showDevices: Boolean = false,
+    val devices: List<DeviceView> = emptyList(),
+    /** Task-centre panel visibility and its server-backed rows. */
+    val showTasks: Boolean = false,
+    val tasks: List<TaskView> = emptyList(),
+    val panelBusy: Boolean = false,
 ) {
     val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy && pending == null
 }
@@ -75,6 +86,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val agent = AgentRepository.create()
     private val login = LoginRepository.create()
     private val devices = DeviceRepository.create()
+    private val tasks = TaskRepository.create()
+    private val gson = Gson()
 
     private val _state = MutableStateFlow(ChatUiState())
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
@@ -91,7 +104,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (!storedPrincipal.isNullOrBlank() && !storedToken.isNullOrBlank()) {
             sessionToken = storedToken
             conversationId = sessionStore.conversationId() ?: conversationId
-            _state.update { it.copy(principal = storedPrincipal, authenticated = true, messages = listOf(welcome())) }
+            // The transcript is restored too, so a restart keeps the answers the
+            // user already received; it is stored sealed, like the credential.
+            val restored = sessionStore.messages()?.let { json ->
+                runCatching { gson.fromJson(json, Array<ChatMessage>::class.java).toList() }.getOrNull()
+            }.orEmpty()
+            _state.update {
+                it.copy(
+                    principal = storedPrincipal,
+                    authenticated = true,
+                    messages = if (restored.isNotEmpty()) restored else listOf(welcome()),
+                )
+            }
         }
     }
 
@@ -142,6 +166,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         },
                     )
                 }
+                persistMessages()
             } catch (failure: GatewayException) {
                 _state.update {
                     it.copy(
@@ -186,12 +211,111 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         Unit
     }
 
+    /**
+     * Sign out: revoke the session on the server first, then forget it locally.
+     *
+     * The order matters - wiping local storage before the server has revoked
+     * the credential would leave a copied token valid until expiry.  The
+     * revocation is best effort: when the network is gone (or the session
+     * already expired) the local wipe still happens, and the token dies at its
+     * short TTL regardless.
+     */
     fun logout() {
-        sessionToken = null
-        sessionStore.clear()
-        conversationId = UUID.randomUUID().toString().replace("-", "").take(20)
-        _state.value = ChatUiState()
+        val token = sessionToken
+        viewModelScope.launch {
+            if (token != null) {
+                withContext(Dispatchers.IO) { runCatching { login.logout(token) } }
+            }
+            sessionToken = null
+            sessionStore.clear()
+            conversationId = UUID.randomUUID().toString().replace("-", "").take(20)
+            _state.value = ChatUiState()
+        }
     }
+
+    /** Seal the transcript (bounded) so a restart restores the same conversation. */
+    private fun persistMessages() {
+        val bounded = _state.value.messages.takeLast(MAX_PERSISTED_MESSAGES)
+        runCatching { gson.toJson(bounded) }.getOrNull()?.let { sessionStore.saveMessages(it) }
+    }
+
+    // -- device management panel -------------------------------------------
+
+    fun openDevices() {
+        _state.update { it.copy(showDevices = true, showTasks = false, panelBusy = true) }
+        refreshDevices()
+    }
+
+    fun refreshDevices() {
+        val principal = _state.value.principal
+        viewModelScope.launch {
+            try {
+                val rows = withContext(Dispatchers.IO) { devices.list(principal, sessionToken ?: "") }
+                _state.update { it.copy(devices = rows, panelBusy = false) }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    fun revokeDevice(targetId: String) {
+        val principal = _state.value.principal
+        _state.update { it.copy(panelBusy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { devices.revoke(targetId, principal, sessionToken ?: "") }
+                val rows = withContext(Dispatchers.IO) { devices.list(principal, sessionToken ?: "") }
+                _state.update {
+                    it.copy(
+                        devices = rows,
+                        panelBusy = false,
+                        notice = if (targetId == deviceId) "本机已解除注册：红色风险操作在本机不可用" else "设备已停用",
+                    )
+                }
+                if (targetId == deviceId) deviceId = null
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    // -- task centre panel ---------------------------------------------------
+
+    fun openTasks() {
+        _state.update { it.copy(showTasks = true, showDevices = false, panelBusy = true) }
+        refreshTasks()
+    }
+
+    fun refreshTasks() {
+        val principal = _state.value.principal
+        viewModelScope.launch {
+            try {
+                val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
+                _state.update { it.copy(tasks = rows, panelBusy = false) }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    fun cancelTask(taskId: String) {
+        val principal = _state.value.principal
+        _state.update { it.copy(panelBusy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { tasks.cancel(taskId, principal, sessionToken ?: "") }
+                val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
+                _state.update { it.copy(tasks = rows, panelBusy = false, notice = "任务已取消") }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(panelBusy = false, error = failure.message) }
+            }
+        }
+    }
+
+    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false) }
+
+    /** Exposed so the device panel can mark "this is this phone" honestly. */
+    fun currentDeviceId(): String? = deviceId
 
     fun send() {
         val current = _state.value
@@ -245,10 +369,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         otp = "",
                     )
                 }
+                persistMessages()
             } catch (failure: GatewayException) {
                 // Drop the placeholder: leaving "正在处理…" behind after a
                 // failure is exactly the kind of lie this codebase avoids.
                 _state.update { state -> state.copy(messages = state.messages.filterNot { it.id == placeholder.id }) }
+                persistMessages()
                 applyFailure(failure)
             } catch (failure: Exception) {
                 // A client-side fault must not take the app down; report it the
@@ -336,6 +462,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         ),
                     )
                 }
+                persistMessages()
             } catch (failure: GatewayException) {
                 applyFailure(failure)
             } catch (failure: Exception) {
@@ -369,6 +496,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         ),
                     )
                 }
+                persistMessages()
             } catch (failure: GatewayException) {
                 applyFailure(failure)
             }
@@ -391,4 +519,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         role = ChatRole.ASSISTANT,
         text = "您好！我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片和订阅。高风险操作需要您完成短信验证与设备签名。",
     )
+
+    private companion object {
+        /** Transcript bound kept sealed in preferences - a chat log is not a ledger. */
+        const val MAX_PERSISTED_MESSAGES = 100
+    }
 }

@@ -47,16 +47,29 @@ class SessionStore(context: Context) {
 
     fun deviceId(): String? = open(KEY_DEVICE)
 
+    /** Persist the (already JSON-serialized) chat transcript, sealed like a credential. */
+    fun saveMessages(json: String) {
+        preferences.edit().putString(KEY_MESSAGES, seal(json)).apply()
+    }
+
+    fun messages(): String? = open(KEY_MESSAGES)
+
     /**
      * Drop the credential material.
      *
      * The device id survives on purpose: the device stays enrolled with the bank
      * across a logout, and the Keystore key backing it is not a session
      * credential.  Only an explicit unenroll (or a lost-device report) should
-     * remove it.
+     * remove it.  The chat transcript goes with the session: it belongs to the
+     * authenticated user, not to the phone.
      */
     fun clear() {
-        preferences.edit().remove(KEY_TOKEN).remove(KEY_PRINCIPAL).remove(KEY_CONVERSATION).apply()
+        preferences.edit()
+            .remove(KEY_TOKEN)
+            .remove(KEY_PRINCIPAL)
+            .remove(KEY_CONVERSATION)
+            .remove(KEY_MESSAGES)
+            .apply()
     }
 
     private fun open(key: String): String? {
@@ -103,6 +116,7 @@ class SessionStore(context: Context) {
         const val KEY_PRINCIPAL = "principal"
         const val KEY_CONVERSATION = "conversation_id"
         const val KEY_DEVICE = "device_id"
+        const val KEY_MESSAGES = "chat_messages"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val IV_BYTES = 12

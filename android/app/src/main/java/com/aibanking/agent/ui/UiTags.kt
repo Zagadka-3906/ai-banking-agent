@@ -15,6 +15,11 @@ object UiTags {
     const val CHAT_INPUT = "chat_input"
     const val CHAT_SEND = "chat_send"
 
+    const val OPEN_DEVICES = "open_devices"
+    const val OPEN_TASKS = "open_tasks"
+    const val DEVICE_REVOKE = "device_revoke"
+    const val TASK_CANCEL = "task_cancel"
+
     const val APPROVAL_APPROVE = "approval_approve"
     const val APPROVAL_REJECT = "approval_reject"
     const val APPROVAL_OTP = "approval_otp"

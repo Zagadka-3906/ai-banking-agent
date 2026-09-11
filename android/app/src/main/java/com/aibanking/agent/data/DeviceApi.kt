@@ -73,6 +73,13 @@ interface DeviceApi {
         @Header("X-User-Id") userId: String,
         @Header("X-Session-Token") sessionToken: String,
     ): DeviceListResponse
+
+    @POST("api/v1/devices/{deviceId}/revoke")
+    suspend fun revoke(
+        @Path("deviceId") deviceId: String,
+        @Header("X-User-Id") userId: String,
+        @Header("X-Session-Token") sessionToken: String,
+    ): DeviceView
 }
 
 data class DeviceListResponse(val code: Int = 0, val data: List<DeviceView> = emptyList())
@@ -106,6 +113,24 @@ class DeviceRepository(private val api: DeviceApi) {
         api.list(userId = principal, sessionToken = sessionToken).data
     } catch (failure: HttpException) {
         throw GatewayException(null, "无法获取设备列表：HTTP ${failure.code()}", failure.code())
+    } catch (failure: IOException) {
+        throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
+    }
+
+    /**
+     * Stop the core trusting this (or another) enrolled device's signatures.
+     *
+     * Revoking the *current* device is the "this phone is compromised" self-service
+     * path: the red tier stops working here immediately, which is the point.
+     */
+    suspend fun revoke(
+        deviceId: String,
+        principal: String,
+        sessionToken: String,
+    ): DeviceView = try {
+        api.revoke(deviceId = deviceId, userId = principal, sessionToken = sessionToken)
+    } catch (failure: HttpException) {
+        throw failure.asGatewayException()
     } catch (failure: IOException) {
         throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
     }

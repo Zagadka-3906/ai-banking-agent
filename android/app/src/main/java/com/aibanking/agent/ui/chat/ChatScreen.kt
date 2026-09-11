@@ -21,6 +21,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -33,7 +34,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,8 +47,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.aibanking.agent.data.ApprovalView
+import com.aibanking.agent.data.DeviceView
+import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
+import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,6 +87,14 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                 title = { Text("AI 银行助手") },
                 actions = {
                     Text("已登录：${state.principal}", style = MaterialTheme.typography.labelMedium)
+                    TextButton(
+                        onClick = viewModel::openTasks,
+                        modifier = Modifier.testTag(UiTags.OPEN_TASKS),
+                    ) { Text("任务") }
+                    TextButton(
+                        onClick = viewModel::openDevices,
+                        modifier = Modifier.testTag(UiTags.OPEN_DEVICES),
+                    ) { Text("设备") }
                     TextButton(onClick = viewModel::logout) { Text("退出") }
                 },
             )
@@ -135,6 +152,24 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             )
         }
     }
+
+    if (state.showDevices) {
+        DevicePanel(
+            devices = state.devices,
+            busy = state.panelBusy,
+            currentDeviceId = viewModel.currentDeviceId(),
+            onRevoke = viewModel::revokeDevice,
+            onDismiss = viewModel::dismissPanels,
+        )
+    }
+    if (state.showTasks) {
+        TaskPanel(
+            tasks = state.tasks,
+            busy = state.panelBusy,
+            onCancel = viewModel::cancelTask,
+            onDismiss = viewModel::dismissPanels,
+        )
+    }
 }
 
 @Composable
@@ -184,6 +219,15 @@ private fun ApprovalCard(
     onBiometricApprove: () -> Unit,
 ) {
     val isRed = approval.mfaRequired
+    // The handle really does expire server-side, so the countdown must move:
+    // a frozen number invites an approve tap the core is guaranteed to refuse.
+    var remainingSeconds by remember(approval.approvalId) { mutableIntStateOf(approval.expiresIn) }
+    LaunchedEffect(approval.approvalId) {
+        while (remainingSeconds > 0) {
+            delay(1_000)
+            remainingSeconds -= 1
+        }
+    }
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (isRed) Color(0xFFFFDAD6) else Color(0xFFFFE0B2),
@@ -197,7 +241,8 @@ private fun ApprovalCard(
             )
             Text(approval.summary, style = MaterialTheme.typography.bodyMedium)
             Text(
-                text = "审批编号 ${approval.approvalId} · 剩余 ${approval.expiresIn} 秒",
+                text = "审批编号 ${approval.approvalId} · " +
+                    if (remainingSeconds > 0) "剩余 $remainingSeconds 秒" else "已超时，请重新发起操作",
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = FontFamily.Monospace,
             )
@@ -273,3 +318,152 @@ private fun InputRow(
         Button(onClick = onSend, enabled = enabled, modifier = Modifier.testTag(UiTags.CHAT_SEND)) { Text("发送") }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DevicePanel(
+    devices: List<DeviceView>,
+    busy: Boolean,
+    currentDeviceId: String?,
+    onRevoke: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("已注册设备", style = MaterialTheme.typography.titleMedium)
+            if (busy) {
+                CircularProgressIndicator()
+            }
+            if (!busy && devices.isEmpty()) {
+                Text("没有已注册的设备。", style = MaterialTheme.typography.bodyMedium)
+            }
+            devices.forEach { device ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(device.label ?: "未知设备", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${device.deviceId}\n指纹 ${device.fingerprint.take(16)}…",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                                Text(
+                                    buildString {
+                                        append(if (device.status == "ACTIVE") "已启用" else "已停用")
+                                        append(" · ")
+                                        append(if (device.pushEnabled) "推送已开启" else "推送未开启")
+                                        if (device.createdAt > 0) append(" · 注册于 ${formatEpochSeconds(device.createdAt)}")
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            if (device.status == "ACTIVE") {
+                                OutlinedButton(
+                                    onClick = { onRevoke(device.deviceId) },
+                                    enabled = !busy,
+                                    modifier = Modifier.testTag(UiTags.DEVICE_REVOKE),
+                                ) { Text("停用") }
+                            }
+                        }
+                        if (device.deviceId == currentDeviceId && device.status == "ACTIVE") {
+                            Text(
+                                "这是本机：停用后红色风险操作在本机将不可用。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskPanel(
+    tasks: List<TaskView>,
+    busy: Boolean,
+    onCancel: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("待办任务", style = MaterialTheme.typography.titleMedium)
+            if (busy) {
+                CircularProgressIndicator()
+            }
+            if (!busy && tasks.isEmpty()) {
+                Text("当前没有任务。", style = MaterialTheme.typography.bodyMedium)
+            }
+            tasks.forEach { task ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(task.taskType, style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${task.status}${task.runAt?.let { " · 到期 $it" } ?: ""}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                taskSummary(task)?.let { detail ->
+                                    Text(detail, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            if (task.status in CANCELLABLE_TASK_STATUSES) {
+                                OutlinedButton(
+                                    onClick = { onCancel(task.taskId) },
+                                    enabled = !busy,
+                                    modifier = Modifier.testTag(UiTags.TASK_CANCEL),
+                                ) { Text("取消") }
+                            }
+                        }
+                    }
+                }
+            }
+            Text(
+                "到期需要资金的任务会先暂停并推送提醒，确认后才会执行。",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+/** Only tasks that have not settled yet may be cancelled from the phone. */
+private val CANCELLABLE_TASK_STATUSES = setOf("PENDING", "WAITING_USER", "FAILED")
+
+private fun taskSummary(task: TaskView): String? {
+    (task.payload["message"] as? String)?.takeIf { it.isNotBlank() }?.let { return it }
+    val subject = (task.payload["merchant"] as? String) ?: (task.payload["item"] as? String)
+    val amount = task.payload["amount"]
+    val parts = listOfNotNull(subject, amount?.let { "¥$it" })
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
+private fun formatEpochSeconds(epochSeconds: Long): String =
+    runCatching {
+        DateTimeFormatter.ofPattern("yyyy-MM-dd")
+            .withZone(ZoneId.systemDefault())
+            .format(Instant.ofEpochSecond(epochSeconds))
+    }.getOrDefault("")
