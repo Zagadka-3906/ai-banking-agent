@@ -29,8 +29,20 @@ services:
       BANK_IDEMPOTENCY_TTL_SECONDS: ${BANK_IDEMPOTENCY_TTL_SECONDS:-86400}
       BANK_IDEMPOTENCY_MAX_RECORDS: ${BANK_IDEMPOTENCY_MAX_RECORDS:-10000}
       BANK_CORS_ORIGINS: ${BANK_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
+      # Push delivery (server half).  This is the *in-container* path; the key is
+      # bind-mounted read-only from ./secrets below.  With no key present the
+      # server degrades honestly: /api/v1/security/health reports
+      # push.configured=false and dispatches audit NOT_SENT with the reason.
+      BANK_FCM_CREDENTIALS: /run/secrets/fcm-service-account.json
     ports:
       - "8000:8000"
+    volumes:
+      # A directory bind on purpose: a missing key is then simply "push not
+      # configured" instead of a Compose error.  Override the source directory
+      # with BANK_FCM_CREDENTIALS_DIR to reuse an existing secrets folder; the
+      # file inside must be named fcm-service-account.json.  ./secrets is
+      # git-ignored.
+      - ${BANK_FCM_CREDENTIALS_DIR:-./secrets}:/run/secrets:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 10s

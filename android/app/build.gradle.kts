@@ -4,6 +4,22 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Firebase is enabled by *dropping in the config file*, not by editing this
+// script: the google-services plugin refuses to configure the build at all when
+// `google-services.json` is missing, so applying it unconditionally would make
+// every checkout without a Firebase project fail.  Put the file in
+// `android/app/` and the plugin activates on the next build; the app then
+// registers a real push token (`push_enabled` flips to true server-side).
+// Without the file, the app builds and runs with push simply disabled - see
+// app/src/main/java/com/aibanking/agent/push/PushNotifications.kt.
+val googleServicesConfig = file("google-services.json")
+if (googleServicesConfig.exists()) {
+    apply(plugin = libs.plugins.google.services.get().pluginId)
+    logger.lifecycle("google-services.json found: Firebase push is enabled for this build.")
+} else {
+    logger.lifecycle("google-services.json not found: building without Firebase push.")
+}
+
 android {
     namespace = "com.aibanking.agent"
     compileSdk = 35
@@ -76,9 +92,10 @@ dependencies {
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp.logging)
 
-    // Push notifications.  The google-services plugin is intentionally NOT
-    // applied: it fails the build outright when google-services.json is missing,
-    // and a checkout without a Firebase project must still compile and run.
+    // Push notifications.  The google-services plugin is applied conditionally at
+    // the top of this file: it fails the build outright when google-services.json
+    // is missing, so it only activates once that file is present, and a checkout
+    // without a Firebase project still compiles and runs (push degrades quietly).
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
 

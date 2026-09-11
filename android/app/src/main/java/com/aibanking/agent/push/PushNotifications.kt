@@ -7,16 +7,18 @@ import com.google.firebase.messaging.FirebaseMessaging
 /**
  * Whether this build can actually receive push notifications.
  *
- * The google-services plugin is deliberately not applied (it refuses to
- * configure the build without a real `google-services.json`), so a checkout with
- * no Firebase project must still run - it simply has no push.  `FirebaseApp`
- * initialises from generated resources, so the absence shows up as "no app
- * registered" rather than as a crash, and every call site asks here first.
+ * The google-services plugin is applied only when `android/app/google-services.json`
+ * exists (see app/build.gradle.kts): it refuses to configure the build at all
+ * without that file, so a checkout with no Firebase project must still compile.
+ * `FirebaseApp` initialises from the resources that file generates, so its
+ * absence shows up as "no app registered" rather than as a crash, and every call
+ * site asks here first.
  *
  * The consequence, stated plainly: **without a Firebase project nothing is
  * delivered.**  The device registers no token, the server has nothing to send
- * to, and `/api/v1/tasks/run-due` records `NOT_SENT` with the reason.  Adding
- * `google-services.json` and applying the plugin is what turns delivery on.
+ * to, and `/api/v1/tasks/run-due` records `NOT_SENT` with the reason.  With the
+ * file present the app fetches a real FCM token on login and registers it, and
+ * the server side reports `push.configured` in `/api/v1/security/health`.
  */
 object PushNotifications {
 

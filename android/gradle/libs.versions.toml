@@ -17,7 +17,7 @@ androidxTestJunit = "1.2.1"
 androidxTestRunner = "1.6.2"
 # Push notifications.  The BoM keeps firebase-messaging and its transitive
 # play-services artifacts on one compatible release.
-firebaseBom = "33.5.1"
+firebaseBom = "34.19.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -50,10 +50,11 @@ retrofit-converter-gson = { group = "com.squareup.retrofit2", name = "converter-
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
-# Push.  Note what is deliberately absent: the google-services plugin, which
-# needs a real google-services.json at configuration time.  The app therefore
-# builds and runs without a Firebase project and degrades to "no push" - see
-# push/PushNotifications.kt.
+# Push.  The BoM keeps firebase-messaging and its transitive play-services
+# artifacts on one compatible release.  The google-services plugin is declared
+# below and applied conditionally by :app: it needs a real google-services.json
+# at configuration time, so a checkout without a Firebase project must not apply
+# it (see plugins.google-services and app/build.gradle.kts).
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 
@@ -61,3 +62,6 @@ firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+# Applied conditionally by :app, and only when android/app/google-services.json
+# exists - the plugin hard-fails configuration without that file.
+google-services = { id = "com.google.gms.google-services", version = "4.5.0" }

@@ -1862,6 +1862,47 @@ def authorize_execution(
             )
 
 
+def push_health() -> dict[str, Any]:
+    """Whether the *server* can deliver a push right now, and if not, why.
+
+    Kept separate from the device registry on purpose: a phone can hold a valid
+    FCM token while the server still has no credential to send with, and that is
+    exactly the gap a reader would otherwise have to infer from an audit event
+    that quietly says NOT_SENT.  Imported lazily because ``notifications``
+    imports this module.
+    """
+
+    try:
+        from notifications import resolve_transport
+    except Exception as exc:  # pragma: no cover - defensive; the import is local
+        return {
+            "configured": False,
+            "provider": "unavailable",
+            "reason": f"notifications module unusable: {type(exc).__name__}",
+            "devices_with_tokens": 0,
+        }
+    with STATE_LOCK:
+        devices_with_tokens = sum(
+            1
+            for item in DEVICES.values()
+            if item.get("push_token") and item.get("status") == DEVICE_STATUS_ACTIVE
+        )
+    transport = resolve_transport()
+    # A transport reports a reason only when it cannot actually deliver; the
+    # reason may quote the credential path, which must not leak out of an
+    # unauthenticated endpoint.
+    reason = getattr(transport, "reason", None)
+    credentials = os.getenv("BANK_FCM_CREDENTIALS", "").strip()
+    if reason and credentials:
+        reason = reason.replace(credentials, "<BANK_FCM_CREDENTIALS>")
+    return {
+        "configured": reason is None,
+        "provider": getattr(transport, "name", "unknown"),
+        "reason": reason or "ready to send",
+        "devices_with_tokens": devices_with_tokens,
+    }
+
+
 def security_health() -> dict[str, Any]:
     with STATE_LOCK:
         now = time.monotonic()
@@ -1901,6 +1942,7 @@ def security_health() -> dict[str, Any]:
                 "active": sum(1 for item in DEVICES.values() if item.get("status") == DEVICE_STATUS_ACTIVE),
                 "revoked": sum(1 for item in DEVICES.values() if item.get("status") == DEVICE_STATUS_REVOKED),
             },
+            "push": push_health(),
             "login": {
                 "password_hashing": "argon2id" if PASSWORDS_AVAILABLE else "unavailable",
                 "min_password_length": MIN_PASSWORD_LENGTH,

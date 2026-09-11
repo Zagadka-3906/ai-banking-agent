@@ -28,6 +28,7 @@ agent_conversations.sqlite3*
 
 # Android 客户端构建产物
 android/.gradle/
+android/.kotlin/
 android/local.properties
 android/build/
 android/**/build/
@@ -36,3 +37,15 @@ android/*.iml
 android/captures/
 *.apk
 *.aab
+
+# Firebase 客户端配置与推送服务账号凭据。
+# google-services.json 严格来说不是密钥（其中的 API key 受包名+签名指纹限制），
+# 但它绑定某一个 Firebase 项目，且 CI 在没有它时应当仍能构建（推送自动降级）。
+# 本地放入 android/app/google-services.json 即自动启用推送，不要提交。
+android/app/google-services.json
+# 服务账号私钥：这是真正的凭据，绝不能入库。
+*firebase-adminsdk*.json
+*service-account*.json
+# docker compose 的只读挂载源：放进去的服务账号私钥同样不入库。
+secrets/
+
