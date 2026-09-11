@@ -31,6 +31,8 @@ conversation layer at all.
 
 from __future__ import annotations
 
+import hmac
+import json
 import logging
 import os
 import queue
@@ -41,10 +43,10 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, Mapping, Optional
 
 from bank_tools import BankAPIError, BankClient
-from security import SecurityError, audit_event, sanitize_text
+from security import AUTH_SECRET_CONFIGURED, SecurityError, audit_event, sanitize_text, store_integrity_digest
 
 try:  # The graph is optional so this module stays importable in minimal setups.
     from agent import build_graph, channel_session
@@ -148,6 +150,41 @@ class Approval:
             "expires_in": max(0, int(self.expires_at - time.time())),
         }
 
+    def to_store_record(self) -> dict[str, Any]:
+        """The durable projection: everything needed to resume, nothing extra."""
+
+        return {
+            "approval_id": self.approval_id,
+            "principal": self.principal,
+            "thread_id": self.thread_id,
+            "conversation_id": self.conversation_id,
+            "request_id": self.request_id,
+            "risk_level": self.risk_level,
+            "required_actions": list(self.required_actions),
+            "summary": self.summary,
+            "auth_token": self.auth_token,
+            "expires_at": self.expires_at,
+            "attempts": self.attempts,
+            "resolved": self.resolved,
+        }
+
+    @classmethod
+    def from_store_record(cls, record: Mapping[str, Any]) -> "Approval":
+        return cls(
+            approval_id=str(record["approval_id"]),
+            principal=str(record["principal"]),
+            thread_id=str(record["thread_id"]),
+            conversation_id=str(record["conversation_id"]),
+            request_id=str(record.get("request_id") or ""),
+            risk_level=str(record.get("risk_level") or "YELLOW"),
+            required_actions=[str(item) for item in (record.get("required_actions") or [])],
+            summary=str(record.get("summary") or "该操作需要您的确认。"),
+            auth_token=record.get("auth_token"),
+            expires_at=float(record.get("expires_at") or 0.0),
+            attempts=int(record.get("attempts") or 0),
+            resolved=bool(record.get("resolved")),
+        )
+
 
 def conversation_thread_id(principal: str, conversation_id: str) -> str:
     """Derive the checkpointer thread id for one principal's conversation.
@@ -229,6 +266,160 @@ def checkpointer_backend() -> str:
     return _GRAPH_BACKEND
 
 
+# ---------------------------------------------------------------------------
+# Durable approval registry
+#
+# The conversation checkpointer already survives a restart, but an approval
+# handle lived only in this process: after a gateway recreate the client kept
+# an ``approval_id`` the new process had never heard of, and the paused turn
+# it pointed at was unreachable until the nonce expired.  With a file-backed
+# checkpointer the pending approvals are persisted next to it (or wherever
+# ``BANK_APPROVAL_STORE_PATH`` points) and reloaded at start-up, so a pending
+# approval can be resolved across a restart.
+#
+# The file necessarily carries the signed authorization nonce while it waits -
+# that is what the handle resolves to - so it gets the same treatment as the
+# device registry: an integrity digest keyed by ``BANK_AUTH_SECRET`` when one
+# is configured (a plain checksum otherwise, reported honestly by
+# ``approval_store_status``), an atomic replace-on-write, and a hard freeze on
+# any file that fails validation so a later approval cannot overwrite the
+# evidence.  The caller's session token is *not* stored: the resumed turn runs
+# with whatever credential the approver presents, so a restart plus a fresh
+# login is all it takes to continue.
+# ---------------------------------------------------------------------------
+
+APPROVAL_STORE_VERSION = 1
+_APPROVAL_STORE_BLOCKED = False
+_APPROVAL_STORE_LOAD_SUMMARY: dict[str, Any] = {}
+
+
+def _approval_store_target() -> Optional[str]:
+    """Where the approval registry persists, or None for memory only.
+
+    Defaults to sitting beside the conversation checkpointer: approvals are
+    only resumable when the paused graph state they point into survives too,
+    so the two live and die together.
+    """
+
+    explicit = (os.getenv("BANK_APPROVAL_STORE_PATH") or "").strip()
+    if explicit:
+        # An explicit "memory" opts out of durability entirely - what the test
+        # suite and the offline demo want.
+        if explicit.lower() in {"memory", ":memory:"}:
+            return None
+        return explicit
+    db = (os.getenv("BANK_CONVERSATION_DB", "agent_conversations.sqlite3") or "").strip()
+    if not db or db.lower() in {"memory", ":memory:"}:
+        return None
+    return f"{db}.approvals.json"
+
+
+def _persist_approvals_locked(approvals: Mapping[str, Approval]) -> None:
+    """Write the live approvals atomically.  Caller holds ``self._lock``."""
+
+    global _APPROVAL_STORE_BLOCKED
+    target = _approval_store_target()
+    if not target or _APPROVAL_STORE_BLOCKED:
+        return
+    # Only approvals a restart could still resolve are worth persisting; a
+    # resolved or expired handle is dead weight (and a resolved nonce must not
+    # look pending again after a reload).
+    live = {
+        approval_id: record.to_store_record()
+        for approval_id, record in sorted(approvals.items())
+        if not record.resolved and not record.expired
+    }
+    canonical = json.dumps(live, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    snapshot = {
+        "version": APPROVAL_STORE_VERSION,
+        "updated_at": int(time.time()),
+        "approvals": live,
+        "integrity": store_integrity_digest(canonical, keyed=AUTH_SECRET_CONFIGURED),
+    }
+    temporary = f"{target}.tmp"
+    try:
+        directory = os.path.dirname(os.path.abspath(target))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass  # best effort; Windows ACLs are not POSIX modes
+        os.replace(temporary, target)
+    except OSError:
+        _APPROVAL_STORE_BLOCKED = True
+        logger.exception("Unable to persist the approval registry")
+
+
+def load_approval_store() -> dict[str, dict[str, Any]]:
+    """Load persisted approvals, refusing anything that fails validation."""
+
+    global _APPROVAL_STORE_BLOCKED
+    target = _approval_store_target()
+    if not target:
+        return {"loaded_approvals": 0, "path": None, "message": "approval store not configured (memory only)"}
+    try:
+        with open(target, "r", encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+    except FileNotFoundError:
+        return {"loaded_approvals": 0, "path": target, "message": "审批文件不存在，从空注册表开始"}
+    except OSError as exc:
+        _APPROVAL_STORE_BLOCKED = True
+        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": f"审批文件无法读取: {type(exc).__name__}"}
+    except json.JSONDecodeError:
+        _APPROVAL_STORE_BLOCKED = True
+        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": "审批文件不是合法 JSON"}
+
+    if not isinstance(snapshot, dict) or snapshot.get("version") != APPROVAL_STORE_VERSION:
+        _APPROVAL_STORE_BLOCKED = True
+        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": "审批文件版本不受支持"}
+    approvals = snapshot.get("approvals")
+    integrity = snapshot.get("integrity")
+    if not isinstance(approvals, dict) or not isinstance(integrity, dict):
+        _APPROVAL_STORE_BLOCKED = True
+        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": "审批文件结构无效"}
+
+    canonical = json.dumps(approvals, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    algorithm = str(integrity.get("alg") or "")
+    if algorithm == "hmac-sha256":
+        expected = store_integrity_digest(canonical, keyed=True)["value"]
+    elif algorithm == "sha256":
+        expected = store_integrity_digest(canonical, keyed=False)["value"]
+    else:
+        _APPROVAL_STORE_BLOCKED = True
+        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": f"审批文件摘要算法未知: {algorithm}"}
+    if not hmac.compare_digest(expected, str(integrity.get("value") or "")):
+        _APPROVAL_STORE_BLOCKED = True
+        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": "审批文件完整性校验失败"}
+    for approval_id, record in approvals.items():
+        if not isinstance(record, dict) or record.get("approval_id") != approval_id:
+            _APPROVAL_STORE_BLOCKED = True
+            return {"loaded_approvals": 0, "path": target, "rejected": True, "error": f"审批记录无效: {approval_id}"}
+    return {
+        "loaded_approvals": len(approvals),
+        "path": target,
+        "rejected": False,
+        "keyed": algorithm == "hmac-sha256",
+        "records": approvals,
+    }
+
+
+def approval_store_status() -> dict[str, Any]:
+    """Describe registry durability without leaking the configured path."""
+
+    configured = bool(_approval_store_target())
+    return {
+        "mode": "memory+file" if configured else "memory_only",
+        "file_configured": configured,
+        "file_loaded_approvals": _APPROVAL_STORE_LOAD_SUMMARY.get("loaded_approvals", 0),
+        "file_rejected": bool(_APPROVAL_STORE_LOAD_SUMMARY.get("rejected")),
+        "writes_frozen": _APPROVAL_STORE_BLOCKED,
+        "integrity_keyed": AUTH_SECRET_CONFIGURED,
+    }
+
+
 class ConversationService:
     """Drives agent turns and resolves the approvals they pause on."""
 
@@ -244,6 +435,30 @@ class ConversationService:
         self._client_factory = client_factory or (
             lambda principal, session_token=None: BankClient(user_id=principal, session_token=session_token)
         )
+        self._load_approvals()
+
+    def _load_approvals(self) -> None:
+        """Restore approvals persisted by a previous process, if any.
+
+        Global (not per-instance) state is loaded once so a rejected file
+        freezes writes for the process, mirroring the device registry.  Expired
+        or stale records are tolerated here and dropped by the next purge.
+        """
+
+        global _APPROVAL_STORE_LOAD_SUMMARY
+        _APPROVAL_STORE_LOAD_SUMMARY = load_approval_store()
+        if _APPROVAL_STORE_LOAD_SUMMARY.get("rejected"):
+            logger.error(
+                "审批文件未通过校验，已拒绝加载并冻结写入（待审批需重新发起）: %s",
+                _APPROVAL_STORE_LOAD_SUMMARY.get("error"),
+            )
+            return
+        records = _APPROVAL_STORE_LOAD_SUMMARY.get("records") or {}
+        for approval_id, record in records.items():
+            try:
+                self._approvals[str(approval_id)] = Approval.from_store_record(record)
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Skipping malformed persisted approval %s", approval_id)
 
     def _client(self, principal: str, session_token: Optional[str]) -> BankClient:
         try:
@@ -353,6 +568,7 @@ class ConversationService:
         )
         with self._lock:
             self._approvals[approval.approval_id] = approval
+            _persist_approvals_locked(self._approvals)
         audit_event(
             "CHANNEL_APPROVAL_ISSUED",
             user_id=principal,
@@ -628,13 +844,13 @@ class ConversationService:
             if approval.resolved:
                 raise ConversationError("该审批已处理", 409, "APPROVAL_ALREADY_RESOLVED")
             if approval.expired:
-                approval.resolved = True
+                self._mark_resolved(approval)
                 raise ConversationError("审批已超时，请重新发起操作", 410, "APPROVAL_EXPIRED")
 
             if normalized == "reject":
                 # A rejection consumes the handle: the nonce is never used and
                 # simply expires at the core.
-                approval.resolved = True
+                self._mark_resolved(approval)
                 audit_event(
                     "CHANNEL_APPROVAL_REJECTED",
                     user_id=principal,
@@ -652,10 +868,10 @@ class ConversationService:
 
             approval.attempts += 1
             if approval.attempts > APPROVAL_MAX_ATTEMPTS:
-                approval.resolved = True
+                self._mark_resolved(approval)
                 raise ConversationError("审批尝试次数过多，请重新发起操作", 429, "APPROVAL_ATTEMPTS_EXHAUSTED")
             if not approval.auth_token:
-                approval.resolved = True
+                self._mark_resolved(approval)
                 raise ConversationError("授权凭证已失效，请重新发起操作", 410, "APPROVAL_STALE")
 
             resume_payload: dict[str, Any]
@@ -691,8 +907,21 @@ class ConversationService:
                     raise self._core_failure(exc) from exc
                 resume_payload = {"confirmed": True}
 
-            approval.resolved = True
+            self._mark_resolved(approval)
             return self._resume(approval, resume_payload, session_token)
+
+    def _mark_resolved(self, approval: Approval) -> None:
+        """Take the handle out of circulation and write that through to disk.
+
+        Every terminal transition (reject, expiry, exhausted attempts, settled)
+        must persist before the caller hears about it: a resolved approval that
+        came back as pending after a restart would invite a second decision on
+        a nonce the core has already consumed or invalidated.
+        """
+
+        approval.resolved = True
+        with self._lock:
+            _persist_approvals_locked(self._approvals)
 
     # -- internals --------------------------------------------------------
 
@@ -755,6 +984,7 @@ class ConversationService:
             "namespace": CHANNEL_NAMESPACE,
             "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
             "pending_approvals": live,
+            "approval_store": approval_store_status(),
         }
 
     def reset(self) -> None:
@@ -765,10 +995,15 @@ class ConversationService:
         approval is exactly the kind of state change that must stay auditable.
         """
 
+        global _APPROVAL_STORE_BLOCKED
         with self._lock:
             self._approvals.clear()
             self._turns.clear()
             self._thread_locks.clear()
+        # A rejected file freezes writes for the life of the process, so a test
+        # that deliberately feeds a forged registry must not leave every later
+        # test frozen (mirrors ``reset_security_state``).
+        _APPROVAL_STORE_BLOCKED = False
 
 
 SERVICE = ConversationService()

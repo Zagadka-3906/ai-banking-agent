@@ -25,6 +25,13 @@ Settings are forced so the suite is hermetic with respect to a developer's local
   silently vanished from it.  Emptying them here removes that class of accident;
   ``tests/test_device_store.py`` opts back in per test with ``monkeypatch.setenv``
   and a ``tmp_path``.
+* ``BANK_LEDGER_STORE_PATH`` emptied and ``BANK_APPROVAL_STORE_PATH=memory`` for
+  the same reason: the ledger snapshot and the approval registry are durable
+  stores of state the suite mutates heavily (transfers, locks, password
+  changes, approvals).  Without the pin, a developer's ``.env`` pointing at a
+  live deployment's file would let a test run rewrite real balances.
+  ``tests/test_ledger_persistence.py`` and ``tests/test_agent_gateway.py`` opt
+  back in per test with ``monkeypatch.setenv`` and a ``tmp_path``.
 
 ``python-dotenv`` is loaded with ``override=False`` by ``security.py`` and
 ``agent.py``, so these values win over any ``.env`` file.
@@ -37,4 +44,6 @@ os.environ["BANK_DEMO_MODE"] = "1"
 os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["BANK_DEVICE_STORE_PATH"] = ""
 os.environ["BANK_AUDIT_LOG_PATH"] = ""
+os.environ["BANK_LEDGER_STORE_PATH"] = ""
+os.environ["BANK_APPROVAL_STORE_PATH"] = "memory"
 

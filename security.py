@@ -1192,6 +1192,31 @@ def revoke_sessions_for(user_id: str, *, reason: str = "credential_rotated", req
     return len(doomed)
 
 
+def revoke_session(token: Optional[str], *, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Drop exactly the presented session credential (logout).
+
+    ``revoke_sessions_for`` answers credential rotation, where every session
+    must go.  A logout button answers something narrower: *this* device signed
+    out, so only the session it presented may die - killing the user's other
+    active sessions would silently log their phone out of the bank.
+    """
+
+    principal = resolve_session(token)
+    with STATE_LOCK:
+        record = SESSION_TOKENS.pop(token, None)
+    if record is not None:
+        audit_event(
+            "SESSION_REVOKED",
+            user_id=principal,
+            decision="ALLOW",
+            outcome="REVOKED",
+            reason="logout",
+            request_id=request_id,
+            metadata={"count": 1},
+        )
+    return {"user_id": principal, "revoked": record is not None}
+
+
 def resolve_session(token: Optional[str]) -> str:
     """Return the principal bound to a session token, or raise ``SecurityError``."""
 
@@ -1584,6 +1609,19 @@ def _device_store_target(path: Optional[str] = None) -> Optional[str]:
 
 
 def _device_store_digest(canonical: str, *, keyed: bool) -> dict[str, str]:
+    return store_integrity_digest(canonical, keyed=keyed)
+
+
+def store_integrity_digest(canonical: str, *, keyed: bool) -> dict[str, str]:
+    """The integrity digest every durable store file carries.
+
+    Keyed (HMAC) when ``BANK_AUTH_SECRET`` is configured, so a forged file
+    needs the server secret; otherwise a plain checksum that only detects
+    corruption.  Each store (device registry, ledger snapshot, approval
+    registry) reports which mode is in force via its own status, rather than
+    implying a protection that is not there.
+    """
+
     if keyed:
         value = hmac.new(AUTH_SECRET, canonical.encode("utf-8"), hashlib.sha256).hexdigest()
         return {"alg": "hmac-sha256", "value": value}

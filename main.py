@@ -11,6 +11,7 @@ from __future__ import annotations
 import hmac
 import hashlib
 import json
+import logging
 import math
 import os
 import time
@@ -26,6 +27,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from security import (
+    AUTH_SECRET_CONFIGURED,
     AUTH_TOKENS,
     AUDIT_LOGS,
     DEVICES,
@@ -55,9 +57,11 @@ from security import (
     record_behavior_signal,
     resolve_session,
     revoke_device,
+    revoke_session,
     revoke_sessions_for,
     security_health,
     sanitize_text,
+    store_integrity_digest,
     validate_actor,
     verify_login_otp,
     verify_mfa,
@@ -70,6 +74,8 @@ from scheduler import TASK_STORE, TaskState
 from planner import analyze_transactions, filter_transactions
 from sandbox import sandbox_health
 
+
+logger = logging.getLogger("mock_banking.core")
 
 app = FastAPI(
     title="Mock Bank Core API",
@@ -314,6 +320,281 @@ def _ledger_transaction():
                     current[:] = deepcopy(snapshot)
             TASK_STORE.restore(task_snapshot)
             raise
+
+# ---------------------------------------------------------------------------
+# Durable ledger store
+#
+# The business ledger is in memory because this is a competition sandbox, but
+# a restart that silently empties every balance is a failure mode the device
+# registry and the audit file already refuse.  Point ``BANK_LEDGER_STORE_PATH``
+# at a file and every committed mutation is persisted atomically and replayed
+# at start-up, so a container recreate keeps the accounts, transactions and
+# reservations it had.
+#
+# What is stored is security-sensitive - balances and password digests are a
+# fraud target - so the file carries an integrity digest: keyed (HMAC) when
+# ``BANK_AUTH_SECRET`` is configured, otherwise a plain checksum that only
+# detects corruption, and ``ledger_store_status`` says which one is in force
+# rather than implying a protection that is not there.  A file that fails its
+# digest, or that holds a structurally invalid record, is neither loaded nor
+# overwritten: writes are frozen so the next mutation cannot quietly destroy
+# the evidence.  Owned by the core process, which is the only writer; the
+# gateway and the Streamlit demo never touch it.
+# ---------------------------------------------------------------------------
+
+LEDGER_STORE_VERSION = 1
+_LEDGER_STORE_BLOCKED = False
+_LEDGER_STORE_LOAD_SUMMARY: dict[str, Any] = {}
+
+# Every domain collection whose committed state a restart must restore.  The
+# daily counters are included so risk accumulation survives a restart instead
+# of giving a fresh 1,000-yuan yellow allowance after every bounce.
+LEDGER_STATE_NAMES = (
+    "ACCOUNTS",
+    "CONTACTS",
+    "DAILY_TRANSFERS",
+    "DAILY_TRANSFER_DATE",
+    "CARD_DAILY_SPENT",
+    "CARD_DAILY_SPENT_DATE",
+    "LOCKS",
+    "WEALTH_PRODUCTS",
+    "WEALTH_HOLDINGS",
+    "WEALTH_RISK_PROFILES",
+    "CARDS",
+    "SUBSCRIPTIONS",
+    "SCHEDULED_TRANSFERS",
+    "SPLIT_REQUESTS",
+    "TRANSACTIONS",
+)
+
+
+def _ledger_store_target(path: Optional[str] = None) -> Optional[str]:
+    """The configured store path, or None when durability is off."""
+
+    target = (path if path is not None else os.getenv("BANK_LEDGER_STORE_PATH")) or ""
+    return target.strip() or None
+
+
+def _ledger_store_digest(canonical: str, *, keyed: bool) -> dict[str, str]:
+    return store_integrity_digest(canonical, keyed=keyed)
+
+
+def _finite_nonnegative(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(float(value)) and float(value) >= 0
+
+
+def _account_record_valid(user_id: str, record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if not user_id or not isinstance(record.get("name"), str) or not isinstance(record.get("status"), str):
+        return False
+    if not isinstance(record.get("password_hash"), str) or not record["password_hash"]:
+        return False
+    return _finite_nonnegative(record.get("balance")) and _finite_nonnegative(record.get("locked_amount", 0.0))
+
+
+def _ledger_state_valid(state: dict[str, Any]) -> bool:
+    """Re-validate a persisted snapshot before it is trusted again.
+
+    A digest only proves the file is the one that was written; these checks
+    prove the *shape* is one this version understands, so a schema drift can
+    never silently resurrect half a ledger.
+    """
+
+    accounts = state.get("ACCOUNTS")
+    if not isinstance(accounts, dict) or not accounts:
+        return False
+    for user_id, record in accounts.items():
+        if not _account_record_valid(str(user_id), record):
+            return False
+    for name in ("CONTACTS", "DAILY_TRANSFER_DATE", "CARD_DAILY_SPENT_DATE"):
+        container = state.get(name)
+        if not isinstance(container, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in container.items()):
+            return False
+    for name in ("DAILY_TRANSFERS", "CARD_DAILY_SPENT"):
+        container = state.get(name)
+        if not isinstance(container, dict) or any(not _finite_nonnegative(v) for v in container.values()):
+            return False
+    locks = state.get("LOCKS")
+    if not isinstance(locks, dict):
+        return False
+    for lock_id, record in locks.items():
+        if not isinstance(record, dict) or record.get("lock_id") != lock_id or not isinstance(record.get("user_id"), str):
+            return False
+        if not _finite_nonnegative(record.get("amount")):
+            return False
+    products = state.get("WEALTH_PRODUCTS")
+    if not isinstance(products, list) or any(not isinstance(item, dict) or not isinstance(item.get("product_id"), str) for item in products):
+        return False
+    holdings = state.get("WEALTH_HOLDINGS")
+    if not isinstance(holdings, dict) or any(not isinstance(rows, list) for rows in holdings.values()):
+        return False
+    profiles = state.get("WEALTH_RISK_PROFILES")
+    if not isinstance(profiles, dict):
+        return False
+    for record in profiles.values():
+        if not isinstance(record, dict) or record.get("risk_profile") not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE"}:
+            return False
+    cards = state.get("CARDS")
+    if not isinstance(cards, dict) or any(not isinstance(record, dict) for record in cards.values()):
+        return False
+    for name in ("SUBSCRIPTIONS", "WEALTH_HOLDINGS"):
+        container = state.get(name)
+        if not isinstance(container, dict):
+            return False
+    for name in ("SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "TRANSACTIONS"):
+        rows = state.get(name)
+        if not isinstance(rows, list):
+            return False
+    for row in state.get("TRANSACTIONS") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("account_id"), str) or not _finite_nonnegative(row.get("amount", 0.0)):
+            return False
+    return True
+
+
+def _persist_ledger_locked() -> None:
+    """Write the ledger snapshot atomically.  Assumes ``STATE_LOCK`` is held."""
+
+    global _LEDGER_STORE_BLOCKED
+    target = _ledger_store_target()
+    if not target or _LEDGER_STORE_BLOCKED:
+        return
+    state = {name: deepcopy(globals()[name]) for name in LEDGER_STATE_NAMES}
+    canonical = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    snapshot = {
+        "version": LEDGER_STORE_VERSION,
+        "updated_at": int(time.time()),
+        "state": state,
+        "integrity": _ledger_store_digest(canonical, keyed=AUTH_SECRET_CONFIGURED),
+    }
+    temporary = f"{target}.tmp"
+    try:
+        directory = os.path.dirname(os.path.abspath(target))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass  # best effort; Windows ACLs are not POSIX modes
+        # Replace, never truncate: a crash mid-write must not leave a half file
+        # that the next start would refuse as tampered.
+        os.replace(temporary, target)
+    except OSError:
+        # The committed mutation stands; the next one retries the write.  The
+        # health endpoint reports the store, so a silently failing disk still
+        # surfaces to an operator.
+        _LEDGER_STORE_BLOCKED = True
+        logger.exception("Unable to persist the ledger store")
+
+
+def persist_ledger() -> dict[str, Any]:
+    """Persist on demand; a no-op when durability is off or writes are frozen."""
+
+    with STATE_LOCK:
+        _persist_ledger_locked()
+    return ledger_store_status()
+
+
+def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
+    """Load a persisted ledger, refusing anything that fails validation.
+
+    Opt-in and re-callable (tests re-point the path): with no
+    ``BANK_LEDGER_STORE_PATH`` the in-memory demo stays deterministic and
+    side-effect free.  Only a validated snapshot is written into the globals;
+    a rejected file freezes writes instead of letting the next mutation
+    overwrite the evidence.
+    """
+
+    global _LEDGER_STORE_BLOCKED, _LEDGER_STORE_LOAD_SUMMARY
+    target = _ledger_store_target(path)
+    if not target:
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": None, "message": "BANK_LEDGER_STORE_PATH not configured"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+    try:
+        with open(target, "r", encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+    except FileNotFoundError:
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "message": "账本文件不存在，从种子账本开始"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+    except OSError as exc:
+        _LEDGER_STORE_BLOCKED = True
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": f"账本文件无法读取: {type(exc).__name__}"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+    except json.JSONDecodeError:
+        _LEDGER_STORE_BLOCKED = True
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": "账本文件不是合法 JSON"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+
+    if not isinstance(snapshot, dict) or snapshot.get("version") != LEDGER_STORE_VERSION:
+        _LEDGER_STORE_BLOCKED = True
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": "账本文件版本不受支持"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+    state = snapshot.get("state")
+    integrity = snapshot.get("integrity")
+    if not isinstance(state, dict) or not isinstance(integrity, dict):
+        _LEDGER_STORE_BLOCKED = True
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": "账本文件结构无效"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+
+    canonical = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    algorithm = str(integrity.get("alg") or "")
+    if algorithm == "hmac-sha256":
+        expected = _ledger_store_digest(canonical, keyed=True)["value"]
+    elif algorithm == "sha256":
+        expected = _ledger_store_digest(canonical, keyed=False)["value"]
+    else:
+        _LEDGER_STORE_BLOCKED = True
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": f"账本文件摘要算法未知: {algorithm}"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+    if not hmac.compare_digest(expected, str(integrity.get("value") or "")):
+        _LEDGER_STORE_BLOCKED = True
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": "账本文件完整性校验失败"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+    if not _ledger_state_valid(state):
+        _LEDGER_STORE_BLOCKED = True
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": "账本文件记录无效"}
+        return _LEDGER_STORE_LOAD_SUMMARY
+
+    with STATE_LOCK:
+        for name in LEDGER_STATE_NAMES:
+            container = globals()[name]
+            restored = deepcopy(state.get(name))
+            if isinstance(container, dict):
+                container.clear()
+                if isinstance(restored, dict):
+                    container.update(restored)
+            elif isinstance(container, list):
+                container[:] = restored if isinstance(restored, list) else []
+    _LEDGER_STORE_LOAD_SUMMARY = {
+        "loaded_state": True,
+        "path": target,
+        "rejected": False,
+        "keyed": algorithm == "hmac-sha256",
+        "accounts": len(state.get("ACCOUNTS") or {}),
+        "transactions": len(state.get("TRANSACTIONS") or []),
+    }
+    return _LEDGER_STORE_LOAD_SUMMARY
+
+
+def ledger_store_status() -> dict[str, Any]:
+    """Describe ledger durability without leaking the configured path."""
+
+    configured = bool(_ledger_store_target())
+    return {
+        "mode": "memory+file" if configured else "memory_only",
+        "file_configured": configured,
+        "file_loaded": bool(_LEDGER_STORE_LOAD_SUMMARY.get("loaded_state")),
+        "file_rejected": bool(_LEDGER_STORE_LOAD_SUMMARY.get("rejected")),
+        "writes_frozen": _LEDGER_STORE_BLOCKED,
+        # False means the file carries a plain checksum: whoever can write it can
+        # also forge it.  Configure BANK_AUTH_SECRET to make the digest keyed.
+        "integrity_keyed": AUTH_SECRET_CONFIGURED,
+    }
+
 
 # Idempotency records make a committed operation safely retryable when a
 # client loses the HTTP response.  Keys are scoped to the authenticated
@@ -1332,6 +1613,7 @@ def wealth_risk_assessment(
         "disclaimer": "风险评估仅供演示，不构成投资建议。",
     }
     _idempotency_complete(actor, "wealth_risk_assessment", idempotency_key, idem_payload, response)
+    persist_ledger()
     audit_event("WEALTH_RISK_ASSESSMENT", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"profile": profile, "horizon_years": int(req.horizon_years)})
     return response
 
@@ -1809,6 +2091,29 @@ def resolve_session_endpoint(
     return {"code": 200, "user_id": x_user_id}
 
 
+@app.post("/api/v1/auth/logout")
+def logout(
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    """Revoke exactly the presented session credential.
+
+    A client signing out must be able to kill the credential it holds on the
+    server as well; wiping local storage only would leave a copied token valid
+    until it expires.  The scope is deliberately this one session - not every
+    session of the principal, which is what credential rotation means - so
+    logging out on one device never signs the user's other devices out.
+    """
+
+    request_id = _request_id(x_request_id)
+    try:
+        result = revoke_session(x_session_token, request_id=request_id)
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=x_user_id, action="LOGOUT", request_id=request_id)
+    return {"code": 200, "status": "LOGGED_OUT", "user_id": result["user_id"]}
+
+
 # ---------------------------------------------------------------------------
 # Device trust root: enrolling the key behind the red tier's biometric factor
 # ---------------------------------------------------------------------------
@@ -2016,6 +2321,7 @@ def execute_transfer(req: TransferExecuteRequest, x_auth_token: Optional[str] = 
     audit_event("TRANSFER_EXECUTE", user_id=actor, risk_level=risk_level, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"transaction_id": txn_id, "target_id": target_id, "amount_cents": int(round(amount * 100))})
     response = {"code": 200, "status": "SUCCESS", "transaction_id": txn_id, "transferred_amount": amount, "sender_balance": ACCOUNTS[req.from_user]["balance"], "receiver_name": receiver["name"], "risk_level": risk_level}
     _idempotency_complete(actor, "transfer_execute", idempotency_key, idem_payload, response)
+    persist_ledger()
     return response
 
 
@@ -2083,6 +2389,7 @@ def lock_fund(req: LockFundRequest, x_auth_token: Optional[str] = Header(None, a
     audit_event("LOCK_FUND", user_id=actor, risk_level=_payload.get("risk_level", "YELLOW"), decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"amount_cents": int(round(amount * 100)), "reason": reason, "lock_id": lock_id})
     response = {"code": 200, "status": "LOCKED", "lock_id": lock_id, "task_id": task.task_id, "reminder_task_id": reminder_task.task_id if reminder_task else None, "order_task_ids": order_task_ids, "event_at": event_at, "reminder_at": reminder_at, "locked_amount": account["locked_amount"], "remaining_available": remaining, "reason": reason}
     _idempotency_complete(actor, "lock_fund", idempotency_key, idem_payload, response)
+    persist_ledger()
     return response
 
 
@@ -2153,6 +2460,7 @@ def unlock_fund(req: UnlockFundRequest, x_auth_token: Optional[str] = Header(Non
     audit_event("UNLOCK_FUND", user_id=actor, risk_level=_payload.get("risk_level", "YELLOW"), decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"amount_cents": int(round(requested_amount * 100)), "lock_ids": released_ids})
     response = {"code": 200, "status": "RELEASED", "released_amount": requested_amount, "lock_ids": released_ids, "locked_amount": account["locked_amount"], "remaining_available": remaining}
     _idempotency_complete(actor, "unlock_fund", idempotency_key, idem_payload, response)
+    persist_ledger()
     return response
 
 
@@ -2439,6 +2747,7 @@ def execute_operation(
     response = {"code": 200, "status": "SUCCESS", "operation": operation, "data": result}
     audit_event("OPERATION_EXECUTE", user_id=actor, risk_level=operation_risk, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"operation": operation, "target": target})
     _idempotency_complete(actor, "operation_execute", idempotency_key, idem_payload, response)
+    persist_ledger()
     return response
 
 
@@ -2554,6 +2863,10 @@ def _task_action(task_id: str, action: str, req: TaskActionRequest, x_user_id: O
                             TASK_STORE.transition(dependent.task_id, TaskState.CANCELLED, owner_id=actor)
                         except (KeyError, ValueError):
                             pass
+                # The cancellation rewrote the domain fixtures (a cancelled
+                # schedule/split no longer counts towards the daily risk
+                # accumulator), so the durable snapshot has to agree.
+                persist_ledger()
         else:
             task = TASK_STORE.takeover(safe_id, owner_id=actor, reason=reason)
     except (SecurityError, KeyError, ValueError) as exc:
@@ -2586,7 +2899,7 @@ def healthz():
 
 @app.get("/api/v1/security/health")
 def security_health_endpoint():
-    return {"code": 200, **security_health(), "sandbox": sandbox_health()}
+    return {"code": 200, **security_health(), "sandbox": sandbox_health(), "ledger_persistence": ledger_store_status()}
 
 
 @app.get("/api/v1/security/circuit/{user_id}")
@@ -2673,7 +2986,17 @@ _INITIAL_SPLIT_REQUESTS = deepcopy(globals().get("SPLIT_REQUESTS", []))
 
 
 def reset_state() -> None:
-    """Restore the deterministic in-memory sandbox and clear security state."""
+    """Restore the deterministic in-memory sandbox and clear security state.
+
+    Deliberately does not touch the durable ledger file: the reset helper is a
+    test/demo affordance that never goes through the HTTP authorization path,
+    so rewriting the audited snapshot from it would let an out-of-band call
+    rewrite what a deployment believes was committed.  Point a deployment's
+    ``BANK_LEDGER_STORE_PATH`` at a scratch file when testing resets.
+    """
+
+    global _LEDGER_STORE_BLOCKED
+    _LEDGER_STORE_BLOCKED = False
     with STATE_LOCK:
         ACCOUNTS.clear()
         ACCOUNTS.update(deepcopy(_INITIAL_ACCOUNTS))
@@ -2717,3 +3040,16 @@ def reset_state() -> None:
         # belt-and-braces so a reset never leaves a test (or demo) trusting a
         # stale key even if that call raised.
         DEVICES.clear()
+
+
+# Opt-in durability: when a path is configured, the committed ledger snapshot is
+# replayed at import time so accounts, transactions and reservations survive a
+# process restart.  With no path configured the in-memory demo stays
+# deterministic and side-effect free.  This must run after every ledger global
+# above is defined, which is why it sits at the end of the module.
+_LEDGER_STORE_LOAD_SUMMARY = load_ledger_store()
+if _LEDGER_STORE_LOAD_SUMMARY.get("rejected"):
+    logger.error(
+        "账本文件未通过校验，已拒绝加载并冻结写入（将使用种子账本）: %s",
+        _LEDGER_STORE_LOAD_SUMMARY.get("error"),
+    )

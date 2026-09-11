@@ -186,6 +186,33 @@ def test_health_reports_the_login_configuration(client):
 
 
 # ---------------------------------------------------------------------------
+# logout: server-side revocation of the presented session
+# ---------------------------------------------------------------------------
+
+
+def test_logout_revokes_the_presented_session_only(client):
+    first = login(client).json()["session_token"]
+    second = login(client).json()["session_token"]
+
+    response = client.post("/api/v1/auth/logout", headers={"X-Session-Token": first})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "LOGGED_OUT"
+
+    # The signed-out credential is dead on the server, not just forgotten by
+    # the client: a copied token stays valid until it expires otherwise.
+    assert client.get("/api/v1/accounts/user_zhang/balance", headers={"X-Session-Token": first}).status_code == 401
+
+    # A logout is *this* session, not the principal's every session - signing
+    # out on one device never signs the user's other devices out.
+    assert client.get("/api/v1/accounts/user_zhang/balance", headers={"X-Session-Token": second}).status_code == 200
+
+
+def test_logout_requires_a_session_credential(client):
+    assert client.post("/api/v1/auth/logout").status_code == 401
+    assert client.post("/api/v1/auth/logout", headers={"X-Session-Token": "not-a-real-token"}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # credential rotation
 # ---------------------------------------------------------------------------
 
