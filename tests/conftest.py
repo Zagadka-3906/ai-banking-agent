@@ -1,7 +1,7 @@
 """Test-suite-wide configuration, applied before any test module imports.
 
-Two settings are forced so the suite is hermetic with respect to a developer's
-local ``.env``:
+Settings are forced so the suite is hermetic with respect to a developer's local
+``.env``:
 
 * ``BANK_REQUIRE_SESSION=0`` - the suite drives much of the core with
   self-asserted ``X-User-Id`` headers, which is precisely what strict session
@@ -17,6 +17,14 @@ local ``.env``:
   intermittently purely because of what the model returned.  Tests that assert
   model-merge behaviour install a fake LLM via ``monkeypatch.setattr(agent,
   "llm", ...)`` and are unaffected.
+* ``BANK_DEVICE_STORE_PATH`` / ``BANK_AUDIT_LOG_PATH`` emptied - both point at
+  *durable stores of real state*, and the suite enrolls devices and writes audit
+  events.  Inheriting a live path from a developer's ``.env`` let a test run
+  overwrite the real device registry: the file ended up holding a fixture device
+  (``label="push-test"``, token ``fcm-token-1``) while the enrolled phone had
+  silently vanished from it.  Emptying them here removes that class of accident;
+  ``tests/test_device_store.py`` opts back in per test with ``monkeypatch.setenv``
+  and a ``tmp_path``.
 
 ``python-dotenv`` is loaded with ``override=False`` by ``security.py`` and
 ``agent.py``, so these values win over any ``.env`` file.
@@ -27,3 +35,6 @@ import os
 os.environ["BANK_REQUIRE_SESSION"] = "0"
 os.environ["BANK_DEMO_MODE"] = "1"
 os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["BANK_DEVICE_STORE_PATH"] = ""
+os.environ["BANK_AUDIT_LOG_PATH"] = ""
+

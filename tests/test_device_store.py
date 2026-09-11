@@ -97,6 +97,22 @@ def test_an_unconfigured_deployment_writes_nothing(tmp_path, monkeypatch):
     assert not list(tmp_path.iterdir()), "an unconfigured store must not create files"
 
 
+def test_the_suite_never_runs_against_a_configured_store():
+    """A test run must not be able to write a real registry.
+
+    Regression guard for a real accident: with a live ``BANK_DEVICE_STORE_PATH``
+    inherited from a developer's ``.env``, enrolling fixtures in the suite
+    overwrote the real device file and the enrolled phone vanished from it.
+    ``conftest`` empties the variable, so durability has to be requested per test.
+    """
+
+    assert security._device_store_target() is None
+    assert security.device_store_status()["mode"] == "memory_only"
+    # Enrolling here writes nothing anywhere; the assertion above is what makes
+    # that a property of the suite rather than of this particular test.
+    enroll()
+
+
 def test_a_missing_file_starts_from_an_empty_registry(store):
     summary = security.load_device_store(str(store))
 
