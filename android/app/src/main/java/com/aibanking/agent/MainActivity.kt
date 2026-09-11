@@ -6,12 +6,14 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -54,10 +56,14 @@ class MainActivity : FragmentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val viewModel: ChatViewModel = viewModel()
                     val state by viewModel.state.collectAsState()
-                    if (state.authenticated) {
-                        ChatScreen(viewModel = viewModel, activity = this)
-                    } else {
-                        LoginScreen(
+                    when {
+                        // Unsealing the stored session is Keystore work and runs off
+                        // the main thread, so there is a short window before the app
+                        // knows whether it is logged in.  Showing the login form
+                        // during it would flash a password prompt on every launch.
+                        state.restoring -> RestoringScreen()
+                        state.authenticated -> ChatScreen(viewModel = viewModel, activity = this)
+                        else -> LoginScreen(
                             busy = state.busy,
                             otpRequired = state.otpRequiredAtLogin,
                             onLogin = viewModel::login,
@@ -96,6 +102,19 @@ class MainActivity : FragmentActivity() {
  * the app on launch with "Can only use lower 16 bits for requestCode".
  */
 private const val NOTIFICATION_PERMISSION_REQUEST = 1001
+
+@Composable
+private fun RestoringScreen() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            CircularProgressIndicator()
+            Text("正在恢复登录状态…", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
 
 @Composable
 private fun LoginScreen(

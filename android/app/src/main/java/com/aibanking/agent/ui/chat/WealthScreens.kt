@@ -107,6 +107,15 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
             }
             return@Scaffold
         }
+        val loadFailure = state.panelError
+        if (loadFailure != null && state.wealthProducts.isEmpty()) {
+            // 一次失败的加载会把产品、持仓、风险档案一起留空；此时页面若继续渲染
+            // “尚未完成风险测评 / 暂无持仓”，就是把“没问到核心”说成了用户的资产状况。
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                PanelLoadFailure(loadFailure, viewModel::refreshWealth)
+            }
+            return@Scaffold
+        }
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),

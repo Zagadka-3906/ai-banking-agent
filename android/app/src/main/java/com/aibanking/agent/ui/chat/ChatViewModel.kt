@@ -77,6 +77,15 @@ data class RiskQuizUi(
 data class ChatUiState(
     val principal: String = "",
     val authenticated: Boolean = false,
+    /**
+     * True while the sealed session is being unsealed off the main thread.
+     *
+     * Reading the credential means Keystore work (see the constructor), so it
+     * cannot happen before the first frame.  The login form must not be shown
+     * during that window: a logged-in app would flash a password prompt on every
+     * launch.  MainActivity renders a plain loading screen instead.
+     */
+    val restoring: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
     val input: String = "",
     val busy: Boolean = false,
@@ -123,6 +132,15 @@ data class ChatUiState(
     val contactRelationship: String = "朋友",
     val contactBirthday: String = "",
     val panelBusy: Boolean = false,
+    /**
+     * Why the last panel load failed, if it did.
+     *
+     * Without it an empty list is ambiguous: "the core says you own nothing" and
+     * "the core could not be reached" render identically, so a network failure
+     * was shown as an authoritative empty state.  The cards / contacts / wealth
+     * pages read it to offer a retry instead of "还没有…".
+     */
+    val panelError: String? = null,
 ) {
     val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy && pending == null
 
@@ -169,7 +187,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val cardsRepo = CardsRepository.create()
     private val gson = Gson()
 
-    private val _state = MutableStateFlow(ChatUiState())
+    private val _state = MutableStateFlow(ChatUiState(restoring = true))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     private var conversationId: String = UUID.randomUUID().toString().replace("-", "").take(20)
@@ -178,33 +196,58 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         // Restore a previous session so a restart does not force a re-login.
-        val storedPrincipal = sessionStore.principal()
-        val storedToken = sessionStore.sessionToken()
-        deviceId = sessionStore.deviceId()
-        if (!storedPrincipal.isNullOrBlank() && !storedToken.isNullOrBlank()) {
-            sessionToken = storedToken
-            conversationId = sessionStore.conversationId() ?: conversationId
-            // The transcript is restored too, so a restart keeps the answers the
-            // user already received; it is stored sealed, like the credential.
-            val restored = sessionStore.messages()?.let { json ->
-                runCatching { gson.fromJson(json, Array<ChatMessage>::class.java).toList() }.getOrNull()
-            }.orEmpty()
-            _state.update {
-                it.copy(
-                    principal = storedPrincipal,
-                    authenticated = true,
-                    messages = if (restored.isNotEmpty()) restored else listOf(welcome()),
-                )
+        //
+        // 每一次读取都要用 Keystore 解封，放在主线程上会拖住首帧：整段恢复
+        // 放到 IO，期间 restoring 为 true，界面显示载入态。
+        viewModelScope.launch {
+            // 解封失败（Keystore 被重置、偏好文件损坏）必须落到登录页：异常逃出
+            // 这个协程会让 restoring 永远是 true，界面卡在载入态再也进不去。
+            val stored = runCatching { withContext(Dispatchers.IO) { readStoredSession() } }.getOrNull()
+            if (stored == null) {
+                _state.update { it.copy(restoring = false) }
+                return@launch
             }
-            // 未答完的问卷组件一并恢复，不然重装/重启会把它弄丢。
-            sessionStore.quiz()?.let { json ->
-                runCatching {
-                    val questions = gson.fromJson(json, Array<QuizQuestionUi>::class.java).toList()
-                    if (questions.size == 8) _state.update { it.copy(quiz = RiskQuizUi(questions)) }
-                }
-            }
-            verifyRestoredSession(storedToken)
+            restoreSession(stored)
         }
+    }
+
+    /** Everything [SessionStore] holds, read in one IO hop (each value is sealed). */
+    private fun readStoredSession() = StoredSession(
+        principal = sessionStore.principal(),
+        token = sessionStore.sessionToken(),
+        deviceId = sessionStore.deviceId(),
+        conversationId = sessionStore.conversationId(),
+        messages = sessionStore.messages(),
+        quiz = sessionStore.quiz(),
+    )
+
+    private fun restoreSession(stored: StoredSession) {
+        deviceId = stored.deviceId
+        val storedPrincipal = stored.principal
+        val storedToken = stored.token
+        if (storedPrincipal.isNullOrBlank() || storedToken.isNullOrBlank()) {
+            // 没有可恢复的会话：直接落到登录页。
+            _state.update { it.copy(restoring = false) }
+            return
+        }
+        sessionToken = storedToken
+        conversationId = stored.conversationId ?: conversationId
+        // The transcript is restored too, so a restart keeps the answers the
+        // user already received; it is stored sealed, like the credential.
+        val restored = stored.messages?.let { json ->
+            runCatching { gson.fromJson(json, Array<ChatMessage>::class.java).toList() }.getOrNull()
+        }.orEmpty()
+        _state.update {
+            it.copy(
+                principal = storedPrincipal,
+                authenticated = true,
+                restoring = false,
+                messages = if (restored.isNotEmpty()) restored else listOf(welcome()),
+                // 未答完的问卷组件（含已作答进度）一并恢复，不然重启会退回第一题。
+                quiz = parseStoredQuiz(stored.quiz),
+            )
+        }
+        verifyRestoredSession(storedToken)
     }
 
     /**
@@ -304,8 +347,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun enrollDevice(token: String, principal: String): Boolean = try {
         val label = "${Build.MANUFACTURER} ${Build.MODEL}".trim().ifBlank { "Android 设备" }
+        // Keystore 读取/首次生成密钥都会阻塞，放到 IO 上；主线程只负责状态。
+        val spki = withContext(Dispatchers.IO) { deviceKeys.publicKeySpkiBase64() }
         val device = devices.register(
-            publicKeySpkiBase64 = deviceKeys.publicKeySpkiBase64(),
+            publicKeySpkiBase64 = spki,
             principal = principal,
             sessionToken = token,
             label = label,
@@ -393,7 +438,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         notice = if (targetId == deviceId) "本机已解除注册：红色风险操作在本机不可用" else "设备已停用",
                     )
                 }
-                if (targetId == deviceId) deviceId = null
+                if (targetId == deviceId) {
+                    // 本机被解除注册：内存与存储都要忘掉，否则重启后 init 会把它读回来，
+                    // 应用继续以为本机已注册（红色操作白走一次短信 + 生物识别）。
+                    deviceId = null
+                    sessionStore.clearDeviceId()
+                }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
             }
@@ -480,7 +530,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val rows = withContext(Dispatchers.IO) { contacts.list(principal, sessionToken ?: "") }
-                _state.update { it.copy(contacts = rows, panelBusy = false) }
+                _state.update { it.copy(contacts = rows, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
             }
@@ -578,7 +628,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val rows = withContext(Dispatchers.IO) { cardsRepo.list(principal, sessionToken ?: "") }
-                _state.update { it.copy(cards = rows, panelBusy = false) }
+                _state.update { it.copy(cards = rows, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
             }
@@ -608,12 +658,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 冻结/挂失/调额等红色操作：预填话术回对话，走短信+设备签名审批。 */
+    /** 冻结/挂失/解挂等红色操作：预填话术回对话，走短信+设备签名审批。 */
     fun startCardAction(action: String, card: CardView) {
         val phrase = when (action) {
             "freeze" -> "冻结卡片 ${card.cardId}"
             "unfreeze" -> "解冻卡片 ${card.cardId}"
             "report_lost" -> "挂失卡片 ${card.cardId}"
+            // 解挂是 LOST 的唯一出口（核心 CARD_TRANSITIONS: LOST → ACTIVE）；
+            // “解挂”也是 Agent 识别 CARD_UNREPORT_LOST 的关键词。
+            "unreport_lost" -> "解挂卡片 ${card.cardId}"
             else -> return
         }
         onInputChange(phrase)
@@ -645,7 +698,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val products = withContext(Dispatchers.IO) { wealth.products(principal, sessionToken ?: "") }
                 val holdings = withContext(Dispatchers.IO) { wealth.holdings(principal, sessionToken ?: "") }
                 val profile = withContext(Dispatchers.IO) { wealth.riskProfile(principal, sessionToken ?: "") }
-                _state.update { it.copy(wealthProducts = products, wealthHoldings = holdings, riskProfile = profile, panelBusy = false) }
+                _state.update { it.copy(wealthProducts = products, wealthHoldings = holdings, riskProfile = profile, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
             }
@@ -694,13 +747,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sendInternal("退出测评")
     }
 
-    /** 问卷组件状态随手持久化：重装/重启后组件自动恢复，不困在文字兜底里。 */
+    /**
+     * 问卷组件状态随手持久化：题目与已作答进度一起存，重装/重启后接着答，
+     * 不困在文字兜底里，也不会把答了 5/8 的用户退回第一题。
+     */
     private fun persistQuiz(quiz: RiskQuizUi?) {
         if (quiz == null) {
             sessionStore.clearQuiz()
             return
         }
-        runCatching { gson.toJson(quiz.questions) }.getOrNull()?.let { sessionStore.saveQuiz(it) }
+        runCatching { gson.toJson(quiz) }.getOrNull()?.let { sessionStore.saveQuiz(it) }
+    }
+
+    /**
+     * 从存档恢复未答完的问卷（题目 + 进度）。
+     *
+     * 旧版本只存题目数组：那种载荷按 [RiskQuizUi] 解析会失败，这里退回按题目
+     * 数组解析，进度从第一题重新开始——总好过把整个组件丢掉。
+     */
+    private fun parseStoredQuiz(json: String?): RiskQuizUi? {
+        if (json == null) return null
+        return runCatching {
+            val saved = runCatching { gson.fromJson(json, RiskQuizUi::class.java) }.getOrNull()
+                ?: RiskQuizUi(gson.fromJson(json, Array<QuizQuestionUi>::class.java).toList())
+            // Gson 直接写字段、不走构造器，缺字段时数据类的默认值并不生效，
+            // 所以这里按“可能是 null”处理，坏存档最多让组件不出现，不能崩启动。
+            val questions = saved.questions.orEmpty()
+            if (questions.size != 8) return@runCatching null
+            // 只保留仍然存在的问题号，且必须是未答满的：答满的问卷已提交并清除。
+            val numbers = questions.map { it.number }.toSet()
+            val answers = saved.answers.orEmpty().filterKeys { it in numbers }
+            if (answers.size >= questions.size) return@runCatching null
+            RiskQuizUi(questions, answers)
+        }.getOrNull()
     }
 
     private fun parseQuiz(result: Map<String, Any>?): RiskQuizUi? {
@@ -848,12 +927,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val challenge = agent.requestFaceChallenge(principal, sessionToken, approval.approvalId)
                 // The private key stays in the Keystore; this returns only a
-                // signature over the canonical challenge string.
-                val signature = deviceKeys.signChallenge(
-                    challengeId = challenge.challengeId,
-                    userId = principal,
-                    authTokenJti = challenge.authTokenJti,
-                )
+                // signature over the canonical challenge string.  Signing is
+                // Keystore work too, so it happens off the main thread.
+                val signature = withContext(Dispatchers.IO) {
+                    deviceKeys.signChallenge(
+                        challengeId = challenge.challengeId,
+                        userId = principal,
+                        authTokenJti = challenge.authTokenJti,
+                    )
+                }
                 val envelope = DeviceKeyManager.attestationEnvelope(
                     deviceId = enrolledDevice,
                     challengeId = challenge.challengeId,
@@ -945,6 +1027,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * short-lived and live in the core's memory - left the user "logged in" on a
      * page where every action then failed.  Sharing the chat path's session check
      * means an expiry always lands back on the login screen.
+     *
+     * `panelError` is kept as well as `error` because the panels need it after
+     * the snackbar is dismissed: an empty list plus a failure reason is "we could
+     * not ask", which must not render as "you own nothing".
      */
     private fun applyPanelFailure(failure: GatewayException) {
         _state.update { state ->
@@ -953,7 +1039,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 sessionStore.clear()
                 ChatUiState(error = "登录状态已失效，请重新登录")
             } else {
-                state.copy(panelBusy = false, error = failure.message)
+                state.copy(panelBusy = false, panelError = failure.message, error = failure.message)
             }
         }
     }
@@ -968,6 +1054,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_PERSISTED_MESSAGES = 100
     }
 }
+
+/**
+ * Everything [SessionStore] hands back at start-up.
+ *
+ * Read as one batch so the restore costs a single IO hop: every read unseals a
+ * Keystore-encrypted value, which must not happen on the main thread.
+ */
+private class StoredSession(
+    val principal: String?,
+    val token: String?,
+    val deviceId: String?,
+    val conversationId: String?,
+    val messages: String?,
+    val quiz: String?,
+)
 
 /**
  * 风险档案 → 可购买的最高产品等级，与服务端 `profile_rank` 保持一致。

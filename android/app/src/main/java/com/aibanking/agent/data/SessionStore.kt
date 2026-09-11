@@ -47,6 +47,19 @@ class SessionStore(context: Context) {
 
     fun deviceId(): String? = open(KEY_DEVICE)
 
+    /**
+     * Forget the enrolled device id.
+     *
+     *  Needed when *this* device is revoked server-side: `clear()` keeps the id
+     *  on purpose across a logout, so without this the next start re-read it and
+     *  the app went on believing it was enrolled on a device the core had
+     *  already revoked - walking the user through OTP and biometrics for a
+     *  signature that was guaranteed to be refused.
+     */
+    fun clearDeviceId() {
+        preferences.edit().remove(KEY_DEVICE).apply()
+    }
+
     /** Persist the (already JSON-serialized) chat transcript, sealed like a credential. */
     fun saveMessages(json: String) {
         preferences.edit().putString(KEY_MESSAGES, seal(json)).apply()
@@ -54,7 +67,7 @@ class SessionStore(context: Context) {
 
     fun messages(): String? = open(KEY_MESSAGES)
 
-    /** Persist the in-progress risk quiz (question bank JSON) so a restart restores the widget. */
+    /** Persist the in-progress risk quiz (questions + answers JSON) so a restart restores the widget where it was left. */
     fun saveQuiz(json: String) {
         preferences.edit().putString(KEY_QUIZ, seal(json)).apply()
     }

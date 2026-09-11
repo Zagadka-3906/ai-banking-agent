@@ -109,7 +109,9 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             return@Scaffold
         }
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            // Tagged so a test can scroll: the list is lazy, so a card face that is
+            // outside the viewport is not composed at all and cannot be found by tag.
+            modifier = Modifier.fillMaxSize().padding(padding).testTag(UiTags.CARD_LIST),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -118,11 +120,17 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             }
             if (state.cards.isEmpty() && !state.panelBusy) {
                 item {
-                    Text(
-                        "还没有银行卡。点右下角即可自行添加。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    val loadFailure = state.panelError
+                    if (loadFailure != null) {
+                        // 请求失败 ≠ 没有银行卡：报错并可重试，不谎报“还没有银行卡”。
+                        PanelLoadFailure(loadFailure, viewModel::refreshCards)
+                    } else {
+                        Text(
+                            "还没有银行卡。点右下角即可自行添加。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             item {
@@ -209,20 +217,38 @@ private fun BankCardVisual(card: CardView, viewModel: ChatViewModel) {
         }
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (frozen) {
-                    ActionChip("解冻", enabled = true) { viewModel.startCardAction("unfreeze", card) }
-                } else {
-                    ActionChip("冻结", enabled = true) { viewModel.startCardAction("freeze", card) }
-                    ActionChip("挂失", enabled = true) { viewModel.startCardAction("report_lost", card) }
+                cardActions(card.status).forEach { action ->
+                    ActionChip(actionLabel(action), card, action) { viewModel.startCardAction(action, card) }
                 }
             }
             Text(
-                "操作将回到对话确认：冻结/挂失为高风险操作，需短信验证码与设备签名。",
+                "操作将回到对话确认：冻结/挂失/解挂为高风险操作，需短信验证码与设备签名。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
+}
+
+/**
+ * 卡片状态 → 可执行的操作，与核心的 `CARD_TRANSITIONS` 一一对应。
+ *
+ * 旧版对任何非 ACTIVE 的卡都只给“解冻”，而核心只允许 FROZEN → ACTIVE：挂失卡
+ * 点下去必然被拒绝，用户卡在死路上。挂失的唯一出口是“解挂”（LOST → ACTIVE）。
+ */
+private fun cardActions(status: String): List<String> = when (status) {
+    "ACTIVE" -> listOf("freeze", "report_lost")
+    "FROZEN" -> listOf("unfreeze")
+    "LOST" -> listOf("unreport_lost")
+    else -> emptyList()
+}
+
+private fun actionLabel(action: String): String = when (action) {
+    "freeze" -> "冻结"
+    "unfreeze" -> "解冻"
+    "report_lost" -> "挂失"
+    "unreport_lost" -> "解挂"
+    else -> action
 }
 
 @Composable
@@ -243,8 +269,8 @@ private fun StatusBadge(status: String) {
 }
 
 @Composable
-private fun ActionChip(text: String, enabled: Boolean, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, enabled = enabled, modifier = Modifier.testTag(UiTags.CARD_ACTION)) {
+private fun ActionChip(text: String, card: CardView, action: String, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, modifier = Modifier.testTag(UiTags.cardAction(card.cardId, action))) {
         Text(text)
     }
 }

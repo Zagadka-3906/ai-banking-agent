@@ -20,6 +20,15 @@ import com.aibanking.agent.ui.UiTags
 
 /** Log in unless a session was already restored from storage. */
 internal fun ComposeContentTestRule.ensureLoggedIn(password: String, timeoutMs: Long = 30_000) {
+    // The stored session is unsealed on a background thread (Keystore work), so
+    // the app spends its first moments on the restoring screen.  Wait for that to
+    // resolve into either the login form or the chat screen before deciding, or a
+    // logged-out launch looks like "already logged in" and the test then waits
+    // forever for a chat field that is never coming.
+    waitUntil(timeoutMs) {
+        onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty() ||
+            onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty()
+    }
     if (onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty()) {
         onNodeWithTag(UiTags.LOGIN_PASSWORD).performTextInput(password)
         onNodeWithTag(UiTags.LOGIN_BUTTON).performClick()
@@ -55,3 +64,13 @@ private fun ComposeContentTestRule.inputCleared(): Boolean {
     val node = onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().firstOrNull() ?: return false
     return node.config.getOrNull(SemanticsProperties.EditableText)?.text.isNullOrEmpty()
 }
+
+/**
+ * The text currently in the chat field, or null when the chat screen is not shown.
+ *
+ * Panel actions do not send anything by themselves: they prefill the field and
+ * return to the conversation, so the prefill is the observable result of a click.
+ */
+internal fun ComposeContentTestRule.chatInputText(): String? =
+    onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().firstOrNull()
+        ?.config?.getOrNull(SemanticsProperties.EditableText)?.text

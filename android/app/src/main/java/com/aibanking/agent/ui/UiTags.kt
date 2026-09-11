@@ -21,7 +21,28 @@ object UiTags {
     const val OPEN_CARDS = "open_cards"
     const val CARD_OPEN_ADD = "card_open_add"
     const val CARD_ADD = "card_add"
+
+    /**
+     * 卡片操作按钮的标签前缀。
+     *
+     * 一张卡同时有多个操作（ACTIVE 有冻结与挂失），所以只带 cardId 的标签仍会
+     * 命中多个节点；[cardAction] 把操作名也带上，一张卡的某个操作才唯一可寻址。
+     */
     const val CARD_ACTION = "card_action"
+
+    /** 卡片列表本身：列表是懒加载的，测试要滚动才能把视口外的卡面带进组合树。 */
+    const val CARD_LIST = "card_list"
+
+    /**
+     * Tag of one card's one action button, e.g.
+     * `onNodeWithTag(UiTags.cardAction("CARD-002", "freeze"))`.
+     *
+     * Joined with `:` rather than `_` because action names contain underscores
+     * (`report_lost`): an underscore-joined tag cannot be split back into
+     * (cardId, action), and a test that tried read `report_lost` as `lost`.
+     */
+    fun cardAction(cardId: String, action: String) = "$CARD_ACTION:$cardId:$action"
+
     const val OPEN_WEALTH = "open_wealth"
     const val WEALTH_BUY = "wealth_buy"
     const val WEALTH_TO_TEST = "wealth_to_test"
@@ -36,4 +57,7 @@ object UiTags {
     const val APPROVAL_APPROVE = "approval_approve"
     const val APPROVAL_REJECT = "approval_reject"
     const val APPROVAL_OTP = "approval_otp"
+
+    /** Retry affordance of a panel whose load failed. */
+    const val PANEL_RETRY = "panel_retry"
 }

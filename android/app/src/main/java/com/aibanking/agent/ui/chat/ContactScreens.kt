@@ -68,7 +68,6 @@ import androidx.compose.ui.unit.dp
 import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.ui.UiTags
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /**
  * 通讯录式联系人界面：列表（搜索 + 拼音首字母分组 + 字母索引条 + FAB）→
@@ -168,15 +167,21 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel, snac
                     }
                     if (sections.isEmpty() && !state.panelBusy) {
                         item {
-                            Text(
-                                if (state.contactSearch.isBlank()) {
-                                    "还没有联系人。点右下角添加，之后可直接说“给 <姓名> 转 300 元”。"
-                                } else {
-                                    "没有匹配“${state.contactSearch}”的联系人。"
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(24.dp),
-                            )
+                            val loadFailure = state.panelError
+                            if (loadFailure != null && state.contacts.isEmpty()) {
+                                // 请求失败 ≠ 通讯录是空的：报错并可重试，不谎报“还没有联系人”。
+                                PanelLoadFailure(loadFailure, viewModel::refreshContacts, Modifier.padding(horizontal = 24.dp))
+                            } else {
+                                Text(
+                                    if (state.contactSearch.isBlank()) {
+                                        "还没有联系人。点右下角添加，之后可直接说“给 <姓名> 转 300 元”。"
+                                    } else {
+                                        "没有匹配“${state.contactSearch}”的联系人。"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(24.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -466,7 +471,9 @@ private fun ContactAvatar(name: String, size: Dp, textStyle: TextStyle = Materia
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
-            .background(AVATAR_COLORS[abs(name.hashCode()) % AVATAR_COLORS.size]),
+            // floorMod rather than abs: abs(Int.MIN_VALUE) is still negative, so the
+            // old expression indexed the palette out of bounds for that one hash.
+            .background(AVATAR_COLORS[Math.floorMod(name.hashCode(), AVATAR_COLORS.size)]),
         contentAlignment = Alignment.Center,
     ) {
         Text(initial, color = Color.White, style = textStyle)
