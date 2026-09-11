@@ -108,7 +108,7 @@ mock-banking-core/
 │   ├── app/src/main/java/com/aibanking/agent/   # 界面、会话、Keystore 设备密钥、推送
 │   ├── app/src/androidTest/java/com/aibanking/agent/  # 插桩 UI 测试（绿/黄/红三条链路）
 │   └── tools/                       # 工具链安装脚本、BiometricPrompt 应答脚本
-├── tests/               # 自动化测试套件（14 个文件 / 265 个用例）
+├── tests/               # 自动化测试套件（17 个文件 / 300 个用例）
 │   ├── conftest.py                  # 套件级强制配置（见「贡献者指南」，改动前务必阅读）
 │   ├── test_core_api.py             # 核心契约、金额与风险边界、状态/卡片拒绝路径
 │   ├── test_security_regressions.py # 身份、票据绑定、上下文篡改、审计、回滚
@@ -122,8 +122,11 @@ mock-banking-core/
 │   ├── test_login.py                # 真实登录：argon2id 口令、可选短信 OTP、会话吊销
 │   ├── test_device_trust.py         # 设备信任根：Keystore 公钥注册与挑战-签名验签
 │   ├── test_device_store.py         # 设备注册表落盘：跨重启存活、伪造/损坏拒绝、写入冻结
+│   ├── test_ledger_persistence.py   # 账本落盘：跨重启续账与篡改拒绝
+│   ├── test_approval_store.py       # 审批注册表落盘：重启后待审批不丢
+│   ├── test_contact_book.py         # 联系人簿：增删改与转账直接解析新联系人
 │   ├── test_agent_gateway.py        # 渠道网关：审批句柄、SSE 流式、会话转发
-│   └── test_push_notifications.py   # 推送：令牌绑定、可审计派发、FCM 流程
+│   └── test_push_notifications.py   # 推送：令牌绑定、可审计派发、FCM 流程、死令牌清理
 ├── scripts/
 │   ├── smoke_test.py            # 容器冒烟验收（/healthz + 余额可读且非负）
 │   ├── agent_gateway_e2e.py     # 网关三段式授权探针（严格会话模式下 64 项检查）
@@ -297,11 +300,11 @@ cd android; .\gradlew.bat --no-daemon assembleDebug        # 产出 app\build\ou
 
 ## 📊 自动化测试与质量保障
 
-`tests/` 共 14 个文件 / 265 个用例，全部离线可跑（不需要网络、不需要大模型密钥、不写任何真实数据文件）。
+`tests/` 共 17 个文件 / 300 个用例，全部离线可跑（不需要网络、不需要大模型密钥、不写任何真实数据文件）。
 
 ```powershell
 # 运行全部测试
-python -m pytest -q                       # 265 passed
+python -m pytest -q                       # 300 passed
 
 # 核心门禁四件套——提交前必须全过，CI（.github/workflows/ci.yml）跑的就是这些
 python -m compileall -q .
@@ -381,7 +384,7 @@ cd android
 
 ```powershell
 python -m compileall -q .            # 语法
-python -m pytest -q                  # 265 passed
+python -m pytest -q                  # 300 passed
 python -m ruff check . --ignore E402 # 静态检查
 docker compose config --quiet        # 编排文件仍然有效
 ```
