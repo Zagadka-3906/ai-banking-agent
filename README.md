@@ -258,7 +258,7 @@ python -m streamlit run web_app.py
 
 ### Android 客户端
 
-工具链安装、模拟器与设备凭据、插桩测试与通过标准见 **[`docs/device-verification.md`](docs/device-verification.md)**。摘要：
+工具链安装、模拟器与设备凭据、**手动点测（含中文输入怎么做）**、插桩测试与通过标准见 **[`docs/device-verification.md`](docs/device-verification.md)**。摘要：
 
 ```powershell
 pwsh -File android\tools\install-android-toolchain.ps1     # JDK 17 + Android SDK + Gradle（免管理员）
