@@ -617,7 +617,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             if (it.id == placeholder.id) {
                                 ChatMessage(
                                     role = ChatRole.ASSISTANT,
-                                    text = envelope.reply,
+                                    text = displayText(envelope.reply, envelope.result),
                                     riskLevel = envelope.riskLevel,
                                     result = envelope.result,
                                     traceId = envelope.requestId,
@@ -718,8 +718,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         otp = "",
                         messages = state.messages + ChatMessage(
                             role = ChatRole.ASSISTANT,
-                            text = resolved.reply,
+                            text = displayText(resolved.reply, resolved.result),
                             riskLevel = resolved.riskLevel,
+                            result = resolved.result,
                         ),
                     )
                 }
@@ -752,8 +753,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         otp = "",
                         messages = state.messages + ChatMessage(
                             role = ChatRole.ASSISTANT,
-                            text = envelope.reply,
+                            text = displayText(envelope.reply, envelope.result),
                             riskLevel = envelope.riskLevel,
+                            result = envelope.result,
                         ),
                     )
                 }
@@ -796,3 +798,13 @@ internal fun profileRank(profile: String?): Int? = when (profile) {
 }
 
 internal fun productRank(riskLevel: String): Int = riskLevel.removePrefix("R").toIntOrNull() ?: 9
+
+/**
+ * 理财回复的产品清单以卡片渲染（见 ResultView），气泡文本里保留头行、
+ * 风险提示等说明，去掉会重复的“- `代码` …”清单行。
+ */
+private fun displayText(reply: String, result: Map<String, Any>?): String {
+    val type = (result?.get("execution_result") as? Map<*, *>)?.get("type")?.toString()
+    if (type !in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE")) return reply
+    return reply.lines().filterNot { it.trimStart().startsWith("- `") }.joinToString("\n")
+}

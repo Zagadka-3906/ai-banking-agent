@@ -362,6 +362,14 @@ RISK_GRADE_META: dict[str, tuple[str, str, str]] = {
 }
 
 
+PROFILE_LABELS: dict[str, str] = {
+    "CONSERVATIVE": "保守型", "C1": "保守型",
+    "C2": "稳健型", "BALANCED": "平衡型", "C3": "平衡型",
+    "C4": "进取型", "AGGRESSIVE": "进取型",
+    "C5": "激进型",
+}
+
+
 def risk_grade_for_score(score: int) -> str:
     for threshold, grade in RISK_GRADE_TABLE:
         if score >= threshold:
@@ -1911,7 +1919,7 @@ def recommend_wealth(user_id: Optional[str] = None, risk_profile: str = "CONSERV
     max_risk = profile_rank(profile) or 1
     products = [p for p in WEALTH_PRODUCTS if int(str(p.get("risk_level", "R3")).lstrip("R")) <= max_risk]
     audit_event("WEALTH_RECOMMEND", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"risk_profile": profile, "count": len(products)})
-    return {"code": 200, "risk_profile": profile, "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [dict(p) for p in products]}
+    return {"code": 200, "risk_profile": profile, "risk_profile_label": PROFILE_LABELS.get(profile, profile), "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [dict(p) for p in products]}
 
 
 @app.get("/api/v1/wealth/risk-profile")

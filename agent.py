@@ -386,8 +386,17 @@ def _fetch_risk_profile(state: BankingAgentState) -> Optional[dict[str, Any]]:
         return None
 
 
-def _quiz_result(state: BankingAgentState, response_text: str, quiz: Optional[dict[str, Any]]) -> dict[str, Any]:
-    """问卷回合的统一出口：quiz 为 None 表示已结束（完成或放弃）。"""
+def _quiz_result(
+    state: BankingAgentState,
+    response_text: str,
+    quiz: Optional[dict[str, Any]],
+    execution_result: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """问卷回合的统一出口：quiz 为 None 表示已结束（完成或放弃）。
+
+    完成回合可携带结构化的匹配产品列表（execution_result），让原生客户端
+    把回复渲染成理财卡片而不是纯文本清单。
+    """
 
     result = _empty_state(final_response=response_text)
     result.update({
@@ -396,6 +405,7 @@ def _quiz_result(state: BankingAgentState, response_text: str, quiz: Optional[di
         "clarification_required": quiz is not None,
         "plan": build_task_plan({"intent": Intent.WEALTH_RISK_ASSESSMENT.value, "date_scope": "ALL"}).to_dict(),
         "context": {"risk_quiz": quiz},
+        "execution_result": execution_result,
         "sub_requests": None,
     })
     return result
@@ -445,10 +455,14 @@ def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any])
 
     grade = str(graded.get("risk_profile") or "")
     product_text = ""
+    execution_result: Optional[dict[str, Any]] = None
     try:
         rec = _http("GET", f"wealth/recommend?user_id={user_id}&risk_profile={grade}", state=state, headers={"X-User-Id": user_id})
         if rec.status_code < 400:
-            product_text = "\n\n" + _render_wealth(_response_json(rec), Intent.WEALTH_RECOMMEND.value)
+            rec_payload = _response_json(rec)
+            product_text = "\n\n" + _render_wealth(rec_payload, Intent.WEALTH_RECOMMEND.value)
+            # 结构化产品列表随回复下发，原生客户端渲染为理财卡片。
+            execution_result = {"type": Intent.WEALTH_RECOMMEND.value, "data": rec_payload}
     except (requests.RequestException, RuntimeError, ValueError):
         product_text = ""
     audit_event("RISK_QUIZ", user_id=user_id, decision="ALLOW", outcome="COMPLETED", request_id=request_id, metadata={"grade": grade})
@@ -458,7 +472,7 @@ def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any])
         f"匹配理财产品级别：{graded.get('matching_levels', '')}。以下是与您风险等级匹配的在售产品："
         f"{product_text}\n\n现在可以直接说出需求（例如“查看理财产品”或“申购 CJ01002 500 元”）。"
     )
-    return _quiz_result(state, reply, None)
+    return _quiz_result(state, reply, None, execution_result=execution_result)
 
 
 def _format_hint(missing: list[int]) -> str:
@@ -1917,7 +1931,7 @@ def _render_wealth(data: Mapping[str, Any], intent: str) -> str:
     if intent == Intent.WEALTH_COMPARE.value:
         header = f"⚖️ 产品对比（{len(rows)} 款，按您指定的顺序）："
     elif intent == Intent.WEALTH_RECOMMEND.value:
-        profile = str(data.get("risk_profile") or "")
+        profile = str(data.get("risk_profile_label") or data.get("risk_profile") or "")
         header = f"📈 按风险偏好 **{profile}** 为您匹配到 {len(rows)} 款产品：" if profile else f"📈 为您匹配到 {len(rows)} 款产品："
     else:
         header = f"📊 在售理财产品共 {len(rows)} 款："

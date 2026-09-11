@@ -663,6 +663,10 @@ def test_quiz_collects_answers_and_recommends_matching_products(wired):
     assert stored["risk_profile"] == "C3"
     assert stored["score"] == 27
     assert stored["answers"]["8"] == "C"
+    # 匹配产品随结构化结果下发，App 渲染为理财卡片
+    assert values["execution_result"]["type"] == "WEALTH_RECOMMEND"
+    ids = {item["product_id"] for item in values["execution_result"]["data"]["data"]}
+    assert ids == {"CJ01002", "AY90204", "ZY18031"}
 
 
 def test_quiz_supports_partial_answers_then_completion(wired):

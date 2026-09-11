@@ -21,7 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.Locale
 import kotlin.math.max
@@ -47,11 +49,86 @@ fun ResultExtras(result: Map<String, Any?>?) {
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
         executions.forEach { execution ->
+            val type = execution.text("type")
+            if (type in WEALTH_PRODUCT_TYPES) {
+                // 理财回复：产品渲染成与理财页同款的卡片，而不是文本清单。
+                execution.child("data")?.let { WealthProducts(it) }
+                return@forEach
+            }
             execution.child("facts")?.let { BillFacts(it) }
             execution.child("data")?.let { KeyValues(it, title = "核心返回") }
         }
         result.child("todo_card")?.let { TodoCard(it) }
         result.child("plan")?.let { PlanCard(it) }
+    }
+}
+
+private val WEALTH_PRODUCT_TYPES = setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE")
+
+@Composable
+private fun WealthProducts(data: Map<String, Any?>) {
+    val products = data.children("data")
+    if (products.isEmpty()) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SectionTitle("理财产品（已核验）")
+        products.forEach { product ->
+            val name = product.text("name") ?: return@forEach
+            val level = product.text("risk_level") ?: "—"
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        product.text("category")?.let { CategoryTag(it) }
+                        RiskTag(level)
+                    }
+                    Text(name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        product.text("benchmark") ?: "业绩比较基准以产品说明书为准",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    val minAmount = product.number("min_amount")
+                    val term = product.text("term")
+                    Text(
+                        buildString {
+                            if (minAmount != null) append("起购 " + money(minAmount))
+                            term?.let { append(if (isEmpty()) it else " · $it") }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryTag(text: String) {
+    Box(
+        modifier = Modifier
+            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(text, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+private fun RiskTag(level: String) {
+    val color = when (level) {
+        "R1" -> Color(0xFF2E7D32)
+        "R2" -> Color(0xFF1565C0)
+        "R3" -> Color(0xFFE65100)
+        else -> Color(0xFFC62828)
+    }
+    Box(
+        modifier = Modifier
+            .background(color, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(level, style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
     }
 }
 
