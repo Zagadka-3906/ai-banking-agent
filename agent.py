@@ -9,11 +9,13 @@ usable offline; ambiguous or incomplete requests are sent to clarification.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import math
 import os
 import re
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, TypedDict
 from urllib.parse import urlencode
@@ -65,6 +67,25 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 BANK_API_BASE = os.getenv("BANK_API_BASE", "http://127.0.0.1:8000/api/v1").rstrip("/")
 HTTP_TIMEOUT = max(0.5, min(float(os.getenv("BANK_HTTP_TIMEOUT_SECONDS", "8")), 60.0))
 MODEL_ENABLED = bool(DEEPSEEK_API_KEY and ChatOpenAI is not None)
+
+# The caller's session credential for the turn currently being executed.
+#
+# A ContextVar rather than graph state on purpose: the checkpointer persists
+# state to disk (and a resumable approval may sit for a while), so a bearer
+# credential kept there would outlive the request that legitimately held it.
+# ``channel_session`` scopes it to one graph invocation.
+_CHANNEL_SESSION: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("bank_channel_session", default=None)
+
+
+@contextmanager
+def channel_session(token: Optional[str]):
+    """Present *token* to every core call made inside this block."""
+
+    handle = _CHANNEL_SESSION.set(token or None)
+    try:
+        yield
+    finally:
+        _CHANNEL_SESSION.reset(handle)
 
 if MODEL_ENABLED:
     llm = ChatOpenAI(
@@ -533,8 +554,15 @@ def _model_parse(text: str) -> dict[str, Any]:
             for key in ("scheduled_at", "event_at", "reminder_at"):
                 if local.get(key):
                     parsed[key] = local[key]
-        # An explicitly stated amount or recipient outranks a model omission.
-        for key in ("amount", "target"):
+        # An explicitly stated amount, recipient or date outranks a model
+        # omission.  The date case matters most for a *bare slot answer*: when
+        # the user replies to a clarification with just "下周六", the model has
+        # no verb to anchor on and returns UNKNOWN with every field null, so
+        # without this the deterministic parser's ISO date was silently
+        # discarded and the agent re-asked for a date the user had already
+        # given.  A date the model *did* return is still authoritative here -
+        # this only fills an omission.
+        for key in ("amount", "target", "scheduled_at", "event_at"):
             if parsed.get(key) in (None, "", 0) and local.get(key) not in (None, "", 0):
                 parsed[key] = local[key]
         # If the model produced an incomplete request while the deterministic
@@ -956,6 +984,14 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
 
 def _http(method: str, path: str, *, state: BankingAgentState, json_body: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None) -> requests.Response:
     merged = {"X-Request-Id": state.get("request_id") or f"agent_{uuid.uuid4().hex}"}
+    # When the core requires a session for writes, the calls a turn makes on the
+    # user's behalf must present the user's own credential.  It arrives through a
+    # ContextVar rather than graph state: state is written to the checkpointer,
+    # and a bearer credential has no business sitting in a checkpoint file.  See
+    # ``channel_session``.
+    session_token = _CHANNEL_SESSION.get()
+    if session_token:
+        merged["X-Session-Token"] = session_token
     merged.update(headers or {})
     return requests.request(method, f"{BANK_API_BASE}/{path.lstrip('/')}", json=json_body, headers=merged, timeout=HTTP_TIMEOUT)
 
@@ -1970,7 +2006,21 @@ def route_after_human_review(state: BankingAgentState) -> str:
     return END if state.get("final_response") or not state.get("user_confirmed") else "executor"
 
 
-if StateGraph is not None:
+def build_graph(checkpointer: Any = None) -> Any:
+    """Compile the banking agent graph against an explicit checkpointer.
+
+    ``agent.app`` - the module-level graph used by the Streamlit demo and the
+    unit tests - keeps the in-process :class:`MemorySaver`.  A channel service
+    that must survive a restart, or that has to answer an approval arriving on
+    a *later* HTTP request (possibly served by another worker), injects a
+    durable checkpointer instead.  See ``conversation.py``.
+
+    Returns ``None`` when LangGraph is not installed, matching the historical
+    behaviour of ``agent.app`` so a minimal installation still imports.
+    """
+
+    if StateGraph is None:  # pragma: no cover - dependency guidance path
+        return None
     workflow = StateGraph(BankingAgentState)
     workflow.add_node("intent_parser", intent_parser_node)
     workflow.add_node("risk_checker", risk_checker_node)
@@ -1983,14 +2033,16 @@ if StateGraph is not None:
     workflow.add_conditional_edges("human_review", route_after_human_review)
     workflow.add_edge("executor", "responder")
     workflow.add_edge("responder", END)
-    memory = MemorySaver()
-    app = workflow.compile(checkpointer=memory)
-else:  # pragma: no cover - dependency guidance for minimal installations
-    app = None
+    return workflow.compile(checkpointer=checkpointer if checkpointer is not None else MemorySaver())
+
+
+app = build_graph()
 
 
 __all__ = [
     "app",
+    "build_graph",
+    "channel_session",
     "BankingAgentState",
     "extract_json",
     "intent_parser_node",

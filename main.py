@@ -28,33 +28,44 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from security import (
     AUTH_TOKENS,
     AUDIT_LOGS,
+    DEVICES,
     MFA_PROOFS,
     SecurityError,
     amount_to_cents,
+    attach_push_token,
     audit_event,
     authorize_execution,
     behavior_large_amount_cents,
     behavior_status,
     circuit_status,
     confirm_auth_token,
+    demo_mode,
     ensure_circuit_closed,
+    enroll_device,
     get_audit_logs,
     get_audit_trace,
+    hash_password,
     inspect_auth_token,
     issue_auth_token,
     issue_face_challenge,
     issue_session_token,
+    list_devices,
     record_security_failure,
     record_security_success,
     record_behavior_signal,
     resolve_session,
+    revoke_device,
+    revoke_sessions_for,
     security_health,
     sanitize_text,
     validate_actor,
+    verify_login_otp,
     verify_mfa,
+    verify_password,
     verify_audit_chain,
 )
 from security import STATE_LOCK
+from notifications import notify_waiting_user
 from scheduler import TASK_STORE, TaskState
 from planner import analyze_transactions, filter_transactions
 from sandbox import sandbox_health
@@ -88,6 +99,10 @@ except (TypeError, ValueError):
 _HEALTH_PATHS = {"/healthz", "/api/v1/security/health"}
 _DOCS_PREFIXES = ("/docs", "/redoc", "/openapi.json")
 _SESSION_ISSUE_PATH = "/api/v1/auth/session"
+# Endpoints that must stay reachable *before* a session exists.  Without this,
+# strict session mode would refuse the login request itself and no client could
+# ever obtain the credential it is being asked for.
+_SESSION_BOOTSTRAP_PATHS = {_SESSION_ISSUE_PATH, "/api/v1/auth/login"}
 RATE_LIMIT_WINDOW_SECONDS = 60
 # Per-principal request windows.  The demo has no reverse proxy, so a simple
 # in-process fixed window is the cheapest way to blunt accidental or hostile
@@ -153,7 +168,7 @@ async def request_safety_middleware(request: Request, call_next):
         forwarded = [(name, value) for name, value in request.scope["headers"] if name.lower() != b"x-user-id"]
         forwarded.append((b"x-user-id", principal.encode("utf-8")))
         request.scope["headers"] = forwarded
-    elif _strict_session_required() and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _rate_limit_exempt(path) and path != _SESSION_ISSUE_PATH:
+    elif _strict_session_required() and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _rate_limit_exempt(path) and path not in _SESSION_BOOTSTRAP_PATHS:
         return _apply_security_headers(
             JSONResponse(status_code=401, content={"detail": {"code": "SESSION_REQUIRED", "message": "写操作需要会话凭证"}}),
             path,
@@ -189,10 +204,17 @@ async def request_safety_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 # In-memory demo ledger (public names retained for backwards compatibility)
 # ---------------------------------------------------------------------------
+# Every demo account shares one password.  The argon2id digest is baked in
+# rather than computed at import: hashing costs ~33 ms per call, and a fixed
+# digest keeps start-up (and therefore every test run) deterministic.  A real
+# deployment provisions credentials through an enrolment flow, never a source
+# constant.  The plaintext (`Bank@2026`) is documented in .env.example.
+DEMO_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$01eEUN2Ii59Smsmuoc9mhg$O+kWnd/qcEgxrcodomCtjb5PgtkprfAfvHOfDqFEyi8"
+
 ACCOUNTS: dict[str, dict[str, Any]] = {
-    "user_zhang": {"card_no": "622202001", "name": "张三", "phone": "13800138000", "balance": 15000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1},
-    "user_li": {"card_no": "622202002", "name": "李四", "phone": "13900139000", "balance": 2000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1},
-    "user_wife": {"card_no": "622202003", "name": "王美（爱人）", "phone": "13700137000", "balance": 5000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1},
+    "user_zhang": {"card_no": "622202001", "name": "张三", "phone": "13800138000", "balance": 15000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1, "password_hash": DEMO_PASSWORD_HASH},
+    "user_li": {"card_no": "622202002", "name": "李四", "phone": "13900139000", "balance": 2000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1, "password_hash": DEMO_PASSWORD_HASH},
+    "user_wife": {"card_no": "622202003", "name": "王美（爱人）", "phone": "13700137000", "balance": 5000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1, "password_hash": DEMO_PASSWORD_HASH},
 }
 
 CONTACTS: dict[str, str] = {
@@ -418,6 +440,30 @@ class SessionRequest(StrictModel):
     ttl_seconds: Optional[int] = None
 
 
+class LoginRequest(StrictModel):
+    user_id: str
+    password: str
+    # Optional second factor at login, required only when the deployment asks
+    # for it (BANK_LOGIN_REQUIRE_OTP=1).
+    otp: Optional[str] = None
+
+
+class DeviceRegisterRequest(StrictModel):
+    """Device enrollment: the client proves possession of a P-256 private key."""
+
+    public_key: str = Field(..., description="Base64(DER SubjectPublicKeyInfo) 的公钥")
+    label: Optional[str] = None
+    platform: Optional[str] = None
+    app_version: Optional[str] = None
+
+
+class PushTokenRequest(StrictModel):
+    """Delivery token for notifications (an FCM registration token)."""
+
+    token: str
+    platform: Optional[str] = None
+
+
 class LockPrecheckRequest(StrictModel):
     user_id: str
     amount: float = Field(...)
@@ -484,6 +530,10 @@ class OperationExecuteRequest(StrictModel):
     product_ids: Optional[list[str]] = None
     scheduled_at: Optional[str] = None
     reason: Optional[str] = "智能银行操作"
+    # Only meaningful for PASSWORD_CHANGE, and deliberately not part of the
+    # signed approval context: credential material must never travel inside a
+    # bearer token the client holds.
+    new_password: Optional[str] = None
     auth_token: Optional[str] = None
     mfa_proof: Optional[str] = None
     user_confirmed: bool = False
@@ -526,6 +576,9 @@ def _record_failure_and_raise(exc: SecurityError, *, user_id: Optional[str], act
         "TOKEN_BINDING_MISMATCH", "TOKEN_CONTEXT_MISMATCH", "TOKEN_INVALID", "TOKEN_OPERATION_MISMATCH", "MFA_FAILED", "MFA_PROOF_INVALID",
         "MFA_PROOF_REPLAY", "MFA_PROOF_MISMATCH", "MFA_PROOF_EXPIRED", "MFA_REQUIRED", "MFA_PROOF_REQUIRED",
         "IDENTITY_MISMATCH", "PROMPT_INJECTION_BLOCKED", "CIRCUIT_OPEN",
+        # Online password guessing counts towards the same per-account breaker as
+        # a faulty nonce: the point of the breaker is to stop repetition.
+        "INVALID_CREDENTIALS", "INVALID_LOGIN_OTP",
     }
     if exc.code in security_codes:
         record_security_failure(user_id, exc.code, request_id=request_id)
@@ -1643,17 +1696,86 @@ def operation_precheck(
     return response
 
 
-@app.post("/api/v1/auth/session")
-def create_session(req: SessionRequest, x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    """Issue a short-lived session credential bound to an existing account.
+def _login_otp_required() -> bool:
+    """Whether a login must also present an SMS code.
 
-    The demo authenticates nobody (it only checks that the account exists), so
-    this endpoint exists to demonstrate the *channel* contract: a channel
-    presents a session token instead of self-asserting X-User-Id.  Production
-    must authenticate the subject first (OIDC/密码) and then set
-    ``BANK_REQUIRE_SESSION=1`` so writes reject bare identity headers.
+    Optional by design: a password-only login is the demo default, and a
+    deployment that wants the second factor turns it on here.
     """
 
+    return os.getenv("BANK_LOGIN_REQUIRE_OTP", "0").lower() in {"1", "true", "yes", "on"}
+
+
+@app.post("/api/v1/auth/login")
+def login(req: LoginRequest, x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Authenticate a subject with a password, optionally plus an SMS code.
+
+    Failures answer uniformly: an unknown account, a disabled account and a
+    wrong password all return 401 ``INVALID_CREDENTIALS``, so the endpoint is not
+    an account-enumeration oracle.  Every failure is attributed to the presented
+    subject and counts towards that account's breaker, which blunts online
+    guessing regardless of whether the account exists.
+    """
+
+    request_id = _request_id(x_request_id)
+    principal = sanitize_text(req.user_id, field="用户标识", max_length=128)
+    if not principal:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_SUBJECT", "message": "缺少用户标识"})
+    try:
+        ensure_circuit_closed(principal)
+    except SecurityError as exc:
+        _raise_security(exc)
+
+    account = ACCOUNTS.get(principal)
+    if account is None or account.get("status") != "ACTIVE":
+        _record_failure_and_raise(
+            SecurityError("账号或口令不正确", 401, "INVALID_CREDENTIALS"),
+            user_id=principal,
+            action="LOGIN",
+            request_id=request_id,
+        )
+    if not verify_password(req.password, account.get("password_hash")):
+        _record_failure_and_raise(
+            SecurityError("账号或口令不正确", 401, "INVALID_CREDENTIALS"),
+            user_id=principal,
+            action="LOGIN",
+            request_id=request_id,
+        )
+    if _login_otp_required() and not verify_login_otp(req.otp):
+        _record_failure_and_raise(
+            SecurityError("短信验证码不正确", 401, "INVALID_LOGIN_OTP"),
+            user_id=principal,
+            action="LOGIN",
+            request_id=request_id,
+        )
+
+    record_security_success(principal)
+    result = issue_session_token(principal, request_id=request_id)
+    audit_event(
+        "LOGIN",
+        user_id=principal,
+        risk_level="GREEN",
+        decision="ALLOW",
+        outcome="SUCCESS",
+        request_id=request_id,
+        metadata={"otp_required": _login_otp_required()},
+    )
+    return {"code": 200, **result}
+
+
+@app.post("/api/v1/auth/session")
+def create_session(req: SessionRequest, x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Issue a session credential without authenticating anybody.
+
+    Kept for the demo console and the offline test suite, where there is no
+    password to present.  It is gated on ``BANK_DEMO_MODE``: an endpoint that
+    mints a credential for any claimed identity would make ``/auth/login``
+    pointless, so outside a demo it refuses rather than quietly undermines the
+    real login path.
+    """
+
+    if not demo_mode():
+        raise HTTPException(status_code=403, detail={"code": "DEMO_ENDPOINT_DISABLED", "message": "演示会话接口已停用，请使用口令登录"})
     request_id = _request_id(x_request_id)
     try:
         _ensure_account(req.user_id)
@@ -1661,6 +1783,124 @@ def create_session(req: SessionRequest, x_request_id: Optional[str] = Header(Non
     except SecurityError as exc:
         _record_failure_and_raise(exc, user_id=req.user_id, action="SESSION_ISSUE", request_id=request_id)
     return {"code": 200, **result}
+
+
+@app.get("/api/v1/auth/session")
+def resolve_session_endpoint(
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    """Resolve a presented session credential to its subject.
+
+    A channel gateway must not keep its own copy of the session registry: a
+    credential is only meaningful to the authority that issued it, and a second
+    copy would drift - or worse, keep honouring a token the core has already
+    dropped.  The gateway therefore asks this endpoint instead.
+
+    The middleware has already validated the token and replaced ``X-User-Id``
+    with its subject before the request reaches here, so an invalid or expired
+    session never gets this far.
+    """
+
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "缺少会话凭证"})
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    return {"code": 200, "user_id": x_user_id}
+
+
+# ---------------------------------------------------------------------------
+# Device trust root: enrolling the key behind the red tier's biometric factor
+# ---------------------------------------------------------------------------
+@app.post("/api/v1/devices/register")
+def register_device(
+    req: DeviceRegisterRequest,
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    """Register this device's public key against the authenticated principal.
+
+    Enrollment is a credential-establishing operation, so it demands a session
+    credential rather than a self-asserted identity header: once a key is
+    enrolled, its signatures satisfy the biometric factor for that account.
+    The middleware has already replaced ``X-User-Id`` with the session subject
+    when a session is presented, so the two cannot disagree here.
+    """
+
+    request_id = _request_id(x_request_id)
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "设备注册必须出示会话凭证"})
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    try:
+        _ensure_account(x_user_id)
+        summary = enroll_device(
+            req.public_key,
+            user_id=x_user_id,
+            label=req.label,
+            platform=req.platform,
+            app_version=req.app_version,
+            request_id=request_id,
+        )
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=x_user_id, action="DEVICE_REGISTER", request_id=request_id)
+    return {"code": 200, **summary}
+
+
+@app.post("/api/v1/devices/{device_id}/push-token")
+def register_push_token(
+    device_id: str,
+    req: PushTokenRequest,
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    """Attach a notification delivery token to one of the caller's devices.
+
+    Like enrollment this demands a session credential: a token attached to
+    somebody else's device would let one account push notifications onto another
+    account's phone.
+    """
+
+    request_id = _request_id(x_request_id)
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "推送令牌注册必须出示会话凭证"})
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    try:
+        summary = attach_push_token(device_id, req.token, user_id=x_user_id, request_id=request_id)
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=x_user_id, action="PUSH_TOKEN_REGISTER", request_id=request_id)
+    return {"code": 200, **summary}
+
+
+@app.get("/api/v1/devices")
+def get_devices(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """List the devices enrolled to the caller.  No key material is returned."""
+
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(x_user_id, x_user_id, action="DEVICE_QUERY", request_id=request_id)
+    rows = list_devices(actor)
+    audit_event("DEVICE_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
+    return {"code": 200, "data": rows}
+
+
+@app.post("/api/v1/devices/{device_id}/revoke")
+def revoke_registered_device(device_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Stop accepting attestations from one of the caller's own devices."""
+
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(x_user_id, x_user_id, action="DEVICE_REVOKE", request_id=request_id)
+    try:
+        summary = revoke_device(device_id, user_id=actor, request_id=request_id)
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=actor, action="DEVICE_REVOKE", request_id=request_id)
+    return {"code": 200, **summary}
 
 
 @app.post("/api/v1/auth/confirm")
@@ -2105,14 +2345,25 @@ def execute_operation(
                     card["status"] = next_status
                     result.update({"status": next_status, "card": card})
                 elif operation == "PASSWORD_CHANGE":
-                    # The demo never accepts or stores a plaintext password.
-                    # A successful red-zone MFA challenge rotates a mock
-                    # credential version; a real deployment would hand off to
-                    # its identity provider for password policy and hashing.
+                    # Now that logins are password-based, "change my password"
+                    # has to actually change it - otherwise the old credential
+                    # keeps working while the audit trail claims a rotation.
+                    # The new password is NOT bound into the signed approval
+                    # context on purpose: that context is serialized into the
+                    # authorization nonce the client holds, and credential
+                    # material has no business inside a bearer token.  What
+                    # authorizes the change is the single-use, MFA-gated nonce.
+                    if not req.new_password:
+                        raise SecurityError("修改密码需要提供新口令", 400, "NEW_PASSWORD_REQUIRED")
+                    account["password_hash"] = hash_password(req.new_password)
                     current_version = int(account.get("credential_version", 1))
                     account["credential_version"] = current_version + 1
                     account["credential_rotated_at"] = datetime.now(timezone.utc).isoformat()
-                    result.update({"status": "PASSWORD_CHANGED", "credential_version": account["credential_version"]})
+                    # A rotated credential must invalidate the sessions it was
+                    # used to obtain - including this caller's, which is why the
+                    # client is expected to re-login afterwards.
+                    revoked = revoke_sessions_for(req.user_id, reason="password_changed", request_id=request_id)
+                    result.update({"status": "PASSWORD_CHANGED", "credential_version": account["credential_version"], "revoked_sessions": revoked})
                 elif operation == "SUBSCRIPTION_CANCEL":
                     subscriptions = SUBSCRIPTIONS.setdefault(req.user_id, [])
                     selected = _resolve_subscription(req.user_id, req.target, req.merchant)
@@ -2214,6 +2465,10 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
     time.  Reminder tasks can be marked delivered automatically.
     """
 
+    # Bound once: calling ``_request_id`` at each use site minted a *different*
+    # correlation id per event when the caller supplied none, so one scheduler
+    # run could not be traced as a single chain.
+    request_id = _request_id(x_request_id)
     expected = os.getenv("BANK_ADMIN_AUDIT_TOKEN")
     if expected:
         if not x_admin_token or not hmac.compare_digest(expected, x_admin_token):
@@ -2223,7 +2478,7 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
         if not x_user_id:
             raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
         owner = x_user_id
-        _get_actor(owner, owner, action="TASK_RUN", request_id=_request_id(x_request_id))
+        _get_actor(owner, owner, action="TASK_RUN", request_id=request_id)
     changed = []
     for task in TASK_STORE.ready():
         if owner and task.owner_id != owner:
@@ -2236,9 +2491,14 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
             final_status = TaskState.WAITING_USER if task.task_type in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"} else TaskState.SUCCEEDED
             updated = TASK_STORE.transition(task.task_id, final_status, owner_id=owner)
             changed.append(updated.to_dict())
+            if final_status == TaskState.WAITING_USER:
+                # This is the moment nothing more happens without the user, so it
+                # is the moment to tell them.  The dispatch is audited, including
+                # when no delivery provider is configured.
+                notify_waiting_user(updated, request_id=request_id)
         except (KeyError, ValueError):
             continue
-    audit_event("TASK_RUN", user_id=owner, decision="ALLOW", outcome="SUCCESS", request_id=_request_id(x_request_id), metadata={"changed": len(changed)})
+    audit_event("TASK_RUN", user_id=owner, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"changed": len(changed)})
     return {"code": 200, "data": changed}
 
 
@@ -2396,7 +2656,7 @@ def security_audit_trace(request_id: str, x_admin_token: Optional[str] = Header(
     return {"code": 200, **trace}
 
 
-__all__ = ["app", "ACCOUNTS", "CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "reset_state"]
+__all__ = ["app", "ACCOUNTS", "CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "DEVICES", "reset_state"]
 
 
 # Test/demo reset helper.  It is intentionally not exposed as an HTTP route;
@@ -2453,3 +2713,7 @@ def reset_state() -> None:
             reset_security_state()
         except Exception:
             pass
+        # Device enrollment is cleared by ``reset_security_state`` above; this is
+        # belt-and-braces so a reset never leaves a test (or demo) trusting a
+        # stale key even if that call raised.
+        DEVICES.clear()

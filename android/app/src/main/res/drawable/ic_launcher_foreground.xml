@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Classical bank front: pediment, columns, base. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 L78,42 L78,48 L30,48 L30,42 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,52 h8 v22 h-8 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M50,52 h8 v22 h-8 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M64,52 h8 v22 h-8 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,78 h48 v6 h-48 Z" />
+</vector>

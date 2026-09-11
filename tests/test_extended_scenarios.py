@@ -10,6 +10,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 import main
+import security
 
 
 @pytest.fixture()
@@ -146,14 +147,23 @@ def test_purchase_requires_a_recorded_risk_assessment(client: TestClient):
 def test_password_change_is_red_and_card_lost_state_has_explicit_unreport(client: TestClient):
     token, proof = approve_red(client, "PASSWORD_CHANGE")
     version_before = main.ACCOUNTS["user_zhang"]["credential_version"]
+    hash_before = main.ACCOUNTS["user_zhang"]["password_hash"]
     changed = client.post(
         "/api/v1/auth/password/change",
-        json={"user_id": "user_zhang", "auth_token": token},
+        json={"user_id": "user_zhang", "auth_token": token, "new_password": "Rotation@2026"},
         headers={**headers(token), "X-MFA-Proof": proof},
     )
     assert changed.status_code == 200, changed.text
     assert changed.json()["data"]["status"] == "PASSWORD_CHANGED"
     assert main.ACCOUNTS["user_zhang"]["credential_version"] == version_before + 1
+    # The rotation must be real, not cosmetic.  Checked against the stored digest
+    # rather than by attempting a login: a failed login is itself a behaviour
+    # signal (AUTH_FAILURE), and adding one here would perturb the risk score
+    # this module exists to exercise.  The login-path coverage lives in
+    # tests/test_login.py.
+    assert main.ACCOUNTS["user_zhang"]["password_hash"] != hash_before
+    assert security.verify_password("Rotation@2026", main.ACCOUNTS["user_zhang"]["password_hash"])
+    assert not security.verify_password("Bank@2026", main.ACCOUNTS["user_zhang"]["password_hash"])
 
     lost_token, lost_proof = approve_red(client, "CARD_REPORT_LOST")
     lost = client.post(

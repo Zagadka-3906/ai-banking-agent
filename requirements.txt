@@ -4,8 +4,20 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.6
 requests==2.32.3
 langgraph==0.2.53
+# Durable conversation checkpoints for the channel gateway (conversation.py).
+# Without it the gateway silently degrades to the in-process saver, so an
+# approval arriving after a restart would be lost.
+langgraph-checkpoint-sqlite==2.0.11
 langchain-openai==0.2.14
 langchain-core==0.3.28
+# ECDSA verification for the device trust root (security.py): the red tier's
+# biometric factor is a P-256 signature from an enrolled device, not a shared
+# secret that would have to ship inside the client.  Missing => the feature
+# fails closed.
+cryptography==45.0.7
 streamlit==1.41.1
 pandas==2.2.3
 python-dotenv==1.0.1
+# Login: argon2id password hashing for /api/v1/auth/login.  Missing => nobody can
+# log in (the endpoint fails closed) rather than anybody being able to.
+argon2-cffi==25.1.0

@@ -36,40 +36,83 @@ HTTP_TIMEOUT = max(1.0, min(float(os.getenv("BANK_HTTP_TIMEOUT_SECONDS", "8")), 
 
 st.set_page_config(page_title="AI Banking Agent", page_icon="🏦", layout="wide")
 
+# The console presents a session credential rather than only asserting an
+# identity header: that is the same contract a real channel uses, and it keeps
+# the demo working once a deployment turns on BANK_REQUIRE_SESSION.
+_SESSION: dict[str, Any] = {"token": None}
+
+
+def _session_token() -> Optional[str]:
+    if _SESSION["token"]:
+        return _SESSION["token"]
+    try:
+        # Demo console => the demo session endpoint.  It is gated on
+        # BANK_DEMO_MODE, so a deployment that wants real authentication simply
+        # refuses this call and the console reports the failure.
+        response = requests.post(
+            f"{BANK_API_BASE}/auth/session",
+            json={"user_id": DEMO_USER_ID},
+            timeout=HTTP_TIMEOUT,
+        )
+        if response.status_code < 400:
+            _SESSION["token"] = response.json().get("session_token")
+    except (requests.RequestException, ValueError):
+        pass
+    return _SESSION["token"]
+
 
 def _headers(*, request_id: Optional[str] = None, token: Optional[str] = None) -> dict[str, str]:
     result = {"X-User-Id": DEMO_USER_ID, "X-Request-Id": request_id or f"web_{uuid.uuid4().hex}"}
+    session = _session_token()
+    if session:
+        result["X-Session-Token"] = session
     if token:
         result["X-Auth-Token"] = token
     return result
 
 
 def _get(path: str) -> Optional[dict[str, Any]]:
-    try:
-        response = requests.get(f"{BANK_API_BASE}/{path.lstrip('/')}", headers=_headers(), timeout=HTTP_TIMEOUT)
+    for attempt in (0, 1):
+        try:
+            response = requests.get(f"{BANK_API_BASE}/{path.lstrip('/')}", headers=_headers(), timeout=HTTP_TIMEOUT)
+        except requests.RequestException:
+            return None
+        if response.status_code == 401 and attempt == 0:
+            # Expired session: mint a new one and retry exactly once.
+            _SESSION["token"] = None
+            continue
         if response.status_code >= 400:
             return None
-        value = response.json()
+        try:
+            value = response.json()
+        except ValueError:
+            return None
         return value if isinstance(value, dict) else None
-    except (requests.RequestException, ValueError):
-        return None
+    return None
 
 
 def _post(path: str, payload: dict[str, Any], *, token: Optional[str] = None, request_id: Optional[str] = None) -> tuple[bool, Any]:
-    try:
-        response = requests.post(
-            f"{BANK_API_BASE}/{path.lstrip('/')}",
-            json=payload,
-            headers=_headers(request_id=request_id, token=token),
-            timeout=HTTP_TIMEOUT,
-        )
+    for attempt in (0, 1):
+        try:
+            response = requests.post(
+                f"{BANK_API_BASE}/{path.lstrip('/')}",
+                json=payload,
+                headers=_headers(request_id=request_id, token=token),
+                timeout=HTTP_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            return False, {"message": f"核心服务不可用：{exc}"}
+        if response.status_code == 401 and attempt == 0:
+            # The session expired before the request reached a handler, so no
+            # authorization nonce was consumed and a single retry is safe.
+            _SESSION["token"] = None
+            continue
         try:
             body = response.json()
         except ValueError:
             body = {"message": response.text}
         return response.status_code < 400, body
-    except requests.RequestException as exc:
-        return False, {"message": f"核心服务不可用：{exc}"}
+    return False, {"message": "核心服务不可用：会话刷新后仍未通过"}
 
 
 def _append_assistant(state: dict[str, Any]) -> None:

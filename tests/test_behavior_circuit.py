@@ -61,6 +61,10 @@ def red_operation(client: TestClient, operation: str, **kwargs):
     """Approved + MFA-verified sensitive operation (card / password changes)."""
 
     body = {"user_id": "user_zhang", "operation": operation, **kwargs}
+    if operation == "PASSWORD_CHANGE":
+        # A password change now carries the new credential; without one the core
+        # refuses rather than reporting a rotation that never happened.
+        body.setdefault("new_password", "Circuit@2026")
     precheck = client.post("/api/v1/risk/precheck/operation", json=body, headers=auth())
     assert precheck.status_code == 200, precheck.text
     token = precheck.json()["auth_token"]

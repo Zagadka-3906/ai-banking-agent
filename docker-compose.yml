@@ -20,6 +20,10 @@ services:
       BANK_CIRCUIT_LOCKOUT_SECONDS: ${BANK_CIRCUIT_LOCKOUT_SECONDS:-300}
       BANK_MAX_INPUT_LENGTH: ${BANK_MAX_INPUT_LENGTH:-2000}
       BANK_MAX_TRANSFER_CENTS: ${BANK_MAX_TRANSFER_CENTS:-100000000}
+      # Deployment posture: writes must present a session credential issued by
+      # /api/v1/auth/login, not a self-asserted identity header.
+      BANK_REQUIRE_SESSION: ${BANK_REQUIRE_SESSION:-1}
+      BANK_LOGIN_REQUIRE_OTP: ${BANK_LOGIN_REQUIRE_OTP:-0}
       BANK_AUDIT_MAX_EVENTS: ${BANK_AUDIT_MAX_EVENTS:-5000}
       BANK_AUTH_TOKEN_MAX_RECORDS: ${BANK_AUTH_TOKEN_MAX_RECORDS:-20000}
       BANK_IDEMPOTENCY_TTL_SECONDS: ${BANK_IDEMPOTENCY_TTL_SECONDS:-86400}
@@ -32,6 +36,44 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Channel gateway: the HTTP surface a native client (the Android app) drives
+  # the agent through.  It owns conversations, durable checkpoints and the
+  # server-side approval registry; it never touches the ledger itself, and it
+  # never hands a signed nonce or an MFA proof to a client.
+  gateway:
+    build: .
+    command: uvicorn agent_api:app --host 0.0.0.0 --port 8100
+    environment:
+      BANK_API_BASE: http://core:8000/api/v1
+      # Durable conversation state.  Mounted on a named volume so an approval
+      # can still be resumed after the container is recreated.
+      BANK_CONVERSATION_DB: /data/agent_conversations.sqlite3
+      BANK_CHANNEL_ID: app
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Must stay BELOW BANK_TOKEN_TTL_SECONDS: an approval handle points at a
+      # nonce the core will refuse once expired.
+      BANK_APPROVAL_TTL_SECONDS: ${BANK_APPROVAL_TTL_SECONDS:-110}
+      BANK_AGENT_RATE_LIMIT_PER_MINUTE: ${BANK_AGENT_RATE_LIMIT_PER_MINUTE:-60}
+      BANK_HTTP_TIMEOUT_SECONDS: ${BANK_HTTP_TIMEOUT_SECONDS:-8}
+      BANK_CORS_ORIGINS: ${BANK_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
+      # Only meaningful until the login milestone lands: in demo mode a bare
+      # X-User-Id is accepted because no credential exists yet.  Turn it off
+      # together with switching the deployment to session-only writes.
+      BANK_DEMO_MODE: ${BANK_DEMO_MODE:-1}
+    ports:
+      - "8100:8100"
+    volumes:
+      - agent-conversations:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      core:
+        condition: service_healthy
 
   web:
     build: .
@@ -64,3 +106,8 @@ services:
     depends_on:
       core:
         condition: service_healthy
+
+volumes:
+  # Conversation checkpoints, so a pending approval survives a container
+  # recreate instead of evaporating with the process.
+  agent-conversations:

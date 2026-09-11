@@ -1,0 +1,394 @@
+package com.aibanking.agent.ui.chat
+
+import android.app.Application
+import android.os.Build
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.aibanking.agent.data.AgentRepository
+import com.aibanking.agent.data.ApprovalView
+import com.aibanking.agent.data.DeviceRepository
+import com.aibanking.agent.data.GatewayException
+import com.aibanking.agent.data.LoginRepository
+import com.aibanking.agent.data.SessionStore
+import com.aibanking.agent.push.PushNotifications
+import com.aibanking.agent.security.DeviceKeyManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.UUID
+
+enum class ChatRole { USER, ASSISTANT }
+
+data class ChatMessage(
+    val id: String = UUID.randomUUID().toString(),
+    val role: ChatRole,
+    val text: String,
+    val riskLevel: String? = null,
+    /**
+     * Structured result payload from the gateway (`chart_data`, `todo_card`,
+     * `plan`, `execution_result`), kept so the result view can render facts
+     * rather than only the prose summary.
+     */
+    val result: Map<String, Any>? = null,
+    /**
+     * The core's correlation id for this turn.  Shown to the user so a question
+     * about a specific answer ("what happened with my transfer?") can be traced
+     * through `/api/v1/security/audit/trace/{id}` instead of guessed at.
+     */
+    val traceId: String? = null,
+)
+
+data class ChatUiState(
+    val principal: String = "",
+    val authenticated: Boolean = false,
+    val messages: List<ChatMessage> = emptyList(),
+    val input: String = "",
+    val busy: Boolean = false,
+    /** Non-null while the conversation is waiting for a human decision. */
+    val pending: ApprovalView? = null,
+    val otp: String = "",
+    /** Revealed only once the server has actually asked for a login SMS code. */
+    val otpRequiredAtLogin: Boolean = false,
+    val error: String? = null,
+    val notice: String? = null,
+) {
+    val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy && pending == null
+}
+
+/**
+ * Drives one conversation against the channel gateway.
+ *
+ * Nothing security-relevant is decided here: the ViewModel forwards the turn,
+ * shows the approval the *server* asked for, and returns the user's decision.
+ * The risk tier, the required factors and the final settlement all belong to the
+ * core, so a compromised client can annoy the user but cannot authorize a
+ * ledger mutation on its own.
+ */
+class ChatViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val sessionStore = SessionStore(application)
+    private val deviceKeys = DeviceKeyManager()
+    private val agent = AgentRepository.create()
+    private val login = LoginRepository.create()
+    private val devices = DeviceRepository.create()
+
+    private val _state = MutableStateFlow(ChatUiState())
+    val state: StateFlow<ChatUiState> = _state.asStateFlow()
+
+    private var conversationId: String = UUID.randomUUID().toString().replace("-", "").take(20)
+    private var sessionToken: String? = null
+    private var deviceId: String? = null
+
+    init {
+        // Restore a previous session so a restart does not force a re-login.
+        val storedPrincipal = sessionStore.principal()
+        val storedToken = sessionStore.sessionToken()
+        deviceId = sessionStore.deviceId()
+        if (!storedPrincipal.isNullOrBlank() && !storedToken.isNullOrBlank()) {
+            sessionToken = storedToken
+            conversationId = sessionStore.conversationId() ?: conversationId
+            _state.update { it.copy(principal = storedPrincipal, authenticated = true, messages = listOf(welcome())) }
+        }
+    }
+
+    fun onInputChange(value: String) = _state.update { it.copy(input = value) }
+
+    fun onOtpChange(value: String) = _state.update { it.copy(otp = value.filter(Char::isDigit).take(8)) }
+
+    fun dismissMessages() = _state.update { it.copy(error = null, notice = null) }
+
+    /** Surface a local failure (for example a rejected biometric prompt). */
+    fun reportError(message: String) = _state.update { it.copy(error = message) }
+
+    fun login(userId: String, password: String, otp: String? = null) {
+        val principal = userId.trim()
+        if (principal.isEmpty()) {
+            _state.update { it.copy(error = "请输入用户标识") }
+            return
+        }
+        if (password.isEmpty()) {
+            _state.update { it.copy(error = "请输入登录口令") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, error = null) }
+            try {
+                val session = login.login(principal, password, otp)
+                sessionToken = session.sessionToken
+                sessionStore.saveSession(session.sessionToken, session.userId, conversationId)
+                // Registering the device key is what makes the red tier usable.
+                // A failure here is reported but does not block login: green and
+                // yellow operations need no device key at all.
+                val enrolled = enrollDevice(session.sessionToken, session.userId)
+                // Notifications can only be addressed to an enrolled device, and
+                // only once a Firebase project is configured - an unconfigured
+                // build simply registers nothing here.
+                if (enrolled) registerPushToken(session.sessionToken, session.userId)
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        principal = session.userId,
+                        authenticated = true,
+                        messages = listOf(welcome()),
+                        otpRequiredAtLogin = false,
+                        notice = if (enrolled) {
+                            "会话有效期 ${session.ttlSeconds} 秒；本机设备已注册"
+                        } else {
+                            "会话已建立，但本机设备未注册：红色风险操作暂不可用"
+                        },
+                    )
+                }
+            } catch (failure: GatewayException) {
+                _state.update {
+                    it.copy(
+                        busy = false,
+                        error = failure.message,
+                        // Ask for the SMS code only when the deployment actually
+                        // requires it, instead of making everyone type one.
+                        otpRequiredAtLogin = it.otpRequiredAtLogin || failure.code == "INVALID_LOGIN_OTP",
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun enrollDevice(token: String, principal: String): Boolean = try {
+        val label = "${Build.MANUFACTURER} ${Build.MODEL}".trim().ifBlank { "Android 设备" }
+        val device = devices.register(
+            publicKeySpkiBase64 = deviceKeys.publicKeySpkiBase64(),
+            principal = principal,
+            sessionToken = token,
+            label = label,
+        )
+        deviceId = device.deviceId
+        sessionStore.saveDeviceId(device.deviceId)
+        true
+    } catch (failure: Exception) {
+        false
+    }
+
+    /**
+     * Hand the server this device's notification token, if there is one.
+     *
+     * Reads the token off the main thread (the FCM lookup blocks) and stays
+     * silent when push is unconfigured: a build without a Firebase project has
+     * no token to register, and inventing one would make the server's delivery
+     * log claim something that cannot happen.
+     */
+    private suspend fun registerPushToken(sessionToken: String, principal: String) = withContext(Dispatchers.IO) {
+        val device = deviceId ?: return@withContext
+        val token = PushNotifications.currentToken(getApplication()) ?: return@withContext
+        runCatching { devices.registerPushToken(device, token, principal, sessionToken) }
+        Unit
+    }
+
+    fun logout() {
+        sessionToken = null
+        sessionStore.clear()
+        conversationId = UUID.randomUUID().toString().replace("-", "").take(20)
+        _state.value = ChatUiState()
+    }
+
+    fun send() {
+        val current = _state.value
+        if (!current.canSend) return
+        val text = current.input.trim()
+        val principal = current.principal
+        // A placeholder assistant bubble carries the live stage label and is then
+        // replaced by the real answer, so progress appears where the reply will.
+        val placeholder = ChatMessage(role = ChatRole.ASSISTANT, text = "正在处理…")
+        _state.update {
+            it.copy(
+                messages = it.messages + ChatMessage(role = ChatRole.USER, text = text) + placeholder,
+                input = "",
+                busy = true,
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val envelope = agent.streamMessage(
+                    principal = principal,
+                    sessionToken = sessionToken,
+                    conversationId = conversationId,
+                    text = text,
+                ) { label ->
+                    _state.update { state ->
+                        state.copy(
+                            messages = state.messages.map {
+                                if (it.id == placeholder.id) it.copy(text = label) else it
+                            },
+                        )
+                    }
+                }
+                conversationId = envelope.conversationId.ifBlank { conversationId }
+                _state.update { state ->
+                    state.copy(
+                        busy = false,
+                        messages = state.messages.map {
+                            if (it.id == placeholder.id) {
+                                ChatMessage(
+                                    role = ChatRole.ASSISTANT,
+                                    text = envelope.reply,
+                                    riskLevel = envelope.riskLevel,
+                                    result = envelope.result,
+                                    traceId = envelope.requestId,
+                                )
+                            } else {
+                                it
+                            }
+                        },
+                        pending = envelope.approval,
+                        otp = "",
+                    )
+                }
+            } catch (failure: GatewayException) {
+                // Drop the placeholder: leaving "正在处理…" behind after a
+                // failure is exactly the kind of lie this codebase avoids.
+                _state.update { state -> state.copy(messages = state.messages.filterNot { it.id == placeholder.id }) }
+                applyFailure(failure)
+            } catch (failure: Exception) {
+                // A client-side fault must not take the app down; report it the
+                // same way a server-side refusal is reported.
+                _state.update { state ->
+                    state.copy(
+                        busy = false,
+                        messages = state.messages.filterNot { it.id == placeholder.id },
+                        error = "请求失败：${failure.message ?: failure::class.java.simpleName}",
+                    )
+                }
+            }
+        }
+    }
+
+    fun reject() {
+        val approval = _state.value.pending ?: return
+        resolve(approval, decision = "reject")
+    }
+
+    /** Yellow tier: the click on the approval card is the whole factor. */
+    fun approve() {
+        val approval = _state.value.pending ?: return
+        if (approval.mfaRequired) {
+            _state.update { it.copy(error = "该操作需要短信验证码与设备签名，请完成强验证") }
+            return
+        }
+        resolve(approval, decision = "approve")
+    }
+
+    /**
+     * Red tier: fetch the server's liveness challenge, sign it with the device
+     * key, and hand the signature plus the SMS code back for verification.
+     *
+     * Called only after the local biometric prompt succeeded.
+     */
+    fun approveWithDeviceSignature() {
+        val approval = _state.value.pending ?: return
+        val otp = _state.value.otp
+        if (otp.length < 6) {
+            _state.update { it.copy(error = "请输入 6 位短信验证码") }
+            return
+        }
+        // Without an enrolled key the signature would be unverifiable, so say so
+        // instead of sending an attestation the core is guaranteed to refuse.
+        val enrolledDevice = deviceId
+        if (enrolledDevice.isNullOrBlank()) {
+            _state.update { it.copy(error = "本机尚未完成设备注册，无法完成红色风险验证") }
+            return
+        }
+        val principal = _state.value.principal
+        _state.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val challenge = agent.requestFaceChallenge(principal, sessionToken, approval.approvalId)
+                // The private key stays in the Keystore; this returns only a
+                // signature over the canonical challenge string.
+                val signature = deviceKeys.signChallenge(
+                    challengeId = challenge.challengeId,
+                    userId = principal,
+                    authTokenJti = challenge.authTokenJti,
+                )
+                val envelope = DeviceKeyManager.attestationEnvelope(
+                    deviceId = enrolledDevice,
+                    challengeId = challenge.challengeId,
+                    signatureBase64 = signature,
+                )
+                val resolved = agent.resolveApproval(
+                    principal = principal,
+                    sessionToken = sessionToken,
+                    approvalId = approval.approvalId,
+                    decision = "approve",
+                    otp = otp,
+                    faceAttestation = envelope,
+                )
+                _state.update { state ->
+                    state.copy(
+                        busy = false,
+                        pending = null,
+                        otp = "",
+                        messages = state.messages + ChatMessage(
+                            role = ChatRole.ASSISTANT,
+                            text = resolved.reply,
+                            riskLevel = resolved.riskLevel,
+                        ),
+                    )
+                }
+            } catch (failure: GatewayException) {
+                applyFailure(failure)
+            } catch (failure: Exception) {
+                // A Keystore failure is a device problem, not a bank decision;
+                // say so instead of blaming the operation.
+                _state.update { it.copy(busy = false, error = "设备签名失败：${failure.message ?: failure::class.java.simpleName}") }
+            }
+        }
+    }
+
+    private fun resolve(approval: ApprovalView, decision: String) {
+        val principal = _state.value.principal
+        _state.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val envelope = agent.resolveApproval(
+                    principal = principal,
+                    sessionToken = sessionToken,
+                    approvalId = approval.approvalId,
+                    decision = decision,
+                )
+                _state.update { state ->
+                    state.copy(
+                        busy = false,
+                        pending = null,
+                        otp = "",
+                        messages = state.messages + ChatMessage(
+                            role = ChatRole.ASSISTANT,
+                            text = envelope.reply,
+                            riskLevel = envelope.riskLevel,
+                        ),
+                    )
+                }
+            } catch (failure: GatewayException) {
+                applyFailure(failure)
+            }
+        }
+    }
+
+    private fun applyFailure(failure: GatewayException) {
+        _state.update { state ->
+            if (failure.sessionExpired) {
+                sessionToken = null
+                sessionStore.clear()
+                ChatUiState(error = "登录状态已失效，请重新登录")
+            } else {
+                state.copy(busy = false, error = failure.message)
+            }
+        }
+    }
+
+    private fun welcome() = ChatMessage(
+        role = ChatRole.ASSISTANT,
+        text = "您好！我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片和订阅。高风险操作需要您完成短信验证与设备签名。",
+    )
+}

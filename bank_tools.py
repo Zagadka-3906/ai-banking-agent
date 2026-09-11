@@ -70,11 +70,16 @@ class BankClient:
         base_url: str = BASE_URL,
         *,
         user_id: Optional[str] = None,
+        session_token: Optional[str] = None,
         session: Optional[requests.Session] = None,
         timeout: float = DEFAULT_TIMEOUT,
     ):
         self.base_url = base_url.rstrip("/")
         self.user_id = user_id
+        # A channel acting for a signed-in user presents that user's session on
+        # every call; once the core requires sessions for writes, a client
+        # without one is simply refused.
+        self.session_token = session_token
         self.session = session or requests.Session()
         self.timeout = max(0.5, min(float(timeout), 60.0))
 
@@ -86,6 +91,7 @@ class BankClient:
         mfa_proof: Optional[str] = None,
         confirmation: Optional[bool] = None,
         request_id: Optional[str] = None,
+        session_token: Optional[str] = None,
     ) -> dict[str, str]:
         headers = {
             "Accept": "application/json",
@@ -94,6 +100,9 @@ class BankClient:
         effective_principal = principal or self.user_id
         if effective_principal:
             headers["X-User-Id"] = effective_principal
+        effective_session = session_token or self.session_token
+        if effective_session:
+            headers["X-Session-Token"] = effective_session
         if auth_token:
             headers["X-Auth-Token"] = auth_token
         if mfa_proof:
@@ -219,14 +228,41 @@ class BankClient:
             headers["Idempotency-Key"] = idempotency_key
         return self._request("POST", "risk/precheck", json=payload, headers=headers, raise_for_status=False)
 
-    def confirm(self, auth_token: str) -> dict[str, Any]:
+    # Session / authorization --------------------------------------------
+    def session_subject(self, session_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
+        """Resolve a session credential to its subject, asking the core.
+
+        The core is the only authority that can answer this: it holds the
+        session registry, and a channel process that kept its own copy would
+        disagree with the core the moment a session expired or was dropped.
+        """
+
+        return self._request(
+            "GET",
+            "auth/session",
+            headers=self._headers(request_id=request_id, session_token=session_token),
+            read_only=True,
+        ).json()
+
+    def confirm(self, auth_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
+        """Record the user's explicit confirmation for a yellow/red operation.
+
+        ``request_id`` lets a channel reuse the correlation id of the turn that
+        produced the nonce, so the core records ``USER_CONFIRMATION`` on the
+        same audit chain as the precheck that preceded it instead of starting a
+        second, unrelated chain.
+        """
+
         if not self.user_id:
             raise ValueError("user_id is required for confirmation")
         return self._request(
-            "POST", "risk/confirm", json={}, headers=self._headers(principal=self.user_id, auth_token=auth_token, confirmation=True)
+            "POST",
+            "risk/confirm",
+            json={},
+            headers=self._headers(principal=self.user_id, auth_token=auth_token, confirmation=True, request_id=request_id),
         ).json()
 
-    def request_face_challenge(self, auth_token: str) -> dict[str, Any]:
+    def request_face_challenge(self, auth_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
         """Ask the core for a liveness challenge the device SDK must sign."""
 
         if not self.user_id:
@@ -235,10 +271,18 @@ class BankClient:
             "POST",
             "risk/mfa/face/challenge",
             json={"auth_token": auth_token},
-            headers=self._headers(principal=self.user_id, auth_token=auth_token),
+            headers=self._headers(principal=self.user_id, auth_token=auth_token, request_id=request_id),
         ).json()
 
-    def verify_mfa(self, auth_token: str, *, otp: str, face_attestation: Optional[str] = None, face_verified: Optional[bool] = None) -> dict[str, Any]:
+    def verify_mfa(
+        self,
+        auth_token: str,
+        *,
+        otp: str,
+        face_attestation: Optional[str] = None,
+        face_verified: Optional[bool] = None,
+        request_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         """Submit the red-zone factors.
 
         The biometric factor requires a signed, single-use ``face_attestation``
@@ -264,7 +308,7 @@ class BankClient:
             "POST",
             "risk/mfa/verify",
             json=body,
-            headers=self._headers(principal=self.user_id, auth_token=auth_token),
+            headers=self._headers(principal=self.user_id, auth_token=auth_token, request_id=request_id),
         ).json()
 
     def operation_precheck(

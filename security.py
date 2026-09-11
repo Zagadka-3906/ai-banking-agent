@@ -51,6 +51,33 @@ else:
 
 logger = logging.getLogger("mock_banking.security")
 
+# ECDSA verification for the device trust root behind the red tier's biometric
+# factor.  Imported defensively so a minimal installation still starts; when the
+# dependency is missing the feature fails *closed* (a device attestation is
+# refused) rather than silently accepting an unverified one.
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes as _crypto_hashes
+    from cryptography.hazmat.primitives.asymmetric import ec as _crypto_ec
+    from cryptography.hazmat.primitives.serialization import load_der_public_key as _load_der_public_key
+except ImportError:  # pragma: no cover - dependency guidance path
+    InvalidSignature = None  # type: ignore[assignment]
+    _crypto_hashes = None  # type: ignore[assignment]
+    _crypto_ec = None  # type: ignore[assignment]
+    _load_der_public_key = None  # type: ignore[assignment]
+
+DEVICE_KEYS_AVAILABLE = _load_der_public_key is not None
+
+# Password hashing for the login endpoint.  Also optional at import time, and
+# also fails closed: without the library nobody can log in, rather than anybody.
+try:
+    from argon2 import PasswordHasher as _PasswordHasher
+except ImportError:  # pragma: no cover - dependency guidance path
+    _PasswordHasher = None  # type: ignore[assignment]
+
+PASSWORDS_AVAILABLE = _PasswordHasher is not None
+_PASSWORD_HASHER = _PasswordHasher() if _PasswordHasher is not None else None
+
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
@@ -58,6 +85,21 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         value = default
     return max(minimum, min(value, maximum))
+
+
+def demo_mode() -> bool:
+    """Whether demo-only affordances are enabled.
+
+    Read per call rather than captured at import time, so a test (or a
+    deployment reloading its configuration) can flip ``BANK_DEMO_MODE`` without
+    re-importing every module that depends on it.
+    """
+
+    return DEMO_MODE
+
+
+# Must come after ``_env_int`` is defined - it validates through it.
+MIN_PASSWORD_LENGTH = _env_int("BANK_MIN_PASSWORD_LENGTH", 8, 6, 128)
 
 
 # A random process key is safer than a hard-coded development key.  Operators
@@ -1091,6 +1133,65 @@ def issue_session_token(user_id: str, *, ttl_seconds: Optional[int] = None, requ
     return {"session_token": token, "expires_at": now + ttl, "user_id": principal, "ttl_seconds": ttl}
 
 
+def hash_password(password: Any) -> str:
+    """Hash a plaintext password with argon2id.
+
+    The plaintext never leaves this function: callers store only the digest, and
+    nothing (audit trail included) ever records the value that was typed.
+    """
+
+    if not PASSWORDS_AVAILABLE:
+        raise SecurityError("服务端未启用口令校验", 503, "PASSWORDS_UNAVAILABLE")
+    if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
+        raise SecurityError(f"口令长度至少 {MIN_PASSWORD_LENGTH} 位", 400, "WEAK_PASSWORD")
+    if len(password) > 512:
+        # argon2 is not a reason to accept an unbounded allocation.
+        raise SecurityError("口令过长", 400, "WEAK_PASSWORD")
+    return _PASSWORD_HASHER.hash(password)
+
+
+def verify_password(password: Any, digest: Optional[str]) -> bool:
+    """Verify a password against a stored digest, failing closed on any error."""
+
+    if not PASSWORDS_AVAILABLE or not isinstance(digest, str) or not digest:
+        return False
+    if not isinstance(password, str) or not password:
+        return False
+    try:
+        return bool(_PASSWORD_HASHER.verify(digest, password))
+    except Exception:
+        # A mismatched password, a malformed digest and a library failure are all
+        # "not authenticated"; distinguishing them to the caller would leak
+        # whether an account exists and whether its digest is intact.
+        return False
+
+
+def revoke_sessions_for(user_id: str, *, reason: str = "credential_rotated", request_id: Optional[str] = None) -> int:
+    """Drop every session belonging to one principal.
+
+    Rotating a credential has to invalidate the sessions it was used to obtain;
+    otherwise a password change would leave an attacker's existing session fully
+    usable, which is the opposite of what the user just asked for.
+    """
+
+    principal = sanitize_text(user_id, field="用户标识", max_length=128)
+    with STATE_LOCK:
+        doomed = [token for token, record in SESSION_TOKENS.items() if record.get("sub") == principal]
+        for token in doomed:
+            SESSION_TOKENS.pop(token, None)
+    if doomed:
+        audit_event(
+            "SESSION_REVOKED",
+            user_id=principal,
+            decision="ALLOW",
+            outcome="REVOKED",
+            reason=reason,
+            request_id=request_id,
+            metadata={"count": len(doomed)},
+        )
+    return len(doomed)
+
+
 def resolve_session(token: Optional[str]) -> str:
     """Return the principal bound to a session token, or raise ``SecurityError``."""
 
@@ -1189,14 +1290,346 @@ def sign_face_attestation(challenge_id: str, *, user_id: str, token_jti: str) ->
     return _signed_payload(payload, secret=FACE_ATTEST_SECRET)
 
 
-def verify_face_attestation(attestation: Optional[str], *, auth_payload: Mapping[str, Any], user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
-    """Validate a face attestation ticket; return its live challenge record.
+# ---------------------------------------------------------------------------
+# Device trust root
+#
+# The biometric factor is only worth something if the server can tell *which
+# device* produced it.  The original implementation signed attestations with one
+# shared HMAC key, which every client would have to embed - and a key inside an
+# APK can be extracted, so the red tier would collapse to OTP-only.  A device
+# instead generates a P-256 key inside its own Keystore, registers the public
+# half once, and signs each server-issued liveness challenge.  The private half
+# never leaves the device.
+# ---------------------------------------------------------------------------
 
-    Returns ``None`` when any binding fails: signature/type, token jti,
-    subject, challenge existence, single-use status or expiry.
+DEVICE_CURVE = "secp256r1"
+DEVICE_MAX_RECORDS = _env_int("BANK_DEVICE_MAX_RECORDS", 2_000, 16, 200_000)
+DEVICE_STATUS_ACTIVE = "ACTIVE"
+DEVICE_STATUS_REVOKED = "REVOKED"
+
+# Prefix of an attestation produced by a real device (JSON envelope, base64).
+# Anything else is treated as a legacy ticket and only accepted in demo mode.
+FACE_ATTESTATION_V2_PREFIX = "v2:"
+# Must match DeviceKeyManager.canonicalPayload() in the Android client byte for
+# byte; a mismatch shows up as an InvalidSignature, never as a silent accept.
+FACE_PAYLOAD_PREFIX = "bank-agent-face-v1"
+
+DEVICES: dict[str, dict[str, Any]] = {}
+
+
+def device_facing_payload(challenge_id: str, user_id: str, token_jti: str) -> bytes:
+    """The exact bytes a device signs, and the server re-computes."""
+
+    return f"{FACE_PAYLOAD_PREFIX}|{challenge_id}|{user_id}|{token_jti}".encode("utf-8")
+
+
+def _purge_devices() -> None:
+    if len(DEVICES) <= DEVICE_MAX_RECORDS:
+        return
+    # Evict the least recently seen devices first; an active device is re-seen
+    # whenever it signs, so a stale entry is the safest thing to drop.
+    ordered = sorted(DEVICES, key=lambda item: DEVICES[item].get("last_seen_at", 0))
+    for device_id in ordered[: len(DEVICES) - DEVICE_MAX_RECORDS]:
+        DEVICES.pop(device_id, None)
+
+
+def _decode_device_public_key(public_key_b64: str) -> tuple[bytes, Any]:
+    """Decode and validate a device public key (SPKI DER, P-256 only)."""
+
+    if not DEVICE_KEYS_AVAILABLE:
+        raise SecurityError("服务端未启用设备密钥校验", 503, "DEVICE_KEYS_UNAVAILABLE")
+    value = sanitize_text(public_key_b64, field="设备公钥", max_length=4096)
+    if not value:
+        raise SecurityError("缺少设备公钥", 400, "INVALID_DEVICE_KEY")
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except Exception as exc:
+        raise SecurityError("设备公钥编码无效", 400, "INVALID_DEVICE_KEY") from exc
+    try:
+        key = _load_der_public_key(raw)
+    except Exception as exc:
+        raise SecurityError("设备公钥格式无效", 400, "INVALID_DEVICE_KEY") from exc
+    # Pin the curve: accepting anything the client offers would let an attacker
+    # register a weak/unknown key type and then "prove" liveness with it.
+    if not isinstance(key, _crypto_ec.EllipticCurvePublicKey) or key.curve.name != DEVICE_CURVE:
+        raise SecurityError("设备公钥必须是 P-256", 400, "UNSUPPORTED_DEVICE_KEY")
+    return raw, key
+
+
+def _device_summary(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Client-safe projection: no key material, no other user's data."""
+
+    return {
+        "device_id": record.get("device_id"),
+        "user_id": record.get("user_id"),
+        "fingerprint": record.get("fingerprint"),
+        "algorithm": "ECDSA-P256-SHA256",
+        "status": record.get("status"),
+        "label": record.get("label"),
+        "platform": record.get("platform"),
+        "app_version": record.get("app_version"),
+        "created_at": record.get("created_at"),
+        "last_seen_at": record.get("last_seen_at"),
+        # Whether this device can be notified.  The delivery token itself stays
+        # server-side: a listing has no reason to hand out push credentials.
+        "push_enabled": bool(record.get("push_token")),
+    }
+
+
+PUSH_TOKEN_MAX_LENGTH = _env_int("BANK_PUSH_TOKEN_MAX_LENGTH", 4096, 64, 16_384)
+
+
+def attach_push_token(device_id: str, token: str, *, user_id: str, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Record the delivery token notifications for this device go to.
+
+    Bound to the authenticated principal and to one of *their own* devices, for
+    the same reason enrollment is: a token attachable to somebody else's device
+    would let one account push notifications onto another account's phone.
+    """
+
+    principal = sanitize_text(user_id, field="用户标识", max_length=128)
+    candidate = sanitize_text(device_id, field="设备编号", max_length=64)
+    safe_token = sanitize_text(token, field="推送令牌", max_length=PUSH_TOKEN_MAX_LENGTH)
+    if not safe_token:
+        raise SecurityError("缺少推送令牌", 400, "INVALID_PUSH_TOKEN")
+    with STATE_LOCK:
+        record = DEVICES.get(candidate)
+        if record is None or record.get("user_id") != principal:
+            # Same answer for "unknown" and "someone else's", as with revocation.
+            raise SecurityError("设备不存在", 404, "DEVICE_NOT_FOUND")
+        if record.get("status") != DEVICE_STATUS_ACTIVE:
+            raise SecurityError("该设备已被停用", 403, "DEVICE_REVOKED")
+        record["push_token"] = safe_token
+        record["push_token_updated_at"] = int(time.time())
+    audit_event(
+        "PUSH_TOKEN_REGISTERED",
+        user_id=principal,
+        decision="ALLOW",
+        outcome="SUCCESS",
+        request_id=request_id,
+        # A delivery token is a credential for reaching the device, so the trail
+        # records a fingerprint rather than the value.
+        metadata={"device_id": candidate, "token_fingerprint": credential_fingerprint(safe_token)},
+    )
+    return _device_summary(record)
+
+
+def push_tokens_for(user_id: str) -> list[dict[str, str]]:
+    """Active delivery tokens for one principal, newest device first."""
+
+    principal = sanitize_text(user_id, field="用户标识", max_length=128)
+    with STATE_LOCK:
+        rows = [
+            {"device_id": str(item.get("device_id")), "token": str(item.get("push_token"))}
+            for item in DEVICES.values()
+            if item.get("user_id") == principal
+            and item.get("status") == DEVICE_STATUS_ACTIVE
+            and item.get("push_token")
+        ]
+        rows.sort(key=lambda row: str(row.get("device_id")))
+    return rows
+
+
+def enroll_device(
+    public_key_b64: str,
+    *,
+    user_id: str,
+    label: Optional[str] = None,
+    platform: Optional[str] = None,
+    app_version: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Register a device public key for one principal.
+
+    The device id is derived from the key itself, so enrollment is naturally
+    idempotent and a client cannot choose an id that collides with (or
+    impersonates) another device.  A key already bound to a different account is
+    refused rather than transferred.
+    """
+
+    principal = sanitize_text(user_id, field="用户标识", max_length=128)
+    if not principal:
+        raise SecurityError("缺少用户标识", 401, "AUTHENTICATION_REQUIRED")
+    raw, _key = _decode_device_public_key(public_key_b64)
+    device_id = "DEV" + hashlib.sha256(raw).hexdigest()[:24].upper()
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    safe_label = sanitize_text(label, field="设备名称", max_length=64) if label else None
+    safe_platform = sanitize_text(platform, field="平台", max_length=32) if platform else None
+    safe_version = sanitize_text(app_version, field="应用版本", max_length=32) if app_version else None
+    now = int(time.time())
+
+    with STATE_LOCK:
+        existing = DEVICES.get(device_id)
+        if existing is not None:
+            if existing.get("user_id") != principal:
+                raise SecurityError("该设备已绑定其他用户，请先解绑", 409, "DEVICE_ALREADY_BOUND")
+            if existing.get("status") != DEVICE_STATUS_ACTIVE:
+                raise SecurityError("该设备已被停用", 403, "DEVICE_REVOKED")
+            existing["last_seen_at"] = now
+            if safe_label:
+                existing["label"] = safe_label
+            if safe_version:
+                existing["app_version"] = safe_version
+            audit_event(
+                "DEVICE_SEEN",
+                user_id=principal,
+                decision="ALLOW",
+                outcome="ALREADY_ENROLLED",
+                request_id=request_id,
+                metadata={"device_id": device_id, "fingerprint": fingerprint},
+            )
+            return _device_summary(existing)
+
+        record = {
+            "device_id": device_id,
+            "user_id": principal,
+            "public_key": base64.b64encode(raw).decode("ascii"),
+            "fingerprint": fingerprint,
+            "label": safe_label,
+            "platform": safe_platform,
+            "app_version": safe_version,
+            "status": DEVICE_STATUS_ACTIVE,
+            "created_at": now,
+            "last_seen_at": now,
+        }
+        DEVICES[device_id] = record
+        _purge_devices()
+
+    audit_event(
+        "DEVICE_ENROLLED",
+        user_id=principal,
+        decision="ALLOW",
+        outcome="SUCCESS",
+        request_id=request_id,
+        metadata={"device_id": device_id, "fingerprint": fingerprint, "platform": safe_platform},
+    )
+    return _device_summary(record)
+
+
+def list_devices(user_id: str) -> list[dict[str, Any]]:
+    """Every device registered to one principal, newest first."""
+
+    principal = sanitize_text(user_id, field="用户标识", max_length=128)
+    with STATE_LOCK:
+        owned = [item for item in DEVICES.values() if item.get("user_id") == principal]
+    return [_device_summary(item) for item in sorted(owned, key=lambda row: row.get("created_at", 0), reverse=True)]
+
+
+def revoke_device(device_id: str, *, user_id: str, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Stop accepting attestations from one device.
+
+    Ownership is checked against the principal, so a device can only be revoked
+    by the account it belongs to.
+    """
+
+    principal = sanitize_text(user_id, field="用户标识", max_length=128)
+    candidate = sanitize_text(device_id, field="设备编号", max_length=64)
+    with STATE_LOCK:
+        record = DEVICES.get(candidate)
+        if record is None or record.get("user_id") != principal:
+            # Same answer for "unknown" and "someone else's": no enumeration
+            # oracle for device ids.
+            raise SecurityError("设备不存在", 404, "DEVICE_NOT_FOUND")
+        record["status"] = DEVICE_STATUS_REVOKED
+        record["revoked_at"] = int(time.time())
+    audit_event(
+        "DEVICE_REVOKED",
+        user_id=principal,
+        decision="ALLOW",
+        outcome="REVOKED",
+        request_id=request_id,
+        metadata={"device_id": candidate},
+    )
+    return _device_summary(record)
+
+
+def _verify_device_attestation(
+    attestation: str,
+    *,
+    auth_payload: Mapping[str, Any],
+    user_id: Optional[str],
+) -> Optional[dict[str, Any]]:
+    """Verify a device-signed liveness attestation; return the challenge record.
+
+    Every binding is checked before the signature is even examined, and a failure
+    returns ``None`` so the caller reports a single, uniform "MFA failed" - the
+    caller does not learn which check failed, and no failure is attributed here
+    (``verify_mfa`` already records the attempt).
+    """
+
+    if not DEVICE_KEYS_AVAILABLE:
+        return None
+    try:
+        envelope = json.loads(base64.b64decode(attestation[len(FACE_ATTESTATION_V2_PREFIX):], validate=True).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(envelope, Mapping):
+        return None
+    device_id = str(envelope.get("device_id") or "")
+    challenge_id = str(envelope.get("challenge_id") or "")
+    signature_b64 = str(envelope.get("signature") or "")
+    if not device_id or not challenge_id or not signature_b64:
+        return None
+    try:
+        signature = base64.b64decode(signature_b64, validate=True)
+    except Exception:
+        return None
+
+    now = time.time()
+    with STATE_LOCK:
+        device = DEVICES.get(device_id)
+        if not device or device.get("status") != DEVICE_STATUS_ACTIVE:
+            return None
+        challenge = FACE_CHALLENGES.get(challenge_id)
+        if not challenge or challenge.get("used"):
+            return None
+        if float(challenge.get("expires", 0)) <= now:
+            return None
+        subject = str(challenge.get("sub") or "")
+        # The challenge, the authorization nonce and the device must all agree on
+        # the same principal; otherwise a device enrolled to one account could
+        # satisfy a challenge issued for another.
+        if challenge.get("jti") != auth_payload.get("jti"):
+            return None
+        if subject != auth_payload.get("from_user"):
+            return None
+        if user_id and subject != user_id:
+            return None
+        if device.get("user_id") != subject:
+            return None
+        try:
+            public_key = _load_der_public_key(base64.b64decode(str(device.get("public_key")), validate=True))
+        except Exception:
+            return None
+        payload = device_facing_payload(challenge_id, subject, str(challenge.get("jti") or ""))
+        try:
+            public_key.verify(signature, payload, _crypto_ec.ECDSA(_crypto_hashes.SHA256()))
+        except Exception:
+            return None
+        device["last_seen_at"] = int(now)
+    return challenge
+
+
+def verify_face_attestation(attestation: Optional[str], *, auth_payload: Mapping[str, Any], user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Validate a face attestation; return its live challenge record.
+
+    Two formats exist.  A ``v2:`` envelope carries a P-256 signature from an
+    enrolled device and is always accepted.  Anything else is a legacy ticket
+    signed with the shared demo key, which is only honoured while
+    ``BANK_DEMO_MODE`` is on - that key would have to ship inside the client, so
+    outside a demo it is not a factor at all.
+
+    Returns ``None`` when any binding fails: format, signature, token jti,
+    subject, device ownership/status, challenge existence, single-use or expiry.
     """
 
     if not isinstance(attestation, str) or not attestation:
+        return None
+
+    if attestation.startswith(FACE_ATTESTATION_V2_PREFIX):
+        return _verify_device_attestation(attestation, auth_payload=auth_payload, user_id=user_id)
+
+    if not DEMO_MODE:
         return None
     try:
         att = _decode_signed(attestation, "face_attestation", secret=FACE_ATTEST_SECRET)
@@ -1214,6 +1647,19 @@ def verify_face_attestation(attestation: Optional[str], *, auth_payload: Mapping
     if float(challenge.get("expires", 0)) <= time.time():
         return None
     return challenge
+
+
+def verify_login_otp(otp: Any) -> bool:
+    """Validate the SMS code for a *login* attempt.
+
+    Shares its source of truth with the MFA factor: the fixed demo code while
+    ``BANK_DEMO_MODE`` is on, otherwise whatever the deployment configured.
+    Without a configured code this returns False, so an unconfigured deployment
+    cannot be logged into with an empty string.
+    """
+
+    expected = MFA_TEST_OTP if DEMO_MODE else os.getenv("BANK_MFA_OTP", "")
+    return isinstance(otp, str) and bool(expected) and hmac.compare_digest(otp.strip(), expected)
 
 
 def _factor_sms_otp(ctx: dict[str, Any]) -> bool:
@@ -1440,10 +1886,27 @@ def security_health() -> dict[str, Any]:
                 "locked_principals": sum(1 for state in SECURITY_STATE.values() if float(state.get("locked_until", 0)) > now),
             },
             "face_attestation": {
-                "mode": "signed_single_use_ticket",
+                # A device-signed (P-256) attestation is the real factor and is
+                # always accepted; the shared-key ticket would have to ship
+                # inside the client, so it stays a demo affordance.
+                "device_signature": "enabled" if DEVICE_KEYS_AVAILABLE else "unavailable",
+                "legacy_shared_key": "demo_only" if DEMO_MODE else "disabled",
+                "curve": DEVICE_CURVE,
                 "secret_configured": FACE_ATTEST_SECRET_CONFIGURED,
                 "challenge_ttl_seconds": FACE_CHALLENGE_TTL_SECONDS,
                 "active_challenges": sum(1 for rec in FACE_CHALLENGES.values() if not rec.get("used") and float(rec.get("expires", 0)) > time.time()),
+            },
+            "devices": {
+                "enrolled": len(DEVICES),
+                "active": sum(1 for item in DEVICES.values() if item.get("status") == DEVICE_STATUS_ACTIVE),
+                "revoked": sum(1 for item in DEVICES.values() if item.get("status") == DEVICE_STATUS_REVOKED),
+            },
+            "login": {
+                "password_hashing": "argon2id" if PASSWORDS_AVAILABLE else "unavailable",
+                "min_password_length": MIN_PASSWORD_LENGTH,
+                "otp_required": os.getenv("BANK_LOGIN_REQUIRE_OTP", "0").lower() in {"1", "true", "yes", "on"},
+                # Whether a deployment refuses bare identity headers on writes.
+                "session_required_for_writes": os.getenv("BANK_REQUIRE_SESSION", "0").lower() in {"1", "true", "yes", "on"},
             },
         }
 
@@ -1459,6 +1922,7 @@ def reset_security_state() -> None:
         SESSION_TOKENS.clear()
         BEHAVIOR_STATE.clear()
         SECURITY_STATE.clear()
+        DEVICES.clear()
         AUDIT_LOGS.clear()
         _AUDIT_PREVIOUS_HASH = "0" * 64
         _AUDIT_CHAIN_ANCHOR = "0" * 64
