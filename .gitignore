@@ -36,6 +36,9 @@ android/.kotlin/
 android/local.properties
 android/build/
 android/**/build/
+
+# 验证/冒烟脚本的本地产物（截图、帧图、日志）
+/build/
 android/.idea/
 android/*.iml
 android/captures/

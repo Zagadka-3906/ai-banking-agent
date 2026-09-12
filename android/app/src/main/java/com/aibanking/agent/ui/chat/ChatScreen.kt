@@ -1,5 +1,6 @@
 package com.aibanking.agent.ui.chat
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -57,10 +59,14 @@ import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.pageSlideSpec
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+
+/** 聊天之外的三个全屏覆盖页；聊天页是层级最浅的主页。 */
+private enum class AppPage { CHAT, CARDS, WEALTH, CONTACTS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,6 +75,61 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
 
+    // 卡片页优先级最高：与旧版“后写的覆盖层在最上面”的绘制顺序一致。
+    val page = when {
+        state.showCards -> AppPage.CARDS
+        state.showWealth -> AppPage.WEALTH
+        state.showContacts -> AppPage.CONTACTS
+        else -> AppPage.CHAT
+    }
+
+    // 顶层页面切换：聊天 ↔ 卡片/理财/联系人，统一推入/弹出转场。
+    AnimatedContent(
+        targetState = page,
+        transitionSpec = { pageSlideSpec(AppPage::ordinal) },
+        modifier = Modifier.fillMaxSize(),
+        label = "appPage",
+    ) { current ->
+        when (current) {
+            AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, snackbar)
+            AppPage.CARDS -> CardsUi(state, viewModel)
+            AppPage.WEALTH -> WealthUi(state, viewModel)
+            AppPage.CONTACTS -> ContactsUi(state, viewModel)
+        }
+    }
+
+    if (state.showDevices) {
+        DevicePanel(
+            devices = state.devices,
+            busy = state.panelBusy,
+            currentDeviceId = viewModel.currentDeviceId(),
+            onRevoke = viewModel::revokeDevice,
+            onDismiss = viewModel::dismissPanels,
+        )
+    }
+    if (state.showTasks) {
+        TaskPanel(
+            tasks = state.tasks,
+            busy = state.panelBusy,
+            onCancel = viewModel::cancelTask,
+            onDismiss = viewModel::dismissPanels,
+        )
+    }
+}
+
+/**
+ * 聊天主页本体。会话列表滚动位置与 Snackbar 状态放在 [ChatScreen] 根上，
+ * 访问覆盖页返回后不丢失。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatHome(
+    state: ChatUiState,
+    viewModel: ChatViewModel,
+    activity: FragmentActivity,
+    listState: LazyListState,
+    snackbar: SnackbarHostState,
+) {
     // Keep the newest bubble in view.  A LazyColumn does not follow appended
     // items on its own, so without this the answer to a question scrolls in
     // below the fold and the user sees nothing happen.
@@ -192,36 +253,6 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                 onSend = viewModel::send,
             )
         }
-    }
-
-    if (state.showDevices) {
-        DevicePanel(
-            devices = state.devices,
-            busy = state.panelBusy,
-            currentDeviceId = viewModel.currentDeviceId(),
-            onRevoke = viewModel::revokeDevice,
-            onDismiss = viewModel::dismissPanels,
-        )
-    }
-    if (state.showTasks) {
-        TaskPanel(
-            tasks = state.tasks,
-            busy = state.panelBusy,
-            onCancel = viewModel::cancelTask,
-            onDismiss = viewModel::dismissPanels,
-        )
-    }
-    if (state.showContacts) {
-        // 通讯录式全屏界面（列表/详情/新增），覆盖聊天页。
-        ContactsUi(state, viewModel)
-    }
-    if (state.showWealth) {
-        // 银行风格理财页（产品超市/详情），申购预填回聊天走红色审批流。
-        WealthUi(state, viewModel)
-    }
-    if (state.showCards) {
-        // 银行风格银行卡管理页（卡面/余额/操作/添加）。
-        CardsUi(state, viewModel)
     }
 }
 

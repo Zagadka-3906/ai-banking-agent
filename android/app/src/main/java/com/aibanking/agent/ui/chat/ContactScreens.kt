@@ -1,5 +1,16 @@
 package com.aibanking.agent.ui.chat
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,7 +60,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,14 +72,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.composed
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.runtime.compositionLocalOf
 import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.PAGE_TRANSITION_MILLIS
+import com.aibanking.agent.ui.anim.pageSlideSpec
 import kotlinx.coroutines.launch
 
 /**
@@ -77,6 +96,58 @@ import kotlinx.coroutines.launch
  * 所以这里自带一份 SnackbarHost，错误与提示才不会静默丢失。
  */
 
+// SharedTransitionLayout 与当前页的 AnimatedContent scope：列表行与详情页的
+// 共享元素分属两个不同 composable，用 CompositionLocal 递交给它们，避免把
+// scope 一路透传进每个子组件的签名里。
+@OptIn(ExperimentalSharedTransitionApi::class)
+private val LocalSharedTransitionScope = compositionLocalOf<SharedTransitionScope?> { null }
+private val LocalNavAnimatedVisibilityScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
+
+/**
+ * 列表行 ↔ 详情页之间的共享元素绑定。key 相同的一对修饰符在页面切换时由
+ * SharedTransitionLayout 做位置/尺寸插值。null scope（理论上不会发生，防御
+ * 测试或预览里单独渲染某一页）时静默退化为普通 Modifier。
+ *
+ * 统一走 sharedBounds（容器变换）而不是 sharedElement：本库版本里后者会在
+ * 转场中按动画尺寸逐帧重测量布局，且不支持内容随 bounds 缩放；而
+ * sharedBounds 默认的 ScaleToBounds 只按目标约束量一次布局，之后用
+ * RenderNode 等比缩放跟住变形的 bounds——对文字友好，转场中零重布局。
+ * 头像（40dp ↔ 88dp 同内容）与行容器→资料卡（内容不同）都适用：内容不同
+ * 的两侧靠 /2 时长的交叉淡变衔接，不会在变形框里叠影。
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private fun Modifier.contactShared(
+    key: String,
+    zIndexInOverlay: Float = 0f,
+    clipShape: Shape,
+): Modifier = composed {
+    val shared = LocalSharedTransitionScope.current ?: return@composed this
+    val animated = LocalNavAnimatedVisibilityScope.current ?: return@composed this
+    with(shared) {
+        // 显式与页面转场对齐（默认是刚度中低的 spring，时长不可控，元素会在
+        // 页面已经落定之后还在飘）。
+        val bounds = BoundsTransform { _, _ ->
+            tween(PAGE_TRANSITION_MILLIS, easing = FastOutSlowInEasing)
+        }
+        val swap = tween<Float>(PAGE_TRANSITION_MILLIS / 2, easing = FastOutSlowInEasing)
+        sharedBounds(
+            rememberSharedContentState(key),
+            animated,
+            enter = fadeIn(swap),
+            exit = fadeOut(swap),
+            boundsTransform = bounds,
+            zIndexInOverlay = zIndexInOverlay,
+            clipInOverlayDuringTransition = OverlayClip(clipShape),
+        )
+    }
+}
+
+// 共享元素 key 以 contactId 命名空间隔离：同一联系人的头像与容器在列表行、
+// 详情页两两配对，不同联系人之间互不干扰。
+private fun contactAvatarKey(contactId: String) = "contact-avatar-$contactId"
+private fun contactCardKey(contactId: String) = "contact-card-$contactId"
+
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
     val snackbar = remember { SnackbarHostState() }
@@ -88,10 +159,32 @@ fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
         }
     }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        when (state.contactsScreen) {
-            ContactsScreen.LIST -> ContactListScreen(state, viewModel, snackbar)
-            ContactsScreen.DETAIL -> ContactDetailScreen(state, viewModel, snackbar)
-            ContactsScreen.ADD -> ContactAddScreen(state, viewModel, snackbar)
+        SharedTransitionLayout {
+            // 列表 ↔ 详情：元素做共享展开，页面本体只做淡入淡出——整页平移会
+            // 与共享元素的位置插值互相打架。列表 ↔ 新增没有共享元素，仍是推入/弹出。
+            AnimatedContent(
+                targetState = state.contactsScreen,
+                transitionSpec = {
+                    val fade = tween<Float>(PAGE_TRANSITION_MILLIS)
+                    if (setOf(initialState, targetState) == setOf(ContactsScreen.LIST, ContactsScreen.DETAIL)) {
+                        fadeIn(fade) togetherWith fadeOut(fade)
+                    } else {
+                        pageSlideSpec(ContactsScreen::ordinal)
+                    }
+                },
+                label = "contactsScreen",
+            ) { screen ->
+                CompositionLocalProvider(
+                    LocalSharedTransitionScope provides this@SharedTransitionLayout,
+                    LocalNavAnimatedVisibilityScope provides this,
+                ) {
+                    when (screen) {
+                        ContactsScreen.LIST -> ContactListScreen(state, viewModel, snackbar)
+                        ContactsScreen.DETAIL -> ContactDetailScreen(state, viewModel, snackbar)
+                        ContactsScreen.ADD -> ContactAddScreen(state, viewModel, snackbar)
+                    }
+                }
+            }
         }
     }
 }
@@ -224,11 +317,14 @@ private fun ContactRow(contact: ContactView, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // 行容器 → 详情资料卡的容器变换起点。放在 clickable/padding 之前：
+            // 共享 bounds 是整行（含内边距），点击行为与内容不参与插值。
+            .contactShared(contactCardKey(contact.contactId), clipShape = MaterialTheme.shapes.medium)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ContactAvatar(contact.name, 40.dp)
+        ContactAvatar(contact.name, 40.dp, sharedKey = contactAvatarKey(contact.contactId))
         Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(contact.name, style = MaterialTheme.typography.bodyLarge)
             Text(
@@ -272,6 +368,14 @@ private fun AlphabetRail(letters: List<String>, onSelect: (String) -> Unit, modi
 @Composable
 private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel, snackbar: SnackbarHostState) {
     val contact = state.contacts.firstOrNull { it.contactId == state.selectedContactId }
+    // backToContactList()/removeContact() 清 selectedContactId 是立即生效的，
+    // 而退场动画期间本页仍会按新 state 重组：不冻结的话页面会闪成“联系人不
+    // 存在”，共享元素也会在半路丢掉配对对象。退场中（contactsScreen 已不是
+    // DETAIL）改用最后渲染过的那份联系人；页面在台上时保持诚实——通讯录刷
+    // 新后真的移除了该行，就照实提示。
+    var lastRendered by remember { mutableStateOf<ContactView?>(null) }
+    SideEffect { if (contact != null) lastRendered = contact }
+    val rendered = if (state.contactsScreen == ContactsScreen.DETAIL) contact else lastRendered
     var confirmDelete by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
@@ -287,7 +391,7 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        if (contact == null) {
+        if (rendered == null) {
             // The book may have refreshed and dropped this row; say so honestly.
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("联系人不存在或已被删除。", style = MaterialTheme.typography.bodyMedium)
@@ -304,26 +408,26 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Spacer(Modifier.height(8.dp))
-            ContactAvatar(contact.name, 88.dp, MaterialTheme.typography.headlineMedium)
-            Text(contact.name, style = MaterialTheme.typography.headlineSmall)
+            ContactAvatar(rendered.name, 88.dp, MaterialTheme.typography.headlineMedium, sharedKey = contactAvatarKey(rendered.contactId))
+            Text(rendered.name, style = MaterialTheme.typography.headlineSmall)
             FilledTonalButton(
-                onClick = { viewModel.startTransferTo(contact.name) },
+                onClick = { viewModel.startTransferTo(rendered.name) },
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.CONTACT_TRANSFER),
-            ) { Text("给 ${contact.name} 转账") }
-            Card(Modifier.fillMaxWidth()) {
+            ) { Text("给 ${rendered.name} 转账") }
+            Card(Modifier.fillMaxWidth().contactShared(contactCardKey(rendered.contactId), clipShape = MaterialTheme.shapes.medium)) {
                 Column(Modifier.padding(vertical = 4.dp)) {
-                    DetailRow("电话", contact.phone, mono = true)
-                    DetailRow("关系", contact.relationshipLabel.ifBlank { contact.relationship })
-                    DetailRow("生日", contact.birthday ?: "未填写")
+                    DetailRow("电话", rendered.phone, mono = true)
+                    DetailRow("关系", rendered.relationshipLabel.ifBlank { rendered.relationship })
+                    DetailRow("生日", rendered.birthday ?: "未填写")
                     DetailRow(
                         "收款账户",
-                        if (contact.linkedExisting) {
-                            "本行账户${contact.accountName?.let { " · $it" } ?: ""}"
+                        if (rendered.linkedExisting) {
+                            "本行账户${rendered.accountName?.let { " · $it" } ?: ""}"
                         } else {
                             "已就绪（可转账）"
                         },
                     )
-                    DetailRow("添加时间", contact.createdAt?.take(10) ?: "—")
+                    DetailRow("添加时间", rendered.createdAt?.take(10) ?: "—")
                 }
             }
             Text(
@@ -337,12 +441,12 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("删除联系人") },
-            text = { Text("确定删除「${contact?.name ?: ""}」吗？删除后可重新添加。") },
+            text = { Text("确定删除「${rendered?.name ?: ""}」吗？删除后可重新添加。") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmDelete = false
-                        contact?.contactId?.let(viewModel::removeContact)
+                        rendered?.contactId?.let(viewModel::removeContact)
                     },
                     modifier = Modifier.testTag(UiTags.CONTACT_REMOVE),
                 ) { Text("删除") }
@@ -464,11 +568,22 @@ private val AVATAR_COLORS = listOf(
     Color(0xFF00838F),
 )
 
+/**
+ * 头像：纯矢量绘制（纯色圆片 + 首字），共享转场零位图解码开销，转场只动
+ * placement/alpha（RenderNode 层合成，不逐帧重组），60/120Hz 都能满帧。
+ * 若以后换成真实照片，务必异步加载目标显示尺寸的缩略图（例如 Coil 的
+ * size(w, h)），不要为 40dp 的列表行解码全尺寸原图——那是转场掉帧的头号来源。
+ */
 @Composable
-private fun ContactAvatar(name: String, size: Dp, textStyle: TextStyle = MaterialTheme.typography.titleMedium) {
+private fun ContactAvatar(
+    name: String,
+    size: Dp,
+    textStyle: TextStyle = MaterialTheme.typography.titleMedium,
+    sharedKey: String? = null,
+) {
     val initial = name.trim().firstOrNull()?.toString() ?: "?"
     Box(
-        modifier = Modifier
+        modifier = (sharedKey?.let { Modifier.contactShared(it, zIndexInOverlay = 1f, clipShape = CircleShape) } ?: Modifier)
             .size(size)
             .clip(CircleShape)
             // floorMod rather than abs: abs(Int.MIN_VALUE) is still negative, so the

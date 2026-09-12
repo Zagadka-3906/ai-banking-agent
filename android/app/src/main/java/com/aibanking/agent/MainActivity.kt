@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.chat.ChatScreen
 import com.aibanking.agent.ui.chat.ChatViewModel
 import com.aibanking.agent.ui.theme.BankAgentTheme
@@ -56,18 +58,30 @@ class MainActivity : FragmentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     val viewModel: ChatViewModel = viewModel()
                     val state by viewModel.state.collectAsState()
-                    when {
+                    val page = when {
                         // Unsealing the stored session is Keystore work and runs off
                         // the main thread, so there is a short window before the app
                         // knows whether it is logged in.  Showing the login form
                         // during it would flash a password prompt on every launch.
-                        state.restoring -> RestoringScreen()
-                        state.authenticated -> ChatScreen(viewModel = viewModel, activity = this)
-                        else -> LoginScreen(
-                            busy = state.busy,
-                            otpRequired = state.otpRequiredAtLogin,
-                            onLogin = viewModel::login,
-                        )
+                        state.restoring -> RootPage.RESTORING
+                        state.authenticated -> RootPage.CHAT
+                        else -> RootPage.LOGIN
+                    }
+                    // 根级 Screen 切换（恢复态/登录/聊天）共用同一套推入/弹出转场。
+                    AnimatedContent(
+                        targetState = page,
+                        transitionSpec = { pageSlideSpec(RootPage::ordinal) },
+                        label = "rootPage",
+                    ) { current ->
+                        when (current) {
+                            RootPage.RESTORING -> RestoringScreen()
+                            RootPage.CHAT -> ChatScreen(viewModel = viewModel, activity = this@MainActivity)
+                            RootPage.LOGIN -> LoginScreen(
+                                busy = state.busy,
+                                otpRequired = state.otpRequiredAtLogin,
+                                onLogin = viewModel::login,
+                            )
+                        }
                     }
                 }
             }
@@ -102,6 +116,9 @@ class MainActivity : FragmentActivity() {
  * the app on launch with "Can only use lower 16 bits for requestCode".
  */
 private const val NOTIFICATION_PERMISSION_REQUEST = 1001
+
+/** 根级三个 Screen；顺序即层级深度，登录成功为前进、登出为返回。 */
+private enum class RootPage { RESTORING, LOGIN, CHAT }
 
 @Composable
 private fun RestoringScreen() {

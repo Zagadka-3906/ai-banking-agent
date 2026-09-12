@@ -1,5 +1,6 @@
 package com.aibanking.agent.ui.chat
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.pageSlideSpec
 import java.util.Locale
 
 /**
@@ -73,9 +75,16 @@ fun WealthUi(state: ChatUiState, viewModel: ChatViewModel) {
         }
     }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        when (state.wealthScreen) {
-            WealthScreen.LIST -> WealthListScreen(state, viewModel, snackbar)
-            WealthScreen.DETAIL -> WealthDetailScreen(state, viewModel, snackbar)
+        // 产品超市 ↔ 详情：推入/弹出转场（LIST 比 DETAIL 层级浅）。
+        AnimatedContent(
+            targetState = state.wealthScreen,
+            transitionSpec = { pageSlideSpec(WealthScreen::ordinal) },
+            label = "wealthScreen",
+        ) { screen ->
+            when (screen) {
+                WealthScreen.LIST -> WealthListScreen(state, viewModel, snackbar)
+                WealthScreen.DETAIL -> WealthDetailScreen(state, viewModel, snackbar)
+            }
         }
     }
 }
