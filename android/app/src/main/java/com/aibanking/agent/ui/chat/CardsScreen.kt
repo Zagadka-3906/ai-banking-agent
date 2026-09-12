@@ -22,7 +22,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -55,6 +54,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.ShimmerSwitch
+import com.aibanking.agent.ui.anim.SkeletonBlock
+import com.aibanking.agent.ui.anim.cascadeItem
+import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import java.util.Locale
 
 /**
@@ -102,43 +105,51 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             ) { Icon(Icons.Default.Add, contentDescription = "添加银行卡") }
         },
     ) { padding ->
-        if (state.panelBusy && state.cards.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-            return@Scaffold
-        }
-        LazyColumn(
-            // Tagged so a test can scroll: the list is lazy, so a card face that is
-            // outside the viewport is not composed at all and cannot be found by tag.
-            modifier = Modifier.fillMaxSize().padding(padding).testTag(UiTags.CARD_LIST),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        // 流光骨架屏：加载中呈现卡面形占位（45° 高光扫过），数据就绪 200ms
+        // 交叉淡入真实列表。
+        ShimmerSwitch(
+            loading = state.panelBusy && state.cards.isEmpty(),
+            modifier = Modifier.fillMaxSize().padding(padding),
+            skeleton = { CardsSkeleton() },
         ) {
-            items(state.cards.size) { index ->
-                BankCardVisual(state.cards[index], viewModel)
-            }
-            if (state.cards.isEmpty() && !state.panelBusy) {
-                item {
-                    val loadFailure = state.panelError
-                    if (loadFailure != null) {
-                        // 请求失败 ≠ 没有银行卡：报错并可重试，不谎报“还没有银行卡”。
-                        PanelLoadFailure(loadFailure, viewModel::refreshCards)
-                    } else {
-                        Text(
-                            "还没有银行卡。点右下角即可自行添加。",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            // 级联入场：首次加载/刷新完成时，前 8 个子项自下而上波浪进场。
+            val cascade = rememberCascadeEntrance(ready = state.cards.isNotEmpty())
+            LazyColumn(
+                // Tagged so a test can scroll: the list is lazy, so a card face that is
+                // outside the viewport is not composed at all and cannot be found by tag.
+                modifier = Modifier.fillMaxSize().testTag(UiTags.CARD_LIST),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(
+                    count = state.cards.size,
+                    key = { state.cards[it].cardId },
+                ) { index ->
+                    BankCardVisual(state.cards[index], viewModel, Modifier.cascadeItem(cascade, index))
+                }
+                if (state.cards.isEmpty() && !state.panelBusy) {
+                    item {
+                        val loadFailure = state.panelError
+                        if (loadFailure != null) {
+                            // 请求失败 ≠ 没有银行卡：报错并可重试，不谎报“还没有银行卡”。
+                            PanelLoadFailure(loadFailure, viewModel::refreshCards)
+                        } else {
+                            Text(
+                                "还没有银行卡。点右下角即可自行添加。",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
-            }
-            item {
-                Text(
-                    "冻结、挂失与额度调整为红色风险操作：点击后回到对话确认，需短信验证码与设备签名。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                item {
+                    Text(
+                        "冻结、挂失与额度调整为红色风险操作：点击后回到对话确认，需短信验证码与设备签名。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.cascadeItem(cascade, state.cards.size),
+                    )
+                }
             }
         }
     }
@@ -158,11 +169,24 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
     }
 }
 
+/** 加载中的卡面骨架：与真实卡片排版一致的占位块（含高光扫过）。 */
 @Composable
-private fun BankCardVisual(card: CardView, viewModel: ChatViewModel) {
+private fun CardsSkeleton() {
+    Column(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        repeat(3) {
+            SkeletonBlock(height = 190.dp, corner = 16.dp)
+        }
+    }
+}
+
+@Composable
+private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val frozen = card.status != "ACTIVE"
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {

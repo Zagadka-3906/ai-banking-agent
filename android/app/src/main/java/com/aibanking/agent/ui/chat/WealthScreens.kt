@@ -1,6 +1,16 @@
 package com.aibanking.agent.ui.chat
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,7 +34,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,19 +47,45 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.ui.UiTags
-import com.aibanking.agent.ui.anim.pageSlideSpec
+import com.aibanking.agent.ui.anim.EmphasizedAccelerateEasing
+import com.aibanking.agent.ui.anim.EmphasizedDecelerateEasing
+import com.aibanking.agent.ui.anim.LocalInBackPreviewBeneath
+import com.aibanking.agent.ui.anim.PredictiveBackPreview
+import com.aibanking.agent.ui.anim.ShimmerSwitch
+import com.aibanking.agent.ui.anim.SkeletonBlock
+import com.aibanking.agent.ui.anim.cascadeItem
+import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import java.util.Locale
 
 /**
@@ -64,6 +99,109 @@ import java.util.Locale
  * 业绩比较基准不是收益承诺，页面固定展示风险提示（银行规范口径）。
  */
 
+// SharedTransitionLayout 与当前页 AnimatedContent scope（与联系人页同一套模式）：
+// 列表卡片与详情容器分属两个 composable，用 CompositionLocal 递交，避免把
+// scope 一路透传进每个子组件的签名里。
+@OptIn(ExperimentalSharedTransitionApi::class)
+private val LocalWealthSharedTransitionScope = compositionLocalOf<SharedTransitionScope?> { null }
+private val LocalWealthNavAnimatedVisibilityScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
+
+// 容器变换规格：350ms 强调曲线；卡片 16dp 圆角 → 详情直角；展开时阴影抬升。
+private const val CONTAINER_TRANSFORM_MILLIS = 350
+private val CONTAINER_CORNER = 16.dp
+private val CONTAINER_MAX_SHADOW = 14.dp
+
+/** 列表卡片 ↔ 详情容器的共享元素 key，以 productId 命名空间隔离。 */
+private fun wealthProductKey(productId: String) = "wealth-product-$productId"
+
+/**
+ * 容器变换（Material 3 Container Transform）两侧共用的修饰链：
+ * sharedBounds 做位置/尺寸插值 + 自定义 OverlayClip 做圆角形状渐变（16dp →
+ * 直角，绘制期插值）+ graphicsLayer 投影抬升（“从底层悬浮并展开”）。
+ *
+ * [expanded] 标记本侧是展开端（详情）还是收拢端（列表卡片）：形变进度按
+ * 本侧的 enter/exit 转场计算，两端的圆角/阴影插值方向相反——任意时刻两侧
+ * 的遮罩值恒等（展开中 16dp→0，收回中 0→16dp），所以无论转场把哪一侧的
+ * OverlayClip 提供给 overlay，视觉都一致。
+ *
+ * 内容尺寸用 RemeasureToBounds：两侧都是满宽布局，详情内容按动画约束重
+ * 布局、只被变形容器逐步裁出，文字不会像 ScaleToBounds 那样整层等比拉伸。
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private fun Modifier.wealthContainerTransform(
+    key: String,
+    expanded: Boolean,
+): Modifier = composed {
+    if (LocalInBackPreviewBeneath.current) return@composed this
+    val shared = LocalWealthSharedTransitionScope.current ?: return@composed this
+    val animated = LocalWealthNavAnimatedVisibilityScope.current ?: return@composed this
+    // 形变进度：展开端 Visible=1，收拢端 Visible=0；曲线与 bounds 插值同向。
+    val progress = animated.transition.animateFloat(
+        transitionSpec = {
+            if (targetState == EnterExitState.Visible) {
+                tween(CONTAINER_TRANSFORM_MILLIS, easing = EmphasizedDecelerateEasing)
+            } else {
+                tween(CONTAINER_TRANSFORM_MILLIS, easing = EmphasizedAccelerateEasing)
+            }
+        },
+        targetValueByState = { if ((it == EnterExitState.Visible) == expanded) 1f else 0f },
+    )
+    val cornerStart = if (expanded) CONTAINER_CORNER else 0.dp
+    val cornerEnd = if (expanded) 0.dp else CONTAINER_CORNER
+    with(shared) {
+        sharedBounds(
+            rememberSharedContentState(key),
+            animated,
+            enter = fadeIn(tween(220, delayMillis = 60, easing = EmphasizedDecelerateEasing)),
+            exit = fadeOut(tween(140)),
+            resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds,
+            boundsTransform = { initial, target ->
+                // 展开（前进）用 M3 强调减速；收回（返回）用强调加速。
+                if (target.height >= initial.height) {
+                    tween(CONTAINER_TRANSFORM_MILLIS, easing = EmphasizedDecelerateEasing)
+                } else {
+                    tween(CONTAINER_TRANSFORM_MILLIS, easing = EmphasizedAccelerateEasing)
+                }
+            },
+            clipInOverlayDuringTransition = MorphingCornerClip(progress, cornerStart, cornerEnd),
+        )
+    }.graphicsLayer {
+        val f = progress.value
+        shape = RoundedCornerShape(lerp(cornerStart, cornerEnd, f))
+        // 投影随展开抬升（收拢端按 1-f），容器读作从列表层悬浮、铺向详情层。
+        shadowElevation = lerp(2.dp, CONTAINER_MAX_SHADOW, if (expanded) f else 1f - f).toPx()
+        clip = false
+    }
+}
+
+/**
+ * 容器变换的圆角遮罩：圆角随形变进度在两端值之间插值，在绘制期计算路径
+ * （State 只被 draw 读取，不触发重组），并复用同一个 Path 对象。
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private class MorphingCornerClip(
+    private val progress: State<Float>,
+    private val cornerStart: Dp,
+    private val cornerEnd: Dp,
+) : SharedTransitionScope.OverlayClip {
+    private val path = Path()
+
+    override fun getClipPath(
+        state: SharedTransitionScope.SharedContentState,
+        bounds: Rect,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Path? {
+        val outline = RoundedCornerShape(lerp(cornerStart, cornerEnd, progress.value))
+            .createOutline(Size(bounds.width, bounds.height), layoutDirection, density)
+        path.rewind()
+        path.addOutline(outline)
+        path.translate(Offset(bounds.left, bounds.top))
+        return path
+    }
+}
+
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun WealthUi(state: ChatUiState, viewModel: ChatViewModel) {
     val snackbar = remember { SnackbarHostState() }
@@ -75,15 +213,33 @@ fun WealthUi(state: ChatUiState, viewModel: ChatViewModel) {
         }
     }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        // 产品超市 ↔ 详情：推入/弹出转场（LIST 比 DETAIL 层级浅）。
-        AnimatedContent(
-            targetState = state.wealthScreen,
-            transitionSpec = { pageSlideSpec(WealthScreen::ordinal) },
-            label = "wealthScreen",
-        ) { screen ->
-            when (screen) {
-                WealthScreen.LIST -> WealthListScreen(state, viewModel, snackbar)
-                WealthScreen.DETAIL -> WealthDetailScreen(state, viewModel, snackbar)
+        SharedTransitionLayout {
+            // 预测性返回：详情上滑返回时整层跟手缩放/圆角，产品超市视差推入。
+            PredictiveBackPreview(
+                enabled = state.wealthScreen != WealthScreen.LIST,
+                onBack = viewModel::backToWealthList,
+                beneath = { WealthListScreen(state, viewModel, snackbar) },
+            ) {
+                // 产品超市 ↔ 详情：容器变换承载主要演出（卡片展开铺满详情），
+                // 页面本体只做淡入淡出——整页平移会与共享容器的位置插值打架。
+                AnimatedContent(
+                    targetState = state.wealthScreen,
+                    transitionSpec = {
+                        fadeIn(tween(CONTAINER_TRANSFORM_MILLIS, delayMillis = 40)) togetherWith
+                            fadeOut(tween(CONTAINER_TRANSFORM_MILLIS))
+                    },
+                    label = "wealthScreen",
+                ) { screen ->
+                    CompositionLocalProvider(
+                        LocalWealthSharedTransitionScope provides this@SharedTransitionLayout,
+                        LocalWealthNavAnimatedVisibilityScope provides this,
+                    ) {
+                        when (screen) {
+                            WealthScreen.LIST -> WealthListScreen(state, viewModel, snackbar)
+                            WealthScreen.DETAIL -> WealthDetailScreen(state, viewModel, snackbar)
+                        }
+                    }
+                }
             }
         }
     }
@@ -110,28 +266,39 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        if (state.panelBusy && state.wealthProducts.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+        // 流光骨架屏：加载中呈现横幅/持仓/产品卡形占位（45° 高光扫过），数据
+        // 就绪 200ms 交叉淡入真实列表。
+        ShimmerSwitch(
+            loading = state.panelBusy && state.wealthProducts.isEmpty(),
+            modifier = Modifier.fillMaxSize(),
+            skeleton = { WealthSkeleton(Modifier.fillMaxSize().padding(padding)) },
+        ) {
+            val loadFailure = state.panelError
+            if (loadFailure != null && state.wealthProducts.isEmpty()) {
+                // 一次失败的加载会把产品、持仓、风险档案一起留空；此时页面若继续渲染
+                // “尚未完成风险测评 / 暂无持仓”，就是把“没问到核心”说成了用户的资产状况。
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    PanelLoadFailure(loadFailure, viewModel::refreshWealth)
+                }
+                return@ShimmerSwitch
             }
-            return@Scaffold
-        }
-        val loadFailure = state.panelError
-        if (loadFailure != null && state.wealthProducts.isEmpty()) {
-            // 一次失败的加载会把产品、持仓、风险档案一起留空；此时页面若继续渲染
-            // “尚未完成风险测评 / 暂无持仓”，就是把“没问到核心”说成了用户的资产状况。
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                PanelLoadFailure(loadFailure, viewModel::refreshWealth)
-            }
-            return@Scaffold
-        }
+            // 级联入场：数据就绪/刷新完成时，可见区前 8 个子项自下而上波浪进场。
+            val cascade = rememberCascadeEntrance(
+                ready = state.wealthProducts.isNotEmpty() || state.wealthHoldings.isNotEmpty(),
+            )
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item { RiskProfileBanner(state, viewModel) }
-            item { SectionHeader("我的持仓") }
+            // 扁平序号跨越横幅、标题与卡片，波浪按整页顺序推入。
+            var flat = 0
+            item {
+                RiskProfileBanner(state, viewModel, Modifier.cascadeItem(cascade, flat++))
+            }
+            item {
+                SectionHeader("我的持仓", Modifier.cascadeItem(cascade, flat++))
+            }
             if (state.wealthHoldings.isEmpty()) {
                 item {
                     Text(
@@ -141,9 +308,12 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
                     )
                 }
             } else {
-                items(state.wealthHoldings.size) { index ->
+                items(
+                    count = state.wealthHoldings.size,
+                    key = { state.wealthHoldings[it].holdingId },
+                ) { index ->
                     val holding = state.wealthHoldings[index]
-                    Card(Modifier.fillMaxWidth()) {
+                    Card(Modifier.fillMaxWidth().cascadeItem(cascade, flat++)) {
                         Row(
                             Modifier.fillMaxWidth().padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -167,27 +337,64 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
                     }
                 }
             }
-            item { SectionHeader("在售产品") }
-            items(state.wealthProducts.size) { index ->
+            item {
+                SectionHeader("在售产品", Modifier.cascadeItem(cascade, flat++))
+            }
+            items(
+                count = state.wealthProducts.size,
+                // item key 稳定身份：数据刷新后共享元素仍能按 productId 找到卡片。
+                key = { state.wealthProducts[it].productId },
+            ) { index ->
                 val product = state.wealthProducts[index]
-                ProductCard(product) { viewModel.showProductDetail(product.productId) }
+                ProductCard(product, Modifier.cascadeItem(cascade, flat++)) {
+                    viewModel.showProductDetail(product.productId)
+                }
             }
             item {
                 Text(
                     "业绩比较基准不代表未来收益承诺，理财非存款、产品有风险、投资须谨慎。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier.cascadeItem(cascade, flat++).padding(top = 4.dp),
                 )
+            }
+            }
+        }
+    }
+}
+
+/** 加载中的理财骨架：横幅/持仓/标题/产品卡的排版占位（含高光扫过）。 */
+@Composable
+private fun WealthSkeleton(modifier: Modifier = Modifier) {
+    Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SkeletonBlock(height = 64.dp, corner = 12.dp)
+        SkeletonBlock(width = 88.dp, height = 16.dp, corner = 4.dp)
+        SkeletonBlock(height = 56.dp, corner = 12.dp)
+        SkeletonBlock(width = 88.dp, height = 16.dp, corner = 4.dp)
+        repeat(2) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SkeletonBlock(width = 76.dp, height = 18.dp, corner = 4.dp)
+                    SkeletonBlock(width = 30.dp, height = 18.dp, corner = 4.dp)
+                }
+                SkeletonBlock(width = 210.dp, height = 18.dp)
+                SkeletonBlock(width = 150.dp, height = 14.dp)
             }
         }
     }
 }
 
 @Composable
-private fun ProductCard(product: ProductView, onClick: () -> Unit) {
+private fun ProductCard(product: ProductView, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = modifier
+            .fillMaxWidth()
+            .wealthContainerTransform(wealthProductKey(product.productId), expanded = false)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(CONTAINER_CORNER),
+        // 容器变换两端用同一底色：卡片白底形变铺满成详情白底，交叉淡变期间
+        // 容器看起来始终不透明。
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -215,13 +422,13 @@ private fun ProductCard(product: ProductView, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RiskProfileBanner(state: ChatUiState, viewModel: ChatViewModel) {
+private fun RiskProfileBanner(state: ChatUiState, viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val profile = state.riskProfile
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (profile == null) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
@@ -256,6 +463,13 @@ private fun RiskProfileBanner(state: ChatUiState, viewModel: ChatViewModel) {
 @Composable
 private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, snackbar: SnackbarHostState) {
     val product = state.selectedProduct
+    // backToWealthList() 清 selectedProductId 是立即生效的，退场动画期间本页
+    // 会按新 state 重组：不冻结的话页面闪成“产品不存在”，共享容器也会在半
+    // 路丢掉配对对象、收拢形变直接消失。退场中（wealthScreen 已不是 DETAIL）
+    // 改用最后渲染过的那份产品；页面在台上时保持诚实——真的下架就照实提示。
+    var lastRendered by remember { mutableStateOf<ProductView?>(null) }
+    SideEffect { if (product != null) lastRendered = product }
+    val rendered = if (state.wealthScreen == WealthScreen.DETAIL) product else lastRendered
     Scaffold(
         topBar = {
             TopAppBar(
@@ -267,32 +481,37 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
         },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (product != null) {
-                PurchaseBar(state, viewModel, product)
+            if (rendered != null) {
+                PurchaseBar(state, viewModel, rendered)
             }
         },
     ) { padding ->
-        if (product == null) {
+        if (rendered == null) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Text("产品不存在或已下架。", style = MaterialTheme.typography.bodyMedium)
             }
             return@Scaffold
         }
+        // 详情容器：列表卡片形变铺满的落点（顶栏与申购栏不属于容器，随页面
+        // 淡入）。画与卡片相同的底色，位置/尺寸由 sharedBounds 与卡片插值；
+        // 滚动容器在共享节点内，内容随展开被逐步裁出而不是拉伸。
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .wealthContainerTransform(wealthProductKey(rendered.productId), expanded = true)
+                .background(MaterialTheme.colorScheme.surface)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                CategoryChip(product.category ?: "理财产品")
-                RiskBadge(product.riskLevel)
+                CategoryChip(rendered.category ?: "理财产品")
+                RiskBadge(rendered.riskLevel)
             }
-            Text(product.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(rendered.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
-                product.productId,
+                rendered.productId,
                 style = MaterialTheme.typography.labelMedium,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -304,7 +523,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("业绩比较基准", style = MaterialTheme.typography.labelMedium)
                     Text(
-                        product.benchmark ?: "以产品说明书为准",
+                        rendered.benchmark ?: "以产品说明书为准",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
@@ -313,17 +532,17 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(vertical = 4.dp)) {
-                    DetailRow("产品类型", product.category ?: "—")
-                    DetailRow("风险等级", product.riskLevel)
-                    DetailRow("投资期限", product.term ?: "—")
-                    DetailRow("起购金额", "¥%,.0f".format(Locale.CHINA, product.minAmount))
-                    DetailRow("流动性", product.liquidity ?: "—")
+                    DetailRow("产品类型", rendered.category ?: "—")
+                    DetailRow("风险等级", rendered.riskLevel)
+                    DetailRow("投资期限", rendered.term ?: "—")
+                    DetailRow("起购金额", "¥%,.0f".format(Locale.CHINA, rendered.minAmount))
+                    DetailRow("流动性", rendered.liquidity ?: "—")
                 }
             }
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(vertical = 4.dp)) {
-                    DetailRow("底层资产", product.underlying ?: "—")
-                    DetailRow("目标客群", product.targetClients ?: "—")
+                    DetailRow("底层资产", rendered.underlying ?: "—")
+                    DetailRow("目标客群", rendered.targetClients ?: "—")
                 }
             }
             Text(
@@ -388,12 +607,12 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun SectionHeader(title: String) {
+private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     Text(
-        title,
+        text = title,
         style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(top = 6.dp),
+        modifier = modifier.padding(top = 6.dp),
     )
 }
 

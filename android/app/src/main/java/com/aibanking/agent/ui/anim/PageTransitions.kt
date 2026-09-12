@@ -2,6 +2,7 @@ package com.aibanking.agent.ui.anim
 
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -21,6 +22,13 @@ import androidx.compose.ui.unit.IntOffset
  * 内容本身不参与逐帧重组；快出慢入曲线 + 300ms 时长保证跟手、不拖沓。
  */
 const val PAGE_TRANSITION_MILLIS = 300
+
+/**
+ * Material 3 的「强调（Emphasized）」运动曲线标准贝塞尔控制点：
+ * 展开用减速（快出慢停，强调结果），收回用加速（慢起快收，强调来源）。
+ */
+val EmphasizedDecelerateEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
 
 /**
  * [depthOf] 给每个页面状态一个“层级深度”：目标比起点深视为前进，

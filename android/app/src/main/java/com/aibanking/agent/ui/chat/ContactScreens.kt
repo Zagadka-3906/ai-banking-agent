@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -43,7 +43,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -84,8 +83,15 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.runtime.compositionLocalOf
 import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.LocalInBackPreviewBeneath
 import com.aibanking.agent.ui.anim.PAGE_TRANSITION_MILLIS
+import com.aibanking.agent.ui.anim.PredictiveBackPreview
+import com.aibanking.agent.ui.anim.ShimmerSwitch
+import com.aibanking.agent.ui.anim.SkeletonBlock
+import com.aibanking.agent.ui.anim.SkeletonRow
+import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.pageSlideSpec
+import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import kotlinx.coroutines.launch
 
 /**
@@ -121,6 +127,10 @@ private fun Modifier.contactShared(
     zIndexInOverlay: Float = 0f,
     clipShape: Shape,
 ): Modifier = composed {
+    // 预测性返回的手势预览期，本组件作为底层预览与顶层页面同屏：同 key 的
+    // 共享元素在转场外同时可见并无意义，退化为普通绘制；真正提交后仍由
+    // AnimatedContent 的转场做完整的共享元素动画。
+    if (LocalInBackPreviewBeneath.current) return@composed this
     val shared = LocalSharedTransitionScope.current ?: return@composed this
     val animated = LocalNavAnimatedVisibilityScope.current ?: return@composed this
     with(shared) {
@@ -160,28 +170,37 @@ fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
     }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         SharedTransitionLayout {
-            // 列表 ↔ 详情：元素做共享展开，页面本体只做淡入淡出——整页平移会
-            // 与共享元素的位置插值互相打架。列表 ↔ 新增没有共享元素，仍是推入/弹出。
-            AnimatedContent(
-                targetState = state.contactsScreen,
-                transitionSpec = {
-                    val fade = tween<Float>(PAGE_TRANSITION_MILLIS)
-                    if (setOf(initialState, targetState) == setOf(ContactsScreen.LIST, ContactsScreen.DETAIL)) {
-                        fadeIn(fade) togetherWith fadeOut(fade)
-                    } else {
-                        pageSlideSpec(ContactsScreen::ordinal)
-                    }
-                },
-                label = "contactsScreen",
-            ) { screen ->
-                CompositionLocalProvider(
-                    LocalSharedTransitionScope provides this@SharedTransitionLayout,
-                    LocalNavAnimatedVisibilityScope provides this,
-                ) {
-                    when (screen) {
-                        ContactsScreen.LIST -> ContactListScreen(state, viewModel, snackbar)
-                        ContactsScreen.DETAIL -> ContactDetailScreen(state, viewModel, snackbar)
-                        ContactsScreen.ADD -> ContactAddScreen(state, viewModel, snackbar)
+            // 预测性返回：详情/新增上滑返回时整层跟手缩放/圆角，列表页视差推入。
+            // 预览底层里的列表行不带共享元素配对（见 contactShared），真正提交
+            // 后仍走下方 AnimatedContent 的共享元素展开回程。
+            PredictiveBackPreview(
+                enabled = state.contactsScreen != ContactsScreen.LIST,
+                onBack = viewModel::backToContactList,
+                beneath = { ContactListScreen(state, viewModel, snackbar) },
+            ) {
+                // 列表 ↔ 详情：元素做共享展开，页面本体只做淡入淡出——整页平移会
+                // 与共享元素的位置插值互相打架。列表 ↔ 新增没有共享元素，仍是推入/弹出。
+                AnimatedContent(
+                    targetState = state.contactsScreen,
+                    transitionSpec = {
+                        val fade = tween<Float>(PAGE_TRANSITION_MILLIS)
+                        if (setOf(initialState, targetState) == setOf(ContactsScreen.LIST, ContactsScreen.DETAIL)) {
+                            fadeIn(fade) togetherWith fadeOut(fade)
+                        } else {
+                            pageSlideSpec(ContactsScreen::ordinal)
+                        }
+                    },
+                    label = "contactsScreen",
+                ) { screen ->
+                    CompositionLocalProvider(
+                        LocalSharedTransitionScope provides this@SharedTransitionLayout,
+                        LocalNavAnimatedVisibilityScope provides this,
+                    ) {
+                        when (screen) {
+                            ContactsScreen.LIST -> ContactListScreen(state, viewModel, snackbar)
+                            ContactsScreen.DETAIL -> ContactDetailScreen(state, viewModel, snackbar)
+                            ContactsScreen.ADD -> ContactAddScreen(state, viewModel, snackbar)
+                        }
                     }
                 }
             }
@@ -250,12 +269,31 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel, snac
                     .padding(horizontal = 16.dp, vertical = 8.dp)
                     .testTag(UiTags.CONTACT_SEARCH),
             )
-            Box(Modifier.fillMaxSize()) {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            // 流光骨架屏：加载中呈现搜索框/行形占位（45° 高光扫过），数据就绪
+            // 200ms 交叉淡入真实列表（含字母索引条）。
+            ShimmerSwitch(
+                loading = state.panelBusy && sections.isEmpty(),
+                modifier = Modifier.fillMaxSize(),
+                skeleton = { ContactsSkeleton() },
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    // 级联入场：首次加载/刷新完成时，可见区前 8 个子项自下而上波浪进场。
+                    val cascade = rememberCascadeEntrance(ready = state.contacts.isNotEmpty())
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    // 扁平序号跨越分组标题与数据行，波浪按整表顺序推入。
+                    var flat = 0
                     sections.forEach { section ->
-                        stickyHeader(key = section.letter) { SectionHeader(section.letter) }
-                        items(section.contacts, key = { it.contactId }) { contact ->
-                            ContactRow(contact) { viewModel.showContactDetail(contact.contactId) }
+                        val headerIndex = flat
+                        flat += 1
+                        val firstRowIndex = flat
+                        flat += section.contacts.size
+                        stickyHeader(key = section.letter) {
+                            SectionHeader(section.letter, Modifier.cascadeItem(cascade, headerIndex))
+                        }
+                        itemsIndexed(section.contacts, key = { _, contact -> contact.contactId }) { offset, contact ->
+                            ContactRow(contact, Modifier.cascadeItem(cascade, firstRowIndex + offset)) {
+                                viewModel.showContactDetail(contact.contactId)
+                            }
                         }
                     }
                     if (sections.isEmpty() && !state.panelBusy) {
@@ -289,23 +327,32 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel, snac
                         modifier = Modifier.align(Alignment.CenterEnd),
                     )
                 }
-                if (state.panelBusy && sections.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
                 }
             }
         }
     }
 }
 
+/** 加载中的联系人骨架：搜索框 + 若干行占位（含高光扫过）。 */
 @Composable
-private fun SectionHeader(letter: String) {
+private fun ContactsSkeleton() {
+    Column(Modifier.fillMaxSize()) {
+        SkeletonBlock(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            height = 56.dp,
+            corner = 8.dp,
+        )
+        repeat(7) { SkeletonRow() }
+    }
+}
+
+@Composable
+private fun SectionHeader(letter: String, modifier: Modifier = Modifier) {
     Text(
         text = letter,
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(horizontal = 16.dp, vertical = 4.dp),
@@ -313,9 +360,9 @@ private fun SectionHeader(letter: String) {
 }
 
 @Composable
-private fun ContactRow(contact: ContactView, onClick: () -> Unit) {
+private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             // 行容器 → 详情资料卡的容器变换起点。放在 clickable/padding 之前：
             // 共享 bounds 是整行（含内边距），点击行为与内容不参与插值。

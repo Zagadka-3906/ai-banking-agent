@@ -1,6 +1,9 @@
 package com.aibanking.agent.ui.chat
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,7 +62,9 @@ import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
-import com.aibanking.agent.ui.anim.pageSlideSpec
+import com.aibanking.agent.ui.anim.PredictiveBackPreview
+import com.aibanking.agent.ui.anim.cubeFlip
+import com.aibanking.agent.ui.anim.verificationFrost
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
@@ -83,18 +88,29 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         else -> AppPage.CHAT
     }
 
-    // 顶层页面切换：聊天 ↔ 卡片/理财/联系人，统一推入/弹出转场。
-    AnimatedContent(
-        targetState = page,
-        transitionSpec = { pageSlideSpec(AppPage::ordinal) },
-        modifier = Modifier.fillMaxSize(),
-        label = "appPage",
-    ) { current ->
-        when (current) {
-            AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, snackbar)
-            AppPage.CARDS -> CardsUi(state, viewModel)
-            AppPage.WEALTH -> WealthUi(state, viewModel)
-            AppPage.CONTACTS -> ContactsUi(state, viewModel)
+    // 顶层页面切换：聊天 ↔ 卡片/理财/联系人，3D 立方体翻页转场——页面进出
+    // 本身零动画，旋转/透视/暗角全部由 cubeFlip 按各页进度驱动。
+    // 预测性返回：覆盖页上滑返回时整层跟手缩放/圆角，露出的聊天页视差推入；
+    // 只有越过提交阈值才真正关闭覆盖页，取消则弹回原位。
+    PredictiveBackPreview(
+        enabled = page != AppPage.CHAT,
+        onBack = viewModel::dismissPanels,
+        beneath = { ChatHome(state, viewModel, activity, listState, snackbar) },
+    ) {
+        AnimatedContent(
+            targetState = page,
+            transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+            modifier = Modifier.fillMaxSize(),
+            label = "appPage",
+        ) { current ->
+            Box(Modifier.fillMaxSize().cubeFlip(this)) {
+                when (current) {
+                    AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, snackbar)
+                    AppPage.CARDS -> CardsUi(state, viewModel)
+                    AppPage.WEALTH -> WealthUi(state, viewModel)
+                    AppPage.CONTACTS -> ContactsUi(state, viewModel)
+                }
+            }
         }
     }
 
@@ -179,6 +195,9 @@ private fun ChatHome(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
+        // 红色风险验证挂起（MFA 审批在台上）：聊天背景进入磨砂玻璃态——
+        // 消息/建议/输入行连续模糊并提亮，审批卡保持清晰聚焦。
+        val redVerification = state.pending?.mfaRequired == true
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -191,7 +210,9 @@ private fun ChatHome(
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(state.messages) { message -> MessageBubble(message) }
+                items(state.messages) { message ->
+                    MessageBubble(message, Modifier.verificationFrost(redVerification))
+                }
                 state.pending?.let { approval ->
                     item {
                         ApprovalCard(
@@ -234,7 +255,9 @@ private fun ChatHome(
             // 快捷输入建议：点击填入输入框（可修改后再发送）。
             if (state.suggestions.isNotEmpty() && state.quiz == null) {
                 LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verificationFrost(redVerification),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp),
                 ) {
@@ -251,16 +274,17 @@ private fun ChatHome(
                 enabled = state.canSend,
                 onValueChange = viewModel::onInputChange,
                 onSend = viewModel::send,
+                modifier = Modifier.verificationFrost(redVerification),
             )
         }
     }
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
+private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
     val isUser = message.role == ChatRole.USER
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
         Card(
@@ -446,8 +470,9 @@ private fun InputRow(
     enabled: Boolean,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {    Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
             .padding(horizontal = 12.dp, vertical = 8.dp),
