@@ -108,7 +108,7 @@ mock-banking-core/
 │   ├── app/src/main/java/com/aibanking/agent/   # 界面、会话、Keystore 设备密钥、推送
 │   ├── app/src/androidTest/java/com/aibanking/agent/  # 插桩 UI 测试（绿/黄/红三条链路）
 │   └── tools/                       # 工具链安装脚本、BiometricPrompt 应答脚本
-├── tests/               # 自动化测试套件（17 个文件 / 339 个用例）
+├── tests/               # 自动化测试套件（17 个文件 / 341 个用例）
 │   ├── conftest.py                  # 套件级强制配置（见「贡献者指南」，改动前务必阅读）
 │   ├── test_core_api.py             # 核心契约、金额与风险边界、状态/卡片拒绝路径
 │   ├── test_security_regressions.py # 身份、票据绑定、上下文篡改、审计、回滚
@@ -300,11 +300,11 @@ cd android; .\gradlew.bat --no-daemon assembleDebug        # 产出 app\build\ou
 
 ## 📊 自动化测试与质量保障
 
-`tests/` 共 17 个文件 / 339 个用例，全部离线可跑（不需要网络、不需要大模型密钥、不写任何真实数据文件）。
+`tests/` 共 17 个文件 / 341 个用例，全部离线可跑（不需要网络、不需要大模型密钥、不写任何真实数据文件）。
 
 ```powershell
 # 运行全部测试
-python -m pytest -q                       # 339 passed
+python -m pytest -q                       # 341 passed
 
 # 核心门禁四件套——提交前必须全过，CI（.github/workflows/ci.yml）跑的就是这些
 python -m compileall -q .
@@ -384,7 +384,7 @@ cd android
 
 ```powershell
 python -m compileall -q .            # 语法
-python -m pytest -q                  # 339 passed
+python -m pytest -q                  # 341 passed
 python -m ruff check . --ignore E402 # 静态检查
 docker compose config --quiet        # 编排文件仍然有效
 ```

@@ -680,3 +680,22 @@ def test_aa_split_reports_partial_collection_when_participant_lacks_funds(client
     assert failed and failed[0]["account_id"] == "user_li" and failed[0]["reason"] == "INSUFFICIENT_FUNDS"
     assert main.ACCOUNTS["user_li"]["balance"] == li_before
     assert main.ACCOUNTS["user_zhang"]["balance"] == round(initiator_before + 33.33, 2)
+
+
+def test_a_zero_card_limit_is_refused_with_a_precise_error(client: TestClient):
+    """Zero means "stop this card paying", not "make it a one-cent card".
+
+    The generic operation-amount helper folds "no amount" into an internal
+    0.01 sentinel, so an explicit zero had to be rejected before it could be
+    silently rounded up into an instruction the caller did not give.
+    """
+
+    for value in (0, 0.0):
+        refused = client.post(
+            "/api/v1/risk/precheck/operation",
+            json={"user_id": "user_zhang", "operation": "CARD_LIMIT", "card_id": "CARD-001", "new_limit": value},
+            headers=headers(),
+        )
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["detail"]["code"] == "INVALID_CARD_LIMIT"
+    assert main.CARDS["user_zhang"][0]["daily_limit"] == 5000.0

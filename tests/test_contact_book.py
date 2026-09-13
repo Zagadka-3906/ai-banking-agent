@@ -340,3 +340,20 @@ def test_transferring_to_a_provisionally_linked_contact_still_works(client):
     settled = _transfer(client, "老李")
     assert settled.status_code == 200, settled.text
     assert main.ACCOUNTS["user_li"]["balance"] == 2000.0 + 300.0
+
+
+def test_the_contact_book_is_capped_per_user(client, monkeypatch):
+    """Same reasoning as the wallet cap: the book is ledger state rewritten in
+    full on every mutation, and each unmatched phone also provisions an
+    account record."""
+
+    monkeypatch.setattr(main, "CONTACT_MAX_PER_USER", 3)
+    codes = [
+        _add(client, {"name": f"联系人{index}", "phone": f"1390000{index:04d}", "relationship": "朋友"}).status_code
+        for index in range(5)
+    ]
+
+    assert codes == [200, 200, 200, 409, 409], codes
+    refused = _add(client, {"name": "多余", "phone": "13911112222", "relationship": "朋友"})
+    assert refused.json()["detail"]["code"] == "CONTACT_LIMIT_REACHED"
+    assert len(main.USER_CONTACTS["user_zhang"]) == 3

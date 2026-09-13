@@ -303,6 +303,11 @@ CONTACT_RELATION_SYNONYMS.update({
 })
 CONTACT_PHONE_RE = re.compile(r"^\d{5,20}$")
 CONTACT_BIRTHDAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Same reasoning as CARD_MAX_PER_USER: the book is part of the persisted ledger
+# and the snapshot is rewritten in full on every mutation, so an uncapped add is
+# unbounded growth with quadratic disk work - and each new non-matching phone
+# also provisions an account record.
+CONTACT_MAX_PER_USER = max(1, int(os.getenv("BANK_MAX_CONTACTS_PER_USER", "200")))
 # Whether a contact-book entry that resolves to a *real* account carries that
 # account owner's consent.  A typed phone number proves nothing on its own, so
 # a provisional link is good enough to pay *to* (the caller's own money) but
@@ -1604,11 +1609,30 @@ def _operation_target(req: OperationPrecheckRequest | OperationExecuteRequest) -
     return f"__{req.operation.upper()}__"
 
 
-def _operation_amount(value: Optional[float]) -> float:
-    # The signed token format uses cents and requires a positive value.  For
-    # non-financial card/subscription actions 0.01 is an internal sentinel;
-    # it is never debited from an account.
-    if value in (None, 0):
+def _operation_amount(value: Optional[float], *, operation: str = "") -> float:
+    """Normalize an operation amount, or return the non-financial sentinel.
+
+    The signed token format uses cents and requires a positive value, so
+    operations that carry no money (freeze, cancel, password change) use 0.01
+    as an internal sentinel that is never debited.
+
+    A supplied amount of exactly zero is treated as "no amount" rather than as
+    a one-cent operation: the executor defaults ``amount`` to 0, so absent and
+    explicit zero are not distinguishable at this boundary, and every operation
+    that actually moves money is separately required to carry a positive amount
+    (``AMOUNT_REQUIRED``).  What must never happen is a zero being quietly
+    rounded up into an instruction the caller did not give, which is why
+    ``CARD_LIMIT`` - where zero would mean "stop this card paying" - gets a
+    precise rejection instead of the sentinel.
+    """
+
+    if value is None or (not isinstance(value, bool) and isinstance(value, (int, float)) and float(value) == 0):
+        if operation == "CARD_LIMIT" and value is not None:
+            raise SecurityError(
+                "卡片日限额必须大于 0；如需停用该卡请使用冻结或挂失",
+                400,
+                "INVALID_CARD_LIMIT",
+            )
         return 0.01
     # Return the canonical cent-rounded value as well as validating it.  Using
     # the raw binary float here would let a value such as 0.005 be signed as
@@ -2188,6 +2212,12 @@ def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] =
             existing = USER_CONTACTS.get(user_id, [])
             if any(row.get("name") == name and row.get("phone") == phone for row in existing):
                 raise SecurityError("该联系人已存在", 409, "CONTACT_EXISTS")
+            if len(existing) >= CONTACT_MAX_PER_USER:
+                raise SecurityError(
+                    f"联系人最多 {CONTACT_MAX_PER_USER} 位，请先删除不再使用的联系人",
+                    409,
+                    "CONTACT_LIMIT_REACHED",
+                )
             account_id, linked_existing, link_verification = _resolve_contact_account(name, phone, caller_id=user_id)
             row = {
                 "contact_id": f"CTT{uuid.uuid4().hex[:10].upper()}",
@@ -2770,7 +2800,7 @@ def operation_precheck(
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
         reason = sanitize_text(req.reason or "智能银行操作", field="操作原因", max_length=300)
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
-        amount = _operation_amount(amount_input)
+        amount = _operation_amount(amount_input, operation=operation)
         if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation in {"SCHEDULED_TRANSFER", "SPLIT_BILL", "WEALTH_PURCHASE", "WEALTH_REDEEM", "CARD_LIMIT"} and (amount_input is None or float(amount_input) <= 0):
@@ -3451,7 +3481,7 @@ def execute_operation(
         if operation == "PASSWORD_CHANGE" and any(value for value in (req.target, req.product_id, req.card_id, req.merchant)):
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
-        amount = _operation_amount(amount_input)
+        amount = _operation_amount(amount_input, operation=operation)
         reason = sanitize_text(req.reason or "智能银行操作", field="操作原因", max_length=300)
         if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
