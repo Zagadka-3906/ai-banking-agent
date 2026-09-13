@@ -65,6 +65,9 @@ interface ContactApi {
         @Body body: ContactAddRequest,
         @Header("X-User-Id") userIdHeader: String,
         @Header("X-Session-Token") sessionToken: String,
+        // 核心按 (用户, 端点, 键) 缓存响应：同一个键重发只会回放上一次的结果，
+        // 超时重试不会建出第二个联系人。
+        @Header("Idempotency-Key") idempotencyKey: String,
     ): ContactAddResponse
 
     @POST("api/v1/contacts/{userId}/book/{contactId}/remove")
@@ -86,6 +89,14 @@ class ContactRepository(private val api: ContactApi) {
         throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
     }
 
+    /**
+     * Save one contact.
+     *
+     * [idempotencyKey] is required rather than defaulted on purpose: a fresh key
+     * per call would make a read timeout plus an explicit retry create a second
+     * contact.  The caller owns one key per user submission and reuses it for
+     * every retry of that submission.
+     */
     suspend fun add(
         principal: String,
         sessionToken: String,
@@ -93,12 +104,14 @@ class ContactRepository(private val api: ContactApi) {
         phone: String,
         relationship: String,
         birthday: String?,
+        idempotencyKey: String,
     ): ContactView = try {
         api.add(
             userId = principal,
             body = ContactAddRequest(name = name, phone = phone, relationship = relationship, birthday = birthday?.takeIf { it.isNotBlank() }),
             userIdHeader = principal,
             sessionToken = sessionToken,
+            idempotencyKey = idempotencyKey,
         ).data ?: throw GatewayException(null, "核心服务未返回联系人", 502)
     } catch (failure: HttpException) {
         throw failure.asGatewayException()

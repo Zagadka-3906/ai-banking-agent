@@ -9,6 +9,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -79,6 +81,11 @@ class MainActivity : FragmentActivity() {
                             RootPage.LOGIN -> LoginScreen(
                                 busy = state.busy,
                                 otpRequired = state.otpRequiredAtLogin,
+                                // 登录失败（口令错误 / 核心不可达）和“会话已失效”都由这里
+                                // 显示：之前 state.error 只有聊天页的 Snackbar 会读，登录页
+                                // 完全看不到，输错口令时界面毫无反馈。
+                                error = state.error,
+                                onDismissError = viewModel::dismissMessages,
                                 onLogin = viewModel::login,
                             )
                         }
@@ -137,6 +144,8 @@ private fun RestoringScreen() {
 private fun LoginScreen(
     busy: Boolean,
     otpRequired: Boolean,
+    error: String?,
+    onDismissError: () -> Unit,
     onLogin: (String, String, String?) -> Unit,
 ) {
     var userId by remember { mutableStateOf("user_zhang") }
@@ -179,6 +188,22 @@ private fun LoginScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.LOGIN_OTP),
             )
+        }
+        if (error != null) {
+            // 表单内就地报错：口令错误、核心不可达、会话已失效都在这里说清楚，
+            // 而不是让按钮从“登录中…”直接变回“登录”什么都不解释。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onDismissError) { Text("知道了") }
+            }
         }
         Button(
             onClick = { onLogin(userId, password, otp.takeIf { it.isNotBlank() }) },

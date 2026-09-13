@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.math.BigDecimal
 import java.util.UUID
 
 enum class ChatRole { USER, ASSISTANT }
@@ -152,8 +153,10 @@ data class ChatUiState(
     val canBuySelected: Boolean
         get() {
             val product = selectedProduct ?: return false
-            val amount = buyAmount.toDoubleOrNull() ?: return false
-            if (amount < product.minAmount || amount <= 0.0) return false
+            // 与 startPurchase 用同一个解析器：按钮可点就等于提交一定成立，
+            // 不再让 "1.2.3" 这种文本靠 toDoubleOrNull 悄悄变成 null。
+            val amount = parseAmountInput(buyAmount) ?: return false
+            if (amount.signum() <= 0 || amount < BigDecimal.valueOf(product.minAmount)) return false
             val profileRank = profileRank(riskProfile?.riskProfile) ?: return false
             return profileRank >= productRank(product.riskLevel)
         }
@@ -193,6 +196,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var conversationId: String = UUID.randomUUID().toString().replace("-", "").take(20)
     private var sessionToken: String? = null
     private var deviceId: String? = null
+
+    /**
+     * 进行中的创建提交（开卡 / 加联系人），保留到成功为止。
+     *
+     * 失败后用户再点一次“确认添加”是同一次提交的重试，必须复用同一个幂等键；
+     * 每次调用都新生成一个 UUID 等于把一次超时变成两张开出的卡。
+     */
+    private var cardCreateAttempt: CreateAttempt? = null
+    private var contactCreateAttempt: CreateAttempt? = null
 
     init {
         // Restore a previous session so a restart does not force a re-login.
@@ -319,6 +331,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update {
                     it.copy(
                         busy = false,
+                        // 上一次失败的原因必须随成功登录一起清掉：留在 state 里会跟着
+                        // 进入聊天页，被 ChatHome 的 Snackbar 当成刚发生的事弹出来。
+                        error = null,
                         principal = session.userId,
                         authenticated = true,
                         messages = listOf(welcome()),
@@ -420,6 +435,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(devices = rows, panelBusy = false) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
+            } catch (failure: Exception) {
+                // 解析异常（JsonSyntaxException）等非网关失败同样要收尾：逃出协程会让
+                // panelBusy 永远为 true，面板停在骨架屏上，连重试按钮都不出现。
+                applyPanelFailure(failure)
             }
         }
     }
@@ -464,6 +483,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
                 _state.update { it.copy(tasks = rows, panelBusy = false) }
             } catch (failure: GatewayException) {
+                applyPanelFailure(failure)
+            } catch (failure: Exception) {
                 applyPanelFailure(failure)
             }
         }
@@ -533,6 +554,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(contacts = rows, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
+            } catch (failure: Exception) {
+                applyPanelFailure(failure)
             }
         }
     }
@@ -561,6 +584,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val principal = _state.value.principal
         val form = _state.value
         if (!form.canAddContact || form.panelBusy) return
+        // 同一次提交的所有重试共用一个幂等键（见 [CreateAttempt]）：核心据此回放
+        // 响应，读超时后的重发不会建出第二个联系人。
+        val attempt = CreateAttempt.of(
+            contactCreateAttempt,
+            listOf(form.contactName.trim(), form.contactPhone, form.contactRelationship, form.contactBirthday)
+                .joinToString("\u0000"),
+        )
+        contactCreateAttempt = attempt
         _state.update { it.copy(panelBusy = true, error = null) }
         viewModelScope.launch {
             try {
@@ -572,8 +603,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         phone = form.contactPhone,
                         relationship = form.contactRelationship,
                         birthday = form.contactBirthday.takeIf { it.isNotBlank() },
+                        idempotencyKey = attempt.value,
                     )
                 }
+                // 已经建好：这次提交到此为止，下一次保存是新的意图、新的键。
+                contactCreateAttempt = null
                 _state.update {
                     it.copy(
                         panelBusy = false,
@@ -586,6 +620,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 refreshContacts()
             } catch (failure: GatewayException) {
+                applyPanelFailure(failure)
+            } catch (failure: Exception) {
+                // 与 refresh* 同样的收尾：异常逃出协程会把“保存中…”永远留在界面上，
+                // 连重试的机会都没有。
                 applyPanelFailure(failure)
             }
         }
@@ -631,6 +669,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(cards = rows, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
+            } catch (failure: Exception) {
+                applyPanelFailure(failure)
             }
         }
     }
@@ -644,15 +684,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val principal = _state.value.principal
         val form = _state.value
         if (form.panelBusy) return
+        // 同一次提交的所有重试共用一个幂等键（见 [CreateAttempt]）：20 秒读超时后
+        // 重发不会开出第二张卡。表单内容变了才是另一次提交，那时必须换新键。
+        val attempt = CreateAttempt.of(cardCreateAttempt, "${form.cardType}\u0000${form.cardLabel.trim()}")
+        cardCreateAttempt = attempt
         _state.update { it.copy(panelBusy = true, error = null) }
         viewModelScope.launch {
             try {
                 val created = withContext(Dispatchers.IO) {
-                    cardsRepo.add(principal, sessionToken ?: "", form.cardType, form.cardLabel)
+                    cardsRepo.add(principal, sessionToken ?: "", form.cardType, form.cardLabel, attempt.value)
                 }
-                _state.update { it.copy(panelBusy = false, cardLabel = "", notice = "银行卡 ${created.numberMasked} 已添加") }
+                // 卡已经开出：这次提交到此为止，下一次添加是新的意图、新的键。
+                cardCreateAttempt = null
+                _state.update {
+                    it.copy(
+                        panelBusy = false,
+                        cardLabel = "",
+                        // 核心已经把新卡返回来了，就立刻放进列表：添加表单据此判断
+                        // “真的开出来了”才收起，而后续的列表刷新即使失败，卡也不会
+                        // 从页面上消失（它确实已经存在）。
+                        cards = it.cards + created,
+                        notice = "银行卡 ${created.numberMasked} 已添加",
+                    )
+                }
                 refreshCards()
             } catch (failure: GatewayException) {
+                applyPanelFailure(failure)
+            } catch (failure: Exception) {
+                // 失败必须收尾：panelBusy 留在 true 会让添加表单永远停在“开卡中…”。
                 applyPanelFailure(failure)
             }
         }
@@ -688,8 +747,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun backToWealthList() =
         _state.update { it.copy(wealthScreen = WealthScreen.LIST, selectedProductId = null, buyAmount = "") }
 
+    /**
+     * 申购金额只接受合法十进制文本：最多一个小数点、小数最多两位。
+     *
+     * 旧实现只过滤“非数字且非点”的字符，于是 `1.2.3` 也能进输入框，到
+     * [startPurchase] 里要么被 `toDoubleOrNull` 判成 null（点了没反应），
+     * 要么经 `Double.toString()` 变成科学计数法发给核心。非法编辑直接不采纳
+     * （保留上一次的合法文本），而不是先塞进状态再在提交时失败。
+     */
     fun onBuyAmountChange(value: String) =
-        _state.update { it.copy(buyAmount = value.filter { ch -> ch.isDigit() || ch == '.' }.take(12)) }
+        _state.update {
+            if (AMOUNT_INPUT.matches(value)) {
+                it.copy(buyAmount = value)
+            } else {
+                it
+            }
+        }
 
     fun refreshWealth() {
         val principal = _state.value.principal
@@ -701,6 +774,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _state.update { it.copy(wealthProducts = products, wealthHoldings = holdings, riskProfile = profile, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
+            } catch (failure: Exception) {
+                applyPanelFailure(failure)
             }
         }
     }
@@ -711,10 +786,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 把用户的意图送到那条安全链路的入口。
      */
     fun startPurchase(product: ProductView, amountText: String) {
-        val amount = amountText.toDoubleOrNull() ?: return
-        if (amount < product.minAmount || amount <= 0.0) return
-        val display = if (amount == amount.toLong().toDouble()) amount.toLong().toString() else amount.toString()
-        onInputChange("申购 ${product.productId} $display 元")
+        val amount = parseAmountInput(amountText) ?: return
+        if (amount.signum() <= 0 || amount < BigDecimal.valueOf(product.minAmount)) return
+        // toPlainString：`Double.toString()` 会把大额写成 1.0E11 这种科学计数法，
+        // 那不是银行话术，也不是核心能解析的金额。
+        onInputChange("申购 ${product.productId} ${amount.toPlainString()} 元")
         closeWealth()
     }
 
@@ -1014,7 +1090,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 sessionStore.clear()
                 ChatUiState(error = "登录状态已失效，请重新登录")
             } else {
-                state.copy(busy = false, error = failure.message)
+                // 审批/验证失败时短信验证码已经被核心消费或拒绝，字段必须清空：
+                // 留着它，用户再次点“确认执行”只会把同一个失效的码再送一次。
+                state.copy(busy = false, error = failure.message, otp = "")
             }
         }
     }
@@ -1044,6 +1122,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 非网关失败（响应解析失败、客户端自身异常）的面板收尾。
+     *
+     * 与上面的重载走同一条路：清掉 panelBusy、留下 panelError，页面据此显示
+     * 真正的失败与重试按钮，而不是把“没问到核心”渲染成“你没有卡片/联系人”。
+     * 这类异常没有 HTTP 状态，所以不做会话失效判断。
+     */
+    private fun applyPanelFailure(failure: Exception) {
+        val message = "面板加载失败：${failure.message ?: failure::class.java.simpleName}"
+        _state.update { it.copy(panelBusy = false, panelError = message, error = message) }
+    }
+
     private fun welcome() = ChatMessage(
         role = ChatRole.ASSISTANT,
         text = "您好！我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片和订阅。高风险操作需要您完成短信验证与设备签名。",
@@ -1071,6 +1161,25 @@ private class StoredSession(
 )
 
 /**
+ * 一次“用户发起的创建”的幂等身份。
+ *
+ * [fingerprint] 是这次提交的内容，[value] 是随请求发出的 `Idempotency-Key`。
+ * 核心按 (用户, 端点, 键) 记录：同一份内容的重试必须复用同一个键，否则一次读
+ * 超时后的重发就是第二次创建（多出一张卡或一个联系人）；而内容一变就必须换新
+ * 键，否则核心会对同一个键的另一个载荷回 `IDEMPOTENCY_KEY_REUSE`(409)。
+ */
+private class CreateAttempt(val fingerprint: String, val value: String) {
+    companion object {
+        fun of(previous: CreateAttempt?, fingerprint: String): CreateAttempt =
+            if (previous != null && previous.fingerprint == fingerprint) {
+                previous
+            } else {
+                CreateAttempt(fingerprint, UUID.randomUUID().toString())
+            }
+    }
+}
+
+/**
  * 风险档案 → 可购买的最高产品等级，与服务端 `profile_rank` 保持一致。
  *
  * 服务端有两套词汇：老表单产出 CONSERVATIVE/BALANCED/AGGRESSIVE，8 题问卷产出
@@ -1087,6 +1196,27 @@ internal fun profileRank(profile: String?): Int? = when (profile) {
 }
 
 internal fun productRank(riskLevel: String): Int = riskLevel.removePrefix("R").toIntOrNull() ?: 9
+
+/**
+ * 申购金额的输入文法：最多一个小数点、小数最多两位、整数部分最多十位。
+ *
+ * 空串与孤立的 “.” 是输入过程中的中间态（用户先打小数点），匹配得上但不是
+ * 金额，由 [parseAmountInput] 判掉。
+ */
+private val AMOUNT_INPUT = Regex("""\d{0,10}(\.\d{0,2})?""")
+
+/**
+ * 金额文本 → 金额；非法文本返回 null。
+ *
+ * 全程走 [BigDecimal]，不经过 Double：十进制文本→Double→字符串的往返会改写
+ * 用户输入（0.1+0.2 类误差），大额还会变成科学计数法。
+ */
+internal fun parseAmountInput(text: String): BigDecimal? {
+    val trimmed = text.trim()
+    if (!AMOUNT_INPUT.matches(trimmed)) return null
+    // "." 或 "" 能过文法但不是金额，BigDecimal 会直接抛，交给 runCatching。
+    return runCatching { BigDecimal(trimmed) }.getOrNull()
+}
 
 /**
  * 理财回复的产品清单以卡片渲染（见 ResultView），气泡文本里保留头行、

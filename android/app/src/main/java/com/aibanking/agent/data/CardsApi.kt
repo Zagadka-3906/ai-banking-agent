@@ -55,6 +55,9 @@ interface CardsApi {
         @Body body: CardAddRequest,
         @Header("X-User-Id") userIdHeader: String,
         @Header("X-Session-Token") sessionToken: String,
+        // 核心按 (用户, 端点, 键) 缓存响应：同一个键重发只会回放上一次的结果，
+        // 超时重试不会开出第二张卡。
+        @Header("Idempotency-Key") idempotencyKey: String,
     ): CardAddResponse
 }
 
@@ -68,12 +71,27 @@ class CardsRepository(private val api: CardsApi) {
         throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
     }
 
-    suspend fun add(principal: String, sessionToken: String, cardType: String, label: String?): CardView = try {
+    /**
+     * Issue one card.
+     *
+     * [idempotencyKey] is required rather than defaulted on purpose: generating a
+     * fresh key per call would turn a read timeout plus an explicit retry into a
+     * second card.  The caller owns one key per user submission and reuses it for
+     * every retry of that submission.
+     */
+    suspend fun add(
+        principal: String,
+        sessionToken: String,
+        cardType: String,
+        label: String?,
+        idempotencyKey: String,
+    ): CardView = try {
         api.add(
             userId = principal,
             body = CardAddRequest(card_type = cardType, label = label?.takeIf { it.isNotBlank() }),
             userIdHeader = principal,
             sessionToken = sessionToken,
+            idempotencyKey = idempotencyKey,
         ).data ?: throw GatewayException(null, "核心服务未返回卡片", 502)
     } catch (failure: HttpException) {
         throw failure.asGatewayException()

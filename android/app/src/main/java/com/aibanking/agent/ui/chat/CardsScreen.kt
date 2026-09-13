@@ -81,6 +81,18 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
         }
     }
     var showAdd by remember { mutableStateOf(false) }
+    // 打开表单那一刻的卡片数量。开卡是异步的（viewModelScope.launch），
+    // 只有列表真的多出一张卡才收起表单。
+    var cardsBeforeSubmit by remember { mutableStateOf<Int?>(null) }
+    // 提交成功 → cards 变长 → 收起表单；失败则原地保留用户输入与错误提示，
+    // 不再像以前那样先关表单再发请求（失败时输入被吞掉，只剩一条 Snackbar）。
+    LaunchedEffect(showAdd, state.cards.size) {
+        val submittedAt = cardsBeforeSubmit ?: return@LaunchedEffect
+        if (state.cards.size > submittedAt) {
+            showAdd = false
+            cardsBeforeSubmit = null
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -161,10 +173,17 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             label = state.cardLabel,
             onFieldChange = viewModel::onCardFormChange,
             onAdd = {
-                viewModel.addCard()
-                showAdd = false
+                // panelBusy 期间不受理第二次提交：按钮虽然已禁用，但这里要挡住
+                // “按下按钮的同时另一次开卡已在飞”的那一下连点。
+                if (!state.panelBusy) {
+                    cardsBeforeSubmit = state.cards.size
+                    viewModel.addCard()
+                }
             },
-            onDismiss = { showAdd = false },
+            onDismiss = {
+                showAdd = false
+                cardsBeforeSubmit = null
+            },
         )
     }
 }
