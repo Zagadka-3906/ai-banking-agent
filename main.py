@@ -21,7 +21,7 @@ import uuid
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +58,7 @@ from security import (
     record_security_success,
     record_behavior_signal,
     resolve_session,
+    resolve_store_digest_algorithm,
     revoke_device,
     revoke_session,
     revoke_sessions_for,
@@ -122,6 +123,31 @@ def _rate_limit_exempt(path: str) -> bool:
     return path in _HEALTH_PATHS or path.startswith(_DOCS_PREFIXES)
 
 
+def _rate_limit_key(request: "Request") -> str:
+    """Pick a throttling bucket the caller cannot trivially re-key.
+
+    ``X-User-Id`` is a *object selector*, not a credential: outside strict
+    session mode anyone can send any value, so using it as the rate-limit key
+    meant a caller could rotate the header and reset the window at will.  The
+    verified session principal wins; otherwise the peer address; the header is
+    only the fallback for callers with no address at all (the in-process test
+    client), where it still keeps one principal's traffic from throttling
+    another's.
+    """
+
+    session_token = request.headers.get("X-Session-Token")
+    if session_token:
+        try:
+            return f"session:{resolve_session(session_token)}"
+        except SecurityError:
+            # An invalid session is answered by the middleware above; bucket it
+            # by peer so a bad token cannot be used to re-key either.
+            pass
+    if request.client and request.client.host:
+        return f"peer:{request.client.host}"
+    return f"user:{request.headers.get('X-User-Id') or 'anonymous'}"
+
+
 def _strict_session_required() -> bool:
     return os.getenv("BANK_REQUIRE_SESSION", "0").lower() in {"1", "true", "yes", "on"}
 
@@ -176,6 +202,9 @@ async def request_safety_middleware(request: Request, call_next):
         forwarded = [(name, value) for name, value in request.scope["headers"] if name.lower() != b"x-user-id"]
         forwarded.append((b"x-user-id", principal.encode("utf-8")))
         request.scope["headers"] = forwarded
+        # Downstream handlers read this to bind approvals to the session that
+        # requested them, so revoking the session invalidates them.
+        request.state.session_token = session_token
     elif _strict_session_required() and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _rate_limit_exempt(path) and path not in _SESSION_BOOTSTRAP_PATHS:
         return _apply_security_headers(
             JSONResponse(status_code=401, content={"detail": {"code": "SESSION_REQUIRED", "message": "写操作需要会话凭证"}}),
@@ -183,8 +212,14 @@ async def request_safety_middleware(request: Request, call_next):
         )
     # 2) Per-principal request window (probes and docs are exempt).
     if not _rate_limit_exempt(path):
-        rate_key = request.headers.get("X-User-Id") or (request.client.host if request.client else "anonymous")
-        retry_after = _rate_limit_check(str(rate_key))
+        # The bucket key must not be something the caller can pick freely: an
+        # ``X-User-Id`` header is self-asserted outside strict session mode, so
+        # keying on it let anyone rotate the header and get a fresh window per
+        # request.  Prefer the verified session principal, then the peer
+        # address, and keep the header only as a last resort (an in-process
+        # test client has no peer address).
+        rate_key = _rate_limit_key(request)
+        retry_after = _rate_limit_check(rate_key)
         if retry_after is not None:
             response = _apply_security_headers(
                 JSONResponse(status_code=429, content={"detail": {"code": "RATE_LIMITED", "message": "请求过于频繁，请稍后重试"}}),
@@ -268,6 +303,12 @@ CONTACT_RELATION_SYNONYMS.update({
 })
 CONTACT_PHONE_RE = re.compile(r"^\d{5,20}$")
 CONTACT_BIRTHDAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Whether a contact-book entry that resolves to a *real* account carries that
+# account owner's consent.  A typed phone number proves nothing on its own, so
+# a provisional link is good enough to pay *to* (the caller's own money) but
+# never good enough to debit from - see ``_aa_debit_authorized``.
+LINK_VERIFIED = "OWNER_CONSENTED"
+LINK_UNVERIFIED = "PROVISIONAL"
 
 DAILY_TRANSFERS: dict[str, float] = {"user_zhang": 0.0}
 DAILY_TRANSFER_DATE: dict[str, str] = {}
@@ -432,6 +473,15 @@ CARDS: dict[str, list[dict[str, Any]]] = {
 # mutation, so an un-capped add is both unbounded growth and quadratic disk work
 # - and each card carries its own daily spending limit.
 CARD_MAX_PER_USER = max(1, int(os.getenv("BANK_MAX_CARDS_PER_USER", "10")))
+# A newly issued card starts at this daily payment ceiling.
+CARD_DEFAULT_DAILY_LIMIT = 5000.0
+# ...and CARD_LIMIT may move it, but only within a sane band.  The transfer
+# per-transaction ceiling is not a card-limit policy: it let one MFA approval
+# raise a 5,000-yuan daily limit to 1,000,000.
+CARD_MAX_DAILY_LIMIT = max(
+    CARD_DEFAULT_DAILY_LIMIT,
+    float(os.getenv("BANK_MAX_CARD_DAILY_LIMIT", "200000")),
+)
 
 
 def _user_cards(user_id: str) -> list[dict[str, Any]]:
@@ -511,6 +561,37 @@ def _mock_card_masked() -> str:
 
     digits = "622202" + "".join(str(secrets.randbelow(10)) for _ in range(10))
     return "**** **** **** " + digits[-4:]
+
+
+def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = None) -> dict[str, Any]:
+    """Append one card to ``user_id``'s wallet, enforcing the per-user ceiling.
+
+    Every issuance path funnels through here.  ``CARD_APPLY`` (the agent's
+    "申请一张虚拟卡" flow) used to append directly, so the ceiling that
+    ``/cards/{user_id}/add`` enforced could be bypassed simply by asking the
+    assistant instead - and each card is ledger state whose snapshot is
+    rewritten in full, which is what the ceiling exists to bound.
+
+    Caller must hold ``STATE_LOCK``.
+    """
+
+    held = CARDS.setdefault(user_id, [])
+    if len(held) >= CARD_MAX_PER_USER:
+        raise SecurityError(
+            f"每人最多持有 {CARD_MAX_PER_USER} 张卡片，请先注销不再使用的卡",
+            409,
+            "CARD_LIMIT_REACHED",
+        )
+    card = {
+        "card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}",
+        "number_masked": _mock_card_masked(),
+        "type": card_type,
+        "status": "ACTIVE",
+        "daily_limit": CARD_DEFAULT_DAILY_LIMIT,
+        "label": label,
+    }
+    held.append(card)
+    return card
 # Per-card, per-day settled spend.  The card's ``daily_limit`` is enforced on
 # settlement, so lowering a limit (CARD_LIMIT) immediately constrains further
 # payments instead of only being a display field.
@@ -728,6 +809,12 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
                 return False
             if not CONTACT_PHONE_RE.fullmatch(str(row.get("phone"))):
                 return False
+            # ``owner_id``/``link_verification`` are consent bookkeeping added
+            # later; snapshots written before them must still load (consent is
+            # recomputed on read anyway), so only validate the shape when present.
+            for key in ("owner_id", "link_verification"):
+                if key in row and not isinstance(row.get(key), str):
+                    return False
     return True
 
 
@@ -818,15 +905,14 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
         return _LEDGER_STORE_LOAD_SUMMARY
 
     canonical = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    algorithm = str(integrity.get("alg") or "")
-    if algorithm == "hmac-sha256":
-        expected = _ledger_store_digest(canonical, keyed=True)["value"]
-    elif algorithm == "sha256":
-        expected = _ledger_store_digest(canonical, keyed=False)["value"]
-    else:
+    # The algorithm comes from our configuration, never from the file being
+    # verified: see ``resolve_store_digest_algorithm``.
+    keyed, algorithm_error = resolve_store_digest_algorithm(integrity)
+    if algorithm_error:
         _LEDGER_STORE_BLOCKED = True
-        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": f"账本文件摘要算法未知: {algorithm}"}
+        _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": algorithm_error}
         return _LEDGER_STORE_LOAD_SUMMARY
+    expected = _ledger_store_digest(canonical, keyed=bool(keyed))["value"]
     if not hmac.compare_digest(expected, str(integrity.get("value") or "")):
         _LEDGER_STORE_BLOCKED = True
         _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": "账本文件完整性校验失败"}
@@ -850,7 +936,7 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
         "loaded_state": True,
         "path": target,
         "rejected": False,
-        "keyed": algorithm == "hmac-sha256",
+        "keyed": bool(keyed),
         "accounts": len(state.get("ACCOUNTS") or {}),
         "transactions": len(state.get("TRANSACTIONS") or []),
     }
@@ -959,6 +1045,9 @@ class PrecheckRequest(StrictModel):
     target_name_or_id: str
     amount: float = Field(...)
     remark: Optional[str] = "智能转账"
+    # The card this payment will settle against.  Optional so single-card
+    # clients keep working; with several ACTIVE cards the core refuses to guess.
+    card_id: Optional[str] = None
 
 
 class TransferExecuteRequest(StrictModel):
@@ -968,6 +1057,7 @@ class TransferExecuteRequest(StrictModel):
     remark: Optional[str] = "智能转账"
     mfa_proof: Optional[str] = None
     user_confirmed: bool = False
+    card_id: Optional[str] = None
 
 
 class ConfirmationRequest(StrictModel):
@@ -1112,6 +1202,19 @@ class RiskAssessmentRequest(StrictModel):
     # 8 题问卷模式：{"1": "B", ..., "8": "C"}。提供 answers 时服务端是唯一
     # 评分权威（客户端只提交选项字母，不提交分数），并按总分定 C1-C5 档。
     answers: Optional[dict[str, str]] = None
+
+
+def _presented_session(request: Optional[Request]) -> Optional[str]:
+    """The raw session credential this request presented, if any.
+
+    Set by ``request_safety_middleware`` after it verified the token, so an
+    approval can be bound to the session that asked for it.
+    """
+
+    if request is None:
+        return None
+    value = getattr(request.state, "session_token", None)
+    return str(value) if value else None
 
 
 def _request_id(value: Optional[str]) -> str:
@@ -1341,37 +1444,85 @@ def _card_daily_spent(card_id: str) -> float:
     return float(CARD_DAILY_SPENT.get(card_id, 0.0))
 
 
-def _card_id_for(user_id: str) -> Optional[str]:
+def _payment_card(user_id: str, card_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """The single card a payment settles against, validated for status.
+
+    One resolution for both halves of the check, because enforcement used to
+    read ``_first_active_card()`` (the limit) while recording read ``cards[0]``
+    (the counter) - so with one frozen and one active card the transfer was
+    authorised against the active card's limit and *recorded* on the frozen
+    one, leaving both cards' displayed figures wrong.
+
+    ``card_id`` names the card explicitly (an operator choosing on the app);
+    otherwise the only ACTIVE card is used and ambiguity is an error rather
+    than a guess.
+    """
+
     cards = _user_cards(user_id)
     if not cards:
         return None
-    return str(cards[0].get("card_id") or user_id)
+    if card_id:
+        card = _find_card(user_id, card_id)
+        if card is None:
+            raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
+        if str(card.get("status")) != "ACTIVE":
+            raise SecurityError("该卡片当前不可用于交易", 423, "CARD_BLOCKED")
+        return card
+    active = [card for card in cards if str(card.get("status")) == "ACTIVE"]
+    if not active:
+        return None
+    if len(active) > 1:
+        names = "、".join(str(card.get("card_id")) for card in active[:5])
+        raise SecurityError(f"您有多张可用的卡片（{names}），请指定用于支付的卡片", 409, "CARD_ID_REQUIRED")
+    return active[0]
 
 
-def _enforce_card_limit(user_id: str, amount: float) -> None:
-    """Refuse a settlement that would exceed the card's daily payment limit."""
+def _enforce_card_limit(user_id: str, amount: float, *, card: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    """Refuse a settlement that would exceed the paying card's daily limit.
 
-    card = _first_active_card(user_id)
-    card_id = _card_id_for(user_id)
-    if not card or not card_id:
-        return
-    limit = card.get("daily_limit")
+    Returns the card that was checked, which the caller must hand to
+    ``_record_card_spend`` so both halves use one card.
+    """
+
+    resolved = card if card is not None else _payment_card(user_id)
+    if not resolved:
+        return None
+    limit = resolved.get("daily_limit")
     if limit is None:
-        return
+        return resolved
     try:
         limit_value = float(limit)
     except (TypeError, ValueError):
-        return
-    spent = _card_daily_spent(card_id)
+        return resolved
+    spent = _card_daily_spent(str(resolved.get("card_id") or ""))
     if round(spent + amount, 2) > round(limit_value, 2):
         raise SecurityError("超出卡片当日支付限额，请调整额度或明日再试", 400, "CARD_LIMIT_EXCEEDED")
+    return resolved
 
 
-def _record_card_spend(user_id: str, amount: float) -> None:
-    card_id = _card_id_for(user_id)
+def _record_card_spend(user_id: str, amount: float, *, card: Optional[dict[str, Any]] = None) -> None:
+    resolved = card if card is not None else _payment_card(user_id)
+    if not resolved:
+        return
+    card_id = str(resolved.get("card_id") or "")
     if not card_id:
         return
     CARD_DAILY_SPENT[card_id] = round(_card_daily_spent(card_id) + amount, 2)
+
+
+def _charge_card_and_balance(user_id: str, amount: float, *, card_id: Optional[str] = None) -> dict[str, Any]:
+    """Enforce the paying card's limit and record the spend, consistently.
+
+    Used by every path that actually moves money out of the account (transfer,
+    wealth purchase), so ``daily_limit`` cannot be enforced on one outflow and
+    silently ignored on another.
+    """
+
+    card = _payment_card(user_id, card_id)
+    if card is None:
+        raise SecurityError("付款卡片当前不可用于交易", 423, "CARD_BLOCKED")
+    checked = _enforce_card_limit(user_id, amount, card=card)
+    return checked or card
 
 
 # Sensitive operations that feed the behaviour-combination breaker.  The
@@ -1598,6 +1749,16 @@ def _validate_split_participants(user_id: str, participants: Optional[list[str]]
     for value in values:
         display = sanitize_text(value, field="分摊参与人", max_length=120)
         target_id, _ = _resolve_target(display, from_user=user_id)
+        # AA really debits the participant, so a contact-book entry that only
+        # *claims* a phone number is not enough: without this, adding someone
+        # else's phone number to your own book was enough to pull money out of
+        # their account.
+        if not _aa_debit_authorized(user_id, display):
+            raise SecurityError(
+                f"“{display}”尚未确认可代为扣款，AA 分摊只能向已确认的联系人发起",
+                403,
+                "PARTICIPANT_NOT_AUTHORIZED",
+            )
         if target_id in resolved_ids:
             raise SecurityError("分摊参与人不能重复指向同一账户", 400, "INVALID_PARTICIPANTS")
         resolved_ids.add(target_id)
@@ -1819,11 +1980,26 @@ class ContactAddRequest(StrictModel):
     birthday: Optional[str] = None
 
 
-def _contact_public_view(row: dict[str, Any]) -> dict[str, Any]:
-    """Client-safe projection of one contact-book row (no account internals)."""
+def _contact_public_view(row: dict[str, Any], *, caller_id: Optional[str] = None) -> dict[str, Any]:
+    """Client-safe projection of one contact-book row (no account internals).
+
+    ``account_name`` is the *payee account holder's* real name, so it is only
+    disclosed once that account has actually consented to being linked (see
+    ``_link_verification``).  Otherwise the caller sees the name they typed:
+    anyone can type someone else's phone number, and echoing the holder's real
+    name back would turn the contact book into a name-lookup oracle over the
+    account database.
+
+    Consent is recomputed on every read rather than replayed from the stored
+    row, because it can be granted *after* the contact was created: the owner
+    registering this caller's number later must take effect immediately.
+    """
 
     account_id = str(row.get("account_id") or "")
-    linked_name = ACCOUNTS.get(account_id, {}).get("name") if account_id else None
+    verification = _contact_link_status(row, caller_id=caller_id)
+    link_verified = verification == LINK_VERIFIED
+    link_verified = verification == LINK_VERIFIED
+    linked_name = ACCOUNTS.get(account_id, {}).get("name") if account_id and link_verified else None
     return {
         "contact_id": row.get("contact_id"),
         "name": row.get("name"),
@@ -1834,14 +2010,88 @@ def _contact_public_view(row: dict[str, Any]) -> dict[str, Any]:
         "account_id": account_id or None,
         "linked_existing": bool(row.get("linked_existing")),
         "account_name": linked_name,
+        "link_verification": verification,
+        "debit_authorized": link_verified,
         "created_at": row.get("created_at"),
     }
 
 
-def _resolve_contact_account(name: str, phone: str) -> tuple[str, bool]:
+def _link_verification(account_id: str, phone: str, name: str, *, caller_id: Optional[str] = None) -> str:
+    """Record the link consent state for a freshly added contact.
+
+    Kept for the persisted row; readers should call ``_contact_link_status`` so
+    a later grant is not missed.
+    """
+
+    del name
+    return _contact_consent(account_id, phone, caller_id=caller_id)
+
+
+def _contact_consent(account_id: str, phone: str, *, caller_id: Optional[str]) -> str:
+    """Whether a phone-to-account link carries the account owner's consent.
+
+    A phone number alone is *not* proof of anything: it is a string the caller
+    typed.  Linking it is fine for a payee the caller is paying (their own
+    money, their own choice), but it must not hand the caller the ability to
+    *debit* that account - which is what treating a typed phone number as an
+    authorized AA participant did.
+
+    Consent exists when the two parties have each registered the other: the
+    account holder's own book contains this phone, or the caller is paying with
+    the number registered on their own account.
+    """
+
+    caller = ACCOUNTS.get(str(caller_id or ""))
+    if caller and str(caller.get("phone") or "") == phone:
+        return LINK_VERIFIED
+    if caller_id and str(caller_id) == account_id:
+        return LINK_VERIFIED
+    for row in USER_CONTACTS.get(account_id, []):
+        if str(row.get("phone") or "") == phone:
+            return LINK_VERIFIED
+    # The caller's own number for this account may have been registered by the
+    # holder only after the contact was first added, so treat "the book the
+    # contact points at now lists the caller's number" as consent too.
+    if caller:
+        caller_phone = str(caller.get("phone") or "")
+        for row in USER_CONTACTS.get(account_id, []):
+            if caller_phone and str(row.get("phone") or "") == caller_phone:
+                return LINK_VERIFIED
+    return LINK_UNVERIFIED
+
+
+def _contact_link_status(row: Mapping[str, Any], *, caller_id: Optional[str] = None) -> str:
+    """Live consent state for a stored contact-book row."""
+
+    account_id = str(row.get("account_id") or "")
+    if not account_id:
+        return LINK_UNVERIFIED
+    owner_id = str(row.get("owner_id") or caller_id or "")
+    return _contact_consent(account_id, str(row.get("phone") or ""), caller_id=owner_id or None)
+
+
+def _aa_debit_authorized(user_id: str, name: str) -> bool:
+    """Whether ``name`` may be *debited* by an AA split initiated by ``user_id``.
+
+    The AA flow really moves money out of the participant's account, so the
+    participant must be someone the core can vouch for - a built-in allow-list
+    entry, or a contact-book entry whose owner has consented to the link.
+    """
+
+    with STATE_LOCK:
+        for row in USER_CONTACTS.get(user_id, []):
+            if name in {str(row.get("name") or ""), str(row.get("phone") or "")}:
+                if str(row.get("account_id") or "") not in ACCOUNTS:
+                    return False
+                return _contact_consent(str(row.get("account_id") or ""), str(row.get("phone") or ""), caller_id=user_id) == LINK_VERIFIED
+    return name in CONTACTS
+
+
+def _resolve_contact_account(name: str, phone: str, *, caller_id: Optional[str] = None) -> tuple[str, bool, str]:
     """Return the payee account a contact points at, provisioning one if needed.
 
-    A phone that already belongs to a demo account links to it.  Anything else
+    A phone that already belongs to a demo account links to it and records
+    whether the owner consented (see ``_link_verification``).  Anything else
     gets a zero-balance shadow payee account so the transfer settles end to
     end; its password digest is deliberately unusable, so a contact can never
     be turned into a login.
@@ -1853,7 +2103,7 @@ def _resolve_contact_account(name: str, phone: str) -> tuple[str, bool]:
             None,
         )
         if linked:
-            return linked, True
+            return linked, True, _link_verification(linked, phone, name, caller_id=caller_id)
         account_id = f"ext{uuid.uuid4().hex[:12]}"
         ACCOUNTS[account_id] = {
             "card_no": "----",
@@ -1869,7 +2119,7 @@ def _resolve_contact_account(name: str, phone: str) -> tuple[str, bool]:
             "password_hash": "!contact-book-no-login",
             "source": "CONTACT_BOOK",
         }
-        return account_id, False
+        return account_id, False, LINK_UNVERIFIED
 
 
 @app.get("/api/v1/contacts/{user_id}/book")
@@ -1880,7 +2130,7 @@ def list_contact_book(user_id: str, x_user_id: Optional[str] = Header(None, alia
     actor = _get_actor(user_id, x_user_id, action="CONTACT_QUERY", request_id=request_id)
     _ensure_account(user_id)
     with STATE_LOCK:
-        rows = [_contact_public_view(dict(row)) for row in USER_CONTACTS.get(user_id, [])]
+        rows = [_contact_public_view(dict(row), caller_id=user_id) for row in USER_CONTACTS.get(user_id, [])]
     audit_event("CONTACT_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows), "source": "contact_book"})
     return {"code": 200, "data": rows}
 
@@ -1938,20 +2188,22 @@ def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] =
             existing = USER_CONTACTS.get(user_id, [])
             if any(row.get("name") == name and row.get("phone") == phone for row in existing):
                 raise SecurityError("该联系人已存在", 409, "CONTACT_EXISTS")
-            account_id, linked_existing = _resolve_contact_account(name, phone)
+            account_id, linked_existing, link_verification = _resolve_contact_account(name, phone, caller_id=user_id)
             row = {
                 "contact_id": f"CTT{uuid.uuid4().hex[:10].upper()}",
+                "owner_id": user_id,
                 "name": name,
                 "phone": phone,
                 "relationship": relationship,
                 "birthday": birthday,
                 "account_id": account_id,
                 "linked_existing": linked_existing,
+                "link_verification": link_verification,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             USER_CONTACTS.setdefault(user_id, []).append(row)
     persist_ledger()
-    response = {"code": 200, "status": "CREATED", "data": _contact_public_view(dict(row))}
+    response = {"code": 200, "status": "CREATED", "data": _contact_public_view(dict(row), caller_id=user_id)}
     _idempotency_complete(actor, "contact_add", idempotency_key, idem_payload, response)
     audit_event(
         "CONTACT_ADD",
@@ -2384,24 +2636,7 @@ def add_card(
 
     with STATE_LOCK:
         with _ledger_transaction():
-            held = CARDS.setdefault(user_id, [])
-            # Inside the lock on purpose: two concurrent adds must not both see
-            # room and push the account past the ceiling.
-            if len(held) >= CARD_MAX_PER_USER:
-                raise SecurityError(
-                    f"每人最多持有 {CARD_MAX_PER_USER} 张卡片，请先注销不再使用的卡",
-                    409,
-                    "CARD_LIMIT_REACHED",
-                )
-            card = {
-                "card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}",
-                "number_masked": _mock_card_masked(),
-                "type": card_type,
-                "status": "ACTIVE",
-                "daily_limit": 5000.0,
-                "label": label,
-            }
-            CARDS.setdefault(user_id, []).append(card)
+            card = _issue_card_locked(user_id, card_type=card_type, label=label)
     persist_ledger()
     response = {"code": 200, "status": "ISSUED", "data": dict(card)}
     _idempotency_complete(actor, "card_add", idempotency_key, idem_payload, response)
@@ -2413,7 +2648,7 @@ def add_card(
 # Risk prechecks, explicit confirmation and MFA
 # ---------------------------------------------------------------------------
 @app.post("/api/v1/risk/precheck")
-def risk_precheck(req: PrecheckRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+def risk_precheck(req: PrecheckRequest, request: Request = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     request_id = _request_id(x_request_id)
     actor = _get_actor(req.from_user, x_user_id, action="RISK_PRECHECK", request_id=request_id)
     idem_payload = {"from_user": req.from_user, "target": req.target_name_or_id, "amount": req.amount, "remark": req.remark or "智能转账"}
@@ -2427,6 +2662,12 @@ def risk_precheck(req: PrecheckRequest, x_user_id: Optional[str] = Header(None, 
         cents = amount_to_cents(req.amount)
         if not math.isfinite(float(req.amount)):
             raise SecurityError("金额格式无效", 400, "INVALID_AMOUNT")
+        # Resolve the paying card before a credential is issued, so an
+        # ambiguous or unusable wallet is reported now rather than after the
+        # user has approved and passed MFA.  Execution re-checks it.
+        payer_card = _payment_card(req.from_user, req.card_id)
+        if req.card_id or payer_card is not None:
+            _enforce_card_limit(req.from_user, cents / 100.0, card=payer_card)
     except SecurityError as exc:
         _idempotency_abort(actor, "risk_precheck", idempotency_key)
         _record_failure_and_raise(exc, user_id=actor, action="RISK_PRECHECK", request_id=request_id)
@@ -2437,7 +2678,7 @@ def risk_precheck(req: PrecheckRequest, x_user_id: Optional[str] = Header(None, 
         accumulated_after = round(current_spent + pending + cents / 100.0, 2)
         risk_level = "YELLOW" if accumulated_after <= 1000.0 else "RED"
         required_actions = ["USER_CLICK_CONFIRM"] if risk_level == "YELLOW" else ["USER_CLICK_CONFIRM", "SMS_OTP", "FACE_RECOGNITION"]
-        token, payload = issue_auth_token(from_user=req.from_user, target_id=target_id, target_display=receiver["name"], amount=req.amount, remark=remark, risk_level=risk_level, required_actions=required_actions, operation="TRANSFER")
+        token, payload = issue_auth_token(from_user=req.from_user, target_id=target_id, target_display=receiver["name"], amount=req.amount, remark=remark, risk_level=risk_level, required_actions=required_actions, operation="TRANSFER", session_token=_presented_session(request))
     audit_event("RISK_PRECHECK", user_id=actor, risk_level=risk_level, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"jti": payload["jti"], "target_id": target_id, "amount_cents": cents, "daily_accumulated_after_cents": int(round(accumulated_after * 100)), "required_actions": required_actions})
     response = {"risk_level": risk_level, "daily_accumulated_now": current_spent, "daily_pending_reserved": pending, "daily_accumulated_after": accumulated_after, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": payload["exp"], "required_actions": required_actions, "target_id": target_id, "target_name": receiver["name"], "mfa_required": risk_level == "RED"}
     _idempotency_complete(actor, "risk_precheck", idempotency_key, idem_payload, response)
@@ -2445,7 +2686,7 @@ def risk_precheck(req: PrecheckRequest, x_user_id: Optional[str] = Header(None, 
 
 
 @app.post("/api/v1/risk/precheck/lock")
-def lock_precheck(req: LockPrecheckRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+def lock_precheck(req: LockPrecheckRequest, request: Request = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     request_id = _request_id(x_request_id)
     actor = _get_actor(req.user_id, x_user_id, action="LOCK_PRECHECK", request_id=request_id)
     idem_payload = {"user_id": req.user_id, "amount": req.amount, "reason": req.reason, "event_at": req.event_at, "reminder_at": req.reminder_at}
@@ -2465,7 +2706,7 @@ def lock_precheck(req: LockPrecheckRequest, x_user_id: Optional[str] = Header(No
     lock_context_hash = _context_hash({"event_at": event_at, "reminder_at": reminder_at})
     risk_level = _fund_lock_risk_level(req.amount)
     required_actions = ["USER_CLICK_CONFIRM"] if risk_level == "YELLOW" else ["USER_CLICK_CONFIRM", "SMS_OTP", "FACE_RECOGNITION"]
-    token, payload = issue_auth_token(from_user=req.user_id, target_id="__LOCK_FUND__", target_display="资金隔离池", amount=req.amount, remark=reason, risk_level=risk_level, required_actions=required_actions, operation="LOCK_FUND", context_hash=lock_context_hash)
+    token, payload = issue_auth_token(from_user=req.user_id, target_id="__LOCK_FUND__", target_display="资金隔离池", amount=req.amount, remark=reason, risk_level=risk_level, required_actions=required_actions, operation="LOCK_FUND", context_hash=lock_context_hash, session_token=_presented_session(request))
     audit_event("LOCK_PRECHECK", user_id=actor, risk_level=risk_level, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"jti": payload["jti"], "amount_cents": cents})
     response = {"risk_level": risk_level, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": payload["exp"], "required_actions": required_actions, "mfa_required": risk_level == "RED", "event_at": event_at, "reminder_at": reminder_at}
     _idempotency_complete(actor, "lock_precheck", idempotency_key, idem_payload, response)
@@ -2473,7 +2714,7 @@ def lock_precheck(req: LockPrecheckRequest, x_user_id: Optional[str] = Header(No
 
 
 @app.post("/api/v1/risk/precheck/unlock")
-def unlock_precheck(req: UnlockPrecheckRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+def unlock_precheck(req: UnlockPrecheckRequest, request: Request = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     """Issue a yellow-zone nonce for releasing a previously locked amount."""
     request_id = _request_id(x_request_id)
     actor = _get_actor(req.user_id, x_user_id, action="UNLOCK_PRECHECK", request_id=request_id)
@@ -2496,7 +2737,7 @@ def unlock_precheck(req: UnlockPrecheckRequest, x_user_id: Optional[str] = Heade
         return cached
     risk_level = _fund_lock_risk_level(req.amount)
     required_actions = ["USER_CLICK_CONFIRM"] if risk_level == "YELLOW" else ["USER_CLICK_CONFIRM", "SMS_OTP", "FACE_RECOGNITION"]
-    token, payload = issue_auth_token(from_user=req.user_id, target_id=target, target_display="资金隔离池", amount=req.amount, remark=reason, risk_level=risk_level, required_actions=required_actions, operation="UNLOCK_FUND")
+    token, payload = issue_auth_token(from_user=req.user_id, target_id=target, target_display="资金隔离池", amount=req.amount, remark=reason, risk_level=risk_level, required_actions=required_actions, operation="UNLOCK_FUND", session_token=_presented_session(request))
     audit_event("UNLOCK_PRECHECK", user_id=actor, risk_level=risk_level, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"jti": payload["jti"], "amount_cents": cents, "lock_id": lock_id})
     response = {"risk_level": risk_level, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": payload["exp"], "required_actions": required_actions, "mfa_required": risk_level == "RED", "lock_id": lock_id}
     _idempotency_complete(actor, "unlock_precheck", idempotency_key, idem_payload, response)
@@ -2506,6 +2747,7 @@ def unlock_precheck(req: UnlockPrecheckRequest, x_user_id: Optional[str] = Heade
 @app.post("/api/v1/risk/precheck/operation")
 def operation_precheck(
     req: OperationPrecheckRequest,
+    request: Request = None,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
@@ -2631,6 +2873,7 @@ def operation_precheck(
             required_actions=required,
             operation=operation,
             context_hash=context_hash,
+            session_token=_presented_session(request),
         )
     response = {"code": 200, "risk_level": risk_level, "operation": operation, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": payload["exp"], "required_actions": required, "mfa_required": risk_level == "RED", "target": target, "context_hash": context_hash}
     _idempotency_complete(actor, "operation_precheck", idempotency_key, idem_payload, response)
@@ -2841,12 +3084,19 @@ def register_push_token(
 
 
 @app.get("/api/v1/devices")
-def get_devices(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    """List the devices enrolled to the caller.  No key material is returned."""
+def get_devices(x_session_token: Optional[str] = Header(None, alias="X-Session-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """List the devices enrolled to the caller.  No key material is returned.
 
+    Demands a session credential like its siblings (enroll, push-token): the
+    device registry is the red tier's trust root, so it must not be readable -
+    or revocable, below - from a self-asserted identity header alone.
+    """
+
+    request_id = _request_id(x_request_id)
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "设备查询必须出示会话凭证"})
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    request_id = _request_id(x_request_id)
     actor = _get_actor(x_user_id, x_user_id, action="DEVICE_QUERY", request_id=request_id)
     rows = list_devices(actor)
     audit_event("DEVICE_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
@@ -2854,12 +3104,19 @@ def get_devices(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_re
 
 
 @app.post("/api/v1/devices/{device_id}/revoke")
-def revoke_registered_device(device_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    """Stop accepting attestations from one of the caller's own devices."""
+def revoke_registered_device(device_id: str, x_session_token: Optional[str] = Header(None, alias="X-Session-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Stop accepting attestations from one of the caller's own devices.
 
+    A session credential is required for the same reason as enrollment: this
+    endpoint controls the device trust root, and revoking a device is a
+    security response, not a profile edit.
+    """
+
+    request_id = _request_id(x_request_id)
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "设备吊销必须出示会话凭证"})
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    request_id = _request_id(x_request_id)
     actor = _get_actor(x_user_id, x_user_id, action="DEVICE_REVOKE", request_id=request_id)
     try:
         summary = revoke_device(device_id, user_id=actor, request_id=request_id)
@@ -2928,7 +3185,7 @@ def mfa_face_challenge(req: FaceChallengeRequest, x_user_id: Optional[str] = Hea
 # Yellow/red execution gates
 # ---------------------------------------------------------------------------
 @app.post("/api/v1/transfers/execute")
-def execute_transfer(req: TransferExecuteRequest, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_confirmation: Optional[str] = Header(None, alias="X-User-Confirmation"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_confirmation: Optional[str] = Header(None, alias="X-User-Confirmation"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     request_id = _request_id(x_request_id)
     actor = _get_actor(req.from_user, x_user_id, action="TRANSFER_EXECUTE", request_id=request_id)
     token = x_auth_token
@@ -2938,7 +3195,7 @@ def execute_transfer(req: TransferExecuteRequest, x_auth_token: Optional[str] = 
     # correlation/legacy clients and is deliberately ignored for authorization.
     confirmation = False
     proof = req.mfa_proof or x_mfa_proof
-    idem_payload = {"from_user": req.from_user, "target": req.target_name_or_id, "amount": req.amount, "remark": req.remark or "智能转账"}
+    idem_payload = {"from_user": req.from_user, "target": req.target_name_or_id, "amount": req.amount, "remark": req.remark or "智能转账", "card_id": req.card_id}
     cached = _idempotency_begin(actor, "transfer_execute", idempotency_key, idem_payload, request_id=request_id)
     if cached is not None:
         return cached
@@ -2949,22 +3206,19 @@ def execute_transfer(req: TransferExecuteRequest, x_auth_token: Optional[str] = 
         if not token:
             raise SecurityError("缺少安全授权凭证，严禁直接执行", 403, "TOKEN_REQUIRED")
         with _ledger_transaction():
-            with authorize_execution(token, from_user=req.from_user, target_id=target_id, amount=req.amount, remark=remark, confirmation=confirmation, mfa_proof=proof, operation="TRANSFER", request_id=request_id) as (payload, _record):
+            with authorize_execution(token, from_user=req.from_user, target_id=target_id, amount=req.amount, remark=remark, confirmation=confirmation, mfa_proof=proof, operation="TRANSFER", presented_session=_presented_session(request), request_id=request_id) as (payload, _record):
                 sender = ACCOUNTS[req.from_user]
-                user_cards = _user_cards(req.from_user)
-                if user_cards and not _first_active_card(req.from_user):
-                    raise SecurityError("付款卡片当前不可用于交易", 423, "CARD_BLOCKED")
                 amount = amount_to_cents(req.amount) / 100.0
-                # The card's daily payment limit is enforced on settlement, not
-                # only displayed; lowering the limit constrains later payments.
-                _enforce_card_limit(req.from_user, amount)
+                # The paying card's status and daily limit are enforced on
+                # settlement, and the same card records the spend.
+                paying_card = _charge_card_and_balance(req.from_user, amount, card_id=req.card_id)
                 available = sender["balance"] - sender["locked_amount"]
                 if available < amount:
                     raise SecurityError("可用余额不足（部分资金已被锁定）", 400, "INSUFFICIENT_FUNDS")
                 sender["balance"] = round(sender["balance"] - amount, 2)
                 receiver["balance"] = round(receiver["balance"] + amount, 2)
                 DAILY_TRANSFERS[req.from_user] = round(_daily_spent(req.from_user) + amount, 2)
-                _record_card_spend(req.from_user, amount)
+                _record_card_spend(req.from_user, amount, card=paying_card)
                 if int(round(amount * 100)) >= behavior_large_amount_cents():
                     record_behavior_signal(req.from_user, "LARGE_TRANSFER", metadata={"amount_cents": int(round(amount * 100)), "target_id": target_id}, request_id=request_id)
                 txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
@@ -2986,7 +3240,7 @@ def execute_transfer(req: TransferExecuteRequest, x_auth_token: Optional[str] = 
 
 
 @app.post("/api/v1/accounts/lock_fund")
-def lock_fund(req: LockFundRequest, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_confirmation: Optional[str] = Header(None, alias="X-User-Confirmation"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+def lock_fund(req: LockFundRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_confirmation: Optional[str] = Header(None, alias="X-User-Confirmation"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     request_id = _request_id(x_request_id)
     actor = _get_actor(req.user_id, x_user_id, action="LOCK_FUND", request_id=request_id)
     # ``user_confirmed`` and ``X-User-Confirmation`` are advisory input only;
@@ -3007,7 +3261,7 @@ def lock_fund(req: LockFundRequest, x_auth_token: Optional[str] = Header(None, a
             raise SecurityError("资金锁定需要先完成风险预检并确认", 403, "TOKEN_REQUIRED")
         with _ledger_transaction():
             context_hash = _context_hash({"event_at": event_at, "reminder_at": reminder_at})
-            with authorize_execution(token, from_user=req.user_id, target_id="__LOCK_FUND__", amount=req.amount, remark=reason, confirmation=confirmation, mfa_proof=proof, operation="LOCK_FUND", context_hash=context_hash, request_id=request_id) as (_payload, _record):
+            with authorize_execution(token, from_user=req.user_id, target_id="__LOCK_FUND__", amount=req.amount, remark=reason, confirmation=confirmation, mfa_proof=proof, operation="LOCK_FUND", context_hash=context_hash, presented_session=_presented_session(request), request_id=request_id) as (_payload, _record):
                 amount = amount_to_cents(req.amount) / 100.0
                 if account["balance"] - account["locked_amount"] < amount:
                     raise SecurityError("可用余额不足以锁定此金额", 400, "INSUFFICIENT_FUNDS")
@@ -3055,7 +3309,7 @@ def lock_fund(req: LockFundRequest, x_auth_token: Optional[str] = Header(None, a
 
 @app.post("/api/v1/accounts/unlock_fund")
 @app.post("/api/v1/accounts/rollback_lock")
-def unlock_fund(req: UnlockFundRequest, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+def unlock_fund(req: UnlockFundRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     """Release reserved funds through the same confirmation gate.
 
     A lock id, when supplied, must belong to the authenticated user.  Without
@@ -3087,7 +3341,7 @@ def unlock_fund(req: UnlockFundRequest, x_auth_token: Optional[str] = Header(Non
                 raise SecurityError("锁定编号或可解除金额不匹配", 400, "LOCK_NOT_FOUND")
             if not lock_id and sum(float(v.get("amount", 0)) for v in candidates) < requested_amount:
                 raise SecurityError("可解除的锁定金额不足", 400, "LOCK_NOT_FOUND")
-            with authorize_execution(token, from_user=req.user_id, target_id=target, amount=req.amount, remark=reason, confirmation=False, mfa_proof=proof, operation="UNLOCK_FUND", request_id=request_id) as (_payload, _record):
+            with authorize_execution(token, from_user=req.user_id, target_id=target, amount=req.amount, remark=reason, confirmation=False, mfa_proof=proof, operation="UNLOCK_FUND", presented_session=_presented_session(request), request_id=request_id) as (_payload, _record):
                 left = requested_amount
                 released_ids: list[str] = []
                 for row in candidates:
@@ -3245,7 +3499,7 @@ def execute_operation(
         if cached is not None:
             return cached
         with _ledger_transaction():
-            with authorize_execution(token, from_user=req.user_id, target_id=target, amount=amount, remark=reason, confirmation=False, mfa_proof=proof, operation=operation, context_hash=context_hash, request_id=request_id) as (authorization_payload, _record):
+            with authorize_execution(token, from_user=req.user_id, target_id=target, amount=amount, remark=reason, confirmation=False, mfa_proof=proof, operation=operation, context_hash=context_hash, presented_session=_presented_session(request), request_id=request_id) as (authorization_payload, _record):
                 operation_risk = authorization_payload.get("risk_level", operation_risk)
                 account = ACCOUNTS[req.user_id]
                 result: dict[str, Any] = {"operation": operation}
@@ -3259,7 +3513,13 @@ def execute_operation(
                             raise SecurityError("申购金额低于产品起购金额", 400, "MIN_AMOUNT_NOT_MET")
                         if account["balance"] - account["locked_amount"] < amount:
                             raise SecurityError("可用余额不足", 400, "INSUFFICIENT_FUNDS")
+                        # A purchase is money leaving the account, so the card's
+                        # daily payment limit applies here too.  Enforcing it
+                        # only on transfers left an obvious second outflow that
+                        # ignored the limit entirely.
+                        paying_card = _charge_card_and_balance(req.user_id, amount, card_id=req.card_id)
                         account["balance"] = round(account["balance"] - amount, 2)
+                        _record_card_spend(req.user_id, amount, card=paying_card)
                         holding = {"holding_id": f"HLD{uuid.uuid4().hex[:10].upper()}", "product_id": product_id, "product_name": product["name"], "principal": amount, "estimated_value": amount, "purchased_at": datetime.now().isoformat()}
                         WEALTH_HOLDINGS.setdefault(req.user_id, []).append(holding)
                         TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": req.user_id, "merchant": product["name"], "category": "理财申购", "amount": amount, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
@@ -3276,8 +3536,10 @@ def execute_operation(
                             holdings.pop(index)
                         result.update({"status": "REDEEMED", "product": product, "redeemed_amount": amount})
                 elif operation == "CARD_APPLY":
-                    card = {"card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}", "number_masked": _mock_card_masked(), "type": "VIRTUAL", "status": "ACTIVE", "daily_limit": 5000.0}
-                    CARDS.setdefault(req.user_id, []).append(card)
+                    # Same issuance path (and the same per-user ceiling) as the
+                    # convenience endpoint - asking the assistant must not be a
+                    # way around the wallet cap.
+                    card = _issue_card_locked(req.user_id, card_type="VIRTUAL")
                     result.update({"status": "ISSUED", "card": card})
                 elif operation == "CARD_LIMIT":
                     # ``amount`` is already normalized to cents before the
@@ -3287,6 +3549,12 @@ def execute_operation(
                     new_limit = amount
                     if not math.isfinite(float(new_limit)) or float(new_limit) <= 0:
                         raise SecurityError("卡片额度必须为正数", 400, "INVALID_CARD_LIMIT")
+                    if float(new_limit) > CARD_MAX_DAILY_LIMIT:
+                        raise SecurityError(
+                            f"卡片日限额不得超过 {CARD_MAX_DAILY_LIMIT:.0f} 元",
+                            400,
+                            "CARD_LIMIT_OUT_OF_RANGE",
+                        )
                     card = _select_card(req.user_id, req.card_id)
                     card["daily_limit"] = round(float(new_limit), 2)
                     result.update({"status": "LIMIT_UPDATED", "card": card})

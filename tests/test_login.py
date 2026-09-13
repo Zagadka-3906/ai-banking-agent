@@ -143,7 +143,7 @@ def test_sms_code_is_enforced_when_the_deployment_asks_for_it(client, monkeypatc
 
 
 def test_the_demo_session_endpoint_is_disabled_outside_demo_mode(client, monkeypatch):
-    monkeypatch.setattr(security, "DEMO_MODE", False)
+    monkeypatch.setenv("BANK_DEMO_MODE", "0")
 
     bypass = client.post("/api/v1/auth/session", json={"user_id": "user_zhang"})
     assert bypass.status_code == 403
@@ -267,3 +267,23 @@ def test_a_too_short_new_password_is_refused(client):
     response = _approve_red(client, "PASSWORD_CHANGE", {"new_password": "short"}, {})
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "WEAK_PASSWORD"
+
+
+def test_turning_demo_mode_off_at_runtime_closes_the_session_endpoint(client, monkeypatch):
+    """The documented way to disable demo mode must actually work.
+
+    Regression: ``security.demo_mode()`` returned the value captured at import
+    while its own docstring (and ``agent_api``, which does read the
+    environment) promised a per-call read.  Setting ``BANK_DEMO_MODE=0``
+    therefore disabled the gateway's demo identity shortcut but left the core
+    still minting password-free session credentials here.
+    """
+
+    assert client.post("/api/v1/auth/session", json={"user_id": "user_li"}).status_code == 200
+
+    monkeypatch.setenv("BANK_DEMO_MODE", "0")
+
+    refused = client.post("/api/v1/auth/session", json={"user_id": "user_li"})
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"]["code"] == "DEMO_ENDPOINT_DISABLED"
+    assert client.get("/api/v1/security/health").json()["demo_mode"] is False

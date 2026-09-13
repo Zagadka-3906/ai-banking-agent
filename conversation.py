@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping, Optional
 
 from bank_tools import BankAPIError, BankClient
-from security import AUTH_SECRET_CONFIGURED, SecurityError, audit_event, sanitize_text, store_integrity_digest
+from security import AUTH_SECRET_CONFIGURED, SecurityError, audit_event, resolve_store_digest_algorithm, sanitize_text, store_integrity_digest
 
 try:  # The graph is optional so this module stays importable in minimal setups.
     from agent import build_graph, channel_session
@@ -382,14 +382,13 @@ def load_approval_store() -> dict[str, dict[str, Any]]:
         return {"loaded_approvals": 0, "path": target, "rejected": True, "error": "审批文件结构无效"}
 
     canonical = json.dumps(approvals, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    algorithm = str(integrity.get("alg") or "")
-    if algorithm == "hmac-sha256":
-        expected = store_integrity_digest(canonical, keyed=True)["value"]
-    elif algorithm == "sha256":
-        expected = store_integrity_digest(canonical, keyed=False)["value"]
-    else:
+    # Algorithm chosen from our configuration, not from the file: see
+    # ``resolve_store_digest_algorithm``.
+    keyed, algorithm_error = resolve_store_digest_algorithm(integrity)
+    if algorithm_error:
         _APPROVAL_STORE_BLOCKED = True
-        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": f"审批文件摘要算法未知: {algorithm}"}
+        return {"loaded_approvals": 0, "path": target, "rejected": True, "error": algorithm_error}
+    expected = store_integrity_digest(canonical, keyed=bool(keyed))["value"]
     if not hmac.compare_digest(expected, str(integrity.get("value") or "")):
         _APPROVAL_STORE_BLOCKED = True
         return {"loaded_approvals": 0, "path": target, "rejected": True, "error": "审批文件完整性校验失败"}
@@ -401,7 +400,7 @@ def load_approval_store() -> dict[str, dict[str, Any]]:
         "loaded_approvals": len(approvals),
         "path": target,
         "rejected": False,
-        "keyed": algorithm == "hmac-sha256",
+        "keyed": bool(keyed),
         "records": approvals,
     }
 

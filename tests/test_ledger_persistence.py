@@ -118,12 +118,71 @@ def test_the_digest_is_keyed_when_the_secret_is_configured(client, store_path, m
     payload = json.loads(store_path.read_text(encoding="utf-8"))
     assert payload["integrity"]["alg"] == "hmac-sha256"
 
-    # A forged file cannot be produced without the key.
+    # A file whose digest no longer matches is refused - any scheme catches
+    # this.  The meaningful property (an attacker who can rewrite the file but
+    # does not hold the key still cannot forge one) is covered by
+    # test_a_downgraded_digest_algorithm_cannot_forge_a_balance below.
     main.reset_state()
     forged = json.loads(store_path.read_text(encoding="utf-8"))
     forged["state"]["ACCOUNTS"]["user_zhang"]["balance"] = 1.0
     store_path.write_text(json.dumps(forged), encoding="utf-8")
     assert main.load_ledger_store()["rejected"] is True
+
+
+def test_a_downgraded_digest_algorithm_cannot_forge_a_balance(client, store_path, monkeypatch):
+    """The algorithm must come from our config, not from the file.
+
+    Regression: the loader used to honour the file's own ``integrity.alg``, so
+    an attacker who could write the snapshot (but who never learned
+    ``BANK_AUTH_SECRET``) could relabel it ``sha256``, recompute an unkeyed
+    checksum over a tampered state, and have it accepted as authentic - while
+    ``ledger_store_status()`` kept reporting ``integrity_keyed: True``.  The
+    assertion must therefore recompute the digest exactly as the attacker can,
+    otherwise it only proves that a file with a stale digest is refused.
+    """
+
+    import hashlib
+
+    monkeypatch.setattr(security, "AUTH_SECRET", b"unit-test-key")
+    monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", True)
+    monkeypatch.setattr(main, "AUTH_SECRET_CONFIGURED", True)
+
+    _yellow_transfer(client)
+    main.reset_state()
+
+    forged = json.loads(store_path.read_text(encoding="utf-8"))
+    forged["state"]["ACCOUNTS"]["user_zhang"]["balance"] = 999999.0
+    canonical = json.dumps(forged["state"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    forged["integrity"] = {"alg": "sha256", "value": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
+    store_path.write_text(json.dumps(forged), encoding="utf-8")
+
+    summary = main.load_ledger_store()
+    assert summary["rejected"] is True, summary
+    assert "降级" in summary.get("error", "")
+    assert main.ACCOUNTS["user_zhang"]["balance"] != 999999.0
+
+
+def test_an_unconfigured_deployment_refuses_a_keyed_file(client, store_path, monkeypatch):
+    """Without the secret we cannot verify an HMAC, so accepting it would be a
+    silent 'trust the file' path (and the reverse of the downgrade attack).
+
+    ``BANK_AUTH_SECRET`` is pinned off explicitly: a developer's ``.env``
+    otherwise supplies one (python-dotenv is loaded with ``override=False``),
+    which would make this test silently exercise the configured branch.
+    """
+
+    monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", False)
+    monkeypatch.setattr(main, "AUTH_SECRET_CONFIGURED", False)
+
+    _yellow_transfer(client)
+    payload = json.loads(store_path.read_text(encoding="utf-8"))
+    assert payload["integrity"]["alg"] == "sha256"  # no secret configured here
+    payload["integrity"]["alg"] = "hmac-sha256"
+    store_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = main.load_ledger_store()
+    assert summary["rejected"] is True, summary
+    assert security.AUTH_SECRET_CONFIGURED is False
 
 
 def test_health_reports_the_ledger_store(client):

@@ -314,6 +314,122 @@ def test_self_service_card_issuance_is_capped_per_user(client: TestClient, monke
     assert refused.json()["detail"]["code"] == "CARD_LIMIT_REACHED"
 
 
+def test_card_apply_cannot_bypass_the_per_user_card_ceiling(client: TestClient, monkeypatch):
+    """Regression: asking the assistant for a card skipped the wallet cap.
+
+    ``/cards/{user_id}/add`` enforced ``CARD_MAX_PER_USER`` while the
+    ``CARD_APPLY`` operation appended straight to the wallet, so the same
+    outcome was reachable two ways with only one of them bounded.
+    """
+
+    monkeypatch.setattr(main, "CARD_MAX_PER_USER", 2)
+    main.CARDS["user_zhang"] = []
+
+    def apply_card():
+        precheck = client.post(
+            "/api/v1/risk/precheck/operation",
+            json={"user_id": "user_zhang", "operation": "CARD_APPLY"},
+            headers=headers(),
+        )
+        assert precheck.status_code == 200, precheck.text
+        token = precheck.json()["auth_token"]
+        client.post("/api/v1/auth/confirm", json={}, headers=headers(token))
+        return client.post("/api/v1/cards/apply", json={"user_id": "user_zhang", "auth_token": token}, headers=headers(token))
+
+    assert apply_card().status_code == 200
+    assert apply_card().status_code == 200
+    refused = apply_card()
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "CARD_LIMIT_REACHED"
+    assert len(main.CARDS["user_zhang"]) == 2
+
+
+def test_card_limit_cannot_be_raised_to_the_transfer_ceiling(client: TestClient):
+    """``CARD_LIMIT`` is bounded by card policy, not by the transfer maximum.
+
+    The only ceiling used to be ``BANK_MAX_TRANSFER_CENTS`` (10,000 yuan), so a
+    single MFA approval could turn a 5,000-yuan daily limit into 1,000,000.
+    """
+
+    assert main.CARD_MAX_DAILY_LIMIT < 1_000_000
+    token, proof = approve_red(client, "CARD_LIMIT", card_id="CARD-001", new_limit=1_000_000)
+    refused = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "CARD_LIMIT", "card_id": "CARD-001", "new_limit": 1_000_000, "auth_token": token},
+        headers={**headers(token), "X-MFA-Proof": proof},
+    )
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["detail"]["code"] == "CARD_LIMIT_OUT_OF_RANGE"
+    assert main.CARDS["user_zhang"][0]["daily_limit"] == 5000.0
+
+    allowed_token, allowed_proof = approve_red(client, "CARD_LIMIT", card_id="CARD-001", new_limit=8000)
+    allowed = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "CARD_LIMIT", "card_id": "CARD-001", "new_limit": 8000, "auth_token": allowed_token},
+        headers={**headers(allowed_token), "X-MFA-Proof": allowed_proof},
+    )
+    assert allowed.status_code == 200, allowed.text
+    assert main.CARDS["user_zhang"][0]["daily_limit"] == 8000.0
+
+
+def test_wealth_purchase_obeys_the_card_daily_limit(client: TestClient, monkeypatch):
+    """A purchase is money leaving the account, so the card limit applies.
+
+    Regression: ``daily_limit`` was enforced only in ``execute_transfer``, so
+    the same card could ignore its limit entirely by buying a wealth product.
+    """
+
+    monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
+    client.post(
+        "/api/v1/wealth/risk-assessment",
+        json={"user_id": "user_zhang", "answers": {str(number): "D" for number in range(1, 9)}},
+        headers=headers(),
+    )
+    main.CARDS["user_zhang"][0]["daily_limit"] = 100.0
+    main.CARD_DAILY_SPENT.clear()
+    main.CARD_DAILY_SPENT_DATE.clear()
+    balance_before = main.ACCOUNTS["user_zhang"]["balance"]
+
+    token, proof = approve_red(client, "WEALTH_PURCHASE", product_id="CJ01002", amount=5000, reason="大额申购")
+    refused = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 5000, "reason": "大额申购", "auth_token": token},
+        headers={**headers(token), "X-MFA-Proof": proof},
+    )
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["detail"]["code"] == "CARD_LIMIT_EXCEEDED"
+    assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before
+    assert main.WEALTH_HOLDINGS.get("user_zhang", []) == []
+    assert main.CARD_DAILY_SPENT.get("CARD-001", 0.0) == 0.0
+
+
+def test_wealth_purchase_records_the_card_spend_when_it_settles(client: TestClient, monkeypatch):
+    monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
+    client.post(
+        "/api/v1/wealth/risk-assessment",
+        json={"user_id": "user_zhang", "answers": {str(number): "D" for number in range(1, 9)}},
+        headers=headers(),
+    )
+    main.CARDS["user_zhang"][0]["daily_limit"] = 5000.0
+    main.CARD_DAILY_SPENT.clear()
+    main.CARD_DAILY_SPENT_DATE.clear()
+    balance_before = main.ACCOUNTS["user_zhang"]["balance"]
+
+    token, proof = approve_red(client, "WEALTH_PURCHASE", product_id="CJ01002", amount=1000, reason="申购")
+    settled = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "申购", "auth_token": token},
+        headers={**headers(token), "X-MFA-Proof": proof},
+    )
+
+    assert settled.status_code == 200, settled.text
+    assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before - 1000.0
+    assert main.CARD_DAILY_SPENT["CARD-001"] == 1000.0
+    assert len(main.WEALTH_HOLDINGS["user_zhang"]) == 1
+
+
 def test_password_change_is_red_and_card_lost_state_has_explicit_unreport(client: TestClient):
     token, proof = approve_red(client, "PASSWORD_CHANGE")
     version_before = main.ACCOUNTS["user_zhang"]["credential_version"]
@@ -398,7 +514,13 @@ def _transfer(client: TestClient, amount: float, target: str = "李四"):
 
 
 def test_card_daily_limit_is_enforced_on_settlement(client: TestClient, monkeypatch):
-    """The card's daily_limit now constrains real payments, not just display."""
+    """The card's daily_limit constrains real payments, not just display.
+
+    It is checked at both ends now: the precheck refuses before a credential is
+    issued (so the user is not sent through approval and MFA for a payment that
+    cannot settle), and settlement re-checks because the limit can move in
+    between.
+    """
 
     monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
     card = main.CARDS["user_zhang"][0]
@@ -409,7 +531,12 @@ def test_card_daily_limit_is_enforced_on_settlement(client: TestClient, monkeypa
     assert at_limit.status_code == 200, at_limit.text
     assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before - 100.0
 
-    over_limit = _transfer(client, 0.01)
+    # Over the limit is refused at precheck, before any token exists.
+    over_limit = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 0.01},
+        headers=headers(),
+    )
     assert over_limit.status_code == 400, over_limit.text
     assert over_limit.json()["detail"]["code"] == "CARD_LIMIT_EXCEEDED"
     assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before - 100.0
@@ -423,6 +550,44 @@ def test_card_daily_limit_is_enforced_on_settlement(client: TestClient, monkeypa
     next_day = _transfer(client, 50.0)
     assert next_day.status_code == 200, next_day.text
     assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before - 150.0
+
+
+def test_the_settlement_card_is_the_card_that_is_charged(client: TestClient, monkeypatch):
+    """Regression: enforcement read one card and the counter wrote another.
+
+    ``_enforce_card_limit`` checked the first *ACTIVE* card while
+    ``_record_card_spend`` wrote ``cards[0]``, so with one frozen and one
+    active card the payment was authorised against the active card's limit and
+    recorded on the frozen one - leaving both cards' displayed figures wrong.
+    """
+
+    monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
+    main.CARDS["user_zhang"] = [
+        {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "FROZEN", "daily_limit": 5000.0, "label": "工资卡"},
+        {"card_id": "CARD-002", "number_masked": "**** **** **** 9999", "type": "借记卡", "status": "ACTIVE", "daily_limit": 100.0, "label": "小额卡"},
+    ]
+    main.CARD_DAILY_SPENT.clear()
+    main.CARD_DAILY_SPENT_DATE.clear()
+
+    assert _transfer(client, 80.0).status_code == 200
+
+    # The spend lands on the card that paid, and only on that one.
+    assert main.CARD_DAILY_SPENT == {"CARD-002": 80.0}
+
+    cards = {row["card_id"]: row for row in client.get("/api/v1/cards/user_zhang", headers=headers()).json()["data"]}
+    assert cards["CARD-002"]["daily_spent_today"] == 80.0
+    assert cards["CARD-002"]["daily_remaining"] == 20.0
+    assert cards["CARD-001"]["daily_spent_today"] == 0.0
+    assert cards["CARD-001"]["daily_remaining"] == 5000.0
+
+    # And the limit that binds is the paying card's 100, not the frozen 5000.
+    refused = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 30.0},
+        headers=headers(),
+    )
+    assert refused.status_code == 400
+    assert refused.json()["detail"]["code"] == "CARD_LIMIT_EXCEEDED"
 
 
 def test_renewal_reminders_are_idempotent_and_cascade_on_cancel(client: TestClient, monkeypatch):

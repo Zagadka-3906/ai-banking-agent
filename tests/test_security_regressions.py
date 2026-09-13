@@ -614,3 +614,66 @@ def test_subscription_match_and_card_state_are_fail_closed(client: TestClient):
     )
     assert missing_card.status_code == 404
     assert missing_card.json()["detail"]["code"] == "CARD_NOT_FOUND"
+
+
+def test_revoking_the_session_invalidates_an_in_flight_authorization(client: TestClient):
+    """Logout (or credential rotation) must kill approvals already minted.
+
+    Regression: the authorization nonce is signed independently of any session
+    and the execute endpoint identified the caller from a self-asserted header,
+    so an approval obtained before a logout still settled afterwards - the
+    login was cut off while the money was not.
+    """
+
+    login = client.post("/api/v1/auth/login", json={"user_id": "user_zhang", "password": "Bank@2026"})
+    assert login.status_code == 200, login.text
+    session = login.json()["session_token"]
+    with_session = {"X-User-Id": "user_zhang", "X-Session-Token": session}
+
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 100},
+        headers=with_session,
+    )
+    assert precheck.status_code == 200, precheck.text
+    token = precheck.json()["auth_token"]
+    assert client.post("/api/v1/auth/confirm", json={}, headers={**with_session, "X-Auth-Token": token}).status_code == 200
+
+    assert client.post("/api/v1/auth/logout", json={}, headers=with_session).status_code == 200
+    assert client.get("/api/v1/accounts/user_zhang/balance", headers=with_session).status_code == 401
+
+    balance_before = main.ACCOUNTS["user_zhang"]["balance"]
+    settled = client.post(
+        "/api/v1/transfers/execute",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 100, "auth_token": token},
+        headers={"X-User-Id": "user_zhang", "X-Auth-Token": token},
+    )
+
+    assert settled.status_code == 401, settled.text
+    assert settled.json()["detail"]["code"] in {"SESSION_REQUIRED", "SESSION_REVOKED"}
+    assert main.ACCOUNTS["user_zhang"]["balance"] == balance_before
+
+
+def test_an_approval_from_a_session_survives_while_that_session_lives(client: TestClient):
+    """The binding must not break the ordinary logged-in flow."""
+
+    login = client.post("/api/v1/auth/login", json={"user_id": "user_zhang", "password": "Bank@2026"})
+    session = login.json()["session_token"]
+    with_session = {"X-User-Id": "user_zhang", "X-Session-Token": session}
+
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 100},
+        headers=with_session,
+    )
+    token = precheck.json()["auth_token"]
+    client.post("/api/v1/auth/confirm", json={}, headers={**with_session, "X-Auth-Token": token})
+
+    settled = client.post(
+        "/api/v1/transfers/execute",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 100, "auth_token": token},
+        headers={**with_session, "X-Auth-Token": token},
+    )
+
+    assert settled.status_code == 200, settled.text
+    assert settled.json()["status"] == "SUCCESS"

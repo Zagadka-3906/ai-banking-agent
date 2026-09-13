@@ -90,12 +90,19 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 def demo_mode() -> bool:
     """Whether demo-only affordances are enabled.
 
-    Read per call rather than captured at import time, so a test (or a
-    deployment reloading its configuration) can flip ``BANK_DEMO_MODE`` without
-    re-importing every module that depends on it.
+    Read per call rather than captured at import time, so a deployment that
+    reloads its configuration - or an operator who turns demo mode off in the
+    environment - takes effect immediately.
+
+    This used to return the module-level ``DEMO_MODE`` constant while claiming
+    to read per call.  Setting ``BANK_DEMO_MODE=0`` at runtime therefore
+    switched off ``agent_api``'s demo identity short-circuit (which does read
+    the environment) but left the core still minting password-free session
+    credentials at ``POST /api/v1/auth/session`` - i.e. the switch that is
+    documented as the way to close that door did not close it.
     """
 
-    return DEMO_MODE
+    return os.getenv("BANK_DEMO_MODE", "1" if DEMO_MODE else "0").lower() in {"1", "true", "yes", "on"}
 
 
 # Must come after ``_env_int`` is defined - it validates through it.
@@ -958,6 +965,7 @@ def issue_auth_token(
     required_actions: list[str],
     operation: str = "TRANSFER",
     context_hash: Optional[str] = None,
+    session_token: Optional[str] = None,
     ttl_seconds: Optional[int] = None,
 ) -> tuple[str, dict[str, Any]]:
     """Issue a signed transfer authorization token and persist its nonce."""
@@ -1001,6 +1009,10 @@ def issue_auth_token(
         # details were changed after approval without exposing those details
         # in the credential itself.
         "context_hash": context_hash,
+        # Fingerprint of the session that requested this approval (when the
+        # caller held one).  Settlement re-checks it, so a revoked session
+        # cannot still spend.  See ``assert_session_still_valid``.
+        "session_fp": session_binding(session_token),
         "iat": now,
         "exp": now + ttl,
     }
@@ -1164,6 +1176,48 @@ def verify_password(password: Any, digest: Optional[str]) -> bool:
         # "not authenticated"; distinguishing them to the caller would leak
         # whether an account exists and whether its digest is intact.
         return False
+
+
+def session_binding(session_token: Optional[str]) -> Optional[str]:
+    """Fingerprint a session credential so an authorization can be bound to it.
+
+    Only the fingerprint enters the token payload - never the credential itself,
+    which has no business travelling inside another bearer token.
+    """
+
+    if not isinstance(session_token, str) or not session_token:
+        return None
+    return credential_fingerprint(session_token)
+
+
+def assert_session_still_valid(session_fingerprint: Optional[str], presented_session: Optional[str]) -> None:
+    """Refuse to settle an approval whose originating session was revoked.
+
+    Revoking a session (logout, credential rotation) used to leave every
+    outstanding authorization nonce fully usable: the nonce is signed
+    independently of any session, and the execution endpoint identifies the
+    caller from a self-asserted header.  So a user could log out - or change a
+    password precisely because a device was stolen - and the in-flight approval
+    would still move money.
+
+    A caller that holds no session at all (the demo's header-only mode) has
+    nothing to bind, and keeps working unchanged.
+    """
+
+    if not session_fingerprint:
+        return
+    if not isinstance(presented_session, str) or not presented_session:
+        raise SecurityError("该授权绑定于一个会话，请携带有效的会话凭证", 401, "SESSION_REQUIRED")
+    with STATE_LOCK:
+        record = SESSION_TOKENS.get(presented_session)
+        if (
+            not record
+            or record.get("token_hash") != credential_fingerprint(presented_session)
+            or credential_fingerprint(presented_session) != session_fingerprint
+        ):
+            raise SecurityError("授权所属会话已失效，请重新登录后再试", 401, "SESSION_REVOKED")
+        if float(record.get("expires_at", 0)) <= time.time():
+            raise SecurityError("授权所属会话已过期，请重新登录后再试", 401, "SESSION_EXPIRED")
 
 
 def revoke_sessions_for(user_id: str, *, reason: str = "credential_rotated", request_id: Optional[str] = None) -> int:
@@ -1690,6 +1744,37 @@ def store_integrity_digest(canonical: str, *, keyed: bool) -> dict[str, str]:
     return {"alg": "sha256", "value": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
 
 
+def resolve_store_digest_algorithm(integrity: Mapping[str, Any]) -> tuple[Optional[bool], Optional[str]]:
+    """Decide whether to verify a store file with the keyed digest.
+
+    Returns ``(keyed, error)``: exactly one is set.
+
+    The algorithm must be chosen from *our* configuration, never from the file
+    being verified.  Trusting the file's own ``alg`` field let anyone who could
+    write the file downgrade ``hmac-sha256`` to a plain ``sha256`` checksum,
+    recompute that checksum without ever learning ``BANK_AUTH_SECRET``, and have
+    the tampered snapshot accepted as authentic - while ``*_store_status()``
+    kept reporting ``integrity_keyed: True``.  A keyed store therefore only
+    accepts a keyed file, and an unconfigured deployment (checksum mode, where
+    the digest proves nothing about authorship) still rejects a keyed file it
+    could not have produced.
+    """
+
+    algorithm = str(integrity.get("alg") or "")
+    if AUTH_SECRET_CONFIGURED:
+        if algorithm != "hmac-sha256":
+            return None, (
+                "存储文件摘要算法被降级：已配置 BANK_AUTH_SECRET，"
+                f"只接受 hmac-sha256（文件声明 {algorithm or '空'}）"
+            )
+        return True, None
+    if algorithm == "hmac-sha256":
+        return None, "存储文件为 HMAC 摘要，但本进程未配置 BANK_AUTH_SECRET，无法校验"
+    if algorithm != "sha256":
+        return None, f"存储文件摘要算法未知: {algorithm or '空'}"
+    return False, None
+
+
 def _device_record_valid(device_id: str, record: Any) -> bool:
     """Re-validate one persisted record before it is trusted again.
 
@@ -1796,14 +1881,11 @@ def _load_device_store(path: Optional[str] = None) -> dict[str, Any]:
         return {"loaded_devices": 0, "path": target, "rejected": True, "error": "设备库结构无效"}
 
     canonical = json.dumps(devices, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    algorithm = str(integrity.get("alg") or "")
-    if algorithm == "hmac-sha256":
-        expected = _device_store_digest(canonical, keyed=True)["value"]
-    elif algorithm == "sha256":
-        expected = _device_store_digest(canonical, keyed=False)["value"]
-    else:
+    keyed, algorithm_error = resolve_store_digest_algorithm(integrity)
+    if algorithm_error:
         _DEVICE_STORE_BLOCKED = True
-        return {"loaded_devices": 0, "path": target, "rejected": True, "error": f"设备库摘要算法未知: {algorithm}"}
+        return {"loaded_devices": 0, "path": target, "rejected": True, "error": algorithm_error}
+    expected = _device_store_digest(canonical, keyed=bool(keyed))["value"]
     if not hmac.compare_digest(expected, str(integrity.get("value") or "")):
         _DEVICE_STORE_BLOCKED = True
         return {"loaded_devices": 0, "path": target, "rejected": True, "error": "设备库完整性校验失败"}
@@ -1821,7 +1903,7 @@ def _load_device_store(path: Optional[str] = None) -> dict[str, Any]:
         "loaded_devices": len(devices),
         "path": target,
         "rejected": False,
-        "keyed": algorithm == "hmac-sha256",
+        "keyed": bool(keyed),
     }
 
 
@@ -1928,7 +2010,7 @@ def verify_face_attestation(attestation: Optional[str], *, auth_payload: Mapping
     if attestation.startswith(FACE_ATTESTATION_V2_PREFIX):
         return _verify_device_attestation(attestation, auth_payload=auth_payload, user_id=user_id)
 
-    if not DEMO_MODE:
+    if not demo_mode():
         return None
     try:
         att = _decode_signed(attestation, "face_attestation", secret=FACE_ATTEST_SECRET)
@@ -1957,13 +2039,13 @@ def verify_login_otp(otp: Any) -> bool:
     cannot be logged into with an empty string.
     """
 
-    expected = MFA_TEST_OTP if DEMO_MODE else os.getenv("BANK_MFA_OTP", "")
+    expected = MFA_TEST_OTP if demo_mode() else os.getenv("BANK_MFA_OTP", "")
     return isinstance(otp, str) and bool(expected) and hmac.compare_digest(otp.strip(), expected)
 
 
 def _factor_sms_otp(ctx: dict[str, Any]) -> bool:
     otp = ctx.get("otp")
-    expected = MFA_TEST_OTP if DEMO_MODE else os.getenv("BANK_MFA_OTP", "")
+    expected = MFA_TEST_OTP if demo_mode() else os.getenv("BANK_MFA_OTP", "")
     return isinstance(otp, str) and bool(expected) and hmac.compare_digest(otp.strip(), expected)
 
 
@@ -2104,6 +2186,7 @@ def authorize_execution(
     mfa_proof: Optional[str] = None,
     operation: str = "TRANSFER",
     context_hash: Optional[str] = None,
+    presented_session: Optional[str] = None,
     request_id: Optional[str] = None,
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
     """Atomically validate a transfer token and mark it used on success.
@@ -2117,6 +2200,8 @@ def authorize_execution(
     proof_record: Optional[dict[str, Any]] = None
     with STATE_LOCK:
         payload, record = _lookup_auth_locked(auth_token)
+        # An approval minted inside a session dies with that session.
+        assert_session_still_valid(payload.get("session_fp"), presented_session)
         if payload.get("operation", "TRANSFER") != operation:
             raise SecurityError("安全凭证与业务操作不匹配", 403, "TOKEN_OPERATION_MISMATCH")
         if payload.get("context_hash") != context_hash:
@@ -2209,7 +2294,7 @@ def security_health() -> dict[str, Any]:
         return {
             "status": "DEGRADED" if locked else "OK",
             "auth_secret_configured": AUTH_SECRET_CONFIGURED,
-            "demo_mode": DEMO_MODE,
+            "demo_mode": demo_mode(),
             "active_auth_tokens": sum(1 for rec in AUTH_TOKENS.values() if not rec.get("used") and float(rec.get("expires_at", 0)) > time.time()),
             "active_sessions": sum(1 for rec in SESSION_TOKENS.values() if float(rec.get("expires_at", 0)) > time.time()),
             "session_ttl_seconds": SESSION_TTL_SECONDS,
@@ -2230,7 +2315,7 @@ def security_health() -> dict[str, Any]:
                 # always accepted; the shared-key ticket would have to ship
                 # inside the client, so it stays a demo affordance.
                 "device_signature": "enabled" if DEVICE_KEYS_AVAILABLE else "unavailable",
-                "legacy_shared_key": "demo_only" if DEMO_MODE else "disabled",
+                "legacy_shared_key": "demo_only" if demo_mode() else "disabled",
                 "curve": DEVICE_CURVE,
                 "secret_configured": FACE_ATTEST_SECRET_CONFIGURED,
                 "challenge_ttl_seconds": FACE_CHALLENGE_TTL_SECONDS,

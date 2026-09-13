@@ -240,7 +240,7 @@ def test_device_signature_is_verified_even_outside_demo_mode(client, monkeypatch
     key = new_device_key()
     device_id = enroll(client, headers, key)
 
-    monkeypatch.setattr(security, "DEMO_MODE", False)
+    monkeypatch.setenv("BANK_DEMO_MODE", "0")
     # Keep the SMS factor satisfiable so a failure could only come from the
     # attestation, making the assertion meaningful.
     monkeypatch.setenv("BANK_MFA_OTP", VALID_OTP)
@@ -251,7 +251,7 @@ def test_device_signature_is_verified_even_outside_demo_mode(client, monkeypatch
 
 
 def test_health_marks_the_shared_key_as_demo_only(client, monkeypatch):
-    monkeypatch.setattr(security, "DEMO_MODE", False)
+    monkeypatch.setenv("BANK_DEMO_MODE", "0")
     health = client.get("/api/v1/security/health").json()
     assert health["face_attestation"]["legacy_shared_key"] == "disabled"
 
@@ -267,7 +267,7 @@ def test_legacy_shared_key_ticket_is_refused_when_demo_mode_is_off(client, monke
     challenge = face_challenge(client, headers, token)
     legacy = security.sign_face_attestation(challenge["challenge_id"], user_id="user_zhang", token_jti=challenge["auth_token_jti"])
 
-    monkeypatch.setattr(security, "DEMO_MODE", False)
+    monkeypatch.setenv("BANK_DEMO_MODE", "0")
     monkeypatch.setenv("BANK_MFA_OTP", VALID_OTP)
     refused = verify_mfa(client, headers, token, legacy)
     assert refused.status_code == 403
@@ -448,3 +448,23 @@ def test_enrollment_and_revocation_are_audited(client):
     # material must never reach the audit trail.
     serialized = json.dumps(security.AUDIT_LOGS)
     assert "public_key" not in serialized
+
+
+def test_device_registry_endpoints_require_a_session(client, monkeypatch):
+    """The device trust root is not readable or revocable from a bare header.
+
+    Regression: enroll and push-token demanded a session credential while
+    list and revoke accepted a self-asserted ``X-User-Id``, so the red tier's
+    trust root was the one part of the surface with no credential behind it.
+    """
+
+    headers = session_headers(client, "user_zhang")
+    device_id = enroll(client, headers, new_device_key())
+
+    bare = {"X-User-Id": "user_zhang"}
+    assert client.get("/api/v1/devices", headers=bare).status_code == 401
+    assert client.post(f"/api/v1/devices/{device_id}/revoke", headers=bare).status_code == 401
+
+    listed = client.get("/api/v1/devices", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert [row["device_id"] for row in listed.json()["data"]] == [device_id]

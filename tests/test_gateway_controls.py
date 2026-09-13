@@ -132,9 +132,31 @@ def test_rate_limit_returns_429_with_retry_after(client: TestClient, monkeypatch
     assert int(limited.headers["Retry-After"]) >= 1
     assert limited.headers["X-Content-Type-Options"] == "nosniff"
 
-    # Health probes are exempt, and the window is per principal.
+    # Health probes are exempt.
     assert client.get("/healthz").status_code == 200
-    assert client.get("/api/v1/accounts/user_li/balance", headers={"X-User-Id": "user_li"}).status_code == 200
+    # A different self-asserted X-User-Id must NOT buy a fresh window: the
+    # header is an object selector, not a credential, so keying on it let
+    # anyone rotate the value and reset the throttle at will.
+    assert client.get("/api/v1/accounts/user_li/balance", headers={"X-User-Id": "user_li"}).status_code == 429
+
+
+def test_rate_limit_buckets_by_verified_session_not_by_claimed_header(client: TestClient, monkeypatch):
+    """One caller exhausting its window must not throttle another principal.
+
+    With a verified session the bucket is the session's principal, so a second
+    logged-in user is unaffected - which is the property the old per-header
+    bucketing appeared to provide, but only by letting the caller pick its own
+    bucket.
+    """
+
+    monkeypatch.setenv("BANK_RATE_LIMIT_PER_MINUTE", "3")
+    noisy_token = _session(client, "user_li")
+    for _ in range(4):
+        client.get("/api/v1/accounts/user_li/balance", headers={"X-Session-Token": noisy_token})
+    assert client.get("/api/v1/accounts/user_li/balance", headers={"X-Session-Token": noisy_token}).status_code == 429
+
+    quiet_token = _session(client, "user_zhang")
+    assert client.get("/api/v1/accounts/user_zhang/balance", headers={"X-Session-Token": quiet_token}).status_code == 200
 
 
 def test_rate_limit_can_be_disabled(client: TestClient, monkeypatch):

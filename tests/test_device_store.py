@@ -262,8 +262,18 @@ def test_a_weak_device_key_is_refused(store):
 # ---------------------------------------------------------------------------
 
 
-def test_an_unkeyed_store_loads_but_is_reported_as_unkeyed(store):
-    """Without BANK_AUTH_SECRET the digest only detects corruption."""
+def test_an_unkeyed_store_loads_but_is_reported_as_unkeyed(store, monkeypatch):
+    """Without BANK_AUTH_SECRET the digest only detects corruption.
+
+    The unconfigured posture is pinned explicitly rather than inherited from the
+    environment: ``python-dotenv`` loads a developer's ``.env`` with
+    ``override=False``, so ``BANK_AUTH_SECRET`` (and therefore
+    ``AUTH_SECRET_CONFIGURED``) is normally *set* even under pytest.  Reading it
+    from the ambient environment would silently exercise the keyed branch and
+    make this test assert the opposite of its name.
+    """
+
+    monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", False)
 
     device_id = enroll()
     snapshot = read_store(store)
@@ -274,6 +284,28 @@ def test_an_unkeyed_store_loads_but_is_reported_as_unkeyed(store):
     assert summary.get("rejected") is False
     assert summary["keyed"] is False
     assert device_id in security.DEVICES
+
+
+def test_a_downgraded_device_store_digest_is_refused(store, monkeypatch):
+    """Regression: the loader must not take the algorithm from the file.
+
+    Relabelling an HMAC store as ``sha256`` and recomputing the unkeyed checksum
+    must not be accepted, because that is exactly how someone without the secret
+    could forge device public keys.
+    """
+
+    device_id = enroll()
+    snapshot = read_store(store)
+    assert snapshot["integrity"]["alg"] == "hmac-sha256"
+    snapshot["devices"][device_id]["label"] = "attacker-controlled"
+    # Exactly the attacker's capability: an unkeyed digest over the tampered
+    # device map, relabelled as sha256.
+    write_store(store, snapshot["devices"], keyed=False)
+
+    summary = security.load_device_store(str(store))
+
+    assert summary["rejected"] is True, summary
+    assert "降级" in summary["error"]
 
 
 def test_the_status_report_never_leaks_the_path(store):
