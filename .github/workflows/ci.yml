@@ -20,6 +20,15 @@ jobs:
         run: python -m pytest -q
       - name: Lint
         run: python -m ruff check . --ignore E402
+      - name: Dependency audit (pip-audit)
+        # Online runs fail on known CVEs; offline runs skip instead of failing
+        # so local, no-network machines keep the rest of the suite green.
+        run: |
+          if python -m pip_audit --version >/dev/null 2>&1 && python -c "import urllib.request; urllib.request.urlopen('https://pypi.org/simple/', timeout=10)" 2>/dev/null; then
+            python -m pip_audit -r requirements.txt --progress-spinner off
+          else
+            echo "pip-audit skipped: network unreachable (offline run)."
+          fi
       - name: Validate Compose file
         run: docker compose config --quiet
 
