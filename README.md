@@ -236,7 +236,7 @@ BANK_FCM_CREDENTIALS=
 ### 终端 1：启动 Mock 核心银行沙箱 (Port: 8000)
 
 ```powershell
-python -m uvicorn main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 ```
 > 启动后可直接访问 Swagger 可视化文档进行接口自测：`http://127.0.0.1:8000/docs`；健康检查：`http://127.0.0.1:8000/healthz`。
 > 要看"当前这台机器能不能真的发推送"，直接读 `http://127.0.0.1:8000/api/v1/security/health` 的 `push` 段——它把「服务端能不能发」和「设备有没有令牌」分成两件事报告，而不是含糊地报一个成功。
@@ -245,14 +245,14 @@ python -m uvicorn main:app --reload --port 8000
 
 ```powershell
 $env:BANK_CONVERSATION_DB = 'agent_conversations.sqlite3'
-python -m uvicorn agent_api:app --reload --port 8100
+.\.venv\Scripts\python.exe -m uvicorn agent_api:app --reload --port 8100
 ```
 > `BANK_REQUIRE_SESSION=1` 时客户端必须先 `POST /api/v1/auth/login` 换取会话令牌，再带 `X-Session-Token` 调用 `/api/v1/agent/messages`。网关自己不做身份判定，而是回核心校验会话——会话注册表只有核心一份。
 
 ### 终端 3（可选）：启动 Streamlit 交互前端 (Port: 8501)
 
 ```powershell
-python -m streamlit run web_app.py
+.\.venv\Scripts\python.exe -m streamlit run web_app.py
 ```
 > 启动后浏览器将自动打开交互界面：`http://127.0.0.1:8501`。它直接驱动核心，不经过网关，适合离线演示与答辩。
 

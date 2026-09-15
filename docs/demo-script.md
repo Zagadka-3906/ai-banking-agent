@@ -72,9 +72,9 @@
 
 ## 录制前检查清单
 
-- 启动 Core：`python -m uvicorn main:app --port 8000`。
-- 启动前端：`python -m streamlit run web_app.py`。
+- 启动 Core：`.\.venv\Scripts\python.exe -m uvicorn main:app --port 8000`。
+- 启动前端：`.\.venv\Scripts\python.exe -m streamlit run web_app.py`。
 - 确认 `DEEPSEEK_API_KEY` 通过安全环境变量注入；不要把 `.env` 或密钥录入视频。
 - 清空/重置沙箱账户和每日累计，保证演示结果可重复。
-- 预先运行 `pytest -q`（全量 7 个测试文件），记录版本和失败用例。
+- 预先运行 `pytest -q`（全量 17 个测试文件 / 341 个用例），记录版本和失败用例。
 - 准备离线降级话术：LLM/API 不可用时只展示“无法完成，请稍后重试”，不声称交易成功。

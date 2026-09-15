@@ -188,9 +188,9 @@ available_balance = total_balance - locked_amount
 启动命令：
 
 ```powershell
-python -m uvicorn main:app      --reload --port 8000
-python -m uvicorn agent_api:app --reload --port 8100   # Android / IM 渠道
-python -m streamlit run web_app.py                     # 可选：演示前端
+.\.venv\Scripts\python.exe -m uvicorn main:app      --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn agent_api:app --reload --port 8100   # Android / IM 渠道
+.\.venv\Scripts\python.exe -m streamlit run web_app.py                     # 可选：演示前端
 ```
 
 演示环境建议增加 `/healthz`、配置化 `BANK_API_BASE`、超时/重试、Docker Compose 和反向代理 TLS。不要把 `127.0.0.1`、测试 OTP 或真实密钥写死在代码中。
@@ -199,7 +199,7 @@ python -m streamlit run web_app.py                     # 可选：演示前端
 
 所有请求携带 `request_id`，核心记录结构化审计事件（策略版本、审批者、MFA challenge、执行前后余额摘要、核心返回码和错误原因，禁止记录完整密钥/验证码），并提供只读审计查询与决策链路还原接口（`/security/audit`、`/security/audit/verify`、`/security/audit/trace/{request_id}`）。Agent 侧事件（意图解析、回复校验）保存在 Agent 进程内，跨进程汇聚属于生产项；建议继续补充指标：成功率、拒绝率、连续失败次数、P95 延迟、待人工任务数。
 
-架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试为 `tests/` 下 17 个文件 / 300 个用例（`pytest -q` 全量运行，涵盖契约、安全回归、Agent 工作流、规划、安全原语、扩展场景、并发原子性、登录、设备信任根、设备库/账本/审批注册表落盘、联系人簿、渠道网关与推送）。
+架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试为 `tests/` 下 17 个文件 / 341 个用例（`pytest -q` 全量运行，涵盖契约、安全回归、Agent 工作流、规划、安全原语、扩展场景、并发原子性、登录、设备信任根、设备库/账本/审批注册表落盘、联系人簿、渠道网关与推送）。
 
 ## 7. 渠道网关与原生客户端
 
