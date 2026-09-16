@@ -40,10 +40,15 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      # Installs cmdline-tools and accepts the SDK licences; AGP then resolves
-      # the platform/build-tools it needs through ANDROID_HOME (local.properties
-      # is deliberately git-ignored, so nothing machine-specific is committed).
+      # Installs cmdline-tools, accepts licences, and provisions the exact SDK
+      # packages required by compileSdk 35.  local.properties is deliberately
+      # git-ignored, so nothing machine-specific is committed.
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default still includes the retired SDK package
+          # "tools", which sdkmanager no longer publishes.  Install only the
+          # packages this compileSdk 35 build actually needs.
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
       - name: Build debug APK and instrumented test APK
         working-directory: android
         run: |

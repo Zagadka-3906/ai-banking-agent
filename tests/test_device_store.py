@@ -294,6 +294,11 @@ def test_a_downgraded_device_store_digest_is_refused(store, monkeypatch):
     could forge device public keys.
     """
 
+    # Pin the keyed posture instead of inheriting a developer's local .env.
+    # CI intentionally has no deployment secret, while this regression test is
+    # specifically about refusing a downgrade from HMAC to an unkeyed digest.
+    monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", True)
+
     device_id = enroll()
     snapshot = read_store(store)
     assert snapshot["integrity"]["alg"] == "hmac-sha256"
