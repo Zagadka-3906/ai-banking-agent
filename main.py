@@ -616,8 +616,9 @@ TRANSACTIONS: list[dict[str, Any]] = [
     {"tx_id": "TX1001", "account_id": "user_zhang", "merchant": "美团外卖", "category": "餐饮", "amount": 45.0, "time": "2026-08-01 12:30:00"},
     {"tx_id": "TX1002", "account_id": "user_zhang", "merchant": "Apple 订阅", "category": "订阅代扣", "amount": 15.0, "time": "2026-08-03 08:00:00"},
     {"tx_id": "TX1003", "account_id": "user_zhang", "merchant": "海底捞火锅", "category": "餐饮", "amount": 320.0, "time": "2026-08-05 19:20:00"},
-    {"tx_id": "TX1004", "account_id": "user_zhang", "merchant": "境外未知商户", "category": "可疑交易", "amount": 999.0, "time": "2026-08-07 03:15:00"},
+    {"tx_id": "TX1004", "account_id": "user_zhang", "merchant": "境外未知商户", "category": "可疑交易", "amount": 999.0, "time": "2026-08-07 03:15:00", "card_id": "CARD-001", "country": "US"},
 ]
+DISPUTE_CASES: list[dict[str, Any]] = []
 
 
 @contextmanager
@@ -643,6 +644,7 @@ def _ledger_transaction():
         "SUBSCRIPTIONS",
         "SCHEDULED_TRANSFERS",
         "SPLIT_REQUESTS",
+        "DISPUTE_CASES",
         "TRANSACTIONS",
         "OUTBOX",
         "WEALTH_RISK_PROFILES",
@@ -708,6 +710,7 @@ LEDGER_STATE_NAMES = (
     "SUBSCRIPTIONS",
     "SCHEDULED_TRANSFERS",
     "SPLIT_REQUESTS",
+    "DISPUTE_CASES",
     "TRANSACTIONS",
     "OUTBOX",
 )
@@ -1174,6 +1177,8 @@ class OperationPrecheckRequest(StrictModel):
     target: Optional[str] = None
     product_id: Optional[str] = None
     card_id: Optional[str] = None
+    transaction_id: Optional[str] = None
+    transaction_snapshot_hash: Optional[str] = None
     new_limit: Optional[float] = None
     merchant: Optional[str] = None
     participants: Optional[list[str]] = None
@@ -1189,6 +1194,8 @@ class OperationExecuteRequest(StrictModel):
     target: Optional[str] = None
     product_id: Optional[str] = None
     card_id: Optional[str] = None
+    transaction_id: Optional[str] = None
+    transaction_snapshot_hash: Optional[str] = None
     new_limit: Optional[float] = None
     merchant: Optional[str] = None
     participants: Optional[list[str]] = None
@@ -1579,6 +1586,7 @@ GENERIC_OPERATION_RISK: dict[str, str] = {
     "CARD_REPORT_LOST": "RED",
     "CARD_UNREPORT_LOST": "RED",
     "PASSWORD_CHANGE": "RED",
+    "FRAUD_PROTECT": "RED",
 }
 
 
@@ -1726,6 +1734,8 @@ def _operation_context(
     risk_profile: Optional[str] = None,
     subscription_id: Optional[str] = None,
     scheduled_at: Optional[str] = None,
+    transaction_id: Optional[str] = None,
+    transaction_snapshot_hash: Optional[str] = None,
 ) -> dict[str, Any]:
     """Normalize every field that can alter a generic operation's outcome."""
 
@@ -1771,7 +1781,25 @@ def _operation_context(
         "risk_profile": sanitize_text(risk_profile, field="风险档案", max_length=32).upper() if risk_profile else None,
         "subscription_id": sanitize_text(subscription_id, field="订阅编号", max_length=128) if subscription_id else None,
         "scheduled_at": normalized_schedule,
+        "transaction_id": sanitize_text(transaction_id, field="交易编号", max_length=128) if transaction_id else None,
+        "transaction_snapshot_hash": sanitize_text(transaction_snapshot_hash, field="交易快照摘要", max_length=128) if transaction_snapshot_hash else None,
     }
+
+
+def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> dict[str, Any]:
+    """Resolve exactly one owned suspicious overseas transaction."""
+    rows = [row for row in TRANSACTIONS if row.get("account_id") == user_id and (row.get("category") == "可疑交易" or row.get("country"))]
+    if transaction_id:
+        row = next((item for item in rows if item.get("tx_id") == transaction_id), None)
+        if row is None:
+            raise SecurityError("交易不存在或不属于当前用户", 404, "TRANSACTION_NOT_FOUND")
+    elif len(rows) != 1:
+        raise SecurityError("匹配到多笔可疑交易，请指定交易编号", 409, "TRANSACTION_ID_REQUIRED")
+    else:
+        row = rows[0]
+    if not row.get("card_id"):
+        raise SecurityError("该交易未关联卡片，无法安全冻结", 409, "CARD_LINK_MISSING")
+    return row
 
 
 def _validate_split_participants(user_id: str, participants: Optional[list[str]]) -> list[str]:
@@ -2814,16 +2842,23 @@ def operation_precheck(
     request_id = _request_id(x_request_id)
     actor = _get_actor(req.user_id, x_user_id, action="OPERATION_PRECHECK", request_id=request_id)
     resolved_subscription_id: Optional[str] = None
+    fraud_tx: Optional[dict[str, Any]] = None
     try:
         _ensure_account(req.user_id)
         operation = _validate_operation_name(req.operation)
         target = _operation_target(req)
+        if operation == "FRAUD_PROTECT":
+            fraud_tx = _fraud_transaction(req.user_id, req.transaction_id)
+            target = str(fraud_tx["card_id"])
+            reason = sanitize_text(req.reason or "客户否认境外消费，申请反诈保护", field="操作原因", max_length=300)
+            if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(fraud_tx):
+                raise SecurityError("交易信息已变化，请重新核验", 409, "TRANSACTION_CONTEXT_CHANGED")
         if operation == "PASSWORD_CHANGE" and any(value for value in (req.target, req.product_id, req.card_id, req.merchant)):
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
-        reason = sanitize_text(req.reason or "智能银行操作", field="操作原因", max_length=300)
+        reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE"} and amount_input not in (None, 0):
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation in {"SCHEDULED_TRANSFER", "SPLIT_BILL", "WEALTH_PURCHASE", "WEALTH_REDEEM", "CARD_LIMIT"} and (amount_input is None or float(amount_input) <= 0):
             raise SecurityError("该操作需要明确的正数金额", 400, "AMOUNT_REQUIRED")
@@ -2909,6 +2944,8 @@ def operation_precheck(
             risk_profile=(WEALTH_RISK_PROFILES.get(req.user_id) or {}).get("risk_profile") if operation == "WEALTH_PURCHASE" else None,
             subscription_id=resolved_subscription_id,
             scheduled_at=normalized_scheduled_at,
+            transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
+            transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -2928,6 +2965,9 @@ def operation_precheck(
             session_token=_presented_session(request),
         )
     response = {"code": 200, "risk_level": risk_level, "operation": operation, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": payload["exp"], "required_actions": required, "mfa_required": risk_level == "RED", "target": target, "context_hash": context_hash}
+    if fraud_tx:
+        response["transaction"] = dict(fraud_tx)
+        response["risk_reasons"] = ["境外交易", "交易类别标记为可疑交易", "用户明确否认该消费"]
     _idempotency_complete(actor, "operation_precheck", idempotency_key, idem_payload, response)
     audit_event("OPERATION_PRECHECK", user_id=actor, risk_level=risk_level, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"operation": operation, "jti": payload["jti"], "target": target})
     return response
@@ -3496,16 +3536,22 @@ def execute_operation(
     proof = x_mfa_proof or req.mfa_proof
     operation_risk = GENERIC_OPERATION_RISK.get(str(req.operation or "").upper(), "UNKNOWN")
     resolved_subscription_id: Optional[str] = None
+    fraud_tx: Optional[dict[str, Any]] = None
     try:
         operation = _validate_operation_name(req.operation)
         _ensure_account(req.user_id)
         target = _operation_target(req)
+        if operation == "FRAUD_PROTECT":
+            fraud_tx = _fraud_transaction(req.user_id, req.transaction_id)
+            target = str(fraud_tx["card_id"])
+            if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(fraud_tx):
+                raise SecurityError("交易信息已变化，请重新预检", 409, "TRANSACTION_CONTEXT_CHANGED")
         if operation == "PASSWORD_CHANGE" and any(value for value in (req.target, req.product_id, req.card_id, req.merchant)):
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
-        reason = sanitize_text(req.reason or "智能银行操作", field="操作原因", max_length=300)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE"} and amount_input not in (None, 0):
+        reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation == "CARD_LIMIT":
             effective_limit = req.new_limit if req.new_limit is not None else req.amount
@@ -3544,6 +3590,8 @@ def execute_operation(
             risk_profile=(WEALTH_RISK_PROFILES.get(req.user_id) or {}).get("risk_profile") if operation == "WEALTH_PURCHASE" else None,
             subscription_id=resolved_subscription_id,
             scheduled_at=_normalize_datetime(req.scheduled_at, field="计划时间", require_future=True) if operation == "SCHEDULED_TRANSFER" else req.scheduled_at,
+            transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
+            transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -3610,6 +3658,19 @@ def execute_operation(
                     card = _select_card(req.user_id, req.card_id)
                     card["daily_limit"] = round(float(new_limit), 2)
                     result.update({"status": "LIMIT_UPDATED", "card": card})
+                elif operation == "FRAUD_PROTECT":
+                    tx = _fraud_transaction(req.user_id, operation_context.get("transaction_id"))
+                    if operation_context.get("transaction_snapshot_hash") != _context_hash(tx) or target != tx.get("card_id"):
+                        raise SecurityError("交易或卡片信息已变化，请重新预检", 409, "FRAUD_CONTEXT_CHANGED")
+                    card = _select_card(req.user_id, str(tx["card_id"]), allowed_states={"ACTIVE", "FROZEN"})
+                    if card.get("status") == "ACTIVE":
+                        card["status"] = "FROZEN"
+                    case = next((item for item in DISPUTE_CASES if item.get("owner_id") == req.user_id and item.get("transaction_id") == tx.get("tx_id") and item.get("status") in {"OPEN", "PENDING_REVIEW"}), None)
+                    if case is None:
+                        created_at = datetime.now(timezone.utc).isoformat()
+                        case = {"case_id": f"CASE-{uuid.uuid4().hex[:10].upper()}", "owner_id": req.user_id, "transaction_id": tx["tx_id"], "transaction_snapshot_hash": operation_context["transaction_snapshot_hash"], "card_id": card["card_id"], "status": "PENDING_REVIEW", "protection_status": "CARD_PROTECTED", "statement": reason, "risk_reasons": ["境外交易", "交易类别标记为可疑交易", "用户明确否认该消费"], "created_at": created_at, "updated_at": created_at}
+                        DISPUTE_CASES.append(case)
+                    result.update({"status": "CARD_PROTECTED", "card": card, "dispute_case": case, "transaction": tx})
                 elif operation in {"CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST"}:
                     card = _select_card(req.user_id, req.card_id)
                     current_status = str(card.get("status") or "")
@@ -4092,7 +4153,7 @@ def security_audit_trace(request_id: str, x_admin_token: Optional[str] = Header(
     return {"code": 200, **trace}
 
 
-__all__ = ["app", "ACCOUNTS", "CONTACTS", "USER_CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "DEVICES", "reset_state"]
+__all__ = ["app", "ACCOUNTS", "CONTACTS", "USER_CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "DISPUTE_CASES", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "DEVICES", "reset_state"]
 
 
 # Test/demo reset helper.  It is intentionally not exposed as an HTTP route;
@@ -4106,6 +4167,7 @@ _INITIAL_CARDS = deepcopy(globals().get("CARDS", {}))
 _INITIAL_SUBSCRIPTIONS = deepcopy(globals().get("SUBSCRIPTIONS", {}))
 _INITIAL_SCHEDULED_TRANSFERS = deepcopy(globals().get("SCHEDULED_TRANSFERS", []))
 _INITIAL_SPLIT_REQUESTS = deepcopy(globals().get("SPLIT_REQUESTS", []))
+_INITIAL_DISPUTE_CASES = deepcopy(globals().get("DISPUTE_CASES", []))
 
 
 def reset_state() -> None:
@@ -4156,6 +4218,8 @@ def reset_state() -> None:
             SCHEDULED_TRANSFERS[:] = deepcopy(_INITIAL_SCHEDULED_TRANSFERS)
         if "SPLIT_REQUESTS" in globals():
             SPLIT_REQUESTS[:] = deepcopy(_INITIAL_SPLIT_REQUESTS)
+        if "DISPUTE_CASES" in globals():
+            DISPUTE_CASES[:] = deepcopy(_INITIAL_DISPUTE_CASES)
         try:
             from security import reset_security_state
 

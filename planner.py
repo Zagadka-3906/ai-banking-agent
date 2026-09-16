@@ -58,6 +58,7 @@ class Intent(str, Enum):
     CARD_QUERY = "CARD_QUERY"
     CARD_LIMIT = "CARD_LIMIT"
     CARD_FREEZE = "CARD_FREEZE"
+    FRAUD_DISPUTE = "FRAUD_DISPUTE"
     CARD_UNFREEZE = "CARD_UNFREEZE"
     CARD_REPORT_LOST = "CARD_REPORT_LOST"
     CARD_UNREPORT_LOST = "CARD_UNREPORT_LOST"
@@ -95,6 +96,7 @@ RED_INTENTS = {
     Intent.CARD_REPORT_LOST.value,
     Intent.CARD_UNREPORT_LOST.value,
     Intent.PASSWORD_CHANGE.value,
+    Intent.FRAUD_DISPUTE.value,
 }
 ALL_INTENTS = {item.value for item in Intent}
 
@@ -483,6 +485,14 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
             Task("validate_event", "VALIDATE_EVENT", risk_level="GREEN", details=base),
             Task("reserve_funds", "LOCK_FUND", ["validate_event"], "YELLOW", compensation="UNLOCK_FUND", details=base),
             Task("schedule_orders", "SCHEDULE_REMINDER", ["reserve_funds"], "YELLOW", details=base),
+        ]
+    elif intent == Intent.FRAUD_DISPUTE.value:
+        tasks = [
+            Task("verify_transaction", "VERIFY_TRANSACTION", risk_level="GREEN", details=base),
+            Task("explain_risk", "EXPLAIN_RISK", ["verify_transaction"], "GREEN", details=base),
+            Task("mfa_confirm", "MFA_CONFIRM", ["explain_risk"], "RED", details=base),
+            Task("freeze_card", "FREEZE_CARD", ["mfa_confirm"], "RED", details=base),
+            Task("create_dispute_case", "CREATE_DISPUTE_CASE", ["freeze_card"], "RED", details=base),
         ]
     elif intent == Intent.SCHEDULED_TRANSFER.value:
         tasks = [

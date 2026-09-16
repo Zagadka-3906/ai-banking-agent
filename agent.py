@@ -133,6 +133,8 @@ class BankingAgentState(TypedDict, total=False):
     event_at: Optional[str]
     reminder_at: Optional[str]
     sub_requests: Optional[list[dict[str, Any]]]
+    transaction: Optional[dict[str, Any]]
+    risk_reasons: Optional[list[str]]
 
 def _empty_state(*, final_response: Optional[str] = None) -> dict[str, Any]:
     return {
@@ -555,6 +557,7 @@ def _format_hint(missing: list[int]) -> str:
 
 
 _IMPLICIT_PROTECTIVE_INTENTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("不是我的", "不是本人", "境外消费"), Intent.FRAUD_DISPUTE.value),
     (("盗刷", "被盗刷", "被盗用", "不是本人消费", "有人拿我的卡"), Intent.CARD_FREEZE.value),
 )
 
@@ -726,6 +729,8 @@ def _local_parse(text: str) -> dict[str, Any]:
         intent = Intent.CARD_REPORT_LOST.value
     elif any(x in text for x in ("解锁卡", "解冻卡")) or ("解冻" in text and "卡" in text):
         intent = Intent.CARD_UNFREEZE.value
+    elif any(x in text for x in ("昨晚这笔境外消费不是我的", "境外消费不是我的", "不是我的境外消费")):
+        intent = Intent.FRAUD_DISPUTE.value
     elif any(x in text for x in ("冻结卡", "锁卡")) or ("冻结" in text and "卡" in text):
         intent = Intent.CARD_FREEZE.value
     elif any(x in text for x in ("申请虚拟卡", "申请信用卡", "办卡")):
@@ -1317,6 +1322,13 @@ _SETTLE_ORDER: dict[str, list[str]] = {
     Intent.WEALTH_PURCHASE.value: ["risk_assessment", "mfa_and_confirm", "settle_wealth"],
     Intent.WEALTH_REDEEM.value: ["risk_assessment", "mfa_and_confirm", "settle_wealth"],
     Intent.PASSWORD_CHANGE.value: ["password_change"],
+    Intent.FRAUD_DISPUTE.value: [
+        "verify_transaction",
+        "explain_risk",
+        "mfa_confirm",
+        "freeze_card",
+        "create_dispute_case",
+    ],
 }
 
 
@@ -1459,11 +1471,11 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         # browser/agent cannot manufacture this token or elevate a yellow
         # operation to red (the core owns the policy table).
         try:
-            response = _http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": intent, "amount": state.get("amount") or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
+            response = _http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "amount": state.get("amount") or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": (state.get("slots") or {}).get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
                 return {"risk_level": "ERROR", "final_response": f"操作风控预检未通过：{_error_message(response)}"}
             data = _response_json(response)
-            return {"risk_level": data.get("risk_level", "ERROR"), "auth_token": data.get("auth_token"), "action_requirements": data.get("required_actions", []), "target": data.get("target") or state.get("target")}
+            return {"risk_level": data.get("risk_level", "ERROR"), "auth_token": data.get("auth_token"), "action_requirements": data.get("required_actions", []), "target": data.get("target") or state.get("target"), "transaction": data.get("transaction"), "risk_reasons": data.get("risk_reasons")}
         except (requests.RequestException, RuntimeError) as exc:
             return {"risk_level": "ERROR", "final_response": f"暂时无法连接核心风控服务：{exc}"}
     if intent == Intent.CROSS_SCENE_LOCK.value:
@@ -1537,6 +1549,8 @@ def _human_readable_action(state: BankingAgentState) -> str:
         return f"把卡片 {target or '默认卡片'} 的日限额调整为 ¥{amount:,.2f}"
     if intent == Intent.CARD_FREEZE.value:
         return f"冻结卡片 {target or ''} 的交易".strip()
+    if intent == Intent.FRAUD_DISPUTE.value:
+        return "核验可疑境外交易并冻结关联卡片、创建争议工单"
     if intent == Intent.CARD_UNFREEZE.value:
         return f"解冻卡片 {target or ''} 的交易".strip()
     if intent == Intent.CARD_REPORT_LOST.value:
@@ -1576,6 +1590,19 @@ def human_review_node(state: BankingAgentState) -> dict[str, Any]:
         "request_id": state.get("request_id"),
         "plan": state.get("plan"),
     }
+    if intent == Intent.FRAUD_DISPUTE.value:
+        payload["transaction"] = state.get("transaction")
+        payload["risk_reasons"] = state.get("risk_reasons") or ["境外交易", "可疑交易", "用户否认消费"]
+        transaction = payload["transaction"] if isinstance(payload["transaction"], dict) else {}
+        reasons = "、".join(str(item) for item in payload["risk_reasons"])
+        amount = transaction.get("amount")
+        amount_text = f"¥{float(amount):,.2f}" if _finite_number(amount, nonnegative=True) else "金额待核验"
+        payload["message"] = (
+            f"已核验交易 {transaction.get('tx_id') or '未知编号'}："
+            f"{transaction.get('merchant') or '未知商户'}，{amount_text}，"
+            f"时间 {transaction.get('time') or '未知'}。风险依据：{reasons}。"
+            "继续后将强验证并冻结关联卡片、创建人工争议工单；不会自动退款。"
+        )
     if interrupt is None:
         return {"final_response": "当前运行环境未启用人机确认组件，操作已安全暂停。"}
     decision = interrupt(payload)
@@ -1794,13 +1821,13 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
         # The remaining write scenarios use explicit mock endpoints.  If an
         # endpoint is not enabled, report a safe refusal rather than claiming
         # completion.
-        if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
+        if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value, Intent.FRAUD_DISPUTE.value}:
             try:
                 response = _settle_with_retry(
                     state,
                     method="POST",
                     path="operations/execute",
-                    json_body={"user_id": user_id, "operation": intent, "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
+                    json_body={"user_id": user_id, "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": (state.get("slots") or {}).get("transaction_id"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
                     headers={"X-User-Id": user_id, "X-Auth-Token": state.get("auth_token") or "", "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"},
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )
@@ -2193,6 +2220,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         # participant lacks funds; both are genuine core outcomes.
         Intent.SPLIT_BILL.value: ("SETTLED", "PARTIAL", "OPEN"),
         Intent.PASSWORD_CHANGE.value: "PASSWORD_CHANGED",
+        Intent.FRAUD_DISPUTE.value: "CARD_PROTECTED",
     }.get(rtype)
     if rtype:
         envelope = result.get("data")
@@ -2213,6 +2241,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                 Intent.SCHEDULED_TRANSFER.value: ("task_id", "schedule_id", "scheduled_at"),
                 Intent.SPLIT_BILL.value: ("task_id", "split_id", "participants", "per_person"),
                 Intent.PASSWORD_CHANGE.value: ("credential_version",),
+                Intent.FRAUD_DISPUTE.value: ("card", "dispute_case", "transaction"),
             }
             if any(key not in payload for key in required_by_type.get(rtype, ())):
                 return _response_validation_failure(state, "GENERIC_RESULT_FIELDS_INVALID")
@@ -2249,6 +2278,7 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
     labels = {
         Intent.CARD_APPLY.value: f"✅ 虚拟卡已开立（{card_id}）。" if card_id else "✅ 虚拟卡已开立。",
         Intent.CARD_FREEZE.value: "✅ 卡片交易已冻结。",
+        Intent.FRAUD_DISPUTE.value: "✅ 已冻结关联卡片并创建争议工单，案件将由人工审核。未执行退款。",
         Intent.CARD_UNFREEZE.value: "✅ 卡片交易已解冻。",
         Intent.CARD_REPORT_LOST.value: "✅ 卡片已挂失，后续交易将被拒绝。",
         Intent.CARD_UNREPORT_LOST.value: "✅ 已解除挂失，卡片恢复可用。",
