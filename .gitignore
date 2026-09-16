@@ -57,3 +57,8 @@ android/app/google-services.json
 secrets/
 
 .tmp-screenshots/
+
+# 本地 Codex Sol-Luna 编排配置，不提交到 ai-banking-agent。
+/.codex/
+/.agents/
+/AGENTS.md
