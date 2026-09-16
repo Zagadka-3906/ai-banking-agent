@@ -269,6 +269,28 @@ private fun ChatHome(
                     }
                 }
             }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                OutlinedButton(onClick = { viewModel.uploadMockArtifact("invoice") }, enabled = !state.busy,
+                    modifier = Modifier.testTag(UiTags.MOCK_INVOICE)) { Text("Mock 发票") }
+                OutlinedButton(onClick = { viewModel.uploadMockArtifact("bill") }, enabled = !state.busy,
+                    modifier = Modifier.testTag(UiTags.MOCK_BILL)) { Text("Mock 账单") }
+                OutlinedButton(onClick = { viewModel.uploadMockArtifact("voice") }, enabled = !state.busy,
+                    modifier = Modifier.testTag(UiTags.MOCK_VOICE)) { Text("Mock 语音") }
+            }
+            state.artifact?.let { artifact ->
+                Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("票据助手 · ${artifact.recognitionMode ?: "Mock"} / ${artifact.provenance ?: "Mock"}", fontWeight = FontWeight.Bold)
+                        Text("状态：${artifact.status}，分类：${artifact.category ?: "待人工核验"}")
+                        artifact.merchant?.let { Text("商户：$it，金额：${artifact.amount} ${artifact.currency ?: ""}") }
+                        artifact.confidence?.let { Text("置信度：${(it * 100).toInt()}%") }
+                        Text("报销草稿：${artifact.reimbursementDraft?.get("status") ?: artifact.status}；未扣款：${!artifact.fundsDebited}")
+                    }
+                }
+            }
             InputRow(
                 value = state.input,
                 enabled = state.canSend,
