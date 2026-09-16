@@ -76,6 +76,7 @@ from notifications import notify_waiting_user
 from scheduler import TASK_STORE, TaskState
 from planner import analyze_transactions, filter_transactions
 from sandbox import sandbox_health
+from notification_outbox import OUTBOX, enqueue as enqueue_notification, dispatch as dispatch_notifications, visible as visible_notifications
 
 
 logger = logging.getLogger("mock_banking.core")
@@ -643,6 +644,7 @@ def _ledger_transaction():
         "SCHEDULED_TRANSFERS",
         "SPLIT_REQUESTS",
         "TRANSACTIONS",
+        "OUTBOX",
         "WEALTH_RISK_PROFILES",
     )
     with STATE_LOCK:
@@ -707,6 +709,7 @@ LEDGER_STATE_NAMES = (
     "SCHEDULED_TRANSFERS",
     "SPLIT_REQUESTS",
     "TRANSACTIONS",
+    "OUTBOX",
 )
 
 
@@ -797,6 +800,15 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
             return False
     for row in state.get("TRANSACTIONS") or []:
         if not isinstance(row, dict) or not isinstance(row.get("account_id"), str) or not _finite_nonnegative(row.get("amount", 0.0)):
+            return False
+    outbox = state.get("OUTBOX", [])
+    if not isinstance(outbox, list):
+        return False
+    valid_outbox_statuses = {"PENDING", "SENDING", "SENT", "RETRY", "FAILED"}
+    for row in outbox:
+        if not isinstance(row, dict) or not all(isinstance(row.get(k), str) and row.get(k) for k in ("event_id", "owner_id", "recipient_id", "split_id", "status")):
+            return False
+        if row.get("status") not in valid_outbox_statuses or not _finite_nonnegative(row.get("amount", 0.0)):
             return False
     # Contact book rows feed the payee allow-list, so a half-written row must
     # not come back from a restart: name/phone/contact_id are the resolution
@@ -930,7 +942,7 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
     with STATE_LOCK:
         for name in LEDGER_STATE_NAMES:
             container = globals()[name]
-            restored = deepcopy(state.get(name))
+            restored = deepcopy(state.get(name, [] if name == "OUTBOX" else None))
             if isinstance(container, dict):
                 container.clear()
                 if isinstance(restored, dict):
@@ -1194,6 +1206,16 @@ class OperationExecuteRequest(StrictModel):
 
 class TaskActionRequest(StrictModel):
     reason: str = "用户请求"
+
+
+class TaskPrecheckRequest(StrictModel):
+    user_id: str
+
+
+class TaskExecuteRequest(StrictModel):
+    user_id: str
+    auth_token: Optional[str] = None
+    mfa_proof: Optional[str] = None
 
 
 class RiskAssessmentRequest(StrictModel):
@@ -1560,7 +1582,7 @@ GENERIC_OPERATION_RISK: dict[str, str] = {
 }
 
 
-def _pending_transfer_amount(user_id: str) -> float:
+def _pending_transfer_amount(user_id: str, *, exclude_schedule_id: Optional[str] = None) -> float:
     """Return unconsumed transfer reservations for cumulative risk checks.
 
     A precheck is a reservation, not a settlement.  Counting active signed
@@ -1590,7 +1612,7 @@ def _pending_transfer_amount(user_id: str) -> float:
         total += sum(
             float(row.get("amount", 0) or 0)
             for row in SCHEDULED_TRANSFERS
-            if row.get("user_id") == user_id and row.get("status") in {"SCHEDULED", "WAITING_USER"}
+            if row.get("user_id") == user_id and row.get("schedule_id") != exclude_schedule_id and row.get("status") in {"SCHEDULED", "WAITING_USER"}
         )
         total += sum(
             float(row.get("amount", 0) or 0)
@@ -3635,7 +3657,7 @@ def execute_operation(
                     result.update({"status": "CANCELLED", "subscription": selected})
                 elif operation == "SCHEDULED_TRANSFER":
                     scheduled_at = operation_context.get("scheduled_at")
-                    schedule = {"schedule_id": f"SCH{uuid.uuid4().hex[:10].upper()}", "user_id": req.user_id, "target": req.target, "amount": amount, "scheduled_at": scheduled_at, "status": "SCHEDULED"}
+                    schedule = {"schedule_id": f"SCH{uuid.uuid4().hex[:10].upper()}", "user_id": req.user_id, "target": req.target, "amount": amount, "card_id": req.card_id, "scheduled_at": scheduled_at, "status": "SCHEDULED"}
                     SCHEDULED_TRANSFERS.append(schedule)
                     # A signed nonce identifies one approved intent.  Use its
                     # jti for the internal task key so two deliberate,
@@ -3672,6 +3694,9 @@ def execute_operation(
                     # two AA requests for the same total but different
                     # participants must never share one task.
                     task = TASK_STORE.create(actor, "SPLIT_BILL", split, depends_on=[], idempotency_key=f"split:{req.user_id}:{authorization_payload.get('jti')}")
+                    for item in collection["collection"]:
+                        outcome = str(item.get("status") or "UNKNOWN")
+                        enqueue_notification(f"AA:{split['split_id']}:{item['account_id']}", owner_id=actor, recipient_id=item["account_id"], split_id=split["split_id"], amount=item["share"], outcome=outcome, message=f"AA 分摊{('已收取' if outcome == 'COLLECTED' else '未收取')} {item['share']:.2f} 元")
                     result.update(split, task_id=task.task_id)
                 else:  # guarded by _validate_operation_name; defensive fallback
                     raise SecurityError("操作未实现", 501, "OPERATION_NOT_IMPLEMENTED")
@@ -3698,6 +3723,26 @@ def execute_operation(
 # ---------------------------------------------------------------------------
 # Task centre: scheduling, cancellation and human takeover
 # ---------------------------------------------------------------------------
+@app.get("/api/v1/notifications/outbox")
+def notification_outbox_list(split_id: Optional[str] = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    actor = _get_actor(x_user_id, x_user_id, action="NOTIFICATION_QUERY", request_id=_request_id(x_request_id))
+    return {"code": 200, "data": visible_notifications(actor, split_id=split_id)}
+
+
+@app.post("/api/v1/notifications/outbox/dispatch")
+def notification_outbox_dispatch(split_id: Optional[str] = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    actor = _get_actor(x_user_id, x_user_id, action="NOTIFICATION_DISPATCH", request_id=_request_id(x_request_id))
+    rows = visible_notifications(actor, split_id=split_id)
+    results = []
+    for row in rows:
+        results.extend(dispatch_notifications(event_id=row["event_id"]))
+    return {"code": 200, "data": results}
+
+
 @app.get("/api/v1/tasks")
 def list_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     if not x_user_id:
@@ -3765,6 +3810,140 @@ def get_task(task_id: str, x_user_id: Optional[str] = Header(None, alias="X-User
     if not task:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
     return {"code": 200, "data": task.to_dict()}
+
+
+def _task_settlement_context(task: Any, *, target_id: str, amount: float, card_id: Optional[str] = None) -> dict[str, Any]:
+    payload = task.payload
+    return {
+        "task_id": task.task_id,
+        "task_updated_at": task.updated_at,
+        "schedule_id": payload.get("schedule_id"),
+        "owner_id": task.owner_id,
+        "target_id": target_id,
+        "amount_cents": amount_to_cents(amount),
+        "card_id": payload.get("card_id") if card_id is None else card_id,
+        "scheduled_at": payload.get("scheduled_at"),
+    }
+
+
+@app.post("/api/v1/tasks/{task_id}/precheck")
+def task_precheck(task_id: str, req: TaskPrecheckRequest, request: Request = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(req.user_id, x_user_id, action="TASK_PRECHECK", request_id=request_id)
+    safe_id = sanitize_text(task_id, field="任务编号", max_length=100)
+    task = TASK_STORE.get(safe_id, owner_id=actor)
+    if not task:
+        raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"})
+    if task.status != TaskState.WAITING_USER or task.task_type not in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"}:
+        raise HTTPException(status_code=409, detail={"code": "TASK_NOT_READY", "message": "任务当前不等待授权"})
+    payload = task.payload
+    amount = float(payload.get("amount", 0)) if task.task_type == "SCHEDULED_TRANSFER" else 0.01
+    if task.task_type == "SCHEDULED_TRANSFER":
+        target_id, receiver = _resolve_target(payload.get("target"), from_user=actor)
+        target_display = receiver.get("name", target_id)
+        paying_card = _payment_card(actor, payload.get("card_id"))
+        if paying_card is None:
+            raise SecurityError("预约转账缺少可用付款卡", 409, "CARD_NOT_AVAILABLE")
+        bound_card_id = str(paying_card.get("card_id") or "")
+        # Persist the concrete choice on the task so the signed context cannot
+        # silently fall back to a different default card at execution time.
+        payload["card_id"] = bound_card_id
+        schedule_row = next((row for row in SCHEDULED_TRANSFERS if row.get("schedule_id") == payload.get("schedule_id")), None)
+        if schedule_row is not None and not schedule_row.get("card_id"):
+            schedule_row["card_id"] = bound_card_id
+        operation = "SCHEDULED_TRANSFER_SETTLE"
+        risk = "YELLOW" if round(_daily_spent(actor) + _pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2) <= 1000 else "RED"
+    else:
+        target_id, target_display, operation, risk = f"__ORDER_DRAFT__:{task.task_id}", str(payload.get("item") or "provider-mock"), "ORDER_DRAFT_SETTLE", "YELLOW"
+    context = _task_settlement_context(task, target_id=target_id, amount=amount, card_id=bound_card_id if task.task_type == "SCHEDULED_TRANSFER" else None)
+    context_hash = _context_hash(context)
+    required = ["USER_CLICK_CONFIRM"] if risk == "YELLOW" else ["USER_CLICK_CONFIRM", "SMS_OTP", "FACE_RECOGNITION"]
+    idem_payload = {"task_id": safe_id, "user_id": actor, "context_hash": context_hash}
+    cached = _idempotency_begin(actor, "task_precheck", idempotency_key, idem_payload, request_id=request_id)
+    if cached is not None:
+        return cached
+    token, token_payload = issue_auth_token(from_user=actor, target_id=target_id, target_display=target_display, amount=amount, remark=f"任务结算:{safe_id}", risk_level=risk, required_actions=required, operation=operation, context_hash=context_hash, session_token=_presented_session(request))
+    response = {"code": 200, "risk_level": risk, "operation": operation, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": token_payload["exp"], "required_actions": required, "mfa_required": risk == "RED", "task_id": safe_id, "context_hash": context_hash}
+    _idempotency_complete(actor, "task_precheck", idempotency_key, idem_payload, response)
+    audit_event("TASK_PRECHECK", user_id=actor, risk_level=risk, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"task_id": safe_id, "jti": token_payload["jti"]})
+    return response
+
+
+@app.post("/api/v1/tasks/{task_id}/execute")
+def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(req.user_id, x_user_id, action="TASK_EXECUTE", request_id=request_id)
+    if not idempotency_key or not idempotency_key.strip():
+        raise HTTPException(status_code=400, detail={"code": "IDEMPOTENCY_KEY_REQUIRED", "message": "任务执行需要 Idempotency-Key"})
+    safe_id = sanitize_text(task_id, field="任务编号", max_length=100)
+    idem_payload = {"task_id": safe_id, "user_id": actor}
+    cached = _idempotency_begin(actor, "task_execute", idempotency_key, idem_payload, request_id=request_id)
+    if cached is not None:
+        return cached
+    token = req.auth_token or x_auth_token
+    proof = req.mfa_proof or x_mfa_proof
+    try:
+        if not token:
+            raise SecurityError("缺少安全授权凭证", 403, "TOKEN_REQUIRED")
+        task = TASK_STORE.get(safe_id, owner_id=actor)
+        if not task:
+            raise SecurityError("任务不存在", 404, "TASK_NOT_FOUND")
+        if task.status != TaskState.WAITING_USER or task.task_type not in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"}:
+            raise SecurityError("任务当前不等待授权", 409, "TASK_NOT_READY")
+        payload = task.payload
+        if task.task_type == "SCHEDULED_TRANSFER":
+            target_id, receiver = _resolve_target(payload.get("target"), from_user=actor)
+            amount = float(payload.get("amount", 0))
+            bound_card_id = payload.get("card_id")
+            schedule = next((row for row in SCHEDULED_TRANSFERS if row.get("schedule_id") == payload.get("schedule_id")), None)
+            if not schedule or any(schedule.get(key) != payload.get(key) for key in ("schedule_id", "target", "amount", "card_id", "scheduled_at")):
+                raise SecurityError("预约任务详情已变化，请重新预检", 409, "SCHEDULE_CONTEXT_CHANGED")
+            operation = "SCHEDULED_TRANSFER_SETTLE"
+            current_risk = "YELLOW" if round(_daily_spent(actor) + _pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2) <= 1000 else "RED"
+        else:
+            target_id, amount, operation, current_risk = f"__ORDER_DRAFT__:{task.task_id}", 0.01, "ORDER_DRAFT_SETTLE", "YELLOW"
+        context_hash = _context_hash(_task_settlement_context(task, target_id=target_id, amount=amount, card_id=bound_card_id if task.task_type == "SCHEDULED_TRANSFER" else None))
+        token_payload, _ = inspect_auth_token(token)
+        if token_payload.get("risk_level") == "YELLOW" and current_risk == "RED":
+            raise SecurityError("风险等级已升高，请重新授权", 409, "RISK_CHANGED_REAUTHORIZE")
+        with _ledger_transaction():
+            with authorize_execution(token, from_user=actor, target_id=target_id, amount=amount, remark=f"任务结算:{safe_id}", operation=operation, context_hash=context_hash, mfa_proof=proof, presented_session=_presented_session(request), request_id=request_id):
+                running = TASK_STORE.transition_if_status(safe_id, TaskState.WAITING_USER, TaskState.RUNNING, owner_id=actor)
+                if running is None:
+                    raise SecurityError("任务已被取消或正在执行", 409, "TASK_STATE_CHANGED")
+                if task.task_type == "ORDER_DRAFT":
+                    order_id = f"MOCK{uuid.uuid4().hex[:12].upper()}"
+                    result = {"execution_mode": "MOCK", "funds_debited": False, "mock_order_id": order_id, "item": payload.get("item")}
+                    payload["mock_order_id"] = order_id
+                else:
+                    schedule = next((row for row in SCHEDULED_TRANSFERS if row.get("schedule_id") == payload.get("schedule_id")), None)
+                    if not schedule or schedule.get("status") not in {"WAITING_USER", "SCHEDULED"}:
+                        raise SecurityError("预约转账状态已变化", 409, "SCHEDULE_CONTEXT_CHANGED")
+                    paying_card = _charge_card_and_balance(actor, amount, card_id=payload.get("card_id"))
+                    account = ACCOUNTS[actor]
+                    if account["balance"] - account["locked_amount"] < amount:
+                        raise SecurityError("可用余额不足（部分资金已被锁定）", 400, "INSUFFICIENT_FUNDS")
+                    account["balance"] = round(account["balance"] - amount, 2)
+                    receiver["balance"] = round(receiver["balance"] + amount, 2)
+                    DAILY_TRANSFERS[actor] = round(_daily_spent(actor) + amount, 2)
+                    _record_card_spend(actor, amount, card=paying_card)
+                    txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
+                    TRANSACTIONS.append({"tx_id": txn_id, "account_id": actor, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": "预约转账", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                    schedule["status"] = "SETTLED"
+                    schedule["settled_at"] = datetime.now().isoformat()
+                    result = {"execution_mode": "LEDGER", "transaction_id": txn_id, "transferred_amount": amount, "sender_balance": account["balance"]}
+                TASK_STORE.transition(safe_id, TaskState.SUCCEEDED, owner_id=actor)
+        response = {"code": 200, "status": "SUCCESS", "task_id": safe_id, **result}
+        _idempotency_complete(actor, "task_execute", idempotency_key, idem_payload, response)
+        audit_event("TASK_EXECUTE", user_id=actor, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"task_id": safe_id})
+        persist_ledger()
+        return response
+    except SecurityError as exc:
+        _idempotency_abort(actor, "task_execute", idempotency_key)
+        _record_failure_and_raise(exc, user_id=actor, action="TASK_EXECUTE", request_id=request_id)
+    except Exception as exc:
+        _idempotency_abort(actor, "task_execute", idempotency_key)
+        raise HTTPException(status_code=500, detail={"code": "CORE_ERROR", "message": "任务执行失败，请稍后重试"}) from exc
 
 
 def _task_action(task_id: str, action: str, req: TaskActionRequest, x_user_id: Optional[str], x_request_id: Optional[str]):
@@ -3958,6 +4137,7 @@ def reset_state() -> None:
         RATE_LIMIT_STATE.clear()
         LOCKS.clear()
         TASK_STORE.reset()
+        OUTBOX.clear()
         IDEMPOTENCY_RECORDS.clear()
         if "WEALTH_HOLDINGS" in globals():
             WEALTH_HOLDINGS.clear()

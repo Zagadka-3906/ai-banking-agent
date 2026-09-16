@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bank_tools import BankAPIError, BankClient
 from conversation import SERVICE, ConversationError
 from security import SecurityError, audit_event, sanitize_text
+from im_webhook import router as im_router
 
 app = FastAPI(
     title="Banking Agent Channel Gateway",
@@ -51,9 +52,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-User-Id", "X-Session-Token", "X-Request-Id", "Idempotency-Key"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-User-Id", "X-Session-Token", "X-Request-Id", "Idempotency-Key", "X-IM-Provider", "X-IM-Timestamp", "X-IM-Event-Id", "X-IM-Signature"],
 )
+app.include_router(im_router)
 
 try:
     _MAX_REQUEST_BYTES = max(4_096, min(int(os.getenv("BANK_MAX_REQUEST_BYTES", "1048576")), 10_000_000))
@@ -224,6 +226,12 @@ def _guard_rate_limit(principal: str) -> None:
         raise response
 
 
+def _turn_request_id(client_value: Optional[str]) -> tuple[str, Optional[str]]:
+    """Create the server correlation id; retain client id only as metadata."""
+    client_id = sanitize_text(client_value, field="客户端请求编号", max_length=128) if client_value else None
+    return f"gw_{uuid.uuid4().hex}", (client_id or None)
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     """Liveness probe: reports the checkpointer backend, never client data.
@@ -255,7 +263,8 @@ def post_message(
     another message: a new message would otherwise abandon a pending approval.
     """
 
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_MESSAGE", request_id=x_request_id)
+    request_id, client_request_id = _turn_request_id(x_request_id)
+    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_MESSAGE", request_id=request_id)
     _guard_rate_limit(principal)
     text = sanitize_text(req.text, field="用户指令", max_length=2000)
     if not text:
@@ -267,6 +276,8 @@ def post_message(
         message_id=req.message_id or f"m{uuid.uuid4().hex[:20]}",
         text=text,
         session_token=x_session_token,
+        request_id=request_id,
+        client_request_id=client_request_id,
     )
 
 
@@ -296,7 +307,8 @@ def post_message_stream(
     ordinary HTTP responses instead of in-band events a client might ignore.
     """
 
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_MESSAGE", request_id=x_request_id)
+    request_id, client_request_id = _turn_request_id(x_request_id)
+    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_MESSAGE", request_id=request_id)
     _guard_rate_limit(principal)
     text = sanitize_text(req.text, field="用户指令", max_length=2000)
     if not text:
@@ -311,6 +323,8 @@ def post_message_stream(
             message_id=message_id,
             text=text,
             session_token=x_session_token,
+            request_id=request_id,
+            client_request_id=client_request_id,
         ):
             yield _sse(str(item.get("event") or "message"), item.get("data"))
 
@@ -323,6 +337,16 @@ def post_message_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/api/v1/agent/traces/{request_id}")
+def get_agent_trace(
+    request_id: str,
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_TRACE")
+    return {"code": 200, **SERVICE.aggregate_trace(principal=principal, request_id=sanitize_text(request_id, field="请求编号", max_length=128), session_token=x_session_token)}
 
 
 @app.post("/api/v1/agent/approvals/{approval_id}/face-challenge")

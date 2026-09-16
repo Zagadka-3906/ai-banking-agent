@@ -17,6 +17,8 @@ from concurrent.futures.process import BrokenProcessPool
 import json
 import math
 import os
+import threading
+import time
 from typing import Any, Optional
 
 
@@ -50,6 +52,58 @@ MAX_COLLECTION_ITEMS = _env_int("BANK_SANDBOX_MAX_COLLECTION_ITEMS", 1000, 16, 1
 MAX_INTEGER_BITS = _env_int("BANK_SANDBOX_MAX_INTEGER_BITS", 4096, 64, 1_000_000)
 MAX_POWER_EXPONENT = _env_int("BANK_SANDBOX_MAX_POWER_EXPONENT", 10000, 1, 1_000_000)
 DEFAULT_TIMEOUT_SECONDS = _env_float("BANK_SANDBOX_TIMEOUT_SECONDS", 1.5, 0.1, 10.0)
+
+
+_TELEMETRY_LOCK = threading.Lock()
+_TELEMETRY: dict[str, Any] = {
+    "last_executor": "none",
+    "last_fallback_reason": None,
+    "os_isolation": "none",
+    "process_successes": 0,
+    "thread_successes": 0,
+    "fallbacks": 0,
+    "timeouts": 0,
+    "failures": 0,
+    "last_transition_timestamp": None,
+}
+
+
+def _record_telemetry(
+    *,
+    executor: str | None = None,
+    isolation: str | None = None,
+    fallback_reason: str | None = None,
+    process_success: bool = False,
+    thread_success: bool = False,
+    fallback: bool = False,
+    timeout: bool = False,
+    failure: bool = False,
+) -> None:
+    """Update process-local health counters without exposing exception data."""
+
+    with _TELEMETRY_LOCK:
+        if executor is not None:
+            _TELEMETRY["last_executor"] = executor
+        if isolation is not None:
+            _TELEMETRY["os_isolation"] = isolation
+        if fallback_reason is not None:
+            _TELEMETRY["last_fallback_reason"] = fallback_reason
+        for key, enabled in (
+            ("process_successes", process_success),
+            ("thread_successes", thread_success),
+            ("fallbacks", fallback),
+            ("timeouts", timeout),
+            ("failures", failure),
+        ):
+            if enabled:
+                _TELEMETRY[key] += 1
+        if any((executor, isolation, fallback_reason, process_success, thread_success, fallback, timeout, failure)):
+            _TELEMETRY["last_transition_timestamp"] = time.time()
+
+
+def _sandbox_telemetry() -> dict[str, Any]:
+    with _TELEMETRY_LOCK:
+        return dict(_TELEMETRY)
 
 
 _ALLOWED_NODES = {
@@ -233,32 +287,67 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
     """
 
     executor: Any = ProcessPoolExecutor(max_workers=1)
+    using_process = True
     try:
         future = executor.submit(_evaluate_worker, expression, safe_data)
-    except (PermissionError, OSError, RuntimeError):
+    except (PermissionError, OSError, RuntimeError) as exc:
         # Managed environments may deny child-process spawning, and Windows
         # spawn re-imports ``__main__``: a plain script without the
         # ``if __name__ == "__main__"`` guard fails at submit time.  Retain the
         # AST/builtins/timeout boundary on a monitored thread instead.
+        reason = "broken_process_pool" if isinstance(exc, BrokenProcessPool) else "submit_failure"
+        _record_telemetry(
+            executor="thread_fallback", isolation="none", fallback_reason=reason, fallback=True
+        )
         executor = _thread_fallback_executor(executor)
-        future = executor.submit(_evaluate_worker, expression, safe_data)
+        using_process = False
+        try:
+            future = executor.submit(_evaluate_worker, expression, safe_data)
+        except Exception as thread_exc:
+            _record_telemetry(executor="thread_fallback", failure=True)
+            raise SandboxError(f"沙箱执行失败: {type(thread_exc).__name__}") from thread_exc
     try:
-        return future.result(timeout=timeout)
+        result = future.result(timeout=timeout)
+        if using_process:
+            _record_telemetry(executor="process", isolation="process", process_success=True)
+        else:
+            _record_telemetry(executor="thread_fallback", thread_success=True)
+        return result
     except FutureTimeoutError as exc:
         future.cancel()
+        _record_telemetry(
+            executor="process" if using_process else "thread_fallback",
+            timeout=True,
+        )
         raise SandboxError("沙箱执行超时") from exc
     except BrokenProcessPool:
+        _record_telemetry(
+            executor="thread_fallback", isolation="none", fallback_reason="broken_process_pool", fallback=True
+        )
         executor = _thread_fallback_executor(executor)
-        future = executor.submit(_evaluate_worker, expression, safe_data)
+        using_process = False
         try:
-            return future.result(timeout=timeout)
+            future = executor.submit(_evaluate_worker, expression, safe_data)
+        except Exception as exc:
+            _record_telemetry(executor="thread_fallback", failure=True)
+            raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
+        try:
+            result = future.result(timeout=timeout)
+            _record_telemetry(executor="thread_fallback", thread_success=True)
+            return result
         except FutureTimeoutError as exc:
             future.cancel()
+            _record_telemetry(executor="thread_fallback", timeout=True)
             raise SandboxError("沙箱执行超时") from exc
         except Exception as exc:
-            raise SandboxError(f"沙箱执行失败: {exc}") from exc
+            _record_telemetry(executor="thread_fallback", failure=True)
+            raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
     except Exception as exc:
-        raise SandboxError(f"沙箱执行失败: {exc}") from exc
+        _record_telemetry(
+            executor="process" if using_process else "thread_fallback",
+            failure=True,
+        )
+        raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
     finally:
         # ``wait=False`` avoids blocking the agent on a runaway child.  Normal
         # completed workers exit immediately; timed-out workers are cancelled.
@@ -312,4 +401,6 @@ def sandbox_health() -> dict[str, Any]:
         "max_ast_nodes": MAX_AST_NODES,
         "max_power_exponent": MAX_POWER_EXPONENT,
         "safe_functions": sorted(_SAFE_FUNCTIONS),
+        "preferred_executor": "process",
+        **_sandbox_telemetry(),
     }

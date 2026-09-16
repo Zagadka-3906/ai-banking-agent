@@ -130,7 +130,33 @@ class TaskStore:
             task.updated_at = datetime.now(timezone.utc).isoformat()
             return task
 
+    def transition_if_status(self, task_id: str, expected: str, status: str, *, error: Optional[str] = None, owner_id: Optional[str] = None) -> Optional[ScheduledTask]:
+        """Compare-and-set a task state; return None when another actor won."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or (owner_id is not None and task.owner_id != owner_id):
+                return None
+            if task.status != expected:
+                return None
+            if status == TaskState.RUNNING:
+                if task.attempts >= task.max_attempts:
+                    raise ValueError("retry budget exhausted")
+                unmet = [dep for dep in task.depends_on if not self._tasks.get(dep) or self._tasks[dep].status != TaskState.SUCCEEDED]
+                if unmet:
+                    raise ValueError(f"dependencies not complete: {','.join(unmet)}")
+                task.attempts += 1
+            task.status = status
+            task.error = str(error)[:500] if error is not None else None
+            task.updated_at = datetime.now(timezone.utc).isoformat()
+            return task
+
     def cancel(self, task_id: str, *, owner_id: Optional[str] = None) -> ScheduledTask:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or (owner_id is not None and task.owner_id != owner_id):
+                raise KeyError(task_id)
+            if task.status == TaskState.RUNNING:
+                raise ValueError("task is currently running")
         return self.transition(task_id, TaskState.CANCELLED, owner_id=owner_id)
 
     def takeover(self, task_id: str, *, owner_id: Optional[str] = None, reason: str = "人工接管") -> ScheduledTask:

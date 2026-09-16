@@ -70,11 +70,18 @@
 
 > 我们把模型当作不可信的建议者，把 Core API 当作唯一记账边界；采用白名单工具、分级权限、一次性凭证、MFA、审计和熔断。已有 argon2id 口令登录、登出吊销，账本/审批/设备库可 HMAC 校验落盘；生产化前仍需数据库事务、OIDC、真实 MFA、多实例一致性和合规评审。
 
+## 可替换的 P1 片段（时间充足时）
+
+用同一条生日订单草稿演示到期闭环：调用 `POST /api/v1/tasks/run-due` 后展示任务变为 `WAITING_USER`；调用 `POST /api/v1/tasks/{task_id}/precheck` 取得新的授权，再以新的 `Idempotency-Key` 调用 `/execute`。转账会重新校验余额和日累计，订单草稿只显示 `provider-mock` 零资金完成，绝不声称已向真实商户下单。
+
+若展示 IM，先在已登录 API 会话调用 `POST /api/v1/im/bindings`，将一次性绑定码交给已配置的 provider；webhook 请求须带签名头。只展示消息解析或“请回 APP/API 确认”的审批提示，不在视频中显示 `BANK_IM_PROVIDER_SECRETS` 或任何真实凭证。
+
 ## 录制前检查清单
 
 - 启动 Core：`.\.venv\Scripts\python.exe -m uvicorn main:app --port 8000`。
 - 启动前端：`.\.venv\Scripts\python.exe -m streamlit run web_app.py`。
 - 确认 `DEEPSEEK_API_KEY` 通过安全环境变量注入；不要把 `.env` 或密钥录入视频。
+- 如演示 IM，仅在进程环境临时注入 `BANK_IM_PROVIDER_SECRETS=provider=<随机测试值>`，录制画面只显示 provider 名称，不显示 secret；演示结束后清除。
 - 清空/重置沙箱账户和每日累计，保证演示结果可重复。
-- 预先运行 `pytest -q`（全量 17 个测试文件 / 341 个用例），记录版本和失败用例。
+- 预先运行 `pytest -q`（全量 22 个测试文件 / 385 个用例；P1 focused suite 44 tests），记录版本和失败用例。
 - 准备离线降级话术：LLM/API 不可用时只展示“无法完成，请稍后重试”，不声称交易成功。

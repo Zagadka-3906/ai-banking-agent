@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping, Optional
 
 from bank_tools import BankAPIError, BankClient
-from security import AUTH_SECRET_CONFIGURED, SecurityError, audit_event, resolve_store_digest_algorithm, sanitize_text, store_integrity_digest
+from security import AUTH_SECRET_CONFIGURED, SecurityError, audit_event, get_audit_logs, resolve_store_digest_algorithm, sanitize_text, store_integrity_digest, verify_audit_chain
 
 try:  # The graph is optional so this module stays importable in minimal setups.
     from agent import build_graph, channel_session
@@ -605,6 +605,23 @@ class ConversationService:
             "clarification_required": False,
         }
 
+    @staticmethod
+    def _audit_response(principal: str, envelope: dict[str, Any], client_request_id: Optional[str] = None) -> None:
+        """Record a redacted gateway response; never persist reply or inputs."""
+        audit_event(
+            "AGENT_RESPONSE", user_id=principal,
+            decision="ALLOW" if envelope.get("status") in {"COMPLETED", "APPROVAL_REQUIRED"} else "ERROR",
+            outcome=str(envelope.get("status") or "UNKNOWN"), request_id=envelope.get("request_id"),
+            metadata={
+                "status": envelope.get("status"), "intent": envelope.get("intent"),
+                "risk_level": envelope.get("risk_level"),
+                "result_types": sorted((envelope.get("result") or {}).keys()) if isinstance(envelope.get("result"), dict) else [],
+                "response_length": len(str(envelope.get("reply") or "")),
+                "approval_id": ((envelope.get("approval") or {}).get("approval_id") if isinstance(envelope.get("approval"), dict) else None),
+                "client_request_id": client_request_id,
+            },
+        )
+
     def _cached_turn(self, principal: str, conversation_id: str, message_id: str) -> Optional[dict[str, Any]]:
         with self._lock:
             cached = self._turns.get((principal, conversation_id, message_id))
@@ -615,7 +632,7 @@ class ConversationService:
             self._turns[(principal, conversation_id, message_id)] = (time.time(), envelope)
             self._purge()
 
-    def _settle_turn(self, *, principal: str, conversation_id: str, thread_id: str, graph: Any, config: dict[str, Any]) -> dict[str, Any]:
+    def _settle_turn(self, *, principal: str, conversation_id: str, thread_id: str, graph: Any, config: dict[str, Any], client_request_id: Optional[str] = None) -> dict[str, Any]:
         """Turn a finished (or paused) graph run into the client envelope."""
 
         interrupt = self._pending_interrupt(graph, config)
@@ -626,13 +643,17 @@ class ConversationService:
                 conversation_id=conversation_id,
                 payload=interrupt,
             )
-            return self._approval_envelope(approval)
+            envelope = self._approval_envelope(approval)
+            self._audit_response(principal, envelope, client_request_id)
+            return envelope
         snapshot = graph.get_state(config)
-        return self._envelope_from_state(
+        envelope = self._envelope_from_state(
             conversation_id=conversation_id,
             state=dict(snapshot.values or {}),
             request_id=None,
         )
+        self._audit_response(principal, envelope, client_request_id)
+        return envelope
 
     def start_turn(
         self,
@@ -642,6 +663,8 @@ class ConversationService:
         message_id: str,
         text: str,
         session_token: Optional[str] = None,
+        request_id: Optional[str] = None,
+        client_request_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Run one user turn, or return the approval the turn is waiting on.
 
@@ -660,6 +683,7 @@ class ConversationService:
             # precheck (and therefore a second approval nonce).
             return cached
 
+        request_id = request_id or f"gw_{uuid.uuid4().hex}"
         with self._thread_lock(thread_id):
             pending = self._pending_approval(thread_id)
             if pending is not None:
@@ -671,13 +695,14 @@ class ConversationService:
             graph = get_graph()
             config = self._config(thread_id)
             with channel_session(session_token):
-                graph.invoke(self._turn_input(principal, text), config)
+                graph.invoke({**self._turn_input(principal, text), "request_id": request_id}, config)
             envelope = self._settle_turn(
                 principal=principal,
                 conversation_id=conversation_id,
                 thread_id=thread_id,
                 graph=graph,
                 config=config,
+                client_request_id=client_request_id,
             )
 
         self._remember_turn(principal, conversation_id, safe_message_id, envelope)
@@ -691,6 +716,8 @@ class ConversationService:
         message_id: str,
         text: str,
         session_token: Optional[str],
+        request_id: Optional[str] = None,
+        client_request_id: Optional[str] = None,
     ) -> Iterator[dict[str, Any]]:
         """The streamed variant of :meth:`start_turn`, as a generator of events.
 
@@ -710,6 +737,7 @@ class ConversationService:
             yield {"event": "result", "data": cached}
             return
 
+        request_id = request_id or f"gw_{uuid.uuid4().hex}"
         with self._thread_lock(thread_id):
             pending = self._pending_approval(thread_id)
             if pending is not None:
@@ -719,7 +747,7 @@ class ConversationService:
             graph = get_graph()
             config = self._config(thread_id)
             with channel_session(session_token):
-                for chunk in graph.stream(self._turn_input(principal, text), config, stream_mode="updates"):
+                for chunk in graph.stream({**self._turn_input(principal, text), "request_id": request_id}, config, stream_mode="updates"):
                     for node in chunk:
                         label = _STAGE_LABELS.get(str(node))
                         if label:
@@ -730,6 +758,7 @@ class ConversationService:
                 thread_id=thread_id,
                 graph=graph,
                 config=config,
+                client_request_id=client_request_id,
             )
 
         self._remember_turn(principal, conversation_id, safe_message_id, envelope)
@@ -744,6 +773,8 @@ class ConversationService:
         message_id: str,
         text: str,
         session_token: Optional[str] = None,
+        request_id: Optional[str] = None,
+        client_request_id: Optional[str] = None,
     ) -> Iterator[dict[str, Any]]:
         """Stream one turn's progress, then exactly one terminal event.
 
@@ -766,6 +797,8 @@ class ConversationService:
                     message_id=message_id,
                     text=text,
                     session_token=session_token,
+                    request_id=request_id,
+                    client_request_id=client_request_id,
                 ):
                     events.put(item)
             except SecurityError as exc:
@@ -959,11 +992,13 @@ class ConversationService:
         # was not actually applied and the client has to know.
         if self._pending_interrupt(graph, config) is not None:
             raise ConversationError("审批未生效，操作仍在等待确认", 409, "APPROVAL_STILL_PENDING")
-        return self._envelope_from_state(
+        envelope = self._envelope_from_state(
             conversation_id=approval.conversation_id,
             state=state,
             request_id=approval.request_id,
         )
+        self._audit_response(approval.principal, envelope)
+        return envelope
 
     @staticmethod
     def _core_failure(exc: BankAPIError) -> ConversationError:
@@ -985,6 +1020,42 @@ class ConversationService:
             "pending_approvals": live,
             "approval_store": approval_store_status(),
         }
+
+    def aggregate_trace(self, *, principal: str, request_id: str, session_token: Optional[str] = None) -> dict[str, Any]:
+        """Combine gateway-local and core events without inventing one chain."""
+        local = [e for e in get_audit_logs(limit=1000, user_id=principal) if e.get("request_id") == request_id]
+        core_trace: dict[str, Any] = {}
+        missing: list[str] = []
+        try:
+            from urllib.parse import quote
+            client = BankClient(user_id=principal, session_token=session_token)
+            response = client._request("GET", f"security/audit/trace/{quote(request_id, safe='')}", read_only=True)
+            payload = response.json()
+            core_trace = payload if isinstance(payload, dict) else {}
+            # Core deployments may wrap the trace under ``data`` while older
+            # ones merge it beside ``code``.  Accept both envelopes.
+            if isinstance(core_trace.get("data"), dict):
+                core_trace = core_trace["data"]
+            if isinstance(core_trace.get("events"), list):
+                core_trace = {**core_trace, "events": [e for e in core_trace["events"] if e.get("user_id") == principal]}
+        except Exception:
+            missing.append("core")
+        if not local:
+            missing.append("gateway")
+        if not local and not core_trace.get("events"):
+            raise ConversationError("审计请求不存在或不属于当前用户", 403, "AUDIT_TRACE_FORBIDDEN")
+        events = [{**e, "source": "gateway"} for e in local]
+        events.extend({**e, "source": "core"} for e in core_trace.get("events", []))
+        events.sort(key=lambda e: (str(e.get("timestamp") or ""), str(e.get("event_id") or "")))
+        core_verification = core_trace.get("chain_verification")
+        if core_verification is None:
+            # The legacy core trace endpoint returns per-event hashes but does
+            # not expose verification of its process-local chain.  Do not
+            # pretend the gateway can verify a chain it does not own.
+            core_verification = {"available": False, "reason": "core_verification_not_exposed"}
+        return {"request_id": request_id, "complete": not missing, "missing_sources": missing,
+                "chain_verification": {"gateway": verify_audit_chain(), "core": core_verification},
+                "events": events}
 
     def reset(self) -> None:
         """Drop every pending approval and cached turn.

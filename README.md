@@ -38,7 +38,8 @@
   - **模糊表达 / 省略上下文 / 隐含意图**：隐含说法映射到白名单意图（“钱都花哪儿去了”→上月深度账单分析、“我的卡好像被人盗刷了”→冻结卡片、“不想再被扣会员费了”→取消订阅、“转点钱给老婆”→转账待补金额）；回指短语按上下文解析（“再转一次”→复用上次收款人与金额并**重新走一遍授权与确认卡**、“把它取消掉”→承接上一次订阅查询）；
   - **一句话多个诉求拆解为有序 DAG**：“查一下余额，再分析上个月账单”会拆成两个只读子任务并编译成带依赖的 DAG（`0_fetch_balance → 1_fetch_transactions → 1_compute_facts`）依次执行、分别校验后合并作答；**含有变更类子请求时不会静默拆解或半做**，而是提示逐条办理；
   - 结算请求携带 `Idempotency-Key`（传输失败只幂等重试一次），结算失败时执行补偿动作（核心账本原子回滚确认，异常升级人工接管）；
-  - 联动底层资金池隔离锁定专款（`balance - locked_amount` 硬扣除），任务中心自动生成提前 2 天的备忘提醒与鲜花/蛋糕订单草稿（到期保持 `WAITING_USER` 状态，不自动扣款，必须经用户二次确认）。
+  - 联动底层资金池隔离锁定专款（`balance - locked_amount` 硬扣除），任务中心自动生成提前 2 天的备忘提醒与鲜花/蛋糕订单草稿；到期由 `/tasks/run-due` 通知并保持 `WAITING_USER`，经 `/tasks/{task_id}/precheck` 重新评估后再 `/execute`，不复用旧授权。
+  - **P1 渠道与可观测性**：provider-neutral 签名 IM webhook（绑定码、HMAC、时间窗和重放防护）；IM 只传递消息，确认/MFA 必须回 APP/API。AA 参与人通知使用 at-least-once outbox；网关 trace 按 `source` 汇聚并返回 `complete/missing_sources`；安全健康接口暴露沙箱实际执行器 telemetry。
 - **全链路金融级原生安全防御**：
   - **决策与执行物理分离**：核心结算接口与大模型物理隔离，无底层签发的安全凭证直接请求 API 一律返回 `403 Forbidden`；
   - **业务参数强绑定**：签名 Token 内嵌 `context_hash`，覆盖收款人、金额与商户等参数，防止中间人篡改；
@@ -108,7 +109,7 @@ mock-banking-core/
 │   ├── app/src/main/java/com/aibanking/agent/   # 界面、会话、Keystore 设备密钥、推送
 │   ├── app/src/androidTest/java/com/aibanking/agent/  # 插桩 UI 测试（绿/黄/红三条链路）
 │   └── tools/                       # 工具链安装脚本、BiometricPrompt 应答脚本
-├── tests/               # 自动化测试套件（17 个文件 / 341 个用例）
+├── tests/               # 自动化测试套件（22 个文件 / 385 个用例）
 │   ├── conftest.py                  # 套件级强制配置（见「贡献者指南」，改动前务必阅读）
 │   ├── test_core_api.py             # 核心契约、金额与风险边界、状态/卡片拒绝路径
 │   ├── test_security_regressions.py # 身份、票据绑定、上下文篡改、审计、回滚
@@ -221,6 +222,8 @@ BANK_APPROVAL_TTL_SECONDS=110
 BANK_AGENT_RATE_LIMIT_PER_MINUTE=60
 # 推送（服务端一半）：Firebase 服务账号私钥路径，放在仓库之外
 BANK_FCM_CREDENTIALS=
+# 可选 IM provider 配置：逗号分隔 provider=secret；只注入部署环境，不提交仓库或录屏
+BANK_IM_PROVIDER_SECRETS=
 ```
 
 完整的 46 个变量及其含义见 [`.env.example`](.env.example)，其中每一项都带注释说明"不配置会怎样"。
@@ -300,11 +303,11 @@ cd android; .\gradlew.bat --no-daemon assembleDebug        # 产出 app\build\ou
 
 ## 📊 自动化测试与质量保障
 
-`tests/` 共 17 个文件 / 341 个用例，全部离线可跑（不需要网络、不需要大模型密钥、不写任何真实数据文件）。
+`tests/` 共 22 个文件 / 385 个用例，全部离线可跑（不需要网络、不需要大模型密钥、不写任何真实数据文件）。
 
 ```powershell
 # 运行全部测试
-python -m pytest -q                       # 341 passed
+python -m pytest -q                       # 385 passed
 
 # 核心门禁四件套——提交前必须全过，CI（.github/workflows/ci.yml）跑的就是这些
 python -m compileall -q .
@@ -384,7 +387,7 @@ cd android
 
 ```powershell
 python -m compileall -q .            # 语法
-python -m pytest -q                  # 341 passed
+python -m pytest -q                  # 385 passed
 python -m ruff check . --ignore E402 # 静态检查
 docker compose config --quiet        # 编排文件仍然有效
 ```

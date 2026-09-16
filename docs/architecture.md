@@ -8,7 +8,7 @@
 
 | 层 | 文件 | 职责 | 当前状态 |
 | --- | --- | --- | --- |
-| 交互层 | `web_app.py` | Streamlit 对话、确认卡、看板和账单图表 | 已实现（演示级） |
+| 交互层 | `web_app.py`、`im_webhook.py` | Streamlit 对话、确认卡、看板和账单图表；provider-neutral 签名 IM webhook | 已实现（演示级；IM 绑定/消息状态为进程内） |
 | 编排/策略层 | `agent.py` + `planner.py` | LangGraph 状态机、离线/LLM 意图槽位、风险路由、暂停/恢复、DAG | 已实现；生产需接入持久化任务执行器 |
 | 核心执行层 | `main.py` + `security.py` | 余额/流水、风险预检、一次性凭证、转账/锁资/解锁及扩展场景 | 已实现服务端策略、MFA、审计、幂等；账本默认内存 Mock，可经 `BANK_LEDGER_STORE_PATH` 落盘（HMAC 完整性校验、篡改冻结） |
 | 安全组件 | `security.py` | 签名凭证、会话签发/吊销（登出）、设备公钥信任根、MFA proof、注入检测、审计链和熔断 | 已实现进程内控制，设备库/审计/账本/审批注册表支持可选持久化；密钥托管（KMS）待补强 |
@@ -68,9 +68,12 @@ parse_event
           └─> schedule_orders (depends_on: reserve_funds)
                   ├─> REMINDER
                   └─> ORDER_DRAFT(鲜花/蛋糕) → WAITING_USER at due time
+
+到期任务不会复用创建时的授权：`POST /api/v1/tasks/run-due` 将预约转账和订单草稿推进到
+`WAITING_USER` 并通知用户；随后必须调用 `POST /api/v1/tasks/{task_id}/precheck` 重新检查余额、日累计和风险，取得新的短时效凭证，再调用 `POST /api/v1/tasks/{task_id}/execute`（带新的 `Idempotency-Key`）完成幂等结算。订单草稿仅完成 provider-mock 的零资金演示结算，不会真实下单。
 ```
 
-每个节点应具备 `task_id`、状态（PENDING/RUNNING/WAITING_USER/SUCCEEDED/FAILED/CANCELLED）、幂等键和补偿动作。当前演示在定时转账/订单到期时停在 `WAITING_USER`，不自动扣款；生产版需接入任务级重新授权与结算 worker。
+每个节点应具备 `task_id`、状态（PENDING/RUNNING/WAITING_USER/SUCCEEDED/FAILED/CANCELLED）、幂等键和补偿动作。当前演示在定时转账/订单到期时先停在 `WAITING_USER`，随后可通过任务级重新预检与结算接口完成演示闭环；生产版仍需持久化任务执行器与结算 worker。
 
 ## 3. 核心数据与接口
 
@@ -133,6 +136,9 @@ available_balance = total_balance - locked_amount
 | `GET /api/v1/security/audit`（别名 `/api/v1/audit/logs`） | 审计查询：本人可查自己的脱敏事件，管理员（`BANK_ADMIN_AUDIT_TOKEN`）可查任意主体 | 本人或管理员 |
 | `GET /api/v1/security/audit/verify` | 审计哈希链完整性自检 | 管理员 |
 | `GET /api/v1/security/audit/trace/{request_id}` | 按请求编号还原完整决策链路（预检 → 确认 → MFA → 结算 → 凭证消费） | 本人或管理员 |
+| `POST /api/v1/notifications/outbox/dispatch` / `GET /api/v1/notifications/outbox` | 派发/查询 AA 通知 outbox；状态包括 `PENDING`、`SENDING`、`RETRY`、`SENT`、`FAILED` | 发起人或接收人 |
+| `POST /api/v1/im/bindings` | 由已登录会话签发一次性 IM 绑定码（不返回或保存 provider secret） | 已登录渠道 |
+| `POST /api/v1/im/webhook` / `DELETE /api/v1/im/bindings/{provider}/{external_subject}` | provider 配置、时间窗、HMAC 签名及事件重放校验；IM 仅可发消息，确认/MFA 必须回 APP/API | IM provider/本人 |
 
 执行接口必须重新在服务端校验：调用者身份、凭证与目标/金额绑定、凭证有效期、账户状态、余额、幂等键和所需 MFA。前端展示的“确认”不能作为安全边界。`security.py` 的签名 token、一次性消费和 proof 绑定属于核心控制。主链路 `agent.py` 自持 `_http` 直连核心并注入 `X-Request-Id`/`Idempotency-Key`；`bank_tools.py` 提供等价的传输适配层，供外部集成方或 CLI/旧静态调用复用，不参与 Agent 运行时路径。
 
@@ -183,7 +189,7 @@ available_balance = total_balance - locked_amount
 
 三条入口共享同一套核心与同一条安全边界：网关与前端都不判定身份，会话一律回核心校验；账户变更只能由核心的三段式端点执行。
 
-当前仓库实际提供的是 Streamlit 演示前端与「网关 + Android 原生客户端」两条已实现渠道；IM webhook、OIDC 登录回调、真实支付/短信/人脸供应商属于接入层扩展，不能把示意图当作已上线能力。原生客户端的运行、设备凭据与验收标准见 [`device-verification.md`](device-verification.md)。
+当前仓库实际提供 Streamlit、网关 + Android 原生客户端，以及 provider-neutral 的签名 IM webhook。IM 绑定、会话和 webhook 防重放状态仍为进程内；OIDC 登录回调、真实支付/短信/人脸供应商属于接入层扩展，不能把此适配器当作已上线 provider 集成。原生客户端的运行、设备凭据与验收标准见 [`device-verification.md`](device-verification.md)。
 
 启动命令：
 
@@ -197,9 +203,9 @@ available_balance = total_balance - locked_amount
 
 ## 6. 可观测性与交付物
 
-所有请求携带 `request_id`，核心记录结构化审计事件（策略版本、审批者、MFA challenge、执行前后余额摘要、核心返回码和错误原因，禁止记录完整密钥/验证码），并提供只读审计查询与决策链路还原接口（`/security/audit`、`/security/audit/verify`、`/security/audit/trace/{request_id}`）。Agent 侧事件（意图解析、回复校验）保存在 Agent 进程内，跨进程汇聚属于生产项；建议继续补充指标：成功率、拒绝率、连续失败次数、P95 延迟、待人工任务数。
+所有请求携带 `request_id`，核心记录结构化审计事件（策略版本、审批者、MFA challenge、执行前后余额摘要、核心返回码和错误原因，禁止记录完整密钥/验证码），并提供只读审计查询与决策链路还原接口。网关 `conversation.aggregate_trace()` 按来源标记事件并返回 `complete` 与 `missing_sources`；这表示当前已收集的 Core/Agent 片段，不代表跨进程集中审计。Agent 侧事件仍保存在 Agent 进程内，生产需集中汇聚。
 
-架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试为 `tests/` 下 17 个文件 / 341 个用例（`pytest -q` 全量运行，涵盖契约、安全回归、Agent 工作流、规划、安全原语、扩展场景、并发原子性、登录、设备信任根、设备库/账本/审批注册表落盘、联系人簿、渠道网关与推送）。
+架构图、接口契约、威胁模型和演示步骤分别见本目录的文档；自动化测试为 `tests/` 下 22 个文件 / 385 个用例（`pytest -q` 全量运行，涵盖契约、安全回归、Agent 工作流、规划、安全原语、扩展场景、并发原子性、登录、设备信任根、设备库/账本/审批注册表落盘、联系人簿、渠道网关与推送）。
 
 ## 7. 渠道网关与原生客户端
 

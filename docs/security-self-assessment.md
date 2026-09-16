@@ -43,7 +43,12 @@
 - **网关入口控制**：会话令牌（`POST /auth/session`，主体覆盖自称身份头；`BANK_REQUIRE_SESSION=1` 时写操作强制）与 60 秒请求窗口限流（429 + `Retry-After`，探针与文档路径豁免，首次超限写入审计）。**限流桶取自已验证的会话主体或对端地址，不取自客户端可自选的身份头**——`X-User-Id` 是对象选择器而非凭证，用它当桶键等于让被限流方自己决定属于哪个桶（改一个头即恢复配额）。网关的演示身份短路与核心的 `demo_mode()` 现在都按调用读取 `BANK_DEMO_MODE`，关闭演示模式只需改环境变量即可同时生效。
 - **行为组合熔断**：敏感操作产出加权信号（大额转账/锁资、理财申赎、卡片额度与状态变更、挂失、改密、凭证失败），6 条命名规则在滑动窗口内命中即累计评分，超阈值锁定账户并写入 `BEHAVIOR_RISK_LOCK` 审计（含评分、命中规则与信号序列）；同一请求内的重复上报按 `request_id` 去重；`GET /security/behavior/{user_id}` 提供可解释明细，锁定随窗口到期自动恢复。
 - **人机协同**：LangGraph `interrupt()` 可暂停黄色/红色流程并取消。
-- **回归测试基线**：`tests/` 共 17 个文件（341 个用例）。`test_core_api.py` 覆盖未知账户、金额边界、风险阈值、伪造/篡改/重放 token、红区 MFA 绕过、锁资，以及**预检后冻结账户/卡片仍拒绝结算且余额不变**的真实负路径；`test_login.py` 覆盖 argon2id 口令登录、枚举不可区分、失败计数熔断、凭证轮换吊销会话与**登出只吊销当前会话**。
+- **到期任务重新授权**：`/tasks/run-due` 只推进并通知 `SCHEDULED_TRANSFER`/`ORDER_DRAFT` 到 `WAITING_USER`；`/tasks/{task_id}/precheck` 重新计算余额、日累计和风险，`/execute` 只接受新凭证与新的幂等键。订单草稿的完成是 provider-mock 零资金演示，不代表真实商户下单。
+- **AA 通知 outbox**：每个参与人事件按 `event_id` 去重入队，状态为 `PENDING → SENDING → SENT`，失败进入 `RETRY`，达到尝试上限为 `FAILED`；这是 at-least-once 投递，provider 失败不回滚已完成的 Mock 记账。outbox 与 IM 绑定/会话等运行时状态仍主要在进程内。
+- **签名 IM webhook**：`/api/v1/im/bindings` 只对已登录会话签发短时绑定码；`/api/v1/im/webhook` 要求 `X-IM-Provider`、时间戳、事件编号和 HMAC 签名，并拒绝过期/重放事件。IM 不执行确认或 MFA，审批必须回到 APP/API；`BANK_IM_PROVIDER_SECRETS` 由部署环境注入且不应写入文档、代码或录屏。
+- **请求链路聚合**：网关为每轮生成 `request_id`，聚合 Core 与 Agent 事件时标记 `source`，并显式返回 `complete`/`missing_sources`；这是可解释的部分聚合，不是跨进程集中审计或全局不可抵赖链。
+- **沙箱 telemetry**：`GET /api/v1/security/health` 的 `sandbox` 字段报告实际 executor mode；首选短生命周期进程，受限环境可能降级为线程。线程降级不等于 OS 隔离，生产仍需容器或 microVM。
+- **回归测试基线**：`tests/` 共 22 个文件（385 个用例；P1 focused suite 44 tests）。`test_core_api.py` 覆盖未知账户、金额边界、风险阈值、伪造/篡改/重放 token、红区 MFA 绕过、锁资，以及**预检后冻结账户/卡片仍拒绝结算且余额不变**的真实负路径；`test_login.py` 覆盖 argon2id 口令登录、枚举不可区分、失败计数熔断、凭证轮换吊销会话与**登出只吊销当前会话**。
 - **安全回归扩展**：`test_security_regressions.py` 覆盖身份缺失、预约/AA 动态红区、上下文篡改、人脸票据绑定与单次性、审计链路与轮转校验、路由混淆、请求大小和失败回滚；`test_concurrency.py` 用真实线程验证**同一 Idempotency-Key 并发只记一笔（第二次回放同一流水号）**、**同一 nonce 并发只有一次结算（另一次 TOKEN_REPLAY）**、并发锁资只占用一次。
 
 ## 4. 已知风险清单与优先级
@@ -65,7 +70,7 @@
 
 ### P2（产品化）
 
-1. 生日联动当前创建“生日前两天提醒”和鲜花/蛋糕订单草稿；订单到期只进入 `WAITING_USER`，不会在 Mock 中真实下单，生产需接入供应商、通知和补偿。
+1. 生日联动当前创建“生日前两天提醒”和鲜花/蛋糕订单草稿；到期通知后必须重新预检和授权，订单完成仅为 provider-mock 零资金演示，不会真实下单，生产需接入供应商、通知和补偿。
 2. 密码修改当前只做“凭证版本轮换”演示，不接收明文密码；生产必须由 IdP 完成密码复杂度、旧密码校验、哈希和设备绑定。
 3. 加密传输/密钥轮换、速率限制、设备指纹、灾备和数据留存策略。
 4. 当前沙箱是 AST + 受限进程示范；生产需容器/microVM、seccomp 和网络隔离。

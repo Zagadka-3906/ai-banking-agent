@@ -451,7 +451,9 @@ def _quiz_result(
     result = _empty_state(final_response=response_text)
     result.update({
         "intent": Intent.WEALTH_RISK_ASSESSMENT.value,
-        "request_id": f"agent_{uuid.uuid4().hex}",
+        # The gateway owns correlation for a turn.  Keep the fallback for
+        # direct graph callers, but never replace an id supplied in state.
+        "request_id": state.get("request_id") or f"agent_{uuid.uuid4().hex}",
         "clarification_required": quiz is not None,
         "plan": build_task_plan({"intent": Intent.WEALTH_RISK_ASSESSMENT.value, "date_scope": "ALL"}).to_dict(),
         "context": {"risk_quiz": quiz},
@@ -1223,7 +1225,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             response = ("请补充：" + "、".join(missing_names) + "。") if missing_names else "请补充必要信息后我再为您办理。"
     result = {
         **parsed,
-        "request_id": f"agent_{uuid.uuid4().hex}",
+        "request_id": state.get("request_id") or f"agent_{uuid.uuid4().hex}",
         "risk_level": None,
         "auth_token": None,
         "mfa_proof": None,
