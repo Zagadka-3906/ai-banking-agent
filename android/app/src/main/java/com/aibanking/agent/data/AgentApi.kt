@@ -67,29 +67,6 @@ data class FaceChallengeView(
     @SerializedName("expires_in") val expiresIn: Int? = null,
 )
 
-data class ArtifactRequest(
-    @SerializedName("media_type") val mediaType: String,
-    @SerializedName("content_base64") val contentBase64: String,
-    val sha256: String,
-    val filename: String,
-    @SerializedName("conversation_id") val conversationId: String,
-)
-
-data class ArtifactView(
-    @SerializedName("artifact_id") val artifactId: String = "",
-    val status: String = "",
-    val category: String? = null,
-    val amount: Double? = null,
-    val currency: String? = null,
-    val merchant: String? = null,
-    @SerializedName("invoice_number") val invoiceNumber: String? = null,
-    val confidence: Double? = null,
-    @SerializedName("recognition_mode") val recognitionMode: String? = null,
-    val provenance: String? = null,
-    @SerializedName("reimbursement_draft") val reimbursementDraft: Map<String, Any>? = null,
-    @SerializedName("funds_debited") val fundsDebited: Boolean = false,
-)
-
 /** A normalized gateway/transport failure, so the UI never shows a raw stack. */
 class GatewayException(
     val code: String?,
@@ -173,11 +150,4 @@ interface AgentApi {
         @Header("X-User-Id") userId: String,
         @Header("X-Session-Token") sessionToken: String?,
     ): FaceChallengeView
-
-    @POST("api/v1/agent/artifacts")
-    suspend fun uploadArtifact(
-        @Body body: ArtifactRequest,
-        @Header("X-User-Id") userId: String,
-        @Header("X-Session-Token") sessionToken: String?,
-    ): ArtifactView
 }

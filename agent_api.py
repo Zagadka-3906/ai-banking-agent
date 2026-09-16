@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 import time
 import uuid
 from typing import Any, Iterator, Optional
@@ -37,7 +36,6 @@ from bank_tools import BankAPIError, BankClient
 from conversation import SERVICE, ConversationError
 from security import SecurityError, audit_event, sanitize_text
 from im_webhook import router as im_router
-from artifacts import extract_mock, new_artifact_id, validate_upload
 
 app = FastAPI(
     title="Banking Agent Channel Gateway",
@@ -68,11 +66,6 @@ except (TypeError, ValueError):
 # per-principal window on top of the core's own limit.
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_STATE: dict[str, dict[str, Any]] = {}
-# Only sanitized metadata is retained.  The gateway is intentionally not a
-# media store; raw bytes live only for the duration of one request.
-ARTIFACTS: dict[str, dict[str, Any]] = {}
-ARTIFACTS_BY_OWNER_HASH: dict[tuple[str, str], str] = {}
-ARTIFACT_LOCK = threading.RLock()
 
 
 def _demo_identity_allowed() -> bool:
@@ -127,14 +120,6 @@ class ApprovalRequest(StrictModel):
     decision: str = Field(..., description="approve 或 reject")
     otp: Optional[str] = None
     face_attestation: Optional[str] = None
-
-
-class ArtifactRequest(StrictModel):
-    media_type: str
-    content_base64: str
-    sha256: str
-    filename: str
-    conversation_id: str
 
 
 @app.middleware("http")
@@ -362,63 +347,6 @@ def get_agent_trace(
 ):
     principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_TRACE")
     return {"code": 200, **SERVICE.aggregate_trace(principal=principal, request_id=sanitize_text(request_id, field="请求编号", max_length=128), session_token=x_session_token)}
-
-
-@app.post("/api/v1/agent/artifacts")
-def post_artifact(
-    req: ArtifactRequest,
-    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
-):
-    """Validate a small media upload and return a deterministic mock draft."""
-    request_id, _client_request_id = _turn_request_id(x_request_id)
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_ARTIFACT", request_id=request_id)
-    _guard_rate_limit(principal)
-    try:
-        data, digest = validate_upload(req.media_type, req.content_base64, req.sha256)
-    except ValueError as exc:
-        audit_event("ARTIFACT_UPLOAD", user_id=principal, decision="BLOCK", outcome="FAILURE", reason=str(exc), request_id=request_id, metadata={"media_type": req.media_type})
-        raise ConversationError("票据文件校验失败", 400, str(exc)) from exc
-    key = (principal, digest)
-    filename = sanitize_text(req.filename, field="文件名", max_length=128)
-    conversation_id = sanitize_text(req.conversation_id, field="会话编号", max_length=128)
-    if not filename or not conversation_id:
-        raise ConversationError("文件名和会话编号不能为空", 400, "ARTIFACT_METADATA_REQUIRED")
-    with ARTIFACT_LOCK:
-        artifact_id = ARTIFACTS_BY_OWNER_HASH.get(key)
-        if artifact_id is None:
-            artifact_id = new_artifact_id()
-            result = extract_mock(digest)
-            ARTIFACTS_BY_OWNER_HASH[key] = artifact_id
-            ARTIFACTS[artifact_id] = {
-                "artifact_id": artifact_id, "owner_id": principal, "sha256": digest,
-                "media_type": req.media_type, "filename": filename,
-                "size_bytes": len(data), "conversation_id": conversation_id,
-                "result": result,
-            }
-        record = dict(ARTIFACTS[artifact_id])
-    result = dict(record["result"])
-    audit_event("ARTIFACT_UPLOAD", user_id=principal, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"artifact_id": artifact_id, "sha256_prefix": digest[:12], "media_type": req.media_type, "size_bytes": len(data), "provenance": result.get("provenance")})
-    return {"code": 200, "request_id": request_id, "artifact_id": artifact_id, "sha256": record["sha256"], "media_type": record["media_type"],
-            "filename": record["filename"], "size_bytes": record["size_bytes"], **result}
-
-
-@app.get("/api/v1/agent/artifacts/{artifact_id}")
-def get_artifact(
-    artifact_id: str,
-    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-):
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_ARTIFACT_READ")
-    safe_id = sanitize_text(artifact_id, field="票据编号", max_length=128)
-    with ARTIFACT_LOCK:
-        stored = ARTIFACTS.get(safe_id)
-        record = dict(stored) if stored is not None else None
-    if record is None or record["owner_id"] != principal:
-        raise ConversationError("票据不存在", 404, "ARTIFACT_NOT_FOUND")
-    return {"code": 200, "artifact_id": safe_id, "sha256": record["sha256"], "media_type": record["media_type"],
-            "filename": record["filename"], "size_bytes": record["size_bytes"], **record["result"]}
 
 
 @app.post("/api/v1/agent/approvals/{approval_id}/face-challenge")

@@ -14,9 +14,6 @@ object UiTags {
 
     const val CHAT_INPUT = "chat_input"
     const val CHAT_SEND = "chat_send"
-    const val MOCK_INVOICE = "mock_invoice"
-    const val MOCK_BILL = "mock_bill"
-    const val MOCK_VOICE = "mock_voice"
 
     const val OPEN_DEVICES = "open_devices"
     const val OPEN_TASKS = "open_tasks"

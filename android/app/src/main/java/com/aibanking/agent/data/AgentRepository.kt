@@ -26,10 +26,6 @@ class AgentRepository(
     private val gson: Gson = Gson(),
 ) {
 
-    suspend fun uploadArtifact(
-        principal: String, sessionToken: String?, request: ArtifactRequest,
-    ): ArtifactView = normalizing { api.uploadArtifact(request, principal, sessionToken) }
-
     suspend fun sendMessage(
         principal: String,
         sessionToken: String?,

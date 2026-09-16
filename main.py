@@ -471,7 +471,7 @@ def profile_rank(profile: Optional[str]) -> Optional[int]:
 # 卡余额与所属账户共享（借记卡语义），转账日限额按卡生效。
 CARDS: dict[str, list[dict[str, Any]]] = {
     "user_zhang": [
-        {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "overseas_daily_limit": 3000.0, "label": "工资卡"}
+        {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "工资卡"}
     ]
 }
 # Self-service issuance needs a ceiling like every other collection here.  Cards
@@ -594,7 +594,6 @@ def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = N
         "type": card_type,
         "status": "ACTIVE",
         "daily_limit": CARD_DEFAULT_DAILY_LIMIT,
-        "overseas_daily_limit": 3000.0,
         "label": label,
     }
     held.append(card)
@@ -620,7 +619,6 @@ TRANSACTIONS: list[dict[str, Any]] = [
     {"tx_id": "TX1004", "account_id": "user_zhang", "merchant": "境外未知商户", "category": "可疑交易", "amount": 999.0, "time": "2026-08-07 03:15:00", "card_id": "CARD-001", "country": "US"},
 ]
 DISPUTE_CASES: list[dict[str, Any]] = []
-TRAVEL_PLANS: list[dict[str, Any]] = []
 
 
 @contextmanager
@@ -647,7 +645,6 @@ def _ledger_transaction():
         "SCHEDULED_TRANSFERS",
         "SPLIT_REQUESTS",
         "DISPUTE_CASES",
-        "TRAVEL_PLANS",
         "TRANSACTIONS",
         "OUTBOX",
         "WEALTH_RISK_PROFILES",
@@ -714,7 +711,6 @@ LEDGER_STATE_NAMES = (
     "SCHEDULED_TRANSFERS",
     "SPLIT_REQUESTS",
     "DISPUTE_CASES",
-    "TRAVEL_PLANS",
     "TRANSACTIONS",
     "OUTBOX",
 )
@@ -797,13 +793,11 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
         for record in rows:
             if not isinstance(record, dict) or not isinstance(record.get("card_id"), str) or not record["card_id"]:
                 return False
-            if not _finite_nonnegative(record.get("overseas_daily_limit", 3000.0)):
-                return False
     for name in ("SUBSCRIPTIONS", "WEALTH_HOLDINGS"):
         container = state.get(name)
         if not isinstance(container, dict):
             return False
-    for name in ("SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "DISPUTE_CASES", "TRAVEL_PLANS", "TRANSACTIONS"):
+    for name in ("SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "TRANSACTIONS"):
         rows = state.get(name)
         if not isinstance(rows, list):
             return False
@@ -1191,14 +1185,6 @@ class OperationPrecheckRequest(StrictModel):
     product_ids: Optional[list[str]] = None
     scheduled_at: Optional[str] = None
     reason: Optional[str] = "智能银行操作"
-    destination: Optional[str] = None
-    currency: Optional[str] = None
-    start_at: Optional[str] = None
-    return_at: Optional[str] = None
-    budget: Optional[float] = None
-    temporary_limit: Optional[float] = None
-    statement: Optional[str] = None
-    evidence_ref: Optional[str] = None
 
 
 class OperationExecuteRequest(StrictModel):
@@ -1223,14 +1209,6 @@ class OperationExecuteRequest(StrictModel):
     auth_token: Optional[str] = None
     mfa_proof: Optional[str] = None
     user_confirmed: bool = False
-    destination: Optional[str] = None
-    currency: Optional[str] = None
-    start_at: Optional[str] = None
-    return_at: Optional[str] = None
-    budget: Optional[float] = None
-    temporary_limit: Optional[float] = None
-    statement: Optional[str] = None
-    evidence_ref: Optional[str] = None
 
 
 class TaskActionRequest(StrictModel):
@@ -1609,8 +1587,6 @@ GENERIC_OPERATION_RISK: dict[str, str] = {
     "CARD_UNREPORT_LOST": "RED",
     "PASSWORD_CHANGE": "RED",
     "FRAUD_PROTECT": "RED",
-    "TRAVEL_MODE_ACTIVATE": "RED",
-    "DISPUTE_SUBMIT": "YELLOW",
 }
 
 
@@ -1760,16 +1736,6 @@ def _operation_context(
     scheduled_at: Optional[str] = None,
     transaction_id: Optional[str] = None,
     transaction_snapshot_hash: Optional[str] = None,
-    destination: Optional[str] = None,
-    currency: Optional[str] = None,
-    start_at: Optional[str] = None,
-    return_at: Optional[str] = None,
-    budget: Optional[float] = None,
-    temporary_limit: Optional[float] = None,
-    original_limit: Optional[float] = None,
-    fx_snapshot: Optional[dict[str, Any]] = None,
-    statement: Optional[str] = None,
-    evidence_ref: Optional[str] = None,
 ) -> dict[str, Any]:
     """Normalize every field that can alter a generic operation's outcome."""
 
@@ -1817,16 +1783,6 @@ def _operation_context(
         "scheduled_at": normalized_schedule,
         "transaction_id": sanitize_text(transaction_id, field="交易编号", max_length=128) if transaction_id else None,
         "transaction_snapshot_hash": sanitize_text(transaction_snapshot_hash, field="交易快照摘要", max_length=128) if transaction_snapshot_hash else None,
-        "destination": sanitize_text(destination, field="旅行目的地", max_length=80) if destination else None,
-        "currency": sanitize_text(currency, field="旅行币种", max_length=8).upper() if currency else None,
-        "start_at": _normalize_datetime(start_at, field="出发日期") if start_at else None,
-        "return_at": _normalize_datetime(return_at, field="归国日期") if return_at else None,
-        "budget_cents": amount_to_cents(budget) if budget is not None else None,
-        "temporary_limit_cents": amount_to_cents(temporary_limit) if temporary_limit is not None else None,
-        "original_limit_cents": amount_to_cents(original_limit) if original_limit is not None else None,
-        "fx_snapshot": deepcopy(fx_snapshot) if isinstance(fx_snapshot, dict) else None,
-        "statement": sanitize_text(statement, field="争议陈述", max_length=1000) if statement else None,
-        "evidence_ref": sanitize_text(evidence_ref, field="证据编号", max_length=128) if evidence_ref else None,
     }
 
 
@@ -1844,51 +1800,6 @@ def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> di
     if not row.get("card_id"):
         raise SecurityError("该交易未关联卡片，无法安全冻结", 409, "CARD_LINK_MISSING")
     return row
-
-
-def _owned_transaction(user_id: str, transaction_id: Optional[str]) -> dict[str, Any]:
-    if not transaction_id:
-        raise SecurityError("争议申请缺少交易编号", 400, "TRANSACTION_REQUIRED")
-    row = next((item for item in TRANSACTIONS if item.get("account_id") == user_id and item.get("tx_id") == transaction_id), None)
-    if row is None:
-        raise SecurityError("交易不存在或不属于当前用户", 404, "TRANSACTION_NOT_FOUND")
-    return row
-
-
-MOCK_FX_RATES = {"JPY": 20.83, "USD": 0.1404, "EUR": 0.1274, "GBP": 0.1081, "SGD": 0.1880, "THB": 4.7619}
-
-
-def _travel_fields(req: OperationPrecheckRequest | OperationExecuteRequest, user_id: str, card: Optional[dict[str, Any]] = None, *, original_limit: Optional[float] = None) -> dict[str, Any]:
-    destination = sanitize_text(req.destination or "", field="旅行目的地", max_length=80)
-    currency = sanitize_text(req.currency or "", field="旅行币种", max_length=8).upper()
-    if not destination or currency not in MOCK_FX_RATES:
-        raise SecurityError("旅行模式需要支持的目的地和币种", 400, "TRAVEL_SLOTS_REQUIRED")
-    start_at = _normalize_datetime(req.start_at, field="出发日期", require_future=True)
-    return_at = _normalize_datetime(req.return_at, field="归国日期", require_future=True)
-    if not start_at or not return_at or datetime.fromisoformat(return_at) <= datetime.fromisoformat(start_at):
-        raise SecurityError("归国日期必须晚于出发日期", 400, "INVALID_TRAVEL_DATES")
-    try:
-        budget = amount_to_cents(req.budget) / 100.0 if req.budget is not None else None
-        temporary_limit = amount_to_cents(req.temporary_limit) / 100.0 if req.temporary_limit is not None else None
-    except (TypeError, ValueError):
-        raise SecurityError("旅行预算或限额格式无效", 400, "INVALID_TRAVEL_AMOUNT")
-    if budget is None or temporary_limit is None:
-        raise SecurityError("旅行模式需要预算和临时境外限额", 400, "TRAVEL_SLOTS_REQUIRED")
-    card = card or _select_card(user_id, req.card_id, allowed_states={"ACTIVE"})
-    original = float(card.get("overseas_daily_limit", 3000.0) if original_limit is None else original_limit)
-    if temporary_limit <= original or temporary_limit > CARD_MAX_DAILY_LIMIT:
-        raise SecurityError("临时境外限额必须高于原限额且不超过系统上限", 400, "TRAVEL_LIMIT_OUT_OF_RANGE")
-    fx = {"from": "CNY", "to": currency, "rate": MOCK_FX_RATES[currency], "source": "MOCK", "as_of": "2026-09-16"}
-    trip_days = max(1, (datetime.fromisoformat(return_at) - datetime.fromisoformat(start_at)).days)
-    allocations = (("住宿", 0.40), ("交通", 0.20), ("餐饮", 0.25), ("备用金", 0.15))
-    budget_plan = {
-        "total_cny": budget,
-        "trip_days": trip_days,
-        "daily_cny": round(budget / trip_days, 2),
-        "estimated_local_total": round(budget * fx["rate"], 2),
-        "categories": [{"category": name, "amount_cny": round(budget * ratio, 2)} for name, ratio in allocations],
-    }
-    return {"destination": destination, "currency": currency, "start_at": start_at, "return_at": return_at, "budget": budget, "budget_plan": budget_plan, "temporary_limit": temporary_limit, "original_limit": original, "card_id": card["card_id"], "fx_snapshot": fx}
 
 
 def _validate_split_participants(user_id: str, participants: Optional[list[str]]) -> list[str]:
@@ -2932,37 +2843,22 @@ def operation_precheck(
     actor = _get_actor(req.user_id, x_user_id, action="OPERATION_PRECHECK", request_id=request_id)
     resolved_subscription_id: Optional[str] = None
     fraud_tx: Optional[dict[str, Any]] = None
-    dispute_tx: Optional[dict[str, Any]] = None
-    travel_details: Optional[dict[str, Any]] = None
     try:
         _ensure_account(req.user_id)
         operation = _validate_operation_name(req.operation)
         target = _operation_target(req)
-        if operation == "TRAVEL_MODE_ACTIVATE":
-            card = _select_card(req.user_id, req.card_id, allowed_states={"ACTIVE"})
-            if any(plan.get("owner_id") == req.user_id and plan.get("card_id") == card.get("card_id") and plan.get("status") == "ACTIVE" for plan in TRAVEL_PLANS):
-                raise SecurityError("该卡已有生效中的旅行模式", 409, "ACTIVE_TRAVEL_PLAN_EXISTS")
-            travel_details = _travel_fields(req, req.user_id, card)
-            target = str(card["card_id"])
         if operation == "FRAUD_PROTECT":
             fraud_tx = _fraud_transaction(req.user_id, req.transaction_id)
             target = str(fraud_tx["card_id"])
             reason = sanitize_text(req.reason or "客户否认境外消费，申请反诈保护", field="操作原因", max_length=300)
             if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(fraud_tx):
                 raise SecurityError("交易信息已变化，请重新核验", 409, "TRANSACTION_CONTEXT_CHANGED")
-        if operation == "DISPUTE_SUBMIT":
-            dispute_tx = _owned_transaction(req.user_id, req.transaction_id)
-            if not req.statement or not req.evidence_ref:
-                raise SecurityError("争议申请需要陈述和证据编号", 400, "DISPUTE_FIELDS_REQUIRED")
-            if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(dispute_tx):
-                raise SecurityError("交易信息已变化，请重新核验", 409, "TRANSACTION_CONTEXT_CHANGED")
-            target = str(dispute_tx["tx_id"])
         if operation == "PASSWORD_CHANGE" and any(value for value in (req.target, req.product_id, req.card_id, req.merchant)):
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
         reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT", "DISPUTE_SUBMIT"} and amount_input not in (None, 0):
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation in {"SCHEDULED_TRANSFER", "SPLIT_BILL", "WEALTH_PURCHASE", "WEALTH_REDEEM", "CARD_LIMIT"} and (amount_input is None or float(amount_input) <= 0):
             raise SecurityError("该操作需要明确的正数金额", 400, "AMOUNT_REQUIRED")
@@ -3049,17 +2945,7 @@ def operation_precheck(
             subscription_id=resolved_subscription_id,
             scheduled_at=normalized_scheduled_at,
             transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
-            transaction_snapshot_hash=_context_hash(fraud_tx or dispute_tx) if (fraud_tx or dispute_tx) else req.transaction_snapshot_hash,
-            destination=(travel_details or {}).get("destination"),
-            currency=(travel_details or {}).get("currency"),
-            start_at=(travel_details or {}).get("start_at"),
-            return_at=(travel_details or {}).get("return_at"),
-            budget=(travel_details or {}).get("budget"),
-            temporary_limit=(travel_details or {}).get("temporary_limit"),
-            original_limit=(travel_details or {}).get("original_limit"),
-            fx_snapshot=(travel_details or {}).get("fx_snapshot"),
-            statement=req.statement,
-            evidence_ref=req.evidence_ref,
+            transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -3082,10 +2968,6 @@ def operation_precheck(
     if fraud_tx:
         response["transaction"] = dict(fraud_tx)
         response["risk_reasons"] = ["境外交易", "交易类别标记为可疑交易", "用户明确否认该消费"]
-    elif dispute_tx:
-        response["transaction"] = dict(dispute_tx)
-    if travel_details:
-        response["travel_preview"] = travel_details
     _idempotency_complete(actor, "operation_precheck", idempotency_key, idem_payload, response)
     audit_event("OPERATION_PRECHECK", user_id=actor, risk_level=risk_level, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"operation": operation, "jti": payload["jti"], "target": target})
     return response
@@ -3655,30 +3537,15 @@ def execute_operation(
     operation_risk = GENERIC_OPERATION_RISK.get(str(req.operation or "").upper(), "UNKNOWN")
     resolved_subscription_id: Optional[str] = None
     fraud_tx: Optional[dict[str, Any]] = None
-    travel_details: Optional[dict[str, Any]] = None
-    dispute_tx: Optional[dict[str, Any]] = None
-    active_travel: Optional[dict[str, Any]] = None
     try:
         operation = _validate_operation_name(req.operation)
         _ensure_account(req.user_id)
         target = _operation_target(req)
-        if operation == "TRAVEL_MODE_ACTIVATE":
-            card = _select_card(req.user_id, req.card_id, allowed_states={"ACTIVE"})
-            active_travel = next((plan for plan in TRAVEL_PLANS if plan.get("owner_id") == req.user_id and plan.get("card_id") == card.get("card_id") and plan.get("status") == "ACTIVE"), None)
-            travel_details = _travel_fields(req, req.user_id, card, original_limit=float(active_travel["original_limit"]) if active_travel else None)
-            target = str(card["card_id"])
         if operation == "FRAUD_PROTECT":
             fraud_tx = _fraud_transaction(req.user_id, req.transaction_id)
             target = str(fraud_tx["card_id"])
             if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(fraud_tx):
                 raise SecurityError("交易信息已变化，请重新预检", 409, "TRANSACTION_CONTEXT_CHANGED")
-        if operation == "DISPUTE_SUBMIT":
-            dispute_tx = _owned_transaction(req.user_id, req.transaction_id)
-            if not req.statement or not req.evidence_ref:
-                raise SecurityError("争议申请需要陈述和证据编号", 400, "DISPUTE_FIELDS_REQUIRED")
-            if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(dispute_tx):
-                raise SecurityError("交易信息已变化，请重新预检", 409, "TRANSACTION_CONTEXT_CHANGED")
-            target = str(dispute_tx["tx_id"])
         if operation == "PASSWORD_CHANGE" and any(value for value in (req.target, req.product_id, req.card_id, req.merchant)):
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
@@ -3723,18 +3590,8 @@ def execute_operation(
             risk_profile=(WEALTH_RISK_PROFILES.get(req.user_id) or {}).get("risk_profile") if operation == "WEALTH_PURCHASE" else None,
             subscription_id=resolved_subscription_id,
             scheduled_at=_normalize_datetime(req.scheduled_at, field="计划时间", require_future=True) if operation == "SCHEDULED_TRANSFER" else req.scheduled_at,
-            transaction_id=(fraud_tx or dispute_tx or {}).get("tx_id") or req.transaction_id,
-            transaction_snapshot_hash=_context_hash(fraud_tx or dispute_tx) if (fraud_tx or dispute_tx) else req.transaction_snapshot_hash,
-            destination=(travel_details or {}).get("destination"),
-            currency=(travel_details or {}).get("currency"),
-            start_at=(travel_details or {}).get("start_at"),
-            return_at=(travel_details or {}).get("return_at"),
-            budget=(travel_details or {}).get("budget"),
-            temporary_limit=(travel_details or {}).get("temporary_limit"),
-            original_limit=(travel_details or {}).get("original_limit"),
-            fx_snapshot=(travel_details or {}).get("fx_snapshot"),
-            statement=req.statement,
-            evidence_ref=req.evidence_ref,
+            transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
+            transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -3814,36 +3671,6 @@ def execute_operation(
                         case = {"case_id": f"CASE-{uuid.uuid4().hex[:10].upper()}", "owner_id": req.user_id, "transaction_id": tx["tx_id"], "transaction_snapshot_hash": operation_context["transaction_snapshot_hash"], "card_id": card["card_id"], "status": "PENDING_REVIEW", "protection_status": "CARD_PROTECTED", "statement": reason, "risk_reasons": ["境外交易", "交易类别标记为可疑交易", "用户明确否认该消费"], "created_at": created_at, "updated_at": created_at}
                         DISPUTE_CASES.append(case)
                     result.update({"status": "CARD_PROTECTED", "card": card, "dispute_case": case, "transaction": tx})
-                elif operation == "TRAVEL_MODE_ACTIVATE":
-                    card = _select_card(req.user_id, target, allowed_states={"ACTIVE"})
-                    details = _travel_fields(req, req.user_id, card)
-                    active = next((p for p in TRAVEL_PLANS if p.get("owner_id") == req.user_id and p.get("card_id") == card["card_id"] and p.get("status") == "ACTIVE"), None)
-                    if active:
-                        raise SecurityError("该卡已有生效中的旅行模式", 409, "ACTIVE_TRAVEL_PLAN_EXISTS")
-                    card["overseas_daily_limit"] = details["temporary_limit"]
-                    now = datetime.now(timezone.utc).isoformat()
-                    plan = {"plan_id": f"TRAVEL-{uuid.uuid4().hex[:10].upper()}", "owner_id": req.user_id, **details, "status": "ACTIVE", "created_at": now, "updated_at": now, "restore_at": details["return_at"]}
-                    TRAVEL_PLANS.append(plan)
-                    task = TASK_STORE.create(req.user_id, "TRAVEL_LIMIT_RESTORE", {"plan_id": plan["plan_id"], "card_id": card["card_id"], "restore_at": plan["restore_at"]}, run_at=plan["restore_at"], idempotency_key=f"travel-restore:{plan['plan_id']}")
-                    plan["restore_task_id"] = task.task_id
-                    result.update({"status": "TRAVEL_MODE_ACTIVE", "plan": plan, "card": card, "restore_task": task.to_dict(), "esim_offer": {"available": True, "execution_mode": "MOCK", "funds_debited": False}, "execution_mode": "MOCK", "funds_debited": False})
-                elif operation == "DISPUTE_SUBMIT":
-                    tx = _owned_transaction(req.user_id, operation_context.get("transaction_id"))
-                    if operation_context.get("transaction_snapshot_hash") != _context_hash(tx):
-                        raise SecurityError("交易信息已变化，请重新预检", 409, "TRANSACTION_CONTEXT_CHANGED")
-                    existing = next((item for item in DISPUTE_CASES if item.get("owner_id") == req.user_id and item.get("transaction_id") == tx.get("tx_id")), None)
-                    now = datetime.now(timezone.utc).isoformat()
-                    if existing is None:
-                        existing = {"case_id": f"CASE-{uuid.uuid4().hex[:10].upper()}", "owner_id": req.user_id, "transaction_id": tx["tx_id"], "transaction_snapshot_hash": operation_context["transaction_snapshot_hash"], "card_id": tx.get("card_id"), "created_at": now}
-                        DISPUTE_CASES.append(existing)
-                    evidence_refs = list(existing.get("evidence_refs") or [])
-                    if operation_context.get("evidence_ref") not in evidence_refs:
-                        evidence_refs.append(operation_context["evidence_ref"])
-                    existing.update({"status": "HUMAN_REVIEW", "review_channel": "MOCK_HUMAN_SUPPORT", "refund_status": "AWAITING_HUMAN_DECISION", "decision_authority": "HUMAN_ONLY", "statement": operation_context.get("statement"), "evidence_refs": evidence_refs, "updated_at": now})
-                    task = TASK_STORE.create(req.user_id, "DISPUTE_HUMAN_REVIEW", {"case_id": existing["case_id"], "transaction_id": tx["tx_id"], "refund_status": existing["refund_status"]}, idempotency_key=f"dispute-human:{existing['case_id']}")
-                    if task.status != TaskState.HUMAN_TAKEOVER:
-                        task = TASK_STORE.takeover(task.task_id, owner_id=req.user_id, reason="争议材料已收集，交由人工审核")
-                    result.update({"status": "HUMAN_TAKEOVER", "transaction": tx, "dispute_case": existing, "review_task": task.to_dict(), "funds_debited": False})
                 elif operation in {"CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST"}:
                     card = _select_card(req.user_id, req.card_id)
                     current_status = str(card.get("status") or "")
@@ -4011,41 +3838,9 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
             raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
         owner = x_user_id
         _get_actor(owner, owner, action="TASK_RUN", request_id=request_id)
-    # Rebuild the scheduler projection from durable travel facts after a
-    # restart or TaskStore loss; the plan itself remains the source of truth.
-    for plan in list(TRAVEL_PLANS):
-        if plan.get("status") != "ACTIVE" or (owner and plan.get("owner_id") != owner):
-            continue
-        existing = next((item for item in TASK_STORE.list(owner_id=plan.get("owner_id")) if item.task_type == "TRAVEL_LIMIT_RESTORE" and item.payload.get("plan_id") == plan.get("plan_id") and item.status not in {TaskState.SUCCEEDED, TaskState.CANCELLED}), None)
-        if existing is None:
-            TASK_STORE.create(plan["owner_id"], "TRAVEL_LIMIT_RESTORE", {"plan_id": plan["plan_id"], "card_id": plan["card_id"], "restore_at": plan["restore_at"]}, run_at=plan["restore_at"], idempotency_key=f"travel-restore:{plan['plan_id']}")
     changed = []
     for task in TASK_STORE.ready():
         if owner and task.owner_id != owner:
-            continue
-        if task.task_type == "TRAVEL_LIMIT_RESTORE":
-            try:
-                with _ledger_transaction():
-                    running = TASK_STORE.transition_if_status(task.task_id, TaskState.PENDING, TaskState.RUNNING, owner_id=owner)
-                    if running is None:
-                        continue
-                    plan = next((item for item in TRAVEL_PLANS if item.get("plan_id") == task.payload.get("plan_id") and item.get("status") == "ACTIVE"), None)
-                    card = _find_card(task.owner_id, task.payload.get("card_id")) if plan else None
-                    if plan and card and float(card.get("overseas_daily_limit", 3000.0)) == float(plan.get("temporary_limit", 0)):
-                        card["overseas_daily_limit"] = float(plan.get("original_limit", 3000.0))
-                        plan["status"] = "RESTORED"
-                        plan["restore_error"] = None
-                        plan["updated_at"] = datetime.now(timezone.utc).isoformat()
-                        updated = TASK_STORE.transition(task.task_id, TaskState.SUCCEEDED, owner_id=owner)
-                    else:
-                        if plan:
-                            plan["status"] = "RESTORE_CONFLICT"
-                            plan["restore_error"] = "境外限额已被后续操作修改，未覆盖用户当前设置"
-                            plan["updated_at"] = datetime.now(timezone.utc).isoformat()
-                        updated = TASK_STORE.transition(task.task_id, TaskState.HUMAN_TAKEOVER, error="旅行限额恢复冲突，需要人工核对", owner_id=owner)
-                changed.append(updated.to_dict())
-            except (KeyError, ValueError):
-                continue
             continue
         try:
             TASK_STORE.transition(task.task_id, TaskState.RUNNING, owner_id=owner)
@@ -4358,7 +4153,7 @@ def security_audit_trace(request_id: str, x_admin_token: Optional[str] = Header(
     return {"code": 200, **trace}
 
 
-__all__ = ["app", "ACCOUNTS", "CONTACTS", "USER_CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "DISPUTE_CASES", "TRAVEL_PLANS", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "DEVICES", "reset_state"]
+__all__ = ["app", "ACCOUNTS", "CONTACTS", "USER_CONTACTS", "DAILY_TRANSFERS", "TRANSACTIONS", "DISPUTE_CASES", "LOCKS", "WEALTH_PRODUCTS", "WEALTH_HOLDINGS", "WEALTH_RISK_PROFILES", "CARDS", "SUBSCRIPTIONS", "SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "AUTH_TOKENS", "MFA_PROOFS", "AUDIT_LOGS", "DEVICES", "reset_state"]
 
 
 # Test/demo reset helper.  It is intentionally not exposed as an HTTP route;
@@ -4373,7 +4168,6 @@ _INITIAL_SUBSCRIPTIONS = deepcopy(globals().get("SUBSCRIPTIONS", {}))
 _INITIAL_SCHEDULED_TRANSFERS = deepcopy(globals().get("SCHEDULED_TRANSFERS", []))
 _INITIAL_SPLIT_REQUESTS = deepcopy(globals().get("SPLIT_REQUESTS", []))
 _INITIAL_DISPUTE_CASES = deepcopy(globals().get("DISPUTE_CASES", []))
-_INITIAL_TRAVEL_PLANS = deepcopy(globals().get("TRAVEL_PLANS", []))
 
 
 def reset_state() -> None:
@@ -4426,8 +4220,6 @@ def reset_state() -> None:
             SPLIT_REQUESTS[:] = deepcopy(_INITIAL_SPLIT_REQUESTS)
         if "DISPUTE_CASES" in globals():
             DISPUTE_CASES[:] = deepcopy(_INITIAL_DISPUTE_CASES)
-        if "TRAVEL_PLANS" in globals():
-            TRAVEL_PLANS[:] = deepcopy(_INITIAL_TRAVEL_PLANS)
         try:
             from security import reset_security_state
 

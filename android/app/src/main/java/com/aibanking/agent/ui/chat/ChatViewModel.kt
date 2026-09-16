@@ -7,8 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.data.CardsRepository
 import com.aibanking.agent.data.AgentRepository
-import com.aibanking.agent.data.ArtifactRequest
-import com.aibanking.agent.data.ArtifactView
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.ContactRepository
 import com.aibanking.agent.data.ContactView
@@ -36,8 +34,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.util.UUID
-import android.util.Base64
-import java.security.MessageDigest
 
 enum class ChatRole { USER, ASSISTANT }
 
@@ -146,7 +142,6 @@ data class ChatUiState(
      * pages read it to offer a retry instead of "还没有…".
      */
     val panelError: String? = null,
-    val artifact: ArtifactView? = null,
 ) {
     val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy && pending == null
 
@@ -187,29 +182,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionStore = SessionStore(application)
     private val deviceKeys = DeviceKeyManager()
     private val agent = AgentRepository.create()
-
-    fun uploadMockArtifact(kind: String) {
-        if (!_state.value.authenticated || _state.value.busy) return
-        val (mediaType, filename, encoded) = when (kind) {
-            "invoice" -> Triple("image/png", "mock-invoice.png", MOCK_INVOICE)
-            "bill" -> Triple("image/png", "mock-bill.png", MOCK_BILL)
-            else -> Triple("audio/wav", "mock-voice.wav", MOCK_VOICE)
-        }
-        val digest = sha256(encoded)
-        _state.update { it.copy(busy = true, error = null) }
-        viewModelScope.launch {
-            try {
-                val result = agent.uploadArtifact(
-                    _state.value.principal, sessionToken,
-                    ArtifactRequest(mediaType, encoded, digest, filename, conversationId),
-                )
-                _state.update { it.copy(busy = false, artifact = result, notice = "已生成 Mock 票据报销草稿（未扣款）") }
-            } catch (failure: GatewayException) { applyFailure(failure) }
-        }
-    }
-
-    private fun sha256(base64: String): String = MessageDigest.getInstance("SHA-256")
-        .digest(Base64.decode(base64, Base64.DEFAULT)).joinToString("") { "%02x".format(it) }
     private val login = LoginRepository.create()
     private val devices = DeviceRepository.create()
     private val tasks = TaskRepository.create()
@@ -1170,9 +1142,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         /** Transcript bound kept sealed in preferences - a chat log is not a ledger. */
         const val MAX_PERSISTED_MESSAGES = 100
-        const val MOCK_INVOICE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-        const val MOCK_BILL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUAAZ0D3wAAAAAASUVORK5CYII="
-        const val MOCK_VOICE = "UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA"
     }
 }
 

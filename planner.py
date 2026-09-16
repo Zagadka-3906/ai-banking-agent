@@ -59,8 +59,6 @@ class Intent(str, Enum):
     CARD_LIMIT = "CARD_LIMIT"
     CARD_FREEZE = "CARD_FREEZE"
     FRAUD_DISPUTE = "FRAUD_DISPUTE"
-    TRAVEL_MODE = "TRAVEL_MODE"
-    DISPUTE_HANDOFF = "DISPUTE_HANDOFF"
     CARD_UNFREEZE = "CARD_UNFREEZE"
     CARD_REPORT_LOST = "CARD_REPORT_LOST"
     CARD_UNREPORT_LOST = "CARD_UNREPORT_LOST"
@@ -88,7 +86,6 @@ YELLOW_INTENTS = {
     Intent.CROSS_SCENE_LOCK.value,
     Intent.SUBSCRIPTION_CANCEL.value,
     Intent.CARD_APPLY.value,
-    Intent.DISPUTE_HANDOFF.value,
 }
 RED_INTENTS = {
     Intent.WEALTH_PURCHASE.value,
@@ -100,7 +97,6 @@ RED_INTENTS = {
     Intent.CARD_UNREPORT_LOST.value,
     Intent.PASSWORD_CHANGE.value,
     Intent.FRAUD_DISPUTE.value,
-    Intent.TRAVEL_MODE.value,
 }
 ALL_INTENTS = {item.value for item in Intent}
 
@@ -301,18 +297,6 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
         if not (parsed.get("scheduled_at") or parsed.get("event_at")):
             missing.append("scheduled_at")
         return missing
-    if intent == Intent.TRAVEL_MODE.value:
-        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
-        for key in ("destination", "currency", "start_at", "return_at", "budget", "temporary_limit"):
-            if slots.get(key) in (None, "", 0):
-                missing.append(key)
-        return missing
-    if intent == Intent.DISPUTE_HANDOFF.value:
-        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
-        for key in ("transaction_id", "statement", "evidence_ref"):
-            if not str(slots.get(key) or "").strip():
-                missing.append(key)
-        return missing
     if intent == Intent.SCHEDULED_TRANSFER.value and not parsed.get("scheduled_at"):
         missing.append("scheduled_at")
     if intent == Intent.WEALTH_COMPARE.value:
@@ -493,7 +477,7 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
     intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
     amount = parsed.get("amount")
     target = parsed.get("target")
-    base = {"target": target, "amount": amount, "date_scope": parsed.get("date_scope", "ALL"), "product_ids": list(parsed.get("product_ids") or []), "scheduled_at": parsed.get("scheduled_at"), "event_at": parsed.get("event_at"), "reminder_at": parsed.get("reminder_at"), "slots": dict(parsed.get("slots") or {})}
+    base = {"target": target, "amount": amount, "date_scope": parsed.get("date_scope", "ALL"), "product_ids": list(parsed.get("product_ids") or []), "scheduled_at": parsed.get("scheduled_at"), "event_at": parsed.get("event_at"), "reminder_at": parsed.get("reminder_at")}
     tasks: list[Task]
 
     if intent == Intent.CROSS_SCENE_LOCK.value:
@@ -502,15 +486,6 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
             Task("reserve_funds", "LOCK_FUND", ["validate_event"], "YELLOW", compensation="UNLOCK_FUND", details=base),
             Task("schedule_orders", "SCHEDULE_REMINDER", ["reserve_funds"], "YELLOW", details=base),
         ]
-    elif intent == Intent.TRAVEL_MODE.value:
-        tasks = [
-            Task("parse_itinerary", "PARSE_ITINERARY", risk_level="GREEN", details=base),
-            Task("build_budget", "BUILD_BUDGET", ["parse_itinerary"], "GREEN", details=base),
-            Task("fetch_mock_fx", "FETCH_MOCK_FX", ["build_budget"], "GREEN", details=base),
-            Task("mfa_confirm", "MFA_CONFIRM", ["fetch_mock_fx"], "RED", details=base),
-            Task("activate_travel_mode", "ACTIVATE_TRAVEL_MODE", ["mfa_confirm"], "RED", details=base),
-            Task("schedule_limit_restore", "SCHEDULE_LIMIT_RESTORE", ["activate_travel_mode"], "GREEN", details=base),
-        ]
     elif intent == Intent.FRAUD_DISPUTE.value:
         tasks = [
             Task("verify_transaction", "VERIFY_TRANSACTION", risk_level="GREEN", details=base),
@@ -518,15 +493,6 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
             Task("mfa_confirm", "MFA_CONFIRM", ["explain_risk"], "RED", details=base),
             Task("freeze_card", "FREEZE_CARD", ["mfa_confirm"], "RED", details=base),
             Task("create_dispute_case", "CREATE_DISPUTE_CASE", ["freeze_card"], "RED", details=base),
-        ]
-    elif intent == Intent.DISPUTE_HANDOFF.value:
-        tasks = [
-            Task("verify_transaction", "VERIFY_TRANSACTION", risk_level="GREEN", details=base),
-            Task("collect_statement", "COLLECT_STATEMENT", ["verify_transaction"], "GREEN", details=base),
-            Task("collect_evidence", "COLLECT_EVIDENCE", ["collect_statement"], "GREEN", details=base),
-            Task("user_confirm", "USER_CONFIRM", ["collect_evidence"], "YELLOW", details=base),
-            Task("submit_dispute", "DISPUTE_SUBMIT", ["user_confirm"], "YELLOW", details=base),
-            Task("human_takeover", "HUMAN_TAKEOVER", ["submit_dispute"], "GREEN", details=base),
         ]
     elif intent == Intent.SCHEDULED_TRANSFER.value:
         tasks = [
