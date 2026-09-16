@@ -634,6 +634,19 @@ def _local_parse(text: str) -> dict[str, Any]:
         if product_id not in product_ids:
             product_ids.append(product_id)
     slots: dict[str, Any] = {}
+    dispute_requested = any(word in text for word in ("争议退款", "争议材料", "交易申诉", "转人工客服"))
+    if dispute_requested:
+        transaction_match = re.search(r"\b(TX[0-9A-Z_-]+)\b", text, re.IGNORECASE)
+        statement_match = re.search(r"(?:陈述|说明)[:：]\s*(.+?)(?=[，,]\s*(?:凭证|转人工)|$)", text)
+        evidence_match = re.search(r"(?:凭证|附件)(?:编号)?\s*[:：]?\s*([A-Z0-9._-]+)", text, re.IGNORECASE)
+        slots.update(
+            {
+                "transaction_id": transaction_match.group(1).upper() if transaction_match else None,
+                "statement": statement_match.group(1).strip() if statement_match else None,
+                "evidence_ref": evidence_match.group(1).upper() if evidence_match else None,
+            }
+        )
+        return _parsed_payload(Intent.DISPUTE_HANDOFF.value, text=text, slots=slots, target=slots["transaction_id"])
     # A fraud report must lead to a protective action, never to a card listing.
     protective_intent = _implicit_intent(text, protective=True)
     if protective_intent is not None:
@@ -1345,6 +1358,7 @@ _SETTLE_ORDER: dict[str, list[str]] = {
         "create_dispute_case",
     ],
     Intent.TRAVEL_MODE.value: ["parse_itinerary", "build_budget", "fetch_mock_fx", "mfa_confirm", "activate_travel_mode", "schedule_limit_restore"],
+    Intent.DISPUTE_HANDOFF.value: ["verify_transaction", "collect_statement", "collect_evidence", "user_confirm", "submit_dispute", "human_takeover"],
 }
 
 
@@ -1488,7 +1502,8 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         # operation to red (the core owns the policy table).
         try:
             slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
-            response = _http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else ("TRAVEL_MODE_ACTIVATE" if intent == Intent.TRAVEL_MODE.value else intent), "amount": state.get("amount") or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": slots.get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "destination": slots.get("destination"), "currency": slots.get("currency"), "start_at": slots.get("start_at"), "return_at": slots.get("return_at"), "budget": slots.get("budget"), "temporary_limit": slots.get("temporary_limit"), "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
+            operation_name = "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else ("TRAVEL_MODE_ACTIVATE" if intent == Intent.TRAVEL_MODE.value else ("DISPUTE_SUBMIT" if intent == Intent.DISPUTE_HANDOFF.value else intent))
+            response = _http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": operation_name, "amount": state.get("amount") or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": slots.get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "destination": slots.get("destination"), "currency": slots.get("currency"), "start_at": slots.get("start_at"), "return_at": slots.get("return_at"), "budget": slots.get("budget"), "temporary_limit": slots.get("temporary_limit"), "statement": slots.get("statement"), "evidence_ref": slots.get("evidence_ref"), "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
                 return {"risk_level": "ERROR", "final_response": f"操作风控预检未通过：{_error_message(response)}"}
             data = _response_json(response)
@@ -1571,6 +1586,9 @@ def _human_readable_action(state: BankingAgentState) -> str:
     if intent == Intent.TRAVEL_MODE.value:
         slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
         return f"开启{slots.get('destination') or '目的地'}旅行模式并临时调整境外限额"
+    if intent == Intent.DISPUTE_HANDOFF.value:
+        slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
+        return f"提交交易 {slots.get('transaction_id') or target or '指定交易'} 的争议材料并转人工客服审核"
     if intent == Intent.CARD_UNFREEZE.value:
         return f"解冻卡片 {target or ''} 的交易".strip()
     if intent == Intent.CARD_REPORT_LOST.value:
@@ -1622,6 +1640,18 @@ def human_review_node(state: BankingAgentState) -> dict[str, Any]:
             f"{transaction.get('merchant') or '未知商户'}，{amount_text}，"
             f"时间 {transaction.get('time') or '未知'}。风险依据：{reasons}。"
             "继续后将强验证并冻结关联卡片、创建人工争议工单；不会自动退款。"
+        )
+    elif intent == Intent.DISPUTE_HANDOFF.value:
+        transaction = state.get("transaction") if isinstance(state.get("transaction"), dict) else {}
+        slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
+        amount = transaction.get("amount")
+        amount_text = f"¥{float(amount):,.2f}" if _finite_number(amount, nonnegative=True) else "金额待核验"
+        payload["transaction"] = transaction
+        payload["message"] = (
+            f"已核验交易 {transaction.get('tx_id') or slots.get('transaction_id') or '未知编号'}："
+            f"{transaction.get('merchant') or '未知商户'}，{amount_text}。"
+            f"将提交陈述“{slots.get('statement') or '待补充'}”和凭证 {slots.get('evidence_ref') or '待补充'}，"
+            "转交 Mock 人工客服审核。系统不会自行决定或执行退款。"
         )
     elif intent == Intent.TRAVEL_MODE.value:
         preview = state.get("travel_preview") if isinstance(state.get("travel_preview"), dict) else {}
@@ -1853,13 +1883,13 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
         # The remaining write scenarios use explicit mock endpoints.  If an
         # endpoint is not enabled, report a safe refusal rather than claiming
         # completion.
-        if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value, Intent.FRAUD_DISPUTE.value, Intent.TRAVEL_MODE.value}:
+        if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value, Intent.FRAUD_DISPUTE.value, Intent.TRAVEL_MODE.value, Intent.DISPUTE_HANDOFF.value}:
             try:
                 response = _settle_with_retry(
                     state,
                     method="POST",
                     path="operations/execute",
-                    json_body={"user_id": user_id, "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else ("TRAVEL_MODE_ACTIVATE" if intent == Intent.TRAVEL_MODE.value else intent), "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": (state.get("slots") or {}).get("transaction_id"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "destination": (state.get("slots") or {}).get("destination"), "currency": (state.get("slots") or {}).get("currency"), "start_at": (state.get("slots") or {}).get("start_at"), "return_at": (state.get("slots") or {}).get("return_at"), "budget": (state.get("slots") or {}).get("budget"), "temporary_limit": (state.get("slots") or {}).get("temporary_limit"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
+                    json_body={"user_id": user_id, "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else ("TRAVEL_MODE_ACTIVATE" if intent == Intent.TRAVEL_MODE.value else ("DISPUTE_SUBMIT" if intent == Intent.DISPUTE_HANDOFF.value else intent)), "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": (state.get("slots") or {}).get("transaction_id"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "destination": (state.get("slots") or {}).get("destination"), "currency": (state.get("slots") or {}).get("currency"), "start_at": (state.get("slots") or {}).get("start_at"), "return_at": (state.get("slots") or {}).get("return_at"), "budget": (state.get("slots") or {}).get("budget"), "temporary_limit": (state.get("slots") or {}).get("temporary_limit"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作", "statement": (state.get("slots") or {}).get("statement"), "evidence_ref": (state.get("slots") or {}).get("evidence_ref")},
                     headers={"X-User-Id": user_id, "X-Auth-Token": state.get("auth_token") or "", "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"},
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )
@@ -2254,6 +2284,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         Intent.PASSWORD_CHANGE.value: "PASSWORD_CHANGED",
         Intent.FRAUD_DISPUTE.value: "CARD_PROTECTED",
         Intent.TRAVEL_MODE.value: "TRAVEL_MODE_ACTIVE",
+        Intent.DISPUTE_HANDOFF.value: "HUMAN_TAKEOVER",
     }.get(rtype)
     if rtype:
         envelope = result.get("data")
@@ -2276,6 +2307,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                 Intent.PASSWORD_CHANGE.value: ("credential_version",),
                 Intent.FRAUD_DISPUTE.value: ("card", "dispute_case", "transaction"),
                 Intent.TRAVEL_MODE.value: ("card", "plan", "restore_task", "esim_offer"),
+                Intent.DISPUTE_HANDOFF.value: ("transaction", "dispute_case", "review_task"),
             }
             if any(key not in payload for key in required_by_type.get(rtype, ())):
                 return _response_validation_failure(state, "GENERIC_RESULT_FIELDS_INVALID")
@@ -2307,6 +2339,13 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                     return _response_validation_failure(state, "TRAVEL_RESULT_INVALID")
                 if offer.get("execution_mode") != "MOCK" or offer.get("funds_debited") is not False:
                     return _response_validation_failure(state, "TRAVEL_ESIM_BOUNDARY_INVALID")
+            elif rtype == Intent.DISPUTE_HANDOFF.value:
+                case = payload.get("dispute_case")
+                task = payload.get("review_task")
+                if not isinstance(case, dict) or case.get("status") != "HUMAN_REVIEW" or case.get("decision_authority") != "HUMAN_ONLY" or case.get("refund_status") != "AWAITING_HUMAN_DECISION":
+                    return _response_validation_failure(state, "DISPUTE_CASE_RESULT_INVALID")
+                if not isinstance(task, dict) or task.get("status") != "HUMAN_TAKEOVER" or payload.get("funds_debited") is not False:
+                    return _response_validation_failure(state, "DISPUTE_HANDOFF_RESULT_INVALID")
         return {"final_response": _completion_label(state, rtype)}
     return {"final_response": "未能取得核心服务的可核验结果，因此没有声称操作成功。"}
 
@@ -2323,6 +2362,7 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
         Intent.CARD_APPLY.value: f"✅ 虚拟卡已开立（{card_id}）。" if card_id else "✅ 虚拟卡已开立。",
         Intent.CARD_FREEZE.value: "✅ 卡片交易已冻结。",
         Intent.FRAUD_DISPUTE.value: "✅ 已冻结关联卡片并创建争议工单，案件将由人工审核。未执行退款。",
+        Intent.DISPUTE_HANDOFF.value: "✅ 争议材料已提交人工客服审核，未执行退款。",
         Intent.TRAVEL_MODE.value: (
             f"✅ {inner.get('plan', {}).get('destination') or '目的地'}旅行模式已开启，临时境外限额已生效；"
             f"已安排在 {inner.get('plan', {}).get('restore_at') or '归国时间'} 自动恢复。"

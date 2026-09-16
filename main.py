@@ -1197,6 +1197,8 @@ class OperationPrecheckRequest(StrictModel):
     return_at: Optional[str] = None
     budget: Optional[float] = None
     temporary_limit: Optional[float] = None
+    statement: Optional[str] = None
+    evidence_ref: Optional[str] = None
 
 
 class OperationExecuteRequest(StrictModel):
@@ -1227,6 +1229,8 @@ class OperationExecuteRequest(StrictModel):
     return_at: Optional[str] = None
     budget: Optional[float] = None
     temporary_limit: Optional[float] = None
+    statement: Optional[str] = None
+    evidence_ref: Optional[str] = None
 
 
 class TaskActionRequest(StrictModel):
@@ -1606,6 +1610,7 @@ GENERIC_OPERATION_RISK: dict[str, str] = {
     "PASSWORD_CHANGE": "RED",
     "FRAUD_PROTECT": "RED",
     "TRAVEL_MODE_ACTIVATE": "RED",
+    "DISPUTE_SUBMIT": "YELLOW",
 }
 
 
@@ -1763,6 +1768,8 @@ def _operation_context(
     temporary_limit: Optional[float] = None,
     original_limit: Optional[float] = None,
     fx_snapshot: Optional[dict[str, Any]] = None,
+    statement: Optional[str] = None,
+    evidence_ref: Optional[str] = None,
 ) -> dict[str, Any]:
     """Normalize every field that can alter a generic operation's outcome."""
 
@@ -1818,6 +1825,8 @@ def _operation_context(
         "temporary_limit_cents": amount_to_cents(temporary_limit) if temporary_limit is not None else None,
         "original_limit_cents": amount_to_cents(original_limit) if original_limit is not None else None,
         "fx_snapshot": deepcopy(fx_snapshot) if isinstance(fx_snapshot, dict) else None,
+        "statement": sanitize_text(statement, field="争议陈述", max_length=1000) if statement else None,
+        "evidence_ref": sanitize_text(evidence_ref, field="证据编号", max_length=128) if evidence_ref else None,
     }
 
 
@@ -1834,6 +1843,15 @@ def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> di
         row = rows[0]
     if not row.get("card_id"):
         raise SecurityError("该交易未关联卡片，无法安全冻结", 409, "CARD_LINK_MISSING")
+    return row
+
+
+def _owned_transaction(user_id: str, transaction_id: Optional[str]) -> dict[str, Any]:
+    if not transaction_id:
+        raise SecurityError("争议申请缺少交易编号", 400, "TRANSACTION_REQUIRED")
+    row = next((item for item in TRANSACTIONS if item.get("account_id") == user_id and item.get("tx_id") == transaction_id), None)
+    if row is None:
+        raise SecurityError("交易不存在或不属于当前用户", 404, "TRANSACTION_NOT_FOUND")
     return row
 
 
@@ -2914,6 +2932,7 @@ def operation_precheck(
     actor = _get_actor(req.user_id, x_user_id, action="OPERATION_PRECHECK", request_id=request_id)
     resolved_subscription_id: Optional[str] = None
     fraud_tx: Optional[dict[str, Any]] = None
+    dispute_tx: Optional[dict[str, Any]] = None
     travel_details: Optional[dict[str, Any]] = None
     try:
         _ensure_account(req.user_id)
@@ -2931,12 +2950,19 @@ def operation_precheck(
             reason = sanitize_text(req.reason or "客户否认境外消费，申请反诈保护", field="操作原因", max_length=300)
             if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(fraud_tx):
                 raise SecurityError("交易信息已变化，请重新核验", 409, "TRANSACTION_CONTEXT_CHANGED")
+        if operation == "DISPUTE_SUBMIT":
+            dispute_tx = _owned_transaction(req.user_id, req.transaction_id)
+            if not req.statement or not req.evidence_ref:
+                raise SecurityError("争议申请需要陈述和证据编号", 400, "DISPUTE_FIELDS_REQUIRED")
+            if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(dispute_tx):
+                raise SecurityError("交易信息已变化，请重新核验", 409, "TRANSACTION_CONTEXT_CHANGED")
+            target = str(dispute_tx["tx_id"])
         if operation == "PASSWORD_CHANGE" and any(value for value in (req.target, req.product_id, req.card_id, req.merchant)):
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
         reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT", "DISPUTE_SUBMIT"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation in {"SCHEDULED_TRANSFER", "SPLIT_BILL", "WEALTH_PURCHASE", "WEALTH_REDEEM", "CARD_LIMIT"} and (amount_input is None or float(amount_input) <= 0):
             raise SecurityError("该操作需要明确的正数金额", 400, "AMOUNT_REQUIRED")
@@ -3023,7 +3049,7 @@ def operation_precheck(
             subscription_id=resolved_subscription_id,
             scheduled_at=normalized_scheduled_at,
             transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
-            transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
+            transaction_snapshot_hash=_context_hash(fraud_tx or dispute_tx) if (fraud_tx or dispute_tx) else req.transaction_snapshot_hash,
             destination=(travel_details or {}).get("destination"),
             currency=(travel_details or {}).get("currency"),
             start_at=(travel_details or {}).get("start_at"),
@@ -3032,6 +3058,8 @@ def operation_precheck(
             temporary_limit=(travel_details or {}).get("temporary_limit"),
             original_limit=(travel_details or {}).get("original_limit"),
             fx_snapshot=(travel_details or {}).get("fx_snapshot"),
+            statement=req.statement,
+            evidence_ref=req.evidence_ref,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -3054,6 +3082,8 @@ def operation_precheck(
     if fraud_tx:
         response["transaction"] = dict(fraud_tx)
         response["risk_reasons"] = ["境外交易", "交易类别标记为可疑交易", "用户明确否认该消费"]
+    elif dispute_tx:
+        response["transaction"] = dict(dispute_tx)
     if travel_details:
         response["travel_preview"] = travel_details
     _idempotency_complete(actor, "operation_precheck", idempotency_key, idem_payload, response)
@@ -3626,6 +3656,7 @@ def execute_operation(
     resolved_subscription_id: Optional[str] = None
     fraud_tx: Optional[dict[str, Any]] = None
     travel_details: Optional[dict[str, Any]] = None
+    dispute_tx: Optional[dict[str, Any]] = None
     active_travel: Optional[dict[str, Any]] = None
     try:
         operation = _validate_operation_name(req.operation)
@@ -3641,6 +3672,13 @@ def execute_operation(
             target = str(fraud_tx["card_id"])
             if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(fraud_tx):
                 raise SecurityError("交易信息已变化，请重新预检", 409, "TRANSACTION_CONTEXT_CHANGED")
+        if operation == "DISPUTE_SUBMIT":
+            dispute_tx = _owned_transaction(req.user_id, req.transaction_id)
+            if not req.statement or not req.evidence_ref:
+                raise SecurityError("争议申请需要陈述和证据编号", 400, "DISPUTE_FIELDS_REQUIRED")
+            if req.transaction_snapshot_hash and req.transaction_snapshot_hash != _context_hash(dispute_tx):
+                raise SecurityError("交易信息已变化，请重新预检", 409, "TRANSACTION_CONTEXT_CHANGED")
+            target = str(dispute_tx["tx_id"])
         if operation == "PASSWORD_CHANGE" and any(value for value in (req.target, req.product_id, req.card_id, req.merchant)):
             raise SecurityError("密码修改不接受外部目标编号", 400, "TARGET_NOT_ALLOWED")
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
@@ -3685,8 +3723,8 @@ def execute_operation(
             risk_profile=(WEALTH_RISK_PROFILES.get(req.user_id) or {}).get("risk_profile") if operation == "WEALTH_PURCHASE" else None,
             subscription_id=resolved_subscription_id,
             scheduled_at=_normalize_datetime(req.scheduled_at, field="计划时间", require_future=True) if operation == "SCHEDULED_TRANSFER" else req.scheduled_at,
-            transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
-            transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
+            transaction_id=(fraud_tx or dispute_tx or {}).get("tx_id") or req.transaction_id,
+            transaction_snapshot_hash=_context_hash(fraud_tx or dispute_tx) if (fraud_tx or dispute_tx) else req.transaction_snapshot_hash,
             destination=(travel_details or {}).get("destination"),
             currency=(travel_details or {}).get("currency"),
             start_at=(travel_details or {}).get("start_at"),
@@ -3695,6 +3733,8 @@ def execute_operation(
             temporary_limit=(travel_details or {}).get("temporary_limit"),
             original_limit=(travel_details or {}).get("original_limit"),
             fx_snapshot=(travel_details or {}).get("fx_snapshot"),
+            statement=req.statement,
+            evidence_ref=req.evidence_ref,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -3787,6 +3827,23 @@ def execute_operation(
                     task = TASK_STORE.create(req.user_id, "TRAVEL_LIMIT_RESTORE", {"plan_id": plan["plan_id"], "card_id": card["card_id"], "restore_at": plan["restore_at"]}, run_at=plan["restore_at"], idempotency_key=f"travel-restore:{plan['plan_id']}")
                     plan["restore_task_id"] = task.task_id
                     result.update({"status": "TRAVEL_MODE_ACTIVE", "plan": plan, "card": card, "restore_task": task.to_dict(), "esim_offer": {"available": True, "execution_mode": "MOCK", "funds_debited": False}, "execution_mode": "MOCK", "funds_debited": False})
+                elif operation == "DISPUTE_SUBMIT":
+                    tx = _owned_transaction(req.user_id, operation_context.get("transaction_id"))
+                    if operation_context.get("transaction_snapshot_hash") != _context_hash(tx):
+                        raise SecurityError("交易信息已变化，请重新预检", 409, "TRANSACTION_CONTEXT_CHANGED")
+                    existing = next((item for item in DISPUTE_CASES if item.get("owner_id") == req.user_id and item.get("transaction_id") == tx.get("tx_id")), None)
+                    now = datetime.now(timezone.utc).isoformat()
+                    if existing is None:
+                        existing = {"case_id": f"CASE-{uuid.uuid4().hex[:10].upper()}", "owner_id": req.user_id, "transaction_id": tx["tx_id"], "transaction_snapshot_hash": operation_context["transaction_snapshot_hash"], "card_id": tx.get("card_id"), "created_at": now}
+                        DISPUTE_CASES.append(existing)
+                    evidence_refs = list(existing.get("evidence_refs") or [])
+                    if operation_context.get("evidence_ref") not in evidence_refs:
+                        evidence_refs.append(operation_context["evidence_ref"])
+                    existing.update({"status": "HUMAN_REVIEW", "review_channel": "MOCK_HUMAN_SUPPORT", "refund_status": "AWAITING_HUMAN_DECISION", "decision_authority": "HUMAN_ONLY", "statement": operation_context.get("statement"), "evidence_refs": evidence_refs, "updated_at": now})
+                    task = TASK_STORE.create(req.user_id, "DISPUTE_HUMAN_REVIEW", {"case_id": existing["case_id"], "transaction_id": tx["tx_id"], "refund_status": existing["refund_status"]}, idempotency_key=f"dispute-human:{existing['case_id']}")
+                    if task.status != TaskState.HUMAN_TAKEOVER:
+                        task = TASK_STORE.takeover(task.task_id, owner_id=req.user_id, reason="争议材料已收集，交由人工审核")
+                    result.update({"status": "HUMAN_TAKEOVER", "transaction": tx, "dispute_case": existing, "review_task": task.to_dict(), "funds_debited": False})
                 elif operation in {"CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST"}:
                     card = _select_card(req.user_id, req.card_id)
                     current_status = str(card.get("status") or "")

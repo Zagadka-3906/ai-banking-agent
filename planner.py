@@ -60,6 +60,7 @@ class Intent(str, Enum):
     CARD_FREEZE = "CARD_FREEZE"
     FRAUD_DISPUTE = "FRAUD_DISPUTE"
     TRAVEL_MODE = "TRAVEL_MODE"
+    DISPUTE_HANDOFF = "DISPUTE_HANDOFF"
     CARD_UNFREEZE = "CARD_UNFREEZE"
     CARD_REPORT_LOST = "CARD_REPORT_LOST"
     CARD_UNREPORT_LOST = "CARD_UNREPORT_LOST"
@@ -87,6 +88,7 @@ YELLOW_INTENTS = {
     Intent.CROSS_SCENE_LOCK.value,
     Intent.SUBSCRIPTION_CANCEL.value,
     Intent.CARD_APPLY.value,
+    Intent.DISPUTE_HANDOFF.value,
 }
 RED_INTENTS = {
     Intent.WEALTH_PURCHASE.value,
@@ -305,6 +307,12 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
             if slots.get(key) in (None, "", 0):
                 missing.append(key)
         return missing
+    if intent == Intent.DISPUTE_HANDOFF.value:
+        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+        for key in ("transaction_id", "statement", "evidence_ref"):
+            if not str(slots.get(key) or "").strip():
+                missing.append(key)
+        return missing
     if intent == Intent.SCHEDULED_TRANSFER.value and not parsed.get("scheduled_at"):
         missing.append("scheduled_at")
     if intent == Intent.WEALTH_COMPARE.value:
@@ -510,6 +518,15 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
             Task("mfa_confirm", "MFA_CONFIRM", ["explain_risk"], "RED", details=base),
             Task("freeze_card", "FREEZE_CARD", ["mfa_confirm"], "RED", details=base),
             Task("create_dispute_case", "CREATE_DISPUTE_CASE", ["freeze_card"], "RED", details=base),
+        ]
+    elif intent == Intent.DISPUTE_HANDOFF.value:
+        tasks = [
+            Task("verify_transaction", "VERIFY_TRANSACTION", risk_level="GREEN", details=base),
+            Task("collect_statement", "COLLECT_STATEMENT", ["verify_transaction"], "GREEN", details=base),
+            Task("collect_evidence", "COLLECT_EVIDENCE", ["collect_statement"], "GREEN", details=base),
+            Task("user_confirm", "USER_CONFIRM", ["collect_evidence"], "YELLOW", details=base),
+            Task("submit_dispute", "DISPUTE_SUBMIT", ["user_confirm"], "YELLOW", details=base),
+            Task("human_takeover", "HUMAN_TAKEOVER", ["submit_dispute"], "GREEN", details=base),
         ]
     elif intent == Intent.SCHEDULED_TRANSFER.value:
         tasks = [
