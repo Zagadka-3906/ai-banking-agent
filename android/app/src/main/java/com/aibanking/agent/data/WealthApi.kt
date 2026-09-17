@@ -16,6 +16,7 @@ data class PerformanceView(
     val period: String = "",
     @SerializedName("product_return_pct") val productReturnPct: Double? = null,
     @SerializedName("benchmark_return_pct") val benchmarkReturnPct: Double? = null,
+    @SerializedName("peer_average_pct") val peerAveragePct: Double? = null,
     val rank: String? = null,
 )
 
@@ -29,6 +30,7 @@ data class AnalysisMetricView(
     val label: String = "",
     val score: Int? = null,
     val description: String? = null,
+    val value: String? = null,
 )
 
 data class ManagerView(
@@ -36,10 +38,20 @@ data class ManagerView(
     @SerializedName("tenure_since") val tenureSince: String? = null,
     @SerializedName("experience_years") val experienceYears: Double? = null,
     val bio: String? = null,
+    val title: String? = null,
+    @SerializedName("managed_scale_billion") val managedScaleBillion: Double? = null,
+    @SerializedName("annualized_yield_pct") val annualizedYieldPct: Double? = null,
+    @SerializedName("avatar_url") val avatarUrl: String? = null,
 )
 
 data class AllocationView(
     val name: String = "",
+    val percentage: Double? = null,
+)
+
+data class TopHoldingView(
+    val name: String = "",
+    val category: String? = null,
     val percentage: Double? = null,
 )
 
@@ -66,6 +78,9 @@ data class ProductView(
     @SerializedName("data_source") val dataSource: String? = null,
     @SerializedName("as_of_date") val asOfDate: String? = null,
     @SerializedName("latest_nav") val latestNav: Double? = null,
+    @SerializedName("annual_return_pct") val annualReturnPct: Double? = null,
+    @SerializedName("recent_month_return_pct") val recentMonthReturnPct: Double? = null,
+    @SerializedName("net_value_date") val netValueDate: String? = null,
     @SerializedName("daily_change_pct") val dailyChangePct: Double? = null,
     @SerializedName("performance_history") val performanceHistory: List<PerformanceView> = emptyList(),
     @SerializedName("nav_series") val navSeries: List<NavPointView> = emptyList(),
@@ -81,6 +96,12 @@ data class ProductView(
     @SerializedName("fee_rate") val feeRate: Double? = null,
     val summary: String? = null,
     val announcement: String? = null,
+    @SerializedName("promo_title") val promoTitle: String? = null,
+    @SerializedName("promo_subtitle") val promoSubtitle: String? = null,
+    @SerializedName("institution_founded_years") val institutionFoundedYears: Int? = null,
+    @SerializedName("institution_aum_billion") val institutionAumBillion: Double? = null,
+    @SerializedName("institution_rating") val institutionRating: String? = null,
+    @SerializedName("top_holdings") val topHoldings: List<TopHoldingView> = emptyList(),
 )
 
 data class ProductListResponse(val code: Int = 0, val data: List<ProductView> = emptyList())

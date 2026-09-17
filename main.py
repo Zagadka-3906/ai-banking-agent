@@ -364,7 +364,7 @@ WEALTH_PRODUCTS: list[dict[str, Any]] = [
         "annualized_yield": 0.042,
         "min_amount": 10000.0,
         "liquidity": "180 天定开",
-        "term": "180 天定期开放",
+        "term": "180天运作期",
         "underlying": "主仓位（70%~85%）投资中高等级固定收益证券筑底；副仓位（15%~30%）参与沪深300成分股打新、高股息红利资产及量化中性策略",
         "target_clients": "具有一定风险承受能力，希望在债底防守基础上争取权益市场超额收益的稳健进取型客户",
     },
@@ -414,12 +414,33 @@ _WEALTH_DETAIL_FIXTURES: dict[str, dict[str, Any]] = {
         "established_at": "2020-07-15", "scale_billion": 42.6, "manager_company": "华夏量化理财管理有限公司", "purchase_rule": "1000元起购，工作日 00:00-15:00 申请", "redemption_rule": "封闭期满后可申请赎回或自动滚存", "confirm_time": "T+1", "fee_rate": 0.15, "summary": "以固收资产打底、期限明确的稳健型产品。", "announcement": "本页面为 Mock 行情快照，仅供产品演示，不构成投资建议。",
     },
     "ZY18031": {
-        "latest_nav": 1.1186, "daily_change_pct": -0.35,
-        "performance_history": [{"period": "近1月", "product_return_pct": -0.42, "benchmark_return_pct": -0.36, "rank": "44/61"}, {"period": "近3月", "product_return_pct": 1.26, "benchmark_return_pct": 1.08, "rank": "27/61"}, {"period": "近1年", "product_return_pct": 5.74, "benchmark_return_pct": 4.92, "rank": "19/61"}],
-        "analysis_metrics": [{"label": "收益稳定性", "score": 3, "description": "固收与权益混合"}, {"label": "抗下跌能力", "score": 3, "description": "存在净值波动"}, {"label": "流动性", "score": 2, "description": "180天定开"}, {"label": "风险控制", "score": 3, "description": "R3 中风险"}],
-        "manager": {"name": "顾远", "tenure_since": "2019-11-20", "experience_years": 15, "bio": "擅长固收增强与资产配置"},
-        "asset_allocation": [{"name": "债券", "percentage": 72.0}, {"name": "权益", "percentage": 18.0}, {"name": "量化策略", "percentage": 7.0}, {"name": "现金", "percentage": 3.0}],
-        "established_at": "2019-11-20", "scale_billion": 18.4, "manager_company": "华夏量化理财管理有限公司", "purchase_rule": "10000元起购，开放期内申请", "redemption_rule": "每180天开放一次赎回", "confirm_time": "T+1", "fee_rate": 0.60, "summary": "在固收底仓基础上争取权益增强收益的平衡型产品。", "announcement": "本页面为 Mock 行情快照，仅供产品演示，不构成投资建议。",
+        "latest_nav": 1.2761, "daily_change_pct": 0.38,
+        "annual_return_pct": 19.46, "recent_month_return_pct": 3.89, "net_value_date": "2026-09-15",
+        "performance_history": [
+            {"period": "近1月", "product_return_pct": 3.89, "peer_average_pct": 1.18, "benchmark_return_pct": 1.18, "rank": "58/420"},
+            {"period": "近3月", "product_return_pct": 8.67, "peer_average_pct": 3.42, "benchmark_return_pct": 3.42, "rank": "40/415"},
+            {"period": "近6月", "product_return_pct": -2.12, "peer_average_pct": -4.25, "benchmark_return_pct": -4.25, "rank": "51/390"},
+            {"period": "近1年", "product_return_pct": 19.46, "peer_average_pct": 10.28, "benchmark_return_pct": 10.28, "rank": "49/360"},
+            {"period": "成立以来", "product_return_pct": 36.95, "peer_average_pct": 19.50, "benchmark_return_pct": 19.50, "rank": "36/280"},
+        ],
+        "analysis_metrics": [
+            {"label": "最大回撤控制", "score": 4, "value": "3.12%", "description": "控制力优秀"},
+            {"label": "盈利概率", "score": 4, "value": "89%", "description": "持有6个月正收益概率"},
+            {"label": "波动率评级", "score": 4, "value": "4.15%", "description": "低波动"},
+            {"label": "行业配置倾向", "score": 3, "value": "制造/周期", "description": "制造与周期为主"},
+        ],
+        "manager": {"name": "陈敏", "title": "固定收益与多资产部 投资总监", "tenure_since": "2015-06-01", "experience_years": 11, "managed_scale_billion": 32.6, "annualized_yield_pct": 12.88, "avatar_url": "https://example.com/manager_avatar.png", "bio": "擅长固收增强与资产配置"},
+        "asset_allocation": [{"name": "债券资产", "percentage": 74.5}, {"name": "股票权益", "percentage": 18.2}, {"name": "现金及其他", "percentage": 7.3}],
+        "promo_title": "财富日限时加息", "promo_subtitle": "申购费率1折，额度有限",
+        "institution_founded_years": 26, "institution_aum_billion": 21380.93, "institution_rating": "综合评级 AA+",
+        "top_holdings": [
+            {"name": "中债优选180天资产支持专项计划", "category": "债券资产", "percentage": 18.6},
+            {"name": "国开行金融债2026年第七期", "category": "利率债", "percentage": 15.2},
+            {"name": "华域汽车", "category": "制造业权益", "percentage": 4.8},
+            {"name": "宁德时代", "category": "先进制造权益", "percentage": 3.9},
+            {"name": "中证红利量化增强策略", "category": "量化策略", "percentage": 3.4},
+        ],
+        "established_at": "2000-09-01", "scale_billion": 63.8, "manager_company": "华夏量化理财管理有限公司", "purchase_rule": "10000元起购，开放期内申请", "redemption_rule": "每180天开放一次赎回", "confirm_time": "T+1", "fee_rate": 0.60, "summary": "在固收底仓基础上争取权益增强收益的平衡型产品。", "announcement": "本页面为 Mock 行情快照，仅供产品演示，不构成投资建议。",
     },
     "QK36509": {
         "latest_nav": 1.2643, "daily_change_pct": 0.41,
@@ -439,25 +460,32 @@ def _normalized_wealth_series(detail: dict[str, Any]) -> list[dict[str, Any]]:
     """Build a stable chart whose labeled period returns are mathematically true.
 
     This is a normalized performance chart, deliberately separate from the
-    product's latest NAV.  The three documented periods are exact anchors;
-    intervening monthly points are linear interpolation for presentation.
+    product's latest NAV.  Available documented periods are exact anchors;
+    intervening monthly points are linear interpolation for presentation.  A
+    fixture with an inception return also receives an explicit inception point,
+    so selecting ``成立以来`` never relabels a one-year series as lifetime data.
     """
 
     history = {row["period"]: row for row in detail["performance_history"]}
-    product_last = 1.0 + float(history["近1年"]["product_return_pct"]) / 100.0
-    benchmark_last = 1.0 + float(history["近1年"]["benchmark_return_pct"]) / 100.0
+    has_extended_history = {"近6月", "成立以来"} <= history.keys()
+    total_period = "成立以来" if has_extended_history else "近1年"
+    product_last = 1.0 + float(history[total_period]["product_return_pct"]) / 100.0
+    benchmark_last = 1.0 + float(history[total_period]["benchmark_return_pct"]) / 100.0
     product_anchors = {
-        0: 1.0,
+        0: product_last / (1.0 + float(history["近1年"]["product_return_pct"]) / 100.0),
         9: product_last / (1.0 + float(history["近3月"]["product_return_pct"]) / 100.0),
         11: product_last / (1.0 + float(history["近1月"]["product_return_pct"]) / 100.0),
         12: product_last,
     }
     benchmark_anchors = {
-        0: 1.0,
+        0: benchmark_last / (1.0 + float(history["近1年"]["benchmark_return_pct"]) / 100.0),
         9: benchmark_last / (1.0 + float(history["近3月"]["benchmark_return_pct"]) / 100.0),
         11: benchmark_last / (1.0 + float(history["近1月"]["benchmark_return_pct"]) / 100.0),
         12: benchmark_last,
     }
+    if has_extended_history:
+        product_anchors[6] = product_last / (1.0 + float(history["近6月"]["product_return_pct"]) / 100.0)
+        benchmark_anchors[6] = benchmark_last / (1.0 + float(history["近6月"]["benchmark_return_pct"]) / 100.0)
     series = []
     for index, date in enumerate(_WEALTH_NAV_BASE):
         left = max(anchor for anchor in product_anchors if anchor <= index)
@@ -466,6 +494,8 @@ def _normalized_wealth_series(detail: dict[str, Any]) -> list[dict[str, Any]]:
         product_nav = product_anchors[left] + (product_anchors[right] - product_anchors[left]) * ratio
         benchmark_nav = benchmark_anchors[left] + (benchmark_anchors[right] - benchmark_anchors[left]) * ratio
         series.append({"date": date, "nav": round(product_nav, 6), "benchmark_nav": round(benchmark_nav, 6)})
+    if has_extended_history and detail.get("established_at", "") < _WEALTH_NAV_BASE[0]:
+        series.insert(0, {"date": detail["established_at"], "nav": 1.0, "benchmark_nav": 1.0})
     return series
 
 

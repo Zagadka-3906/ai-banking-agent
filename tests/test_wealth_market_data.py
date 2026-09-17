@@ -41,17 +41,16 @@ def test_all_products_expose_complete_mock_detail_shape(client: TestClient) -> N
         assert {"period", "product_return_pct", "benchmark_return_pct", "rank"} <= product["performance_history"][0].keys()
 
         series = product["nav_series"]
-        assert len(series) == 13
+        assert len(series) >= 13
         assert [row["date"] for row in series] == sorted(row["date"] for row in series)
-        assert series[0]["date"] == "2025-09-15"
         assert series[-1]["date"] == product["as_of_date"]
         for row in series:
             assert math.isfinite(row["nav"]) and row["nav"] > 0
             assert math.isfinite(row["benchmark_nav"]) and row["benchmark_nav"] > 0
 
         history = {row["period"]: row for row in product["performance_history"]}
-        for index, period in ((11, "近1月"), (9, "近3月"), (0, "近1年")):
-            row = series[index]
+        for date, period in (("2026-08-15", "近1月"), ("2026-06-15", "近3月"), ("2025-09-15", "近1年")):
+            row = next(item for item in series if item["date"] == date)
             product_return = (series[-1]["nav"] / row["nav"] - 1) * 100
             benchmark_return = (series[-1]["benchmark_nav"] / row["benchmark_nav"] - 1) * 100
             assert product_return == pytest.approx(history[period]["product_return_pct"], abs=0.001)
@@ -80,6 +79,28 @@ def test_read_projections_cover_recommend_compare_and_legacy_base_records(client
     assert projected["nav_series"][-1]["date"] == "2026-09-15"
     unknown = {"product_id": "CUSTOM-1", "name": "自定义产品"}
     assert main._wealth_product_view(unknown) == unknown
+
+
+def test_zy_detail_matches_high_fidelity_mock_contract(client: TestClient) -> None:
+    response = client.get("/api/v1/wealth/products", headers={"X-User-Id": "user_zhang"})
+    product = next(item for item in response.json()["data"] if item["product_id"] == "ZY18031")
+    assert product["term"] == "180天运作期"
+    assert (product["latest_nav"], product["annual_return_pct"], product["recent_month_return_pct"]) == (1.2761, 19.46, 3.89)
+    assert product["net_value_date"] == "2026-09-15"
+    history = {item["period"]: item for item in product["performance_history"]}
+    assert {period: (row["product_return_pct"], row["peer_average_pct"], row["rank"]) for period, row in history.items()} == {
+        "近1月": (3.89, 1.18, "58/420"), "近3月": (8.67, 3.42, "40/415"),
+        "近6月": (-2.12, -4.25, "51/390"), "近1年": (19.46, 10.28, "49/360"),
+        "成立以来": (36.95, 19.50, "36/280"),
+    }
+    assert [item["percentage"] for item in product["asset_allocation"]] == [74.5, 18.2, 7.3]
+    assert len(product["top_holdings"]) == 5
+    series = product["nav_series"]
+    assert series[0] == {"date": "2000-09-01", "nav": 1.0, "benchmark_nav": 1.0}
+    for date, period in (("2026-03-16", "近6月"), ("2000-09-01", "成立以来")):
+        anchor = next(item for item in series if item["date"] == date)
+        assert (series[-1]["nav"] / anchor["nav"] - 1) * 100 == pytest.approx(history[period]["product_return_pct"], abs=0.001)
+        assert (series[-1]["benchmark_nav"] / anchor["benchmark_nav"] - 1) * 100 == pytest.approx(history[period]["benchmark_return_pct"], abs=0.001)
 
 
 def test_product_listing_is_read_only_and_purchase_stays_red(client: TestClient) -> None:
