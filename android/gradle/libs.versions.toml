@@ -12,9 +12,11 @@ retrofit = "2.11.0"
 okhttp = "4.12.0"
 biometric = "1.1.0"
 coroutines = "1.9.0"
+mlkitText = "16.0.1"
 # Instrumented UI tests (run on a device/emulator via connectedDebugAndroidTest).
 androidxTestJunit = "1.2.1"
 androidxTestRunner = "1.6.2"
+junit = "4.13.2"
 # Push notifications.  The BoM keeps firebase-messaging and its transitive
 # play-services artifacts on one compatible release.
 firebaseBom = "34.19.0"
@@ -44,11 +46,13 @@ androidx-test-runner = { group = "androidx.test", name = "runner", version.ref =
 # GrantPermissionRule: the app asks for POST_NOTIFICATIONS on launch, and the
 # resulting system dialog would otherwise cover the login screen a UI test needs.
 androidx-test-rules = { group = "androidx.test", name = "rules", version = "1.6.1" }
+junit4 = { group = "junit", name = "junit", version.ref = "junit" }
 
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
 retrofit-converter-gson = { group = "com.squareup.retrofit2", name = "converter-gson", version.ref = "retrofit" }
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitText" }
 
 # Push.  The BoM keeps firebase-messaging and its transitive play-services
 # artifacts on one compatible release.  The google-services plugin is declared

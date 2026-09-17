@@ -93,6 +93,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.mlkit.text.recognition)
 
     // Compose: the BOM keeps every artifact on one compatible release.
     implementation(platform(libs.androidx.compose.bom))
@@ -108,6 +109,7 @@ dependencies {
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp.logging)
+    testImplementation(libs.junit4)
 
     // Push notifications.  The google-services plugin is applied conditionally at
     // the top of this file: it fails the build outright when google-services.json

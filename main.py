@@ -599,9 +599,17 @@ def profile_rank(profile: Optional[str]) -> Optional[int]:
 # 卡余额与所属账户共享（借记卡语义），转账日限额按卡生效。
 CARDS: dict[str, list[dict[str, Any]]] = {
     "user_zhang": [
-        {"card_id": "CARD-001", "number_masked": "**** **** **** 3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "工资卡"}
+        {"card_id": "CARD-001", "pan_ref": "MOCK-PAN-001", "number_masked": "**** **** **** 3082", "last4": "3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "工资卡"}
     ]
 }
+# Mock PANs live in a separate, read-only vault.  The ledger only stores the
+# opaque reference and a masked projection; never put a full PAN or PIN here.
+MOCK_CARD_VAULT: dict[str, dict[str, str]] = {
+    "MOCK-PAN-001": {"card_number": "6222020000023082", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
+    "MOCK-PAN-002": {"card_number": "4111111111111111", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
+    "MOCK-PAN-003": {"card_number": "5555555555554444", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
+}
+CARD_DISCLOSURE_FAILURES: dict[tuple[str, str], dict[str, Any]] = {}
 # Self-service issuance needs a ceiling like every other collection here.  Cards
 # are part of the persisted ledger and the snapshot is rewritten in full on each
 # mutation, so an un-capped add is both unbounded growth and quadratic disk work
@@ -697,7 +705,7 @@ def _mock_card_masked() -> str:
     return "**** **** **** " + digits[-4:]
 
 
-def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = None) -> dict[str, Any]:
+def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = None, pan_ref: Optional[str] = None, number_masked: Optional[str] = None, last4: Optional[str] = None) -> dict[str, Any]:
     """Append one card to ``user_id``'s wallet, enforcing the per-user ceiling.
 
     Every issuance path funnels through here.  ``CARD_APPLY`` (the agent's
@@ -716,9 +724,12 @@ def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = N
             409,
             "CARD_LIMIT_REACHED",
         )
+    safe_masked = number_masked or _mock_card_masked()
     card = {
         "card_id": f"CARD-{uuid.uuid4().hex[:8].upper()}",
-        "number_masked": _mock_card_masked(),
+        **({"pan_ref": pan_ref} if pan_ref else {}),
+        "number_masked": safe_masked,
+        "last4": last4 or re.sub(r"\D", "", safe_masked)[-4:],
         "type": card_type,
         "status": "ACTIVE",
         "daily_limit": CARD_DEFAULT_DAILY_LIMIT,
@@ -726,6 +737,40 @@ def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = N
     }
     held.append(card)
     return card
+
+
+def _card_summary(card: Mapping[str, Any], *, available_balance: Optional[float] = None) -> dict[str, Any]:
+    """Explicitly safe card projection; private vault references never escape."""
+
+    allowed = {"card_id", "last4", "number_masked", "type", "status", "daily_limit", "label"}
+    result = {key: card[key] for key in allowed if key in card}
+    if "last4" not in result:
+        masked = str(card.get("number_masked") or "")
+        result["last4"] = re.sub(r"\D", "", masked)[-4:] if len(re.sub(r"\D", "", masked)) >= 4 else ""
+    if available_balance is not None:
+        result["available_balance"] = available_balance
+    return result
+
+
+def _normalize_card_number(value: Any) -> str:
+    number = re.sub(r"[\s-]", "", str(value or ""))
+    if not re.fullmatch(r"\d{12,19}", number):
+        raise SecurityError("银行卡信息无法核验", 400, "CARD_BINDING_REJECTED")
+    checksum = 0
+    for index, digit in enumerate(reversed(number)):
+        value_int = int(digit)
+        if index % 2 == 1:
+            value_int *= 2
+            if value_int > 9:
+                value_int -= 9
+        checksum += value_int
+    if checksum % 10:
+        raise SecurityError("银行卡信息无法核验", 400, "CARD_BINDING_REJECTED")
+    return number
+
+
+def _card_mask(number: str) -> str:
+    return f"**** **** **** {number[-4:]}"
 # Per-card, per-day settled spend.  The card's ``daily_limit`` is enforced on
 # settlement, so lowering a limit (CARD_LIMIT) immediately constrains further
 # payments instead of only being a display field.
@@ -1432,6 +1477,7 @@ _WRITE_ACTIONS_REQUIRING_HEADER = {
     "CONTACT_ADD",
     "CONTACT_DELETE",
     "CARD_ADD",
+    "CARD_DETAIL_REVEAL",
 }
 
 
@@ -2794,7 +2840,7 @@ def get_cards(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-Use
     available = round(float(account["balance"]) - float(account.get("locked_amount", 0.0)), 2)
     data: list[dict[str, Any]] = []
     for card in _user_cards(user_id):
-        enriched = dict(card)
+        enriched = _card_summary(card)
         card_id = str(card.get("card_id") or "")
         if card_id:
             spent = _card_daily_spent(card_id)
@@ -2813,6 +2859,9 @@ def get_cards(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-Use
 class CardAddRequest(StrictModel):
     card_type: str = "借记卡"
     label: Optional[str] = None
+    card_number: str
+    source: str
+    user_confirmed: StrictBool
 
 
 @app.post("/api/v1/cards/{user_id}/add")
@@ -2827,7 +2876,11 @@ def add_card(
 
     request_id = _request_id(x_request_id)
     actor = _get_actor(user_id, x_user_id, action="CARD_ADD", request_id=request_id)
-    idem_payload = {"user_id": user_id, "card_type": req.card_type, "label": req.label}
+    try:
+        normalized_number = _normalize_card_number(req.card_number)
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=actor, action="CARD_ADD", request_id=request_id)
+    idem_payload = {"user_id": user_id, "card_type": req.card_type, "label": req.label, "card_fingerprint": hashlib.sha256(normalized_number.encode("utf-8")).hexdigest(), "source": req.source, "user_confirmed": req.user_confirmed}
     cached = _idempotency_begin(actor, "card_add", idempotency_key, idem_payload, request_id=request_id)
     if cached is not None:
         return cached
@@ -2838,18 +2891,77 @@ def add_card(
         if card_type is None:
             raise SecurityError("卡片类型仅支持：借记卡/虚拟卡", 400, "INVALID_CARD_TYPE")
         label = sanitize_text(req.label, field="卡片别名", max_length=40) if req.label else None
+        source = str(req.source or "").strip().upper()
+        if source not in {"MANUAL", "OCR"}:
+            raise SecurityError("银行卡信息无法核验", 400, "CARD_BINDING_REJECTED")
+        if not req.user_confirmed:
+            raise SecurityError("请确认银行卡信息后继续", 400, "CARD_CONFIRMATION_REQUIRED")
+        if len(_user_cards(user_id)) >= CARD_MAX_PER_USER:
+            raise SecurityError(
+                f"每人最多持有 {CARD_MAX_PER_USER} 张卡片，请先注销不再使用的卡",
+                409,
+                "CARD_LIMIT_REACHED",
+            )
+        pan_ref, vault = next(((ref, item) for ref, item in MOCK_CARD_VAULT.items() if item["card_number"] == normalized_number), (None, None))
+        if vault is None or vault.get("owner_user_id") != user_id:
+            raise SecurityError("银行卡信息无法核验", 400, "CARD_BINDING_REJECTED")
     except SecurityError as exc:
         _idempotency_abort(actor, "card_add", idempotency_key)
         _record_failure_and_raise(exc, user_id=actor, action="CARD_ADD", request_id=request_id)
 
-    with STATE_LOCK:
-        with _ledger_transaction():
-            card = _issue_card_locked(user_id, card_type=card_type, label=label)
+    try:
+        with STATE_LOCK:
+            with _ledger_transaction():
+                # Re-check the opaque reference while holding the same lock as
+                # issuance. This closes the concurrent identical-bind race.
+                if any(item.get("pan_ref") == pan_ref for item in _user_cards(user_id)):
+                    raise SecurityError("银行卡已绑定", 409, "CARD_BINDING_REJECTED")
+                card = _issue_card_locked(user_id, card_type=card_type, label=label, pan_ref=pan_ref, number_masked=_card_mask(normalized_number), last4=normalized_number[-4:])
+    except SecurityError as exc:
+        _idempotency_abort(actor, "card_add", idempotency_key)
+        _record_failure_and_raise(exc, user_id=actor, action="CARD_ADD", request_id=request_id)
     persist_ledger()
-    response = {"code": 200, "status": "ISSUED", "data": dict(card)}
+    response = {"code": 200, "status": "ISSUED", "data": _card_summary(card)}
     _idempotency_complete(actor, "card_add", idempotency_key, idem_payload, response)
-    audit_event("CARD_ADD", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"card_id": card["card_id"], "card_type": card_type})
+    audit_event("CARD_ADD", user_id=actor, risk_level="YELLOW", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"card_id": card["card_id"], "last4": card["last4"], "source": source})
     return response
+
+
+class CardRevealRequest(StrictModel):
+    pin: str
+
+
+@app.post("/api/v1/cards/{user_id}/{card_id}/reveal")
+def reveal_card(user_id: str, card_id: str, req: CardRevealRequest, request: Request = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(user_id, x_user_id, action="CARD_DETAIL_REVEAL", request_id=request_id)
+    session = _presented_session(request)
+    if not session:
+        exc = SecurityError("需要登录会话后查看卡片信息", 401, "CARD_DISCLOSURE_DENIED")
+        _record_failure_and_raise(exc, user_id=actor, action="CARD_DETAIL_REVEAL", request_id=request_id)
+    card = _find_card(user_id, card_id)
+    vault = MOCK_CARD_VAULT.get(str(card.get("pan_ref"))) if card else None
+    key = (user_id, card_id)
+    failure = CARD_DISCLOSURE_FAILURES.get(key, {})
+    now = time.time()
+    if float(failure.get("locked_until", 0)) > now:
+        exc = SecurityError("卡片查看已锁定，请稍后重试", 423, "CARD_DISCLOSURE_LOCKED")
+        _record_failure_and_raise(exc, user_id=actor, action="CARD_DETAIL_REVEAL", request_id=request_id)
+    valid_target = bool(card and vault and card.get("status") != "LOST" and vault.get("owner_user_id") == actor)
+    if not valid_target or not verify_password(req.pin, vault.get("pin_hash") if vault else None):
+        failed = int(failure.get("failed", 0)) + 1
+        if failed >= 5:
+            CARD_DISCLOSURE_FAILURES[key] = {"failed": failed, "locked_until": now + 300}
+            exc = SecurityError("卡片查看已锁定，请稍后重试", 423, "CARD_DISCLOSURE_LOCKED")
+        else:
+            CARD_DISCLOSURE_FAILURES[key] = {"failed": failed, "locked_until": 0}
+            exc = SecurityError("卡片查看验证失败", 401, "CARD_DISCLOSURE_DENIED")
+        _record_failure_and_raise(exc, user_id=actor, action="CARD_DETAIL_REVEAL", request_id=request_id)
+    CARD_DISCLOSURE_FAILURES.pop(key, None)
+    disclosure_id = f"DISC-{uuid.uuid4().hex[:12].upper()}"
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
+    audit_event("CARD_DETAIL_REVEAL", user_id=actor, risk_level="RED", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"card_id": card_id, "last4": card.get("last4"), "disclosure_id": disclosure_id, "expires_at": expires_at})
+    return {"code": 200, "data": {"owner_name": vault["owner_name"], "card_number": vault["card_number"], "issuer_name": vault["issuer_name"], "expires_at": expires_at, "disclosure_id": disclosure_id}}
 
 
 # ---------------------------------------------------------------------------
@@ -4339,6 +4451,8 @@ def reset_state() -> None:
         if "CARDS" in globals():
             CARDS.clear()
             CARDS.update(deepcopy(_INITIAL_CARDS))
+        if "CARD_DISCLOSURE_FAILURES" in globals():
+            CARD_DISCLOSURE_FAILURES.clear()
         if "SUBSCRIPTIONS" in globals():
             SUBSCRIPTIONS.clear()
             SUBSCRIPTIONS.update(deepcopy(_INITIAL_SUBSCRIPTIONS))

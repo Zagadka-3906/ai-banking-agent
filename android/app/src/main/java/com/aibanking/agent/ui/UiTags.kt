@@ -21,6 +21,15 @@ object UiTags {
     const val OPEN_CARDS = "open_cards"
     const val CARD_OPEN_ADD = "card_open_add"
     const val CARD_ADD = "card_add"
+    const val CARD_NUMBER = "card_number"
+    const val CARD_CAMERA = "card_camera"
+    const val CARD_CONFIRM = "card_confirm"
+    const val CARD_DETAIL = "card_detail"
+    const val CARD_REVEAL = "card_reveal"
+    const val CARD_PIN = "card_pin"
+    const val CARD_REVEALED = "card_revealed"
+    const val CARD_TRANSFER = "card_transfer"
+    const val CARD_WEALTH = "card_wealth"
 
     /**
      * 卡片操作按钮的标签前缀。

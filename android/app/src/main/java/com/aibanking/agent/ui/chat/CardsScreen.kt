@@ -2,6 +2,7 @@ package com.aibanking.agent.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.activity.compose.BackHandler
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.Manifest
+import android.content.pm.PackageManager
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -66,7 +82,7 @@ import java.util.Locale
  *
  * 余额与所属账户共享（借记卡语义）；冻结/挂失属于红色风险操作，页面把
  * 话术预填进聊天，由核心的短信 + 设备签名审批流最终授权。添加卡片为
- * 绿区操作，核心开立即生效并审计。
+ * 黄色操作，需用户明确确认后提交并审计。
  */
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,7 +97,8 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
         }
     }
     var showAdd by remember { mutableStateOf(false) }
-    // 打开表单那一刻的卡片数量。开卡是异步的（viewModelScope.launch），
+    var selectedCard by remember { mutableStateOf<CardView?>(null) }
+    // 打开表单那一刻的卡片数量。绑定是异步的（viewModelScope.launch），
     // 只有列表真的多出一张卡才收起表单。
     var cardsBeforeSubmit by remember { mutableStateOf<Int?>(null) }
     // 提交成功 → cards 变长 → 收起表单；失败则原地保留用户输入与错误提示，
@@ -137,7 +154,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                     count = state.cards.size,
                     key = { state.cards[it].cardId },
                 ) { index ->
-                    BankCardVisual(state.cards[index], viewModel, Modifier.cascadeItem(cascade, index))
+                    BankCardVisual(state.cards[index], viewModel, Modifier.cascadeItem(cascade, index)) { selectedCard = state.cards[index] }
                 }
                 if (state.cards.isEmpty() && !state.panelBusy) {
                     item {
@@ -172,12 +189,12 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             cardType = state.cardType,
             label = state.cardLabel,
             onFieldChange = viewModel::onCardFormChange,
-            onAdd = {
+            onAdd = { number, source ->
                 // panelBusy 期间不受理第二次提交：按钮虽然已禁用，但这里要挡住
-                // “按下按钮的同时另一次开卡已在飞”的那一下连点。
+                // “按下按钮的同时另一次绑定已在飞”的那一下连点。
                 if (!state.panelBusy) {
                     cardsBeforeSubmit = state.cards.size
-                    viewModel.addCard()
+                    viewModel.addCard(number, source)
                 }
             },
             onDismiss = {
@@ -186,6 +203,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             },
         )
     }
+    selectedCard?.let { card -> CardDetail(card, viewModel) { selectedCard = null } }
 }
 
 /** 加载中的卡面骨架：与真实卡片排版一致的占位块（含高光扫过）。 */
@@ -202,10 +220,10 @@ private fun CardsSkeleton() {
 }
 
 @Composable
-private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: Modifier = Modifier) {
+private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: Modifier = Modifier, onOpen: () -> Unit = {}) {
     val frozen = card.status != "ACTIVE"
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().clickable(onClick = onOpen).testTag("${UiTags.CARD_DETAIL}:${card.cardId}"),
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
     ) {
@@ -238,7 +256,7 @@ private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: M
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    card.numberMasked,
+                    "尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}",
                     color = Color.White,
                     style = MaterialTheme.typography.titleMedium,
                     fontFamily = FontFamily.Monospace,
@@ -326,11 +344,31 @@ private fun AddCardSheet(
     cardType: String,
     label: String,
     onFieldChange: (String?, String?) -> Unit,
-    onAdd: () -> Unit,
+    onAdd: (String, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
     ModalBottomSheet(onDismissRequest = onDismiss) {
+        var number by remember { mutableStateOf("") }
+        var source by remember { mutableStateOf("MANUAL") }
+        var confirmed by remember { mutableStateOf(false) }
+        var error by remember { mutableStateOf<String?>(null) }
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
+            if (bitmap == null) return@rememberLauncherForActivityResult
+            scope.launch {
+                val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                recognizer.process(InputImage.fromBitmap(bitmap, 0)).addOnSuccessListener { result ->
+                    val found = extractCardNumber(result.text)
+                    if (found != null) { number = found; source = "OCR"; confirmed = false }
+                    else error = "未识别到有效卡号，请手动输入"
+                }.addOnFailureListener { error = "拍照识别失败，请手动输入" }.addOnCompleteListener { recognizer.close() }
+            }
+        }
+        val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) camera.launch(null) else error = "未获得相机权限，可手动输入卡号"
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -339,6 +377,13 @@ private fun AddCardSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("添加银行卡", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = number, onValueChange = { number = it; source = "MANUAL"; confirmed = false; error = null }, label = { Text("卡号（必填）") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f).testTag(UiTags.CARD_NUMBER))
+                OutlinedButton(onClick = { if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) camera.launch(null) else permission.launch(Manifest.permission.CAMERA) }, modifier = Modifier.testTag(UiTags.CARD_CAMERA)) { Text("拍照") }
+            }
+            androidx.compose.material3.Checkbox(checked = confirmed, onCheckedChange = { confirmed = it }, modifier = Modifier.testTag(UiTags.CARD_CONFIRM))
+            Text("我确认卡号属于本人且输入无误", style = MaterialTheme.typography.bodySmall)
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("卡片类型", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("借记卡", "虚拟卡").forEach { option ->
@@ -357,15 +402,61 @@ private fun AddCardSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(
-                onClick = onAdd,
-                enabled = !busy,
+                onClick = { onAdd(number, source) },
+                enabled = !busy && confirmed && extractCardNumber(number) != null,
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.CARD_ADD),
-            ) { Text(if (busy) "开卡中…" else "确认添加") }
+            ) { Text(if (busy) "绑定中…" else "确认添加") }
             Text(
                 "开立即生效并计入审计；卡号为虚构演示号段，仅显示脱敏形式。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+private fun CardNumberLuhn(number: String): Boolean = number.length in 12..19 && number.all(Char::isDigit) && number.reversed().map(Char::digitToInt).mapIndexed { i, d -> if (i % 2 == 1) if (d * 2 > 9) d * 2 - 9 else d * 2 else d }.sum() % 10 == 0
+
+internal fun extractCardNumber(text: String): String? = Regex("(?<!\\d)(?:\\d[ -]?){12,19}(?!\\d)").findAll(text).map { it.value.filter(Char::isDigit) }.firstOrNull { CardNumberLuhn(it) }
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> Unit) {
+    var pin by remember(card.cardId) { mutableStateOf("") }
+    var reveal by remember(card.cardId) { mutableStateOf<com.aibanking.agent.data.CardRevealView?>(null) }
+    var error by remember(card.cardId) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(reveal?.disclosureId) {
+        val shown = reveal ?: return@LaunchedEffect
+        val fallback = 30_000L
+        val remaining = runCatching {
+            val expiry = java.time.Instant.parse(shown.expiresAt).toEpochMilli()
+            (expiry - System.currentTimeMillis()).coerceAtLeast(0L)
+        }.getOrDefault(fallback)
+        kotlinx.coroutines.delay(minOf(fallback, remaining))
+        reveal = null
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    BackHandler(onBack = onBack)
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) { reveal = null; pin = "" } }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); reveal = null; pin = "" }
+    }
+    if (reveal != null) androidx.compose.ui.platform.LocalView.current.let { view -> androidx.compose.runtime.DisposableEffect(Unit) { val window = (view.context as? android.app.Activity)?.window; window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) } } }
+    Scaffold(topBar = { TopAppBar(title = { Text("卡片详情") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } }) }) { padding ->
+        Column(Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("${card.type} · 尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}", style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag(UiTags.CARD_DETAIL))
+            Text("状态：${card.status}")
+            if (reveal == null) {
+                OutlinedTextField(pin, { pin = it }, label = { Text("演示卡取款密码") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth().testTag(UiTags.CARD_PIN))
+                Button(onClick = { val p = pin; pin = ""; error = null; scope.launch { try { reveal = viewModel.revealCard(card.cardId, p); error = null } catch (e: Exception) { error = "验证失败，请检查取款密码" } } }, enabled = pin.isNotEmpty(), modifier = Modifier.testTag(UiTags.CARD_REVEAL)) { Text("查看卡号") }
+            } else {
+                val shown = reveal!!
+                Column(Modifier.testTag(UiTags.CARD_REVEALED), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("户名：${shown.ownerName}"); Text("卡号：${shown.cardNumber}", fontFamily = FontFamily.Monospace); Text("开户行：${shown.issuerName}"); Text("本次展示将在 30 秒后失效") }
+            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { reveal = null; viewModel.prefillCardTransfer(card) }, modifier = Modifier.testTag(UiTags.CARD_TRANSFER)) { Text("转账") }; OutlinedButton(onClick = { reveal = null; onBack(); viewModel.openWealth() }, modifier = Modifier.testTag(UiTags.CARD_WEALTH)) { Text("理财") } }
         }
     }
 }

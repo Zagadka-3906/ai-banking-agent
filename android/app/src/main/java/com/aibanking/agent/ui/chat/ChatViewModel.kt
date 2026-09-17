@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.math.BigDecimal
+import java.security.MessageDigest
 import java.util.UUID
 
 enum class ChatRole { USER, ASSISTANT }
@@ -679,20 +680,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(cardType = cardType ?: it.cardType, cardLabel = label?.take(40) ?: it.cardLabel) }
     }
 
-    /** 自行添加银行卡：绿区操作，核心开立即生效并审计。 */
-    fun addCard() {
+    /** 自行绑定银行卡：黄色操作，需用户明确确认并计入审计。 */
+    fun addCard(cardNumber: String, source: String) {
         val principal = _state.value.principal
         val form = _state.value
         if (form.panelBusy) return
         // 同一次提交的所有重试共用一个幂等键（见 [CreateAttempt]）：20 秒读超时后
         // 重发不会开出第二张卡。表单内容变了才是另一次提交，那时必须换新键。
-        val attempt = CreateAttempt.of(cardCreateAttempt, "${form.cardType}\u0000${form.cardLabel.trim()}")
+        val digest = MessageDigest.getInstance("SHA-256").digest("${form.cardType}\u0000${form.cardLabel.trim()}\u0000$cardNumber".toByteArray()).joinToString("") { "%02x".format(it) }
+        val attempt = CreateAttempt.of(cardCreateAttempt, digest)
         cardCreateAttempt = attempt
         _state.update { it.copy(panelBusy = true, error = null) }
         viewModelScope.launch {
             try {
                 val created = withContext(Dispatchers.IO) {
-                    cardsRepo.add(principal, sessionToken ?: "", form.cardType, form.cardLabel, attempt.value)
+                    cardsRepo.add(principal, sessionToken ?: "", form.cardType, form.cardLabel, attempt.value, cardNumber, source)
                 }
                 // 卡已经开出：这次提交到此为止，下一次添加是新的意图、新的键。
                 cardCreateAttempt = null
@@ -704,7 +706,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // “真的开出来了”才收起，而后续的列表刷新即使失败，卡也不会
                         // 从页面上消失（它确实已经存在）。
                         cards = it.cards + created,
-                        notice = "银行卡 ${created.numberMasked} 已添加",
+                        notice = "银行卡尾号 ${created.last4.ifBlank { created.numberMasked.takeLast(4) }} 已添加",
                     )
                 }
                 refreshCards()
@@ -715,6 +717,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 applyPanelFailure(failure)
             }
         }
+    }
+
+    /** PIN stays in the detail composable; this method never stores the reveal result. */
+    suspend fun revealCard(cardId: String, pin: String): com.aibanking.agent.data.CardRevealView =
+        withContext(Dispatchers.IO) { cardsRepo.reveal(_state.value.principal, sessionToken ?: "", cardId, pin) }
+
+    fun prefillCardTransfer(card: CardView) {
+        onInputChange("使用卡片 ${card.cardId}（尾号${card.last4.ifBlank { card.numberMasked.takeLast(4) }}）转账")
+        closeCards()
     }
 
     /** 冻结/挂失/解挂等红色操作：预填话术回对话，走短信+设备签名审批。 */
@@ -735,7 +746,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // -- wealth (银行风格理财页) ----------------------------------------------
 
     fun openWealth() {
-        _state.update { it.copy(showWealth = true, showContacts = false, showDevices = false, showTasks = false, wealthScreen = WealthScreen.LIST, panelBusy = true) }
+        _state.update { it.copy(showWealth = true, showCards = false, showContacts = false, showDevices = false, showTasks = false, wealthScreen = WealthScreen.LIST, panelBusy = true) }
         refreshWealth()
     }
 

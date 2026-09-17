@@ -8,8 +8,12 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -35,7 +39,7 @@ import org.junit.runner.RunWith
  * 按钮只指向它自己那张卡。
  *
  * 需要在宿主机上跑着银行栈（10.0.2.2:8000 与 8100，演示账户口令
- * ``Bank@2026``），和 [LoginAndChatUiTest] 一样是集成测试；开卡是绿区操作，
+ * ``Bank@2026``），和 [LoginAndChatUiTest] 一样是集成测试；绑定卡是黄色操作，
  * 不需要短信或设备签名。
  */
 @RunWith(AndroidJUnit4::class)
@@ -55,6 +59,11 @@ class CardsUiTest {
         val knownIds = cardActionButtons().map { it.cardId }.toSet()
 
         ui.onNodeWithTag(UiTags.CARD_OPEN_ADD).performClick()
+        check(ui.onAllNodesWithTag(UiTags.CARD_CAMERA).fetchSemanticsNodes().isNotEmpty())
+        // This case owns the 5555 fixture.  The second-card action case owns
+        // 4111, so either JUnit execution order remains duplicate-free.
+        ui.onNodeWithTag(UiTags.CARD_NUMBER).performTextInput("5555555555554444")
+        ui.onNodeWithTag(UiTags.CARD_CONFIRM).performClick()
         ui.onNodeWithTag(UiTags.CARD_ADD).performClick()
 
         // 顶部计数来自刷新后的卡片列表，说明新卡确实进了列表，而不是只在提示里。
@@ -68,11 +77,57 @@ class CardsUiTest {
     }
 
     @Test
+    fun card_detail_masks_then_reveals_and_clears_on_back() {
+        openCardsAndWaitForRows()
+        check(ui.onAllNodesWithTag("${UiTags.CARD_DETAIL}:CARD-001").fetchSemanticsNodes().isNotEmpty())
+        check(ui.onAllNodesWithText("尾号 3082").fetchSemanticsNodes().isNotEmpty())
+        check(ui.onAllNodesWithText("**** **** **** 3082").fetchSemanticsNodes().isEmpty())
+        ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
+        check(ui.onAllNodesWithText("6222020000023082").fetchSemanticsNodes().isEmpty())
+        ui.onNodeWithTag(UiTags.CARD_PIN).performTextInput("24681012")
+        ui.onNodeWithTag(UiTags.CARD_REVEAL).performClick()
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithText("户名：张三").fetchSemanticsNodes().isNotEmpty() }
+        check(ui.onAllNodesWithText("户名：张三").fetchSemanticsNodes().isNotEmpty())
+        check(ui.onAllNodesWithText("卡号：6222020000023082").fetchSemanticsNodes().isNotEmpty())
+        check(ui.onAllNodesWithText("开户行：招商银行").fetchSemanticsNodes().isNotEmpty())
+        ui.onNodeWithContentDescription("返回").performClick()
+        ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
+        check(ui.onAllNodesWithText("6222020000023082").fetchSemanticsNodes().isEmpty())
+        check(ui.onAllNodesWithTag(UiTags.CARD_REVEAL).fetchSemanticsNodes().isNotEmpty())
+    }
+
+    @Test
+    fun wrong_pin_never_shows_sensitive_data() {
+        openCardsAndWaitForRows()
+        ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
+        ui.onNodeWithTag(UiTags.CARD_PIN).performTextInput("00000000")
+        ui.onNodeWithTag(UiTags.CARD_REVEAL).performClick()
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithText("验证失败，请检查取款密码").fetchSemanticsNodes().isNotEmpty() }
+        check(ui.onAllNodesWithText("6222020000023082").fetchSemanticsNodes().isEmpty())
+    }
+
+    @Test
+    fun card_shortcuts_target_id_and_open_wealth() {
+        openCardsAndWaitForRows()
+        ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
+        ui.onNodeWithTag(UiTags.CARD_TRANSFER).performClick()
+        check(ui.chatInputText()?.contains("CARD-001") == true)
+        check(ui.chatInputText()?.contains("6222020000023082") != true)
+        ui.onNodeWithTag(UiTags.OPEN_CARDS).performClick()
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithTag("${UiTags.CARD_DETAIL}:CARD-001").fetchSemanticsNodes().isNotEmpty() }
+        ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
+        ui.onNodeWithTag(UiTags.CARD_WEALTH).performClick()
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithTag(UiTags.WEALTH_LIST).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
     fun a_second_cards_action_targets_that_card() {
         openCardsAndWaitForRows()
         if (renderedCardCount() < 2) {
-            // 开卡是绿区操作，不需要审批；两张卡才谈得上“第二张”。
+            // 绑定卡需明确确认，不需要红色审批；两张卡才谈得上“第二张”。
             ui.onNodeWithTag(UiTags.CARD_OPEN_ADD).performClick()
+            ui.onNodeWithTag(UiTags.CARD_NUMBER).performTextInput("4111111111111111")
+            ui.onNodeWithTag(UiTags.CARD_CONFIRM).performClick()
             ui.onNodeWithTag(UiTags.CARD_ADD).performClick()
             ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { renderedCardCount() >= 2 }
         }
@@ -195,11 +250,11 @@ class CardsPanelActionsTest {
 
         // 挂失卡只给“解挂”（核心 CARD_TRANSITIONS: LOST → ACTIVE）；旧版给的
         // “解冻”核心只对 FROZEN 卡接受，点下去必然被拒，是条死路。
-        ui.onNodeWithTag(UiTags.cardAction("CARD-009", "unreport_lost")).assertExists()
-        ui.onNodeWithTag(UiTags.cardAction("CARD-009", "unfreeze")).assertDoesNotExist()
+        check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-009", "unreport_lost")).fetchSemanticsNodes().isNotEmpty())
+        check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-009", "unfreeze")).fetchSemanticsNodes().isEmpty())
         // 每张卡、每个操作各自可寻址：两张卡三颗按钮，互不遮蔽。
-        ui.onNodeWithTag(UiTags.cardAction("CARD-010", "freeze")).assertExists()
-        ui.onNodeWithTag(UiTags.cardAction("CARD-010", "report_lost")).assertExists()
+        check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-010", "freeze")).fetchSemanticsNodes().isNotEmpty())
+        check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-010", "report_lost")).fetchSemanticsNodes().isNotEmpty())
 
         ui.onNodeWithTag(UiTags.cardAction("CARD-009", "unreport_lost")).performClick()
 

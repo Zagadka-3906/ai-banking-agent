@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit
 data class CardView(
     @SerializedName("card_id") val cardId: String = "",
     @SerializedName("number_masked") val numberMasked: String = "",
+    @SerializedName("last4") val last4: String = "",
     val type: String = "",
     val status: String = "",
     @SerializedName("daily_limit") val dailyLimit: Double = 0.0,
@@ -36,9 +37,25 @@ data class CardView(
 
 data class CardListResponse(val code: Int = 0, val data: List<CardView> = emptyList())
 
-data class CardAddRequest(val card_type: String = "借记卡", val label: String? = null)
+data class CardAddRequest(
+    val card_type: String = "借记卡",
+    val label: String? = null,
+    val card_number: String,
+    val source: String = "MANUAL",
+    val user_confirmed: Boolean = true,
+)
 
 data class CardAddResponse(val code: Int = 0, val status: String = "", val data: CardView? = null)
+
+data class CardRevealRequest(val pin: String)
+data class CardRevealView(
+    @SerializedName("owner_name") val ownerName: String = "",
+    @SerializedName("card_number") val cardNumber: String = "",
+    @SerializedName("issuer_name") val issuerName: String = "",
+    @SerializedName("expires_at") val expiresAt: String = "",
+    @SerializedName("disclosure_id") val disclosureId: String = "",
+)
+data class CardRevealResponse(val code: Int = 0, val status: String = "", val data: CardRevealView? = null)
 
 interface CardsApi {
 
@@ -59,6 +76,15 @@ interface CardsApi {
         // 超时重试不会开出第二张卡。
         @Header("Idempotency-Key") idempotencyKey: String,
     ): CardAddResponse
+
+    @POST("api/v1/cards/{userId}/{cardId}/reveal")
+    suspend fun reveal(
+        @Path("userId") userId: String,
+        @Path("cardId") cardId: String,
+        @Body body: CardRevealRequest,
+        @Header("X-User-Id") userIdHeader: String,
+        @Header("X-Session-Token") sessionToken: String,
+    ): CardRevealResponse
 }
 
 class CardsRepository(private val api: CardsApi) {
@@ -85,14 +111,25 @@ class CardsRepository(private val api: CardsApi) {
         cardType: String,
         label: String?,
         idempotencyKey: String,
+        cardNumber: String,
+        source: String,
     ): CardView = try {
         api.add(
             userId = principal,
-            body = CardAddRequest(card_type = cardType, label = label?.takeIf { it.isNotBlank() }),
+            body = CardAddRequest(card_type = cardType, label = label?.takeIf { it.isNotBlank() }, card_number = cardNumber, source = source),
             userIdHeader = principal,
             sessionToken = sessionToken,
             idempotencyKey = idempotencyKey,
         ).data ?: throw GatewayException(null, "核心服务未返回卡片", 502)
+    } catch (failure: HttpException) {
+        throw failure.asGatewayException()
+    } catch (failure: IOException) {
+        throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
+    }
+
+    suspend fun reveal(principal: String, sessionToken: String, cardId: String, pin: String): CardRevealView = try {
+        api.reveal(principal, cardId, CardRevealRequest(pin), principal, sessionToken).data
+            ?: throw GatewayException(null, "核心服务未返回卡片信息", 502)
     } catch (failure: HttpException) {
         throw failure.asGatewayException()
     } catch (failure: IOException) {

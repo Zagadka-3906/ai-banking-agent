@@ -301,16 +301,19 @@ def test_self_service_card_issuance_is_capped_per_user(client: TestClient, monke
 
     monkeypatch.setattr(main, "CARD_MAX_PER_USER", 3)
     main.CARDS["user_zhang"] = []
+    monkeypatch.setitem(main.MOCK_CARD_VAULT, "MOCK-PAN-TEST-004", {"card_number": "4000000000000002", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": main.MOCK_CARD_VAULT["MOCK-PAN-001"]["pin_hash"]})
+    monkeypatch.setitem(main.MOCK_CARD_VAULT, "MOCK-PAN-TEST-005", {"card_number": "4242424242424242", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": main.MOCK_CARD_VAULT["MOCK-PAN-001"]["pin_hash"]})
 
+    numbers = ["4111111111111111", "5555555555554444", "4000000000000002", "4242424242424242", "4111111111111111"]
     codes = [
-        client.post("/api/v1/cards/user_zhang/add", json={"card_type": "借记卡"}, headers=headers()).status_code
-        for _ in range(5)
+        client.post("/api/v1/cards/user_zhang/add", json={"card_type": "借记卡", "card_number": number, "source": "MANUAL", "user_confirmed": True}, headers=headers()).status_code
+        for number in numbers
     ]
 
     assert codes[:3] == [200, 200, 200], codes
     assert codes[3:] == [409, 409], codes
     assert len(main.CARDS["user_zhang"]) == 3
-    refused = client.post("/api/v1/cards/user_zhang/add", json={"card_type": "借记卡"}, headers=headers())
+    refused = client.post("/api/v1/cards/user_zhang/add", json={"card_type": "借记卡", "card_number": "5555555555554444", "source": "MANUAL", "user_confirmed": True}, headers=headers())
     assert refused.json()["detail"]["code"] == "CARD_LIMIT_REACHED"
 
 
