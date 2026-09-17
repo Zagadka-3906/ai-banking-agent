@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,6 +77,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
+import androidx.compose.foundation.layout.ColumnScope
 import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.EmphasizedAccelerateEasing
@@ -87,6 +89,7 @@ import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import java.util.Locale
+import java.time.LocalDate
 
 /**
  * 银行风格理财页：产品超市 → 产品详情 → 申购。
@@ -389,6 +392,7 @@ private fun ProductCard(product: ProductView, modifier: Modifier = Modifier, onC
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .testTag(UiTags.wealthProduct(product.productId))
             .wealthContainerTransform(wealthProductKey(product.productId), expanded = false)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(CONTAINER_CORNER),
@@ -470,6 +474,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
     var lastRendered by remember { mutableStateOf<ProductView?>(null) }
     SideEffect { if (product != null) lastRendered = product }
     val rendered = if (state.wealthScreen == WealthScreen.DETAIL) product else lastRendered
+    var selectedRange by remember { mutableStateOf("1年") }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -500,8 +505,9 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                 .fillMaxSize()
                 .padding(padding)
                 .wealthContainerTransform(wealthProductKey(rendered.productId), expanded = true)
-                .background(MaterialTheme.colorScheme.surface)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f))
                 .verticalScroll(rememberScrollState())
+                .testTag(UiTags.WEALTH_DETAIL)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -516,43 +522,166 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("业绩比较基准", style = MaterialTheme.typography.labelMedium)
-                    Text(
-                        rendered.benchmark ?: "以产品说明书为准",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                    )
+            SectionCard("最新表现", Modifier.testTag(UiTags.WEALTH_SNAPSHOT)) {
+                Text("${rendered.latestNav?.let { "%,.4f".format(Locale.CHINA, it) } ?: "暂无数据"} 净值", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(
+                    "日涨跌 ${rendered.dailyChangePct?.let { "%+.2f%%".format(Locale.CHINA, it) } ?: "暂无数据"}  · 数据日期 ${rendered.asOfDate ?: "暂无"}",
+                    color = returnColor(rendered.dailyChangePct),
+                )
+                Text("数据来源：${rendered.dataSource ?: "未提供"}（非实时）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            SectionCard("业绩走势") {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("近1月", "近3月", "1年").forEach { range ->
+                        TextButton(
+                            onClick = { selectedRange = range },
+                            modifier = Modifier.testTag(UiTags.wealthRange(range)),
+                        ) {
+                            Text(if (range == selectedRange) "● $range" else range)
+                        }
+                    }
+                }
+                WealthChart(rendered, selectedRange, Modifier.fillMaxWidth().testTag(UiTags.WEALTH_CHART))
+                Text("归一化走势：产品净值 / 业绩比较基准 · Mock 数据，非实时", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            SectionCard("历史业绩", Modifier.testTag(UiTags.WEALTH_HISTORY)) {
+                if (rendered.performanceHistory.isEmpty()) Text("暂无历史业绩数据")
+                rendered.performanceHistory.forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(row.period.ifBlank { "—" })
+                        Text(row.productReturnPct?.let { "%+.2f%%".format(Locale.CHINA, it) } ?: "—", color = returnColor(row.productReturnPct))
+                        Text(row.benchmarkReturnPct?.let { "%+.2f%%".format(Locale.CHINA, it) } ?: "—", color = returnColor(row.benchmarkReturnPct))
+                        Text(row.rank ?: "—")
+                    }
                 }
             }
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(vertical = 4.dp)) {
-                    DetailRow("产品类型", rendered.category ?: "—")
-                    DetailRow("风险等级", rendered.riskLevel)
-                    DetailRow("投资期限", rendered.term ?: "—")
-                    DetailRow("起购金额", "¥%,.0f".format(Locale.CHINA, rendered.minAmount))
-                    DetailRow("流动性", rendered.liquidity ?: "—")
+            SectionCard("分析指标") {
+                if (rendered.analysisMetrics.isEmpty()) {
+                    Text("暂无分析指标")
+                } else {
+                    rendered.analysisMetrics.forEach { metric ->
+                        val score = (metric.score ?: 0).coerceIn(0, 5)
+                        Text("${metric.label.ifBlank { "未命名指标" }}  ${"▰".repeat(score)}${"▱".repeat(5 - score)}")
+                        Text(metric.description ?: "暂无说明", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(vertical = 4.dp)) {
-                    DetailRow("底层资产", rendered.underlying ?: "—")
-                    DetailRow("目标客群", rendered.targetClients ?: "—")
+            SectionCard("产品经理") {
+                Text(rendered.manager?.name ?: "暂无经理信息", fontWeight = FontWeight.Bold)
+                Text(rendered.manager?.bio ?: "暂无履历说明", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "任职：${rendered.manager?.tenureSince ?: "—"} · 从业：${rendered.manager?.experienceYears?.let { "%.1f 年".format(Locale.CHINA, it) } ?: "—"}",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            SectionCard("持仓分布") {
+                if (rendered.assetAllocation.isEmpty()) {
+                    Text("暂无资产配置数据")
+                } else {
+                    rendered.assetAllocation.forEach { allocation ->
+                        Text("${allocation.name.ifBlank { "未分类" }}  ${allocation.percentage?.let { "%.2f%%".format(Locale.CHINA, it) } ?: "—"}")
+                        Box(Modifier.fillMaxWidth().height(5.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = .18f), RoundedCornerShape(4.dp))) {
+                            Box(Modifier.fillMaxWidth(((allocation.percentage ?: 0.0).coerceIn(0.0, 100.0) / 100.0).toFloat()).height(5.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)))
+                        }
+                    }
                 }
+            }
+            SectionCard("产品档案") {
+                DetailRow("成立日期", rendered.establishedAt ?: "暂无")
+                DetailRow("产品规模", rendered.scaleBillion?.let { "%.2f 亿元".format(Locale.CHINA, it) } ?: "暂无")
+                DetailRow("管理人", rendered.managerCompany ?: "暂无")
+            }
+            SectionCard("交易规则", Modifier.testTag(UiTags.WEALTH_RULES)) {
+                DetailRow("买入", rendered.purchaseRule ?: "暂无说明")
+                DetailRow("赎回", rendered.redemptionRule ?: "暂无说明")
+                DetailRow("确认时间", rendered.confirmTime ?: "暂无说明")
+                DetailRow("费率", rendered.feeRate?.let { "%.2f%%".format(Locale.CHINA, it) } ?: "暂无")
+            }
+            SectionCard("产品概要") {
+                Text(rendered.summary ?: "暂无产品概要", style = MaterialTheme.typography.bodySmall)
+                Text("公告：${rendered.announcement ?: "暂无公告"}", style = MaterialTheme.typography.bodySmall)
             }
             Text(
                 "风险提示：业绩比较基准是管理人基于过往资料测算的预期目标，不代表未来收益承诺。" +
                     "理财产品过往业绩不代表未来表现，投资须谨慎。申购需通过风险测评并完成服务端多因子验证。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag(UiTags.WEALTH_DISCLAIMER),
             )
         }
     }
+}
+
+@Composable
+private fun SectionCard(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(
+            Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            content()
+        }
+    }
+}
+
+@Composable
+private fun WealthChart(product: ProductView, range: String, modifier: Modifier = Modifier) {
+    val all = product.navSeries.filter { it.nav?.isFinite() == true && it.benchmarkNav?.isFinite() == true }
+    val points = rangePoints(all, range)
+    Canvas(modifier.height(150.dp)) {
+        if (points.size < 2) return@Canvas
+        val min = points.minOf { minOf(it.nav!!, it.benchmarkNav!!) }
+        val span = (points.maxOf { maxOf(it.nav!!, it.benchmarkNav!!) } - min)
+            .takeIf { it > 0.0 } ?: 1.0
+        fun x(i: Int) = i * size.width / (points.size - 1)
+        fun y(value: Double) = size.height - ((value - min) / span * size.height).toFloat()
+        for (i in 0 until points.lastIndex) {
+            drawLine(
+                Color(0xFFE5484D),
+                Offset(x(i), y(points[i].nav!!)),
+                Offset(x(i + 1), y(points[i + 1].nav!!)),
+                strokeWidth = 4f,
+            )
+            drawLine(
+                Color(0xFF78909C),
+                Offset(x(i), y(points[i].benchmarkNav!!)),
+                Offset(x(i + 1), y(points[i + 1].benchmarkNav!!)),
+                strokeWidth = 3f,
+            )
+        }
+    }
+}
+
+private fun rangePoints(points: List<com.aibanking.agent.data.NavPointView>, range: String): List<com.aibanking.agent.data.NavPointView> {
+    if (points.isEmpty()) return emptyList()
+    val parsed = points.mapNotNull { point ->
+        runCatching { LocalDate.parse(point.date) to point }.getOrNull()
+    }
+    if (parsed.size != points.size) {
+        val fallbackCount = when (range) {
+            "近1月" -> 5
+            "近3月" -> 10
+            else -> points.size
+        }.coerceAtLeast(1)
+        return points.takeLast(fallbackCount)
+    }
+    val end = parsed.maxOf { it.first }
+    val start = when (range) {
+        "近1月" -> end.minusMonths(1)
+        "近3月" -> end.minusMonths(3)
+        else -> end.minusMonths(12)
+    }
+    return parsed.filter { it.first >= start && it.first <= end }.map { it.second }.ifEmpty { points.takeLast(1) }
+}
+
+private fun returnColor(value: Double?): Color = when {
+    value == null || !value.isFinite() || value == 0.0 -> Color.Unspecified
+    value > 0.0 -> Color(0xFFE5484D)
+    else -> Color(0xFF2E8B57)
 }
 
 @Composable
@@ -583,7 +712,7 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                             label = { Text("申购金额（起购 ¥%,.0f）".format(Locale.CHINA, product.minAmount)) },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).testTag(UiTags.WEALTH_AMOUNT),
                         )
                         Button(
                             onClick = { viewModel.startPurchase(product, state.buyAmount) },

@@ -382,6 +382,104 @@ WEALTH_PRODUCTS: list[dict[str, Any]] = [
         "target_clients": "能够承受本金波动、看好产业转型长期红利的高净值积极型投资者",
     },
 ]
+
+# 详情页使用的静态行情快照。数值均为虚构演示数据，明确标注快照日期，
+# 不代表实时行情、历史实际表现或未来收益，也不参与任何交易决策与记账。
+_WEALTH_DETAIL_FIXTURES: dict[str, dict[str, Any]] = {
+    "CJ01002": {
+        "latest_nav": 1.0261, "daily_change_pct": -0.12,
+        "performance_history": [
+            {"period": "近1月", "product_return_pct": 0.18, "benchmark_return_pct": 0.17, "rank": "32/86"},
+            {"period": "近3月", "product_return_pct": 0.61, "benchmark_return_pct": 0.56, "rank": "28/86"},
+            {"period": "近1年", "product_return_pct": 2.61, "benchmark_return_pct": 2.35, "rank": "24/86"},
+        ],
+        "analysis_metrics": [
+            {"label": "收益稳定性", "score": 5, "description": "净值波动较小"},
+            {"label": "抗下跌能力", "score": 5, "description": "现金管理定位"},
+            {"label": "流动性", "score": 5, "description": "支持灵活申赎"},
+            {"label": "风险控制", "score": 5, "description": "R1 低风险"},
+        ],
+        "manager": {"name": "林晨", "tenure_since": "2021-03-04", "experience_years": 9, "bio": "专注现金管理与短久期固收策略"},
+        "asset_allocation": [{"name": "银行存款", "percentage": 45.0}, {"name": "同业存单", "percentage": 30.0}, {"name": "短期债券", "percentage": 20.0}, {"name": "其他", "percentage": 5.0}],
+        "established_at": "2021-03-04", "scale_billion": 63.8, "manager_company": "华夏量化理财管理有限公司",
+        "purchase_rule": "1元起购，工作日 00:00-15:00 申请", "redemption_rule": "工作日支持快速赎回，单日上限1万元",
+        "confirm_time": "T+1", "fee_rate": 0.00, "summary": "适合日常备用金管理的低波动现金管理产品。", "announcement": "本页面为 Mock 行情快照，仅供产品演示，不构成投资建议。",
+    },
+    "AY90204": {
+        "latest_nav": 1.0738, "daily_change_pct": 0.08,
+        "performance_history": [{"period": "近1月", "product_return_pct": 0.24, "benchmark_return_pct": 0.23, "rank": "18/74"}, {"period": "近3月", "product_return_pct": 0.76, "benchmark_return_pct": 0.72, "rank": "21/74"}, {"period": "近1年", "product_return_pct": 3.05, "benchmark_return_pct": 2.92, "rank": "16/74"}],
+        "analysis_metrics": [{"label": "收益稳定性", "score": 4, "description": "以固收资产为主"}, {"label": "抗下跌能力", "score": 4, "description": "波动相对可控"}, {"label": "流动性", "score": 2, "description": "90天封闭运作"}, {"label": "风险控制", "score": 4, "description": "R2 中低风险"}],
+        "manager": {"name": "周宁", "tenure_since": "2020-07-15", "experience_years": 12, "bio": "专注中短债与信用风险管理"},
+        "asset_allocation": [{"name": "利率债", "percentage": 40.0}, {"name": "信用债", "percentage": 40.0}, {"name": "货币工具", "percentage": 15.0}, {"name": "现金", "percentage": 5.0}],
+        "established_at": "2020-07-15", "scale_billion": 42.6, "manager_company": "华夏量化理财管理有限公司", "purchase_rule": "1000元起购，工作日 00:00-15:00 申请", "redemption_rule": "封闭期满后可申请赎回或自动滚存", "confirm_time": "T+1", "fee_rate": 0.15, "summary": "以固收资产打底、期限明确的稳健型产品。", "announcement": "本页面为 Mock 行情快照，仅供产品演示，不构成投资建议。",
+    },
+    "ZY18031": {
+        "latest_nav": 1.1186, "daily_change_pct": -0.35,
+        "performance_history": [{"period": "近1月", "product_return_pct": -0.42, "benchmark_return_pct": -0.36, "rank": "44/61"}, {"period": "近3月", "product_return_pct": 1.26, "benchmark_return_pct": 1.08, "rank": "27/61"}, {"period": "近1年", "product_return_pct": 5.74, "benchmark_return_pct": 4.92, "rank": "19/61"}],
+        "analysis_metrics": [{"label": "收益稳定性", "score": 3, "description": "固收与权益混合"}, {"label": "抗下跌能力", "score": 3, "description": "存在净值波动"}, {"label": "流动性", "score": 2, "description": "180天定开"}, {"label": "风险控制", "score": 3, "description": "R3 中风险"}],
+        "manager": {"name": "顾远", "tenure_since": "2019-11-20", "experience_years": 15, "bio": "擅长固收增强与资产配置"},
+        "asset_allocation": [{"name": "债券", "percentage": 72.0}, {"name": "权益", "percentage": 18.0}, {"name": "量化策略", "percentage": 7.0}, {"name": "现金", "percentage": 3.0}],
+        "established_at": "2019-11-20", "scale_billion": 18.4, "manager_company": "华夏量化理财管理有限公司", "purchase_rule": "10000元起购，开放期内申请", "redemption_rule": "每180天开放一次赎回", "confirm_time": "T+1", "fee_rate": 0.60, "summary": "在固收底仓基础上争取权益增强收益的平衡型产品。", "announcement": "本页面为 Mock 行情快照，仅供产品演示，不构成投资建议。",
+    },
+    "QK36509": {
+        "latest_nav": 1.2643, "daily_change_pct": 0.41,
+        "performance_history": [{"period": "近1月", "product_return_pct": 1.32, "benchmark_return_pct": 1.08, "rank": "12/43"}, {"period": "近3月", "product_return_pct": 4.86, "benchmark_return_pct": 4.12, "rank": "10/43"}, {"period": "近1年", "product_return_pct": 12.64, "benchmark_return_pct": 10.21, "rank": "8/43"}],
+        "analysis_metrics": [{"label": "收益稳定性", "score": 2, "description": "权益仓位较高"}, {"label": "抗下跌能力", "score": 2, "description": "需承受较大波动"}, {"label": "流动性", "score": 1, "description": "365天封闭"}, {"label": "风险控制", "score": 2, "description": "R4 中高风险"}],
+        "manager": {"name": "沈岳", "tenure_since": "2018-06-12", "experience_years": 17, "bio": "聚焦先进制造与产业升级主题投资"},
+        "asset_allocation": [{"name": "权益资产", "percentage": 70.0}, {"name": "债券资产", "percentage": 20.0}, {"name": "现金及其他", "percentage": 10.0}],
+        "established_at": "2018-06-12", "scale_billion": 9.7, "manager_company": "华夏量化理财管理有限公司", "purchase_rule": "50000元起购，募集期内申请", "redemption_rule": "封闭期满后开放赎回", "confirm_time": "T+1", "fee_rate": 1.20, "summary": "面向长期资金、聚焦产业成长机会的高波动产品。", "announcement": "本页面为 Mock 行情快照，仅供产品演示，不构成投资建议。",
+    },
+}
+
+# 以月度快照生成覆盖近1月/近3月/近1年的归一化展示序列；仅用于读接口。
+_WEALTH_NAV_BASE = ("2025-09-15", "2025-10-15", "2025-11-17", "2025-12-15", "2026-01-15", "2026-02-13", "2026-03-16", "2026-04-15", "2026-05-15", "2026-06-15", "2026-07-15", "2026-08-15", "2026-09-15")
+
+
+def _normalized_wealth_series(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build a stable chart whose labeled period returns are mathematically true.
+
+    This is a normalized performance chart, deliberately separate from the
+    product's latest NAV.  The three documented periods are exact anchors;
+    intervening monthly points are linear interpolation for presentation.
+    """
+
+    history = {row["period"]: row for row in detail["performance_history"]}
+    product_last = 1.0 + float(history["近1年"]["product_return_pct"]) / 100.0
+    benchmark_last = 1.0 + float(history["近1年"]["benchmark_return_pct"]) / 100.0
+    product_anchors = {
+        0: 1.0,
+        9: product_last / (1.0 + float(history["近3月"]["product_return_pct"]) / 100.0),
+        11: product_last / (1.0 + float(history["近1月"]["product_return_pct"]) / 100.0),
+        12: product_last,
+    }
+    benchmark_anchors = {
+        0: 1.0,
+        9: benchmark_last / (1.0 + float(history["近3月"]["benchmark_return_pct"]) / 100.0),
+        11: benchmark_last / (1.0 + float(history["近1月"]["benchmark_return_pct"]) / 100.0),
+        12: benchmark_last,
+    }
+    series = []
+    for index, date in enumerate(_WEALTH_NAV_BASE):
+        left = max(anchor for anchor in product_anchors if anchor <= index)
+        right = min(anchor for anchor in product_anchors if anchor >= index)
+        ratio = 0.0 if left == right else (index - left) / (right - left)
+        product_nav = product_anchors[left] + (product_anchors[right] - product_anchors[left]) * ratio
+        benchmark_nav = benchmark_anchors[left] + (benchmark_anchors[right] - benchmark_anchors[left]) * ratio
+        series.append({"date": date, "nav": round(product_nav, 6), "benchmark_nav": round(benchmark_nav, 6)})
+    return series
+
+
+
+
+def _wealth_product_view(product: Mapping[str, Any]) -> dict[str, Any]:
+    """Project presentation fixtures without persisting them with the ledger."""
+
+    view = deepcopy(dict(product))
+    detail = _WEALTH_DETAIL_FIXTURES.get(str(product.get("product_id")))
+    if detail is None:
+        return view
+    view.update({"data_source": "MOCK_FIXTURE", "as_of_date": "2026-09-15", "nav_series": _normalized_wealth_series(detail), **deepcopy(detail)})
+    return view
 WEALTH_HOLDINGS: dict[str, list[dict[str, Any]]] = {"user_zhang": []}
 # 风险档案与账户分开存储，初始为空：用户首次咨询理财业务时由 Agent 触发
 # 8 题风险测评问卷（C1-C5），结果与原始答案一起记录在此（测评得分仅供
@@ -2357,7 +2455,7 @@ def get_wealth_products(user_id: Optional[str] = None, x_user_id: Optional[str] 
     actor = _get_actor(requested, x_user_id, action="WEALTH_QUERY", request_id=request_id)
     _ensure_account(requested)
     audit_event("WEALTH_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id)
-    return {"code": 200, "data": [dict(product) for product in WEALTH_PRODUCTS]}
+    return {"code": 200, "data": [_wealth_product_view(product) for product in WEALTH_PRODUCTS]}
 
 
 @app.get("/api/v1/wealth/holdings/{user_id}")
@@ -2384,7 +2482,7 @@ def recommend_wealth(user_id: Optional[str] = None, risk_profile: str = "CONSERV
     max_risk = profile_rank(profile) or 1
     products = [p for p in WEALTH_PRODUCTS if int(str(p.get("risk_level", "R3")).lstrip("R")) <= max_risk]
     audit_event("WEALTH_RECOMMEND", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"risk_profile": profile, "count": len(products)})
-    return {"code": 200, "risk_profile": profile, "risk_profile_label": PROFILE_LABELS.get(profile, profile), "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [dict(p) for p in products]}
+    return {"code": 200, "risk_profile": profile, "risk_profile_label": PROFILE_LABELS.get(profile, profile), "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [_wealth_product_view(p) for p in products]}
 
 
 # The stored suitability profile is written with the questionnaire's raw score
@@ -2579,7 +2677,7 @@ def compare_wealth(
         product = next((item for item in WEALTH_PRODUCTS if item.get("product_id") == product_id), None)
         if not product:
             raise HTTPException(status_code=404, detail={"code": "PRODUCT_NOT_FOUND", "message": "理财产品不存在"})
-        rows.append(dict(product))
+        rows.append(_wealth_product_view(product))
     audit_event("WEALTH_COMPARE", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"product_count": len(rows)})
     return {"code": 200, "disclaimer": "对比仅基于演示资料，不构成投资建议。", "data": rows}
 

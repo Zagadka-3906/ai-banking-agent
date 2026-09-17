@@ -12,6 +12,37 @@ import retrofit2.http.Path
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+data class PerformanceView(
+    val period: String = "",
+    @SerializedName("product_return_pct") val productReturnPct: Double? = null,
+    @SerializedName("benchmark_return_pct") val benchmarkReturnPct: Double? = null,
+    val rank: String? = null,
+)
+
+data class NavPointView(
+    val date: String = "",
+    val nav: Double? = null,
+    @SerializedName("benchmark_nav") val benchmarkNav: Double? = null,
+)
+
+data class AnalysisMetricView(
+    val label: String = "",
+    val score: Int? = null,
+    val description: String? = null,
+)
+
+data class ManagerView(
+    val name: String? = null,
+    @SerializedName("tenure_since") val tenureSince: String? = null,
+    @SerializedName("experience_years") val experienceYears: Double? = null,
+    val bio: String? = null,
+)
+
+data class AllocationView(
+    val name: String = "",
+    val percentage: Double? = null,
+)
+
 /**
  * 理财货架数据（全部为虚构演示产品，业绩比较基准不是收益承诺）。
  *
@@ -32,6 +63,24 @@ data class ProductView(
     val term: String? = null,
     val underlying: String? = null,
     @SerializedName("target_clients") val targetClients: String? = null,
+    @SerializedName("data_source") val dataSource: String? = null,
+    @SerializedName("as_of_date") val asOfDate: String? = null,
+    @SerializedName("latest_nav") val latestNav: Double? = null,
+    @SerializedName("daily_change_pct") val dailyChangePct: Double? = null,
+    @SerializedName("performance_history") val performanceHistory: List<PerformanceView> = emptyList(),
+    @SerializedName("nav_series") val navSeries: List<NavPointView> = emptyList(),
+    @SerializedName("analysis_metrics") val analysisMetrics: List<AnalysisMetricView> = emptyList(),
+    val manager: ManagerView? = null,
+    @SerializedName("asset_allocation") val assetAllocation: List<AllocationView> = emptyList(),
+    @SerializedName("established_at") val establishedAt: String? = null,
+    @SerializedName("scale_billion") val scaleBillion: Double? = null,
+    @SerializedName("manager_company") val managerCompany: String? = null,
+    @SerializedName("purchase_rule") val purchaseRule: String? = null,
+    @SerializedName("redemption_rule") val redemptionRule: String? = null,
+    @SerializedName("confirm_time") val confirmTime: String? = null,
+    @SerializedName("fee_rate") val feeRate: Double? = null,
+    val summary: String? = null,
+    val announcement: String? = null,
 )
 
 data class ProductListResponse(val code: Int = 0, val data: List<ProductView> = emptyList())
