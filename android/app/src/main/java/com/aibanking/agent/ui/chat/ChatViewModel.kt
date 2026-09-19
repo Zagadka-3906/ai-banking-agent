@@ -526,6 +526,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update {
             it.copy(
                 showContacts = true,
+                showCards = false,
+                showWealth = false,
                 showDevices = false,
                 showTasks = false,
                 contactsScreen = ContactsScreen.LIST,
