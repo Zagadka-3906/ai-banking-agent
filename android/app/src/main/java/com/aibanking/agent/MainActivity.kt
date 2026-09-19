@@ -15,9 +15,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
@@ -45,13 +46,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
@@ -60,6 +59,9 @@ import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.chat.ChatScreen
 import com.aibanking.agent.ui.chat.ChatViewModel
+import com.aibanking.agent.ui.components.BankSectionCard
+import com.aibanking.agent.ui.theme.BankSpacing
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import com.aibanking.agent.ui.theme.BankAgentTheme
 
 /**
@@ -161,21 +163,16 @@ private fun RestoringScreen() {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-            modifier = Modifier.padding(32.dp),
-        ) {
+        BankSectionCard(modifier = Modifier.padding(BankSpacing.xxl)) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.padding(horizontal = 36.dp, vertical = 28.dp),
+                modifier = Modifier.padding(horizontal = BankSpacing.xl, vertical = BankSpacing.lg),
             ) {
                 Box(
                     modifier = Modifier
                         .size(56.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(MaterialTheme.shapes.medium)
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -220,6 +217,7 @@ private fun LoginScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var otp by remember { mutableStateOf("") }
 
+    val semantics = LocalBankSemanticColors.current
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -237,7 +235,8 @@ private fun LoginScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(24.dp),
+            .padding(BankSpacing.xl)
+            .widthIn(max = BankSpacing.contentMaxWidth),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -245,7 +244,7 @@ private fun LoginScreen(
             Box(
                 modifier = Modifier
                     .size(64.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .clip(MaterialTheme.shapes.large)
                     .background(
                         Brush.linearGradient(
                             listOf(
@@ -259,7 +258,7 @@ private fun LoginScreen(
                 Icon(
                     Icons.Default.Lock,
                     contentDescription = "安全中心",
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(36.dp),
                 )
             }
@@ -279,8 +278,8 @@ private fun LoginScreen(
                     Box(
                         modifier = Modifier
                             .size(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF10B981))
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .background(semantics.riskGreen)
                     )
                     Text(
                         "受控金融智能体沙箱 · 硬件信任根",
@@ -290,15 +289,10 @@ private fun LoginScreen(
                 }
             }
 
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            BankSectionCard {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.padding(BankSpacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(BankSpacing.sm),
                 ) {
                     OutlinedTextField(
                         value = userId,
@@ -308,7 +302,6 @@ private fun LoginScreen(
                         leadingIcon = {
                             Icon(Icons.Default.AccountCircle, contentDescription = null)
                         },
-                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth().testTag(UiTags.LOGIN_USER),
                     )
 
@@ -331,7 +324,6 @@ private fun LoginScreen(
                         },
                         visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth().testTag(UiTags.LOGIN_PASSWORD),
                     )
 
@@ -342,14 +334,12 @@ private fun LoginScreen(
                             label = { Text("二次短信验证码") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxWidth().testTag(UiTags.LOGIN_OTP),
                         )
                     }
 
                     if (error != null) {
                         Surface(
-                            shape = RoundedCornerShape(12.dp),
                             color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -373,10 +363,9 @@ private fun LoginScreen(
                     Button(
                         onClick = { onLogin(userId, password, otp.takeIf { it.isNotBlank() }) },
                         enabled = !busy,
-                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .heightIn(min = BankSpacing.minTouchTarget)
                             .testTag(UiTags.LOGIN_BUTTON),
                     ) {
                         if (busy) {
@@ -388,7 +377,7 @@ private fun LoginScreen(
                             Spacer(Modifier.size(10.dp))
                             Text("安全鉴权中…")
                         } else {
-                            Text("立即登录", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text("立即登录", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
@@ -414,8 +403,7 @@ private fun LoginScreen(
                                 userId = uid
                                 password = "Bank@2026"
                             },
-                            label = { Text("$name ($uid)", fontSize = 11.sp) },
-                            shape = RoundedCornerShape(10.dp),
+                            label = { Text("$name ($uid)", style = MaterialTheme.typography.labelSmall) },
                             colors = AssistChipDefaults.assistChipColors(
                                 containerColor = if (userId == uid) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
                             ),
@@ -426,4 +414,3 @@ private fun LoginScreen(
         }
     }
 }
-

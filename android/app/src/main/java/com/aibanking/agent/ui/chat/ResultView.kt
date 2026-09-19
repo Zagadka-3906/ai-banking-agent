@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -21,12 +20,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.util.Locale
 import kotlin.math.max
+import com.aibanking.agent.ui.components.BankSectionCard
+import com.aibanking.agent.ui.components.BankSemanticStatus
+import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.theme.BankSpacing
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 
 /**
  * Renders the structured half of a turn's result.
@@ -72,26 +75,21 @@ private fun RiskProfileCard(profile: Map<String, Any?>) {
     val traits = profile.text("traits") ?: ""
     val levels = profile.text("matching_levels") ?: ""
     val accent = when (grade) {
-        "C1" -> Color(0xFF1565C0)
-        "C2" -> Color(0xFF2E7D32)
-        "C3" -> Color(0xFFE65100)
-        "C4" -> Color(0xFFC62828)
-        else -> Color(0xFF6A1B9A)
+        "C1", "C2" -> LocalBankSemanticColors.current.riskGreen
+        "C3" -> LocalBankSemanticColors.current.riskYellow
+        else -> LocalBankSemanticColors.current.riskRed
     }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = accent.copy(alpha = 0.12f)),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    BankSectionCard {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(
                     modifier = Modifier
-                        .background(accent, RoundedCornerShape(10.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .background(accent, MaterialTheme.shapes.small)
+                        .padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xs),
                 ) {
                     Text(
                         grade,
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleLarge,
                     )
@@ -126,8 +124,8 @@ private fun WealthProducts(data: Map<String, Any?>) {
         products.forEach { product ->
             val name = product.text("name") ?: return@forEach
             val level = product.text("risk_level") ?: "—"
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            BankSectionCard {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(BankSpacing.xxs)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                         product.text("category")?.let { CategoryTag(it) }
                         RiskTag(level)
@@ -157,30 +155,17 @@ private fun WealthProducts(data: Map<String, Any?>) {
 
 @Composable
 private fun CategoryTag(text: String) {
-    Box(
-        modifier = Modifier
-            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    ) {
-        Text(text, style = MaterialTheme.typography.labelSmall)
-    }
+    BankStatusChip(text, BankSemanticStatus.Neutral)
 }
 
 @Composable
 private fun RiskTag(level: String) {
-    val color = when (level) {
-        "R1" -> Color(0xFF2E7D32)
-        "R2" -> Color(0xFF1565C0)
-        "R3" -> Color(0xFFE65100)
-        else -> Color(0xFFC62828)
+    val status = when (level) {
+        "R1", "R2" -> BankSemanticStatus.RiskGreen
+        "R3" -> BankSemanticStatus.RiskYellow
+        else -> BankSemanticStatus.RiskRed
     }
-    Box(
-        modifier = Modifier
-            .background(color, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    ) {
-        Text(level, style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
-    }
+    BankStatusChip(level, status)
 }
 
 @Composable
@@ -197,8 +182,8 @@ private fun BillFacts(facts: Map<String, Any?>) {
     val engine = facts.text("analysis_engine")
     if (spent == null && count == null) return
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    BankSectionCard {
+        Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
             SectionTitle("账单事实（已核验）")
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 count?.let { Metric("笔数", it) }
@@ -254,13 +239,13 @@ private fun CategoryBars(facts: Map<String, Any?>) {
                         .fillMaxWidth()
                         .padding(top = 2.dp)
                         .height(6.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(3.dp)),
+                        .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.extraSmall),
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(max(0.02f, (amount / largest).toFloat().coerceIn(0f, 1f)))
                             .height(6.dp)
-                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(3.dp)),
+                            .background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.extraSmall),
                     )
                 }
             }
@@ -295,8 +280,8 @@ private fun KeyValues(data: Map<String, Any?>, title: String) {
         .take(8)
     if (scalars.isEmpty()) return
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    BankSectionCard {
+        Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.xxs)) {
             SectionTitle(title)
             scalars.forEach { (key, value) ->
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -314,11 +299,8 @@ private fun KeyValues(data: Map<String, Any?>, title: String) {
 
 @Composable
 private fun TodoCard(card: Map<String, Any?>) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    BankSectionCard {
+        Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.xxs)) {
             SectionTitle(card.text("title") ?: "待办任务")
             card.text("locked_fund")?.let { Text("锁定资产：$it", style = MaterialTheme.typography.bodySmall) }
             card.text("schedule")?.let { Text("执行计划：$it", style = MaterialTheme.typography.bodySmall) }
@@ -337,8 +319,8 @@ private fun PlanCard(plan: Map<String, Any?>) {
     if (tasks.isEmpty()) return
     var expanded by remember { mutableStateOf(false) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
+    BankSectionCard {
+        Column {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

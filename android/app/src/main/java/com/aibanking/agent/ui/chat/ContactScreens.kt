@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -92,6 +93,9 @@ import com.aibanking.agent.ui.anim.SkeletonRow
 import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
+import com.aibanking.agent.ui.components.BankEmptyState
+import com.aibanking.agent.ui.components.BankSectionCard
+import com.aibanking.agent.ui.theme.BankSpacing
 import kotlinx.coroutines.launch
 
 /**
@@ -244,7 +248,7 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel, snac
                     Text(
                         "${state.contacts.size} 位",
                         style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(end = 16.dp),
+                         modifier = Modifier.padding(end = BankSpacing.md),
                     )
                 },
             )
@@ -266,7 +270,7 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel, snac
                 singleLine = true,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(horizontal = BankSpacing.md, vertical = BankSpacing.xs)
                     .testTag(UiTags.CONTACT_SEARCH),
             )
             // 流光骨架屏：加载中呈现搜索框/行形占位（45° 高光扫过），数据就绪
@@ -303,14 +307,12 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel, snac
                                 // 请求失败 ≠ 通讯录是空的：报错并可重试，不谎报“还没有联系人”。
                                 PanelLoadFailure(loadFailure, viewModel::refreshContacts, Modifier.padding(horizontal = 24.dp))
                             } else {
-                                Text(
+                                BankEmptyState(
                                     if (state.contactSearch.isBlank()) {
                                         "还没有联系人。点右下角添加，之后可直接说“给 <姓名> 转 300 元”。"
                                     } else {
                                         "没有匹配“${state.contactSearch}”的联系人。"
                                     },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.padding(24.dp),
                                 )
                             }
                         }
@@ -354,35 +356,37 @@ private fun SectionHeader(letter: String, modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 16.dp, vertical = 4.dp),
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(horizontal = BankSpacing.md, vertical = BankSpacing.xs),
     )
 }
 
 @Composable
 private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Row(
+    androidx.compose.material3.Card(
         modifier = modifier
             .fillMaxWidth()
             // 行容器 → 详情资料卡的容器变换起点。放在 clickable/padding 之前：
             // 共享 bounds 是整行（含内边距），点击行为与内容不参与插值。
             .contactShared(contactCardKey(contact.contactId), clipShape = MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.medium,
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        ContactAvatar(contact.name, 40.dp, sharedKey = contactAvatarKey(contact.contactId))
-        Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(contact.name, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                buildString {
-                    append(contact.phone)
-                    contact.relationshipLabel.takeIf { it.isNotBlank() }?.let { append(" · $it") }
-                    contact.birthday?.let { append(" · 生日 $it") }
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Row(Modifier.fillMaxWidth().heightIn(min = BankSpacing.minTouchTarget).padding(horizontal = BankSpacing.md, vertical = BankSpacing.xs), verticalAlignment = Alignment.CenterVertically) {
+            ContactAvatar(contact.name, 40.dp, sharedKey = contactAvatarKey(contact.contactId))
+            Column(Modifier.weight(1f).padding(start = BankSpacing.sm), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(contact.name, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    buildString {
+                        append(contact.phone)
+                        contact.relationshipLabel.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                        contact.birthday?.let { append(" · 生日 $it") }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -400,8 +404,9 @@ private fun AlphabetRail(letters: List<String>, onSelect: (String) -> Unit, modi
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
+                    .heightIn(min = BankSpacing.minTouchTarget)
                     .clickable { onSelect(letter) }
-                    .padding(horizontal = 8.dp, vertical = 1.dp),
+                    .padding(horizontal = BankSpacing.xs, vertical = 1.dp),
             )
         }
     }
@@ -450,7 +455,7 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(BankSpacing.md),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -461,8 +466,8 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
                 onClick = { viewModel.startTransferTo(rendered.name) },
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.CONTACT_TRANSFER),
             ) { Text("给 ${rendered.name} 转账") }
-            Card(Modifier.fillMaxWidth().contactShared(contactCardKey(rendered.contactId), clipShape = MaterialTheme.shapes.medium)) {
-                Column(Modifier.padding(vertical = 4.dp)) {
+            BankSectionCard(modifier = Modifier.contactShared(contactCardKey(rendered.contactId), clipShape = MaterialTheme.shapes.medium)) {
+                Column {
                     DetailRow("电话", rendered.phone, mono = true)
                     DetailRow("关系", rendered.relationshipLabel.ifBlank { rendered.relationship })
                     DetailRow("生日", rendered.birthday ?: "未填写")
@@ -505,7 +510,7 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
 
 @Composable
 private fun DetailRow(label: String, value: String, mono: Boolean = false) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = BankSpacing.md, vertical = BankSpacing.xs)) {
         Text(
             label,
             style = MaterialTheme.typography.bodyMedium,
@@ -543,8 +548,8 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel, snack
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(BankSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(BankSpacing.sm),
         ) {
             OutlinedTextField(
                 value = state.contactName,
@@ -561,12 +566,12 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel, snack
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Text("关系", style = MaterialTheme.typography.labelLarge)
+            Text("关系", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             // 家人细分后选项变多，FlowRow 自动换行而不是挤在一行或溢出。
             @OptIn(ExperimentalLayoutApi::class)
             FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(BankSpacing.xs),
+                verticalArrangement = Arrangement.spacedBy(BankSpacing.xxs),
             ) {
                 RELATIONSHIP_OPTIONS.forEach { option ->
                     FilterChip(
@@ -587,7 +592,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel, snack
             Button(
                 onClick = viewModel::addContact,
                 enabled = state.canAddContact && !state.panelBusy,
-                modifier = Modifier.fillMaxWidth().testTag(UiTags.CONTACT_ADD),
+                modifier = Modifier.fillMaxWidth().heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.CONTACT_ADD),
             ) { Text(if (state.panelBusy) "保存中…" else "保存") }
             Text(
                 "电话命中本行账户将直接关联；否则会开立收款账户，保存后即可转账。",
@@ -606,15 +611,6 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel, snack
 // 直接说“给我爱人转 200”时，核心把称呼解析成联系人簿里对应关系的人。
 private val RELATIONSHIP_OPTIONS = listOf("爱人", "兄弟", "儿子", "女儿", "父母", "家人", "朋友", "同事", "其他")
 
-private val AVATAR_COLORS = listOf(
-    Color(0xFF1565C0),
-    Color(0xFF2E7D32),
-    Color(0xFF6A1B9A),
-    Color(0xFFE65100),
-    Color(0xFFAD1457),
-    Color(0xFF00838F),
-)
-
 /**
  * 头像：纯矢量绘制（纯色圆片 + 首字），共享转场零位图解码开销，转场只动
  * placement/alpha（RenderNode 层合成，不逐帧重组），60/120Hz 都能满帧。
@@ -629,13 +625,15 @@ private fun ContactAvatar(
     sharedKey: String? = null,
 ) {
     val initial = name.trim().firstOrNull()?.toString() ?: "?"
+    val semantic = com.aibanking.agent.ui.theme.LocalBankSemanticColors.current
+    val avatarColors = listOf(semantic.chartBenchmark, semantic.negative, semantic.cardVirtual, semantic.riskYellow, semantic.positive, semantic.cardActive)
     Box(
         modifier = (sharedKey?.let { Modifier.contactShared(it, zIndexInOverlay = 1f, clipShape = CircleShape) } ?: Modifier)
             .size(size)
             .clip(CircleShape)
             // floorMod rather than abs: abs(Int.MIN_VALUE) is still negative, so the
             // old expression indexed the palette out of bounds for that one hash.
-            .background(AVATAR_COLORS[Math.floorMod(name.hashCode(), AVATAR_COLORS.size)]),
+            .background(avatarColors[Math.floorMod(name.hashCode(), avatarColors.size)]),
         contentAlignment = Alignment.Center,
     ) {
         Text(initial, color = Color.White, style = textStyle)

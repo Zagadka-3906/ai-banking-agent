@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -76,6 +77,10 @@ import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
+import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.components.BankSemanticStatus
+import com.aibanking.agent.ui.theme.BankSpacing
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import java.util.Locale
 
 /**
@@ -122,7 +127,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                     ) {
                         Text("我的银行卡", fontWeight = FontWeight.Bold)
                         Surface(
-                            shape = RoundedCornerShape(10.dp),
+                            shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.primaryContainer,
                         ) {
                             Text(
@@ -148,7 +153,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                 onClick = { showAdd = true },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = Color.White,
-                shape = RoundedCornerShape(16.dp),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.testTag(UiTags.CARD_OPEN_ADD),
             ) { Icon(Icons.Default.Add, contentDescription = "添加银行卡") }
         },
@@ -161,8 +166,8 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             val cascade = rememberCascadeEntrance(ready = state.cards.isNotEmpty())
             LazyColumn(
                 modifier = Modifier.fillMaxSize().testTag(UiTags.CARD_LIST),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(BankSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(BankSpacing.sm),
             ) {
                 items(
                     count = state.cards.size,
@@ -221,7 +226,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
 @Composable
 private fun CardsSkeleton() {
     Column(
-        Modifier.fillMaxSize().padding(16.dp),
+        Modifier.fillMaxSize().padding(BankSpacing.md),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         repeat(3) {
@@ -239,7 +244,7 @@ private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: M
             .fillMaxWidth()
             .clickable(onClick = onOpen)
             .testTag("${UiTags.CARD_DETAIL}:${card.cardId}"),
-        shape = RoundedCornerShape(20.dp),
+        shape = MaterialTheme.shapes.large,
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
         Box(
@@ -248,13 +253,13 @@ private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: M
                 .background(
                     Brush.linearGradient(
                         when {
-                            lost -> listOf(Color(0xFF7F1D1D), Color(0xFF991B1B), Color(0xFFB91C1C))
-                            frozen -> listOf(Color(0xFF374151), Color(0xFF4B5563), Color(0xFF6B7280))
-                            else -> listOf(Color(0xFF0F2B48), Color(0xFF1E4E79), Color(0xFF2E6DA4))
+                            lost -> listOf(LocalBankSemanticColors.current.cardLost, LocalBankSemanticColors.current.cardLost.copy(alpha = .78f))
+                            frozen -> listOf(LocalBankSemanticColors.current.cardFrozen, MaterialTheme.colorScheme.surfaceVariant)
+                            else -> listOf(LocalBankSemanticColors.current.cardActive, MaterialTheme.colorScheme.primary)
                         },
                     ),
                 )
-                .padding(20.dp),
+                .padding(BankSpacing.lg),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
@@ -290,11 +295,9 @@ private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: M
                     Box(
                         modifier = Modifier
                             .size(width = 38.dp, height = 28.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(MaterialTheme.shapes.small)
                             .background(
-                                Brush.linearGradient(
-                                    listOf(Color(0xFFFDE68A), Color(0xFFD97706), Color(0xFFFDE68A)),
-                                )
+                                Brush.linearGradient(listOf(LocalBankSemanticColors.current.riskYellow, LocalBankSemanticColors.current.riskYellow.copy(alpha = .72f), LocalBankSemanticColors.current.riskYellow))
                             ),
                     )
                     Text(
@@ -334,7 +337,7 @@ private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: M
                 }
             }
         }
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(BankSpacing.md), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 cardActions(card.status).forEach { action ->
                     ActionChip(actionLabel(action), card, action) { viewModel.startCardAction(action, card) }
@@ -373,24 +376,22 @@ private fun actionLabel(action: String): String = when (action) {
 
 @Composable
 private fun StatusBadge(status: String) {
-    val (label, color) = when (status) {
-        "ACTIVE" -> "正常" to Color(0xFF81C784)
-        "FROZEN" -> "已冻结" to Color(0xFFFFB74D)
-        "LOST" -> "已挂失" to Color(0xFFE57373)
-        else -> status to Color(0xFFB0BEC5)
+    val (label, semantic) = when (status) {
+        "ACTIVE" -> "正常" to BankSemanticStatus.RiskGreen
+        "FROZEN" -> "已冻结" to BankSemanticStatus.RiskYellow
+        "LOST" -> "已挂失" to BankSemanticStatus.RiskRed
+        else -> status to BankSemanticStatus.Neutral
     }
-    Box(
-        Modifier
-            .background(color, RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-    }
+    BankStatusChip(
+        label = label,
+        status = semantic,
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+    )
 }
 
 @Composable
 private fun ActionChip(text: String, card: CardView, action: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.testTag(UiTags.cardAction(card.cardId, action))) {
+    OutlinedButton(onClick = onClick, modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.cardAction(card.cardId, action))) {
         Text(text)
     }
 }
@@ -431,14 +432,14 @@ private fun AddCardSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = BankSpacing.md)
+                .padding(bottom = BankSpacing.xl),
+            verticalArrangement = Arrangement.spacedBy(BankSpacing.sm),
         ) {
             Text("添加银行卡", style = MaterialTheme.typography.titleMedium)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = number, onValueChange = { number = it; source = "MANUAL"; confirmed = false; error = null }, label = { Text("卡号（必填）") }, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.weight(1f).testTag(UiTags.CARD_NUMBER))
-                OutlinedButton(onClick = { if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) camera.launch(null) else permission.launch(Manifest.permission.CAMERA) }, modifier = Modifier.testTag(UiTags.CARD_CAMERA)) { Text("拍照") }
+                OutlinedButton(onClick = { if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) camera.launch(null) else permission.launch(Manifest.permission.CAMERA) }, modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.CARD_CAMERA)) { Text("拍照") }
             }
             androidx.compose.material3.Checkbox(checked = confirmed, onCheckedChange = { confirmed = it }, modifier = Modifier.testTag(UiTags.CARD_CONFIRM))
             Text("我确认卡号属于本人且输入无误", style = MaterialTheme.typography.bodySmall)
@@ -463,7 +464,7 @@ private fun AddCardSheet(
             Button(
                 onClick = { onAdd(number, source) },
                 enabled = !busy && confirmed && extractCardNumber(number) != null,
-                modifier = Modifier.fillMaxWidth().testTag(UiTags.CARD_ADD),
+                modifier = Modifier.fillMaxWidth().heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.CARD_ADD),
             ) { Text(if (busy) "绑定中…" else "确认添加") }
             Text(
                 "开立即生效并计入审计；卡号为虚构演示号段，仅显示脱敏形式。",
@@ -504,18 +505,21 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
     }
     if (reveal != null) androidx.compose.ui.platform.LocalView.current.let { view -> androidx.compose.runtime.DisposableEffect(Unit) { val window = (view.context as? android.app.Activity)?.window; window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) } } }
     Scaffold(topBar = { TopAppBar(title = { Text("卡片详情") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } }) }) { padding ->
-        Column(Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.padding(padding).padding(BankSpacing.md).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
             Text("${card.type} · 尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}", style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag(UiTags.CARD_DETAIL))
             Text("状态：${card.status}")
             if (reveal == null) {
                 OutlinedTextField(pin, { pin = it }, label = { Text("演示卡取款密码") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth().testTag(UiTags.CARD_PIN))
-                Button(onClick = { val p = pin; pin = ""; error = null; scope.launch { try { reveal = viewModel.revealCard(card.cardId, p); error = null } catch (e: Exception) { error = "验证失败，请检查取款密码" } } }, enabled = pin.isNotEmpty(), modifier = Modifier.testTag(UiTags.CARD_REVEAL)) { Text("查看卡号") }
+                Button(onClick = { val p = pin; pin = ""; error = null; scope.launch { try { reveal = viewModel.revealCard(card.cardId, p); error = null } catch (e: Exception) { error = "验证失败，请检查取款密码" } } }, enabled = pin.isNotEmpty(), modifier = Modifier.fillMaxWidth().heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.CARD_REVEAL)) { Text("查看卡号") }
             } else {
                 val shown = reveal!!
                 Column(Modifier.testTag(UiTags.CARD_REVEALED), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("户名：${shown.ownerName}"); Text("卡号：${shown.cardNumber}", fontFamily = FontFamily.Monospace); Text("开户行：${shown.issuerName}"); Text("本次展示将在 30 秒后失效") }
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { reveal = null; viewModel.prefillCardTransfer(card) }, modifier = Modifier.testTag(UiTags.CARD_TRANSFER)) { Text("转账") }; OutlinedButton(onClick = { reveal = null; onBack(); viewModel.openWealth() }, modifier = Modifier.testTag(UiTags.CARD_WEALTH)) { Text("理财") } }
+            Row(horizontalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
+                OutlinedButton(onClick = { reveal = null; viewModel.prefillCardTransfer(card) }, modifier = Modifier.weight(1f).heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.CARD_TRANSFER)) { Text("转账") }
+                OutlinedButton(onClick = { reveal = null; onBack(); viewModel.openWealth() }, modifier = Modifier.weight(1f).heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.CARD_WEALTH)) { Text("理财") }
+            }
         }
     }
 }

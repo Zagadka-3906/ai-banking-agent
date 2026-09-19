@@ -3,6 +3,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 拍照识卡为可选入口；无相机设备仍可手工录入并使用完整应用。 -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- Required from API 33 to actually show a notification; requested at
          runtime by MainActivity. -->

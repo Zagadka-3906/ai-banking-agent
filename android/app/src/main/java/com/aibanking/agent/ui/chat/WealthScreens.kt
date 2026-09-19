@@ -86,6 +86,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -105,9 +107,22 @@ import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
+import com.aibanking.agent.ui.components.BankSectionCard
+import com.aibanking.agent.ui.components.BankSectionHeader
+import com.aibanking.agent.ui.components.BankSemanticStatus
+import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.theme.BankSpacing
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import java.util.Locale
 import java.time.LocalDate
 import kotlinx.coroutines.launch
+
+// Wealth screens consume the shared semantic palette so the Chinese finance
+// convention (red=gain, green=loss) and dark-mode contrast stay consistent.
+private val WealthPositive: Color @Composable get() = LocalBankSemanticColors.current.positive
+private val WealthNegative: Color @Composable get() = LocalBankSemanticColors.current.negative
+private val WealthRiskYellow: Color @Composable get() = LocalBankSemanticColors.current.riskYellow
+private val WealthChartBenchmark: Color @Composable get() = LocalBankSemanticColors.current.chartBenchmark
 
 /**
  * 银行风格理财页：产品超市 → 产品详情 → 申购。
@@ -309,8 +324,8 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
             )
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding).testTag(UiTags.WEALTH_LIST),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(BankSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(BankSpacing.sm),
         ) {
             // 扁平序号跨越横幅、标题与卡片，波浪按整页顺序推入。
             var flat = 0
@@ -336,7 +351,7 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
                     val holding = state.wealthHoldings[index]
                     Card(Modifier.fillMaxWidth().cascadeItem(cascade, flat++)) {
                         Row(
-                            Modifier.fillMaxWidth().padding(12.dp),
+                            Modifier.fillMaxWidth().padding(BankSpacing.md),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -419,7 +434,7 @@ private fun ProductCard(product: ProductView, modifier: Modifier = Modifier, onC
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.fillMaxWidth().padding(BankSpacing.md), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 CategoryChip(product.category ?: "理财产品")
                 RiskBadge(product.riskLevel)
@@ -531,7 +546,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         Icon(
                             if (favorite) Icons.Filled.Star else Icons.Outlined.Star,
                             contentDescription = "自选",
-                            tint = if (favorite) Color(0xFFFFB300) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (favorite) WealthRiskYellow else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     IconButton(onClick = { notice("分享功能为演示版入口") }) {
@@ -559,7 +574,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                 .fillMaxSize()
                 .padding(padding)
                 .wealthContainerTransform(wealthProductKey(rendered.productId), expanded = true)
-                .background(Color(0xFFF5F6F8))
+                .background(MaterialTheme.colorScheme.background)
                 .verticalScroll(rememberScrollState())
                 .testTag(UiTags.WEALTH_DETAIL)
                 .padding(12.dp),
@@ -569,7 +584,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_SUMMARY),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -589,7 +604,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                             Text(
                                 if (rendered.annualReturnPct != null) "近1年收益率" else "业绩比较基准",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF8C9098),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Column(Modifier.weight(1.0f)) {
@@ -603,7 +618,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                             Text(
                                 "日增长率",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF8C9098),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Column(Modifier.weight(1.0f)) {
@@ -611,12 +626,12 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                 rendered.latestNav?.let { "%.4f".format(Locale.CHINA, it) } ?: "—",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF22252A),
+                                color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
                                 "单位净值 (${rendered.netValueDate ?: rendered.asOfDate ?: "09-15"})",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF8C9098),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
@@ -630,20 +645,20 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         CategoryChip(rendered.term ?: "灵活期限")
                         Box(
                             Modifier
-                                .background(Color(0xFFFFF0ED), RoundedCornerShape(4.dp))
+                                .background(WealthPositive.copy(alpha = 0.10f), RoundedCornerShape(4.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
                                     "买入费率: %.2f%%".format(Locale.CHINA, rendered.discountFeeRate ?: 0.10),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFFE53935),
+                                    color = WealthPositive,
                                     fontWeight = FontWeight.SemiBold,
                                 )
                                 Text(
                                     "%.2f%%".format(Locale.CHINA, rendered.originalFeeRate ?: 1.00),
                                     style = MaterialTheme.typography.labelSmall.copy(textDecoration = TextDecoration.LineThrough),
-                                    color = Color(0xFF9E9E9E),
+                                    color = MaterialTheme.colorScheme.outline,
                                 )
                             }
                         }
@@ -657,7 +672,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                             rendered.dataSource ?: "MOCK_FIXTURE（非实时）",
                         ),
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF8C9098),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
 
                     // 晨星评级 / 金牛奖黄金横幅
@@ -667,8 +682,8 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                             .testTag(UiTags.WEALTH_PROMO)
                             .clickable { notice(rendered.promoTitle ?: "财富日限时加息，申购费率1折") },
                         shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF9E6)),
-                        border = BorderStroke(1.dp, Color(0xFFFFE8A3)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.35f)),
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
@@ -685,20 +700,20 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                     rendered.ratingAgency ?: "晨星评级 ★★★★★",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFB78103),
+                                    color = WealthRiskYellow,
                                 )
-                                Text("·", color = Color(0xFFD4A340))
+                                Text("·", color = WealthRiskYellow)
                                 Text("🏆", fontSize = 13.sp)
                                 Text(
                                     rendered.awardTitle ?: rendered.promoTitle ?: "金牛基金奖 · 卓越回报标杆",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFB78103),
+                                    color = WealthRiskYellow,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            Text("›", color = Color(0xFFB78103), fontWeight = FontWeight.Bold)
+                            Text("›", color = WealthRiskYellow, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -708,7 +723,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -724,7 +739,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                     tab,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (tab == selectedTab) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (tab == selectedTab) Color(0xFFE53935) else Color(0xFF6B7280),
+                                    color = if (tab == selectedTab) WealthPositive else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier
                                         .clickable { selectedTab = tab }
                                         .padding(horizontal = 4.dp, vertical = 2.dp),
@@ -741,16 +756,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                     ) {
                         val productReturn = rendered.annualReturnPct ?: 19.46
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(Modifier.width(8.dp).height(8.dp).background(Color(0xFFE53935), CircleShape))
-                            Text("本产品 %+.2f%%".format(Locale.CHINA, productReturn), style = MaterialTheme.typography.labelSmall, color = Color(0xFFE53935), fontWeight = FontWeight.SemiBold)
+                            Box(Modifier.width(8.dp).height(8.dp).background(WealthPositive, CircleShape))
+                            Text("本产品 %+.2f%%".format(Locale.CHINA, productReturn), style = MaterialTheme.typography.labelSmall, color = WealthPositive, fontWeight = FontWeight.SemiBold)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(Modifier.width(8.dp).height(8.dp).background(Color(0xFF78909C), CircleShape))
-                            Text("业绩基准 +10.28%", style = MaterialTheme.typography.labelSmall, color = Color(0xFF607D8B))
+                            Box(Modifier.width(8.dp).height(8.dp).background(WealthChartBenchmark, CircleShape))
+                            Text("业绩基准 +10.28%", style = MaterialTheme.typography.labelSmall, color = WealthChartBenchmark)
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(Modifier.width(8.dp).height(8.dp).background(Color(0xFF26A69A), CircleShape))
-                            Text("同类平均 +8.45%", style = MaterialTheme.typography.labelSmall, color = Color(0xFF00897B))
+                            Box(Modifier.width(8.dp).height(8.dp).background(WealthNegative, CircleShape))
+                            Text("同类平均 +8.45%", style = MaterialTheme.typography.labelSmall, color = WealthNegative)
                         }
                     }
 
@@ -767,7 +782,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                     if (range == selectedRange) "● $range" else range,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (range == selectedRange) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (range == selectedRange) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = if (range == selectedRange) WealthPositive else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -785,7 +800,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_HISTORY),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -795,27 +810,27 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("阶段涨幅", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color(0xFFE53935))
-                            Text("历史净值", style = MaterialTheme.typography.titleMedium, color = Color(0xFF8C9098))
+                            Text("阶段涨幅", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = WealthPositive)
+                            Text("历史净值", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
 
                     Row(
-                        Modifier.fillMaxWidth().background(Color(0xFFF9FAFB), RoundedCornerShape(4.dp)).padding(vertical = 6.dp, horizontal = 4.dp),
+                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp)).padding(vertical = 6.dp, horizontal = 4.dp),
                     ) {
                         listOf("阶段区间", "涨跌幅", "同类平均", "同类排名").forEachIndexed { i, col ->
                             Text(
                                 col,
                                 Modifier.weight(if (i == 0 || i == 3) 1.1f else 1.0f),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF6B7280),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = if (i == 0) TextAlign.Start else TextAlign.Center,
                             )
                         }
                     }
 
                     if (rendered.performanceHistory.isEmpty()) {
-                        Text("暂无历史业绩数据", style = MaterialTheme.typography.bodySmall, color = Color(0xFF8C9098))
+                        Text("暂无历史业绩数据", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         rendered.performanceHistory.take(if (historyExpanded) Int.MAX_VALUE else 3).forEach { row ->
                             Row(
@@ -843,7 +858,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                     row.rank ?: "—",
                                     Modifier.weight(1.1f),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF4B5563),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center,
                                 )
                             }
@@ -854,7 +869,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         onClick = { historyExpanded = !historyExpanded },
                         modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_HISTORY_TOGGLE),
                     ) {
-                        Text(if (historyExpanded) "收起 ⌃" else "展开更多 ⌄", color = Color(0xFF1976D2), style = MaterialTheme.typography.labelMedium)
+                        Text(if (historyExpanded) "收起 ⌃" else "展开更多 ⌄", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -863,16 +878,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_PROFILE),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("风格特征", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("近1年投资风格与特征画像", style = MaterialTheme.typography.labelSmall, color = Color(0xFF8C9098))
+                            Text("近1年投资风格与特征画像", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text("›", color = Color(0xFF9E9E9E))
+                        Text("›", color = MaterialTheme.colorScheme.outline)
                     }
 
                     if (rendered.analysisMetrics.isEmpty()) {
@@ -882,20 +897,20 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 pair.forEachIndexed { colIdx, metric ->
                                     val barColor = when (rowIdx * 2 + colIdx) {
-                                        0 -> Color(0xFF1E88E5)
-                                        1 -> Color(0xFFFB8C00)
-                                        2 -> Color(0xFF43A047)
-                                        else -> Color(0xFFE53935)
+                                        0 -> MaterialTheme.colorScheme.primary
+                                        1 -> WealthRiskYellow
+                                        2 -> WealthNegative
+                                        else -> WealthPositive
                                     }
                                     Card(
                                         modifier = Modifier.weight(1f),
                                         shape = RoundedCornerShape(8.dp),
-                                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF9FAFB)),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                                     ) {
                                         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(metric.label.ifBlank { "未命名指标" }, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                            Text(metric.value ?: "${metric.score ?: 0}/5", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = Color(0xFF212121))
-                                            Text(metric.description ?: "暂无说明", style = MaterialTheme.typography.labelSmall, color = Color(0xFF757575))
+                                            Text(metric.value ?: "${metric.score ?: 0}/5", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
+                                            Text(metric.description ?: "暂无说明", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Box(Modifier.fillMaxWidth().height(3.dp).background(barColor.copy(alpha = 0.25f), RoundedCornerShape(2.dp))) {
                                                 Box(Modifier.fillMaxWidth(0.7f).height(3.dp).background(barColor, RoundedCornerShape(2.dp)))
                                             }
@@ -913,13 +928,13 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_MANAGER),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("基金经理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("历任基金经理 ›", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
+                        Text("历任基金经理 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
 
                     Row(
@@ -932,14 +947,14 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                 .width(50.dp)
                                 .height(50.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFFE8F0FE)),
+                                .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
                                 rendered.manager?.name?.take(1) ?: "经",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 20.sp,
-                                color = Color(0xFF1A73E8),
+                                color = MaterialTheme.colorScheme.primary,
                             )
                         }
 
@@ -952,12 +967,12 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                     rendered.manager?.managedScaleBillion ?: 32.6,
                                 ),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF616161),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
                                 rendered.manager?.bio ?: "专注固收增强与多资产配置，长期业绩稳健",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF757575),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -969,16 +984,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                 "%+.2f%%".format(Locale.CHINA, tenureRet),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFFE53935),
+                                color = WealthPositive,
                             )
-                            Text("任职回报", style = MaterialTheme.typography.labelSmall, color = Color(0xFF8C9098))
+                            Text("任职回报", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
 
                     Text(
                         "管理人：${rendered.managerCompany ?: "华夏量化理财管理有限公司"} · 成立${rendered.institutionFoundedYears ?: 26}年 · AUM ${rendered.institutionAumBillion ?: 21380.93}亿元 · ${rendered.institutionRating ?: "综合评级 AA+"}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF757575),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -987,13 +1002,13 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_ALLOCATION),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("持仓分布", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("重仓详情 ›", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
+                        Text("重仓详情 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
 
                     if (rendered.assetAllocation.isEmpty()) {
@@ -1001,7 +1016,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                     } else {
                         // 比例图例
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val allocColors = listOf(Color(0xFF1E88E5), Color(0xFFFB8C00), Color(0xFF43A047), Color(0xFF8E24AA))
+                            val allocColors = listOf(MaterialTheme.colorScheme.primary, WealthRiskYellow, WealthNegative, MaterialTheme.colorScheme.secondary)
                             rendered.assetAllocation.forEachIndexed { i, allocation ->
                                 val c = allocColors.getOrElse(i) { Color.Gray }
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1009,7 +1024,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                     Text(
                                         "${allocation.name} %.2f%%".format(Locale.CHINA, allocation.percentage ?: 0.0),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF616161),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
@@ -1017,7 +1032,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
 
                         // 多段彩色条形进度
                         Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))) {
-                            val allocColors = listOf(Color(0xFF1E88E5), Color(0xFFFB8C00), Color(0xFF43A047), Color(0xFF8E24AA))
+                            val allocColors = listOf(MaterialTheme.colorScheme.primary, WealthRiskYellow, WealthNegative, MaterialTheme.colorScheme.secondary)
                             Row(Modifier.fillMaxSize()) {
                                 rendered.assetAllocation.forEachIndexed { i, allocation ->
                                     val weight = ((allocation.percentage ?: 0.0).coerceAtLeast(0.0) / 100.0).toFloat().coerceAtLeast(0.01f)
@@ -1030,11 +1045,11 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         Text("重仓前五项", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
 
                         Row(
-                            Modifier.fillMaxWidth().background(Color(0xFFF9FAFB), RoundedCornerShape(4.dp)).padding(vertical = 6.dp, horizontal = 4.dp),
+                            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp)).padding(vertical = 6.dp, horizontal = 4.dp),
                         ) {
-                            Text("标的名称 / 类别", Modifier.weight(2.0f), style = MaterialTheme.typography.labelSmall, color = Color(0xFF6B7280))
-                            Text("持仓占比", Modifier.weight(1.0f), style = MaterialTheme.typography.labelSmall, color = Color(0xFF6B7280), textAlign = TextAlign.Center)
-                            Text("今日涨跌", Modifier.weight(1.0f), style = MaterialTheme.typography.labelSmall, color = Color(0xFF6B7280), textAlign = TextAlign.End)
+                            Text("标的名称 / 类别", Modifier.weight(2.0f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("持仓占比", Modifier.weight(1.0f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                            Text("今日涨跌", Modifier.weight(1.0f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.End)
                         }
 
                         rendered.topHoldings.take(5).forEachIndexed { index, holding ->
@@ -1050,7 +1065,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                             holding.code?.let { append(" · $it") }
                                         },
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF8C9098),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                                 Text(
@@ -1078,13 +1093,13 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("基金概况", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("更多资料 ›", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
+                        Text("更多资料 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
                     DetailRow("成立日期", rendered.establishedAt ?: "暂无")
                     DetailRow("产品规模", rendered.scaleBillion?.let { "%.2f 亿元".format(Locale.CHINA, it) } ?: "暂无")
@@ -1099,7 +1114,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1109,16 +1124,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("基金公告与运作季报", style = MaterialTheme.typography.bodyMedium)
-                        Text("›", color = Color(0xFF9E9E9E))
+                        Text("›", color = MaterialTheme.colorScheme.outline)
                     }
-                    Box(Modifier.fillMaxWidth().height(0.5.dp).background(Color(0xFFEEEEEE)))
+                    Box(Modifier.fillMaxWidth().height(0.5.dp).background(MaterialTheme.colorScheme.outlineVariant))
                     Row(
                         Modifier.fillMaxWidth().clickable { notice("产品文件已更新至2026年版本") }.padding(vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("产品文件（招募说明书、合同、风险揭示书）", style = MaterialTheme.typography.bodyMedium)
-                        Text("›", color = Color(0xFF9E9E9E))
+                        Text("›", color = MaterialTheme.colorScheme.outline)
                     }
                 }
             }
@@ -1127,25 +1142,25 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_RULES),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("交易规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("费率详情 ›", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
+                        Text("费率详情 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
 
                     // 交易时间线步骤
                     Row(
-                        Modifier.fillMaxWidth().background(Color(0xFFF9FAFB), RoundedCornerShape(8.dp)).padding(10.dp),
+                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).padding(10.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TimelineStep("T日", "申购申请", "15:00前")
-                        Text("➔", color = Color(0xFFBDBDBD), fontSize = 12.sp)
+                        Text("➔", color = MaterialTheme.colorScheme.outline, fontSize = 12.sp)
                         TimelineStep("T+1日", "确认份额", "计算净值")
-                        Text("➔", color = Color(0xFFBDBDBD), fontSize = 12.sp)
+                        Text("➔", color = MaterialTheme.colorScheme.outline, fontSize = 12.sp)
                         TimelineStep("T+2日", "查看收益", "计入持仓")
                     }
 
@@ -1167,7 +1182,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             Card(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_DISCLOSURE),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1194,7 +1209,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                     "业绩比较基准不代表未来收益承诺，理财产品过往业绩不代表未来表现，理财非存款、产品有风险、投资须谨慎。" +
                     "申购需通过风险测评并完成服务端多因子验证。",
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF8C9098),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag(UiTags.WEALTH_DISCLAIMER).padding(horizontal = 4.dp, vertical = 8.dp),
             )
 
@@ -1207,14 +1222,14 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
 private fun TimelineStep(step: String, title: String, subtitle: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier.background(Color(0xFFE8F0FE), CircleShape).padding(horizontal = 8.dp, vertical = 2.dp),
+            Modifier.background(MaterialTheme.colorScheme.primaryContainer, CircleShape).padding(horizontal = 8.dp, vertical = 2.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text(step, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF1976D2))
+            Text(step, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         }
         Spacer(Modifier.height(4.dp))
         Text(title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-        Text(subtitle, style = MaterialTheme.typography.labelSmall, color = Color(0xFF8C9098))
+        Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -1239,13 +1254,13 @@ private fun DisclosureRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(title, style = MaterialTheme.typography.bodyMedium)
-            Text(if (expanded) "⌄" else "›", color = Color(0xFF9E9E9E))
+            Text(if (expanded) "⌄" else "›", color = MaterialTheme.colorScheme.outline)
         }
         if (expanded || alwaysShowBody) {
             Text(
                 body,
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF616161),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = (bodyTestTag?.let { Modifier.testTag(it) } ?: Modifier)
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
@@ -1260,23 +1275,9 @@ private fun SectionCard(
     headerAction: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-        Column(
-            Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                headerAction?.invoke()
-            }
-            content()
-        }
+    BankSectionCard(modifier = modifier) {
+            BankSectionHeader(title = title, trailing = headerAction)
+            Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.xs), content = content)
     }
 }
 
@@ -1290,11 +1291,20 @@ private fun Metric(value: String, label: String, color: Color) {
 
 @Composable
 private fun WealthChart(product: ProductView, range: String, modifier: Modifier = Modifier) {
+    val semantic = LocalBankSemanticColors.current
+    val chartSurface = MaterialTheme.colorScheme.surface
     val all = product.navSeries.filter { it.nav?.isFinite() == true && it.benchmarkNav?.isFinite() == true }
     val points = rangePoints(all, range)
     var selectedIndex by remember(points) { mutableStateOf(points.lastIndex.coerceAtLeast(0)) }
 
-    Column(modifier) {
+    Column(
+        modifier.semantics {
+            contentDescription = if (points.isEmpty()) "业绩走势图暂无数据" else {
+                val point = points[selectedIndex.coerceIn(0, points.lastIndex)]
+                "业绩走势图，区间 $range，日期 ${point.date}，产品净值 ${point.nav ?: 0.0}，基准净值 ${point.benchmarkNav ?: 0.0}"
+            }
+        },
+    ) {
         if (points.isNotEmpty()) {
             val point = points[selectedIndex.coerceIn(0, points.lastIndex)]
             Row(
@@ -1305,12 +1315,12 @@ private fun WealthChart(product: ProductView, range: String, modifier: Modifier 
                     "${point.date} · 净值 ${point.nav?.let { "%.4f".format(Locale.CHINA, it) } ?: "—"}",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFFE53935),
+                    color = semantic.chartPrimary,
                 )
                 Text(
                     "基准 ${point.benchmarkNav?.let { "%.4f".format(Locale.CHINA, it) } ?: "—"}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF78909C),
+                    color = semantic.chartBenchmark,
                 )
             }
         }
@@ -1347,7 +1357,7 @@ private fun WealthChart(product: ProductView, range: String, modifier: Modifier 
             drawPath(
                 fillPath,
                 Brush.verticalGradient(
-                    colors = listOf(Color(0x2CE53935), Color(0x02E53935)),
+                    colors = listOf(semantic.chartPrimary.copy(alpha = 0.17f), semantic.chartPrimary.copy(alpha = 0.01f)),
                     startY = y(max),
                     endY = size.height,
                 ),
@@ -1356,7 +1366,7 @@ private fun WealthChart(product: ProductView, range: String, modifier: Modifier 
             // 绘制基准曲线 (灰蓝色)
             for (i in 0 until points.lastIndex) {
                 drawLine(
-                    Color(0xFF90A4AE),
+                    semantic.chartBenchmark,
                     Offset(x(i), y(points[i].benchmarkNav!!)),
                     Offset(x(i + 1), y(points[i + 1].benchmarkNav!!)),
                     strokeWidth = 3f,
@@ -1367,7 +1377,7 @@ private fun WealthChart(product: ProductView, range: String, modifier: Modifier 
             // 绘制本产品曲线 (醒目红)
             for (i in 0 until points.lastIndex) {
                 drawLine(
-                    Color(0xFFE53935),
+                    semantic.chartPrimary,
                     Offset(x(i), y(points[i].nav!!)),
                     Offset(x(i + 1), y(points[i + 1].nav!!)),
                     strokeWidth = 5f,
@@ -1380,21 +1390,21 @@ private fun WealthChart(product: ProductView, range: String, modifier: Modifier 
             val peakX = x(maxNavIndex)
             val peakY = y(points[maxNavIndex].nav!!)
             drawLine(
-                Color(0x80E53935),
+                semantic.chartPrimary.copy(alpha = 0.5f),
                 Offset(peakX, 10f),
                 Offset(peakX, peakY),
                 strokeWidth = 2f,
             )
-            drawCircle(Color(0xFFE53935), 5f, Offset(peakX, peakY))
+            drawCircle(semantic.chartPrimary, 5f, Offset(peakX, peakY))
 
             // 交互十字准星
             val index = selectedIndex.coerceIn(0, points.lastIndex)
             val scrubX = x(index)
-            drawLine(Color(0xFF757575), Offset(scrubX, 0f), Offset(scrubX, size.height), strokeWidth = 2f)
-            drawCircle(Color.White, 7f, Offset(scrubX, y(points[index].nav!!)))
-            drawCircle(Color(0xFFE53935), 5f, Offset(scrubX, y(points[index].nav!!)))
-            drawCircle(Color.White, 6f, Offset(scrubX, y(points[index].benchmarkNav!!)))
-            drawCircle(Color(0xFF90A4AE), 4f, Offset(scrubX, y(points[index].benchmarkNav!!)))
+            drawLine(semantic.chartGrid, Offset(scrubX, 0f), Offset(scrubX, size.height), strokeWidth = 2f)
+            drawCircle(chartSurface, 7f, Offset(scrubX, y(points[index].nav!!)))
+            drawCircle(semantic.chartPrimary, 5f, Offset(scrubX, y(points[index].nav!!)))
+            drawCircle(chartSurface, 6f, Offset(scrubX, y(points[index].benchmarkNav!!)))
+            drawCircle(semantic.chartBenchmark, 4f, Offset(scrubX, y(points[index].benchmarkNav!!)))
         }
     }
 }
@@ -1424,10 +1434,11 @@ private fun rangePoints(points: List<com.aibanking.agent.data.NavPointView>, ran
     return parsed.filter { it.first >= start && it.first <= end }.map { it.second }.ifEmpty { points.takeLast(1) }
 }
 
+@Composable
 private fun returnColor(value: Double?): Color = when {
     value == null || !value.isFinite() || value == 0.0 -> Color.Unspecified
-    value > 0.0 -> Color(0xFFE53935)
-    else -> Color(0xFF2E7D32)
+    value > 0.0 -> WealthPositive
+    else -> WealthNegative
 }
 
 @Composable
@@ -1444,10 +1455,10 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                 Text(
                     "★ 买入费率：%.2f%% (1折专享 · 申购立省90%%)".format(Locale.CHINA, product.discountFeeRate ?: 0.10),
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFE65100),
+                    color = WealthRiskYellow,
                     fontWeight = FontWeight.Medium,
                 )
-                Text("费率说明 ›", style = MaterialTheme.typography.labelSmall, color = Color(0xFF1976D2))
+                Text("费率说明 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
 
             // 底部操作区 (含测试标签 WEALTH_BOTTOM_BAR)
@@ -1463,14 +1474,14 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                         modifier = Modifier.clickable { viewModel.onInputChange("请根据我的风险档案提供${product.name}智能投顾建议"); viewModel.closeWealth() }.padding(horizontal = 6.dp),
                     ) {
                         Text("💬", fontSize = 16.sp)
-                        Text("投顾", style = MaterialTheme.typography.labelSmall, color = Color(0xFF616161))
+                        Text("投顾", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.clickable { viewModel.onInputChange("请帮我试算${product.name}收益"); viewModel.closeWealth() }.padding(horizontal = 6.dp),
                     ) {
                         Text("📊", fontSize = 16.sp)
-                        Text("试算", style = MaterialTheme.typography.labelSmall, color = Color(0xFF616161))
+                        Text("试算", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -1482,14 +1493,14 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                                 onClick = { viewModel.onInputChange("请设置${product.name}定投"); viewModel.closeWealth() },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, Color(0xFFE53935)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                                border = BorderStroke(1.dp, WealthPositive),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = WealthPositive),
                             ) { Text("定投买入") }
                             Button(
                                 onClick = { viewModel.onInputChange("我想做风险测评"); viewModel.closeWealth() },
                                 modifier = Modifier.weight(1f).testTag(UiTags.WEALTH_TO_TEST),
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                                colors = ButtonDefaults.buttonColors(containerColor = WealthPositive),
                             ) { Text("立即购买") }
                         }
                     }
@@ -1499,14 +1510,14 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                                 onClick = { viewModel.onInputChange("请设置${product.name}定投"); viewModel.closeWealth() },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, Color(0xFFE53935)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                                border = BorderStroke(1.dp, WealthPositive),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = WealthPositive),
                             ) { Text("定投买入") }
                             Button(
                                 onClick = { viewModel.onInputChange("我想做风险测评"); viewModel.closeWealth() },
                                 modifier = Modifier.weight(1f).testTag(UiTags.WEALTH_TO_TEST),
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                                colors = ButtonDefaults.buttonColors(containerColor = WealthPositive),
                             ) { Text("重新测评") }
                         }
                     }
@@ -1528,14 +1539,14 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                             OutlinedButton(
                                 onClick = { viewModel.onInputChange("请设置${product.name}定投"); viewModel.closeWealth() },
                                 shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, Color(0xFFE53935)),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935)),
+                                border = BorderStroke(1.dp, WealthPositive),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = WealthPositive),
                             ) { Text("定投") }
                             Button(
                                 onClick = { viewModel.startPurchase(product, state.buyAmount) },
                                 enabled = state.canBuySelected && !state.panelBusy,
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                                colors = ButtonDefaults.buttonColors(containerColor = WealthPositive),
                                 modifier = Modifier.testTag(UiTags.WEALTH_BUY),
                             ) { Text("立即购买") }
                         }
@@ -1573,19 +1584,13 @@ private fun CategoryChip(text: String) {
 
 @Composable
 private fun RiskBadge(level: String) {
-    val color = when (level) {
-        "R1" -> Color(0xFF2E7D32)
-        "R2" -> Color(0xFF1565C0)
-        "R3" -> Color(0xFFE65100)
-        else -> Color(0xFFC62828)
+    val status = when (level) {
+        "R1" -> BankSemanticStatus.RiskGreen
+        "R2" -> BankSemanticStatus.Neutral
+        "R3" -> BankSemanticStatus.RiskYellow
+        else -> BankSemanticStatus.RiskRed
     }
-    Box(
-        Modifier
-            .background(color, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    ) {
-        Text(level, style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
-    }
+    BankStatusChip(level, status)
 }
 
 @Composable

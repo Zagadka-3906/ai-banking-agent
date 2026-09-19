@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,7 +25,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
@@ -75,7 +75,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -92,6 +91,11 @@ import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.cubeFlip
 import com.aibanking.agent.ui.anim.verificationFrost
+import com.aibanking.agent.ui.components.BankSectionCard
+import com.aibanking.agent.ui.components.BankSemanticStatus
+import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.theme.BankSpacing
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
@@ -198,7 +202,7 @@ private fun BankBottomNavigation(
         NavigationBar(
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
-            modifier = Modifier.height(68.dp),
+            modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget),
         ) {
             NavigationBarItem(
                 selected = currentPage == AppPage.CHAT,
@@ -213,7 +217,7 @@ private fun BankBottomNavigation(
                 label = {
                     Text(
                         "助手",
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (currentPage == AppPage.CHAT) FontWeight.Bold else FontWeight.Normal,
                     )
                 },
@@ -237,7 +241,7 @@ private fun BankBottomNavigation(
                 label = {
                     Text(
                         "卡包",
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (currentPage == AppPage.CARDS) FontWeight.Bold else FontWeight.Normal,
                     )
                 },
@@ -262,7 +266,7 @@ private fun BankBottomNavigation(
                 label = {
                     Text(
                         "理财",
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (currentPage == AppPage.WEALTH) FontWeight.Bold else FontWeight.Normal,
                     )
                 },
@@ -287,7 +291,7 @@ private fun BankBottomNavigation(
                 label = {
                     Text(
                         "联系人",
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = if (currentPage == AppPage.CONTACTS) FontWeight.Bold else FontWeight.Normal,
                     )
                 },
@@ -350,7 +354,7 @@ private fun ChatHome(
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(MaterialTheme.shapes.medium)
                                 .background(
                                     Brush.linearGradient(
                                         listOf(
@@ -364,7 +368,7 @@ private fun ChatHome(
                             Icon(
                                 Icons.Default.Lock,
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.size(20.dp),
                             )
                         }
@@ -382,7 +386,7 @@ private fun ChatHome(
                                     modifier = Modifier
                                         .size(6.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFF10B981))
+                                        .background(LocalBankSemanticColors.current.riskGreen)
                                 )
                                 Text(
                                     "风控就绪 · 确定性沙箱",
@@ -515,8 +519,7 @@ private fun ChatHome(
                     items(state.suggestions.size) { index ->
                         SuggestionChip(
                             onClick = { viewModel.onSuggestionClick(state.suggestions[index]) },
-                            label = { Text(state.suggestions[index], fontSize = 12.sp) },
-                            shape = RoundedCornerShape(16.dp),
+                            label = { Text(state.suggestions[index], style = MaterialTheme.typography.labelMedium) },
                             colors = SuggestionChipDefaults.suggestionChipColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                             ),
@@ -561,18 +564,13 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
                 Icon(
                     Icons.Default.AccountCircle,
                     contentDescription = "AI 助手",
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(18.dp),
                 )
             }
         }
         Card(
-            shape = RoundedCornerShape(
-                topStart = 18.dp,
-                topEnd = 18.dp,
-                bottomStart = if (isUser) 18.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 18.dp,
-            ),
+            shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(
                 containerColor = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             ),
@@ -591,7 +589,7 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
                 message.traceId?.let { traceId ->
                     Spacer(Modifier.height(8.dp))
                     Surface(
-                        shape = RoundedCornerShape(6.dp),
+                        shape = MaterialTheme.shapes.extraSmall,
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                     ) {
                         Row(
@@ -602,7 +600,7 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
                             Icon(
                                 Icons.Default.CheckCircle,
                                 contentDescription = null,
-                                tint = Color(0xFF10B981),
+                                tint = LocalBankSemanticColors.current.riskGreen,
                                 modifier = Modifier.size(12.dp),
                             )
                             Text(
@@ -640,19 +638,9 @@ private fun ApprovalCard(
             remainingSeconds -= 1
         }
     }
-    Card(
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isRed) Color(0xFFFFF1F0) else Color(0xFFFFFBEB),
-        ),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (isRed) Color(0xFFFCA5A5) else Color(0xFFFCD34D),
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val riskColors = LocalBankSemanticColors.current
+    BankSectionCard(outlined = true) {
+        Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -660,14 +648,14 @@ private fun ApprovalCard(
                 Icon(
                     if (isRed) Icons.Default.Warning else Icons.Default.Info,
                     contentDescription = null,
-                    tint = if (isRed) Color(0xFFDC2626) else Color(0xFFD97706),
+                    tint = if (isRed) riskColors.riskRed else riskColors.riskYellow,
                     modifier = Modifier.size(22.dp),
                 )
                 Text(
                     text = if (isRed) "红色风险：必须完成服务端多因子认证" else "黄色风险：请确认本次操作",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = if (isRed) Color(0xFF991B1B) else Color(0xFF92400E),
+                    color = if (isRed) riskColors.riskRed else riskColors.riskYellow,
                 )
             }
             Text(
@@ -676,8 +664,7 @@ private fun ApprovalCard(
                 fontWeight = FontWeight.Medium,
             )
             Surface(
-                shape = RoundedCornerShape(6.dp),
-                color = (if (isRed) Color(0xFFFEE2E2) else Color(0xFFFEF3C7)),
+                color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
                 Text(
                     text = "审批编号 ${approval.approvalId} · " +
@@ -695,7 +682,6 @@ private fun ApprovalCard(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_OTP),
                 )
                 if (!canPromptBiometric) {
@@ -711,8 +697,8 @@ private fun ApprovalCard(
                     Button(
                         onClick = onBiometricApprove,
                         enabled = !busy && canPromptBiometric && otp.length >= 6,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                        shape = MaterialTheme.shapes.small,
+                        colors = ButtonDefaults.buttonColors(containerColor = riskColors.riskRed),
                         modifier = Modifier.testTag(UiTags.APPROVAL_APPROVE),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -724,14 +710,13 @@ private fun ApprovalCard(
                     Button(
                         onClick = onApprove,
                         enabled = !busy,
-                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.testTag(UiTags.APPROVAL_APPROVE),
                     ) { Text("确认执行") }
                 }
                 OutlinedButton(
                     onClick = onReject,
                     enabled = !busy,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.small,
                     modifier = Modifier.testTag(UiTags.APPROVAL_REJECT),
                 ) { Text("取消操作") }
             }
@@ -757,11 +742,8 @@ private fun RiskQuizPanel(
     onGiveUp: () -> Unit,
 ) {
     val question = quiz.currentQuestion ?: return
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    BankSectionCard(modifier = Modifier.fillMaxWidth().padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xxs)) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -783,7 +765,7 @@ private fun RiskQuizPanel(
                 Surface(
                     onClick = { onAnswer(question, option.key) },
                     enabled = !busy,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -831,17 +813,15 @@ private fun InputRow(
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
-                placeholder = { Text("例如：给李四转 300 元 / 查一下余额", fontSize = 14.sp) },
+                placeholder = { Text("例如：给李四转 300 元 / 查一下余额", style = MaterialTheme.typography.bodyMedium) },
                 modifier = Modifier
                     .weight(1f)
                     .testTag(UiTags.CHAT_INPUT),
                 maxLines = 3,
-                shape = RoundedCornerShape(22.dp),
             )
             Button(
                 onClick = onSend,
                 enabled = enabled,
-                shape = RoundedCornerShape(22.dp),
                 modifier = Modifier
                     .height(48.dp)
                     .testTag(UiTags.CHAT_SEND),
@@ -887,7 +867,7 @@ private fun DevicePanel(
                 Text("没有已注册的设备。", style = MaterialTheme.typography.bodyMedium)
             }
             devices.forEach { device ->
-                Card(Modifier.fillMaxWidth()) {
+                BankSectionCard(outlined = true) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -957,7 +937,7 @@ private fun TaskPanel(
                 Text("当前没有任务。", style = MaterialTheme.typography.bodyMedium)
             }
             tasks.forEach { task ->
-                Card(Modifier.fillMaxWidth()) {
+                BankSectionCard(outlined = true) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),

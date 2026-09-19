@@ -4,8 +4,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.dp
 
 // Modern fintech & banking design system palette:
 // Deep royal navy, high-tech cobalt, secure emerald, risk alert pigments, and glassmorphic surfaces.
@@ -61,6 +68,26 @@ private val DarkColors = darkColorScheme(
     tertiary = Color(0xFFFCD34D),
 )
 
+private val BankTypography = Typography(
+    displaySmall = TextStyle(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold),
+    headlineSmall = TextStyle(fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.Bold),
+    titleLarge = TextStyle(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold),
+    titleMedium = TextStyle(fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
+    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
+    bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 16.sp),
+    labelLarge = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
+    labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium),
+)
+
+private val BankShapes = Shapes(
+    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+    small = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    large = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+)
+
 @Composable
 fun BankAgentTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -68,7 +95,12 @@ fun BankAgentTheme(
 ) {
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
-        content = content,
-    )
+        typography = BankTypography,
+        shapes = BankShapes,
+    ) {
+        CompositionLocalProvider(
+            LocalBankSemanticColors provides bankSemanticColors(darkTheme),
+            content = content,
+        )
+    }
 }
-

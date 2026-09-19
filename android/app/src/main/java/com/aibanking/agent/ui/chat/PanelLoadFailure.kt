@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.components.BankSectionCard
+import com.aibanking.agent.ui.theme.BankSpacing
 
 /**
  * “加载失败”占位，代替面板的空状态。
@@ -23,10 +25,13 @@ import com.aibanking.agent.ui.UiTags
  */
 @Composable
 internal fun PanelLoadFailure(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+    BankSectionCard(
+        modifier = modifier.fillMaxWidth().padding(vertical = BankSpacing.xs),
+        outlined = true,
+    ) {
+      Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(BankSpacing.xxs),
     ) {
         Text(
             "加载失败：$message",
@@ -34,5 +39,6 @@ internal fun PanelLoadFailure(message: String, onRetry: () -> Unit, modifier: Mo
             color = MaterialTheme.colorScheme.error,
         )
         TextButton(onClick = onRetry, modifier = Modifier.testTag(UiTags.PANEL_RETRY)) { Text("重试") }
+    }
     }
 }
