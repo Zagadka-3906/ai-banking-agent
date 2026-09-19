@@ -126,6 +126,30 @@ class LoginAndChatUiTest {
     }
 
     @Test
+    fun login_enters_chat_before_optional_device_bootstrap_finishes() {
+        ui.waitUntil(timeoutMillis = LOGIN_TIMEOUT_MS) {
+            ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty() ||
+                ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty()
+        }
+        if (ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty()) {
+            ui.onNodeWithTag(UiTags.LOGOUT).performClick()
+            ui.waitUntil(timeoutMillis = LOGIN_TIMEOUT_MS) {
+                ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().size == 1
+            }
+        }
+
+        ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performTextInput(DEMO_PASSWORD)
+        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performClick()
+
+        // Device enrollment and FCM token acquisition continue in the
+        // background. A valid session must navigate immediately instead of
+        // requiring a process restart to restore the persisted credential.
+        ui.waitUntil(timeoutMillis = 10_000L) {
+            ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().size == 1
+        }
+    }
+
+    @Test
     fun a_read_only_turn_returns_a_verified_reply_with_structured_facts() {
         ensureLoggedIn()
         val before = visibleTraceIds()

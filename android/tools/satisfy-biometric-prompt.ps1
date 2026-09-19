@@ -78,7 +78,7 @@ $seen = $false
 while ((Get-Date) -lt $deadline) {
     $focus = Get-FocusedWindow
     $realWindow = $focus -and $focus -match 'Window\{' -and $focus -notmatch 'mCurrentFocus=null'
-    if ($realWindow -and $focus -notmatch [regex]::Escape($Package) -and $focus -notmatch 'nexuslauncher|Launcher') {
+    if ($realWindow -and $focus -notmatch [regex]::Escape($Package) -and $focus -notmatch 'nexuslauncher|Launcher|googlequicksearchbox') {
         $seen = $true
         Write-Host "  prompt detected: $focus" -ForegroundColor Yellow
         break

@@ -3,6 +3,7 @@ package com.aibanking.agent.push
 import android.content.Context
 import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.FirebaseMessaging
+import java.util.concurrent.TimeUnit
 
 /**
  * Whether this build can actually receive push notifications.
@@ -37,7 +38,10 @@ object PushNotifications {
         if (!isConfigured(context)) return null
         return runCatching {
             val task = FirebaseMessaging.getInstance().token
-            com.google.android.gms.tasks.Tasks.await(task)
+            // Some vendor builds can leave Play Services token acquisition
+            // pending indefinitely. Push is optional, so it must have a hard
+            // deadline and must never hold the signed-in UI hostage.
+            com.google.android.gms.tasks.Tasks.await(task, 10, TimeUnit.SECONDS)
         }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 }

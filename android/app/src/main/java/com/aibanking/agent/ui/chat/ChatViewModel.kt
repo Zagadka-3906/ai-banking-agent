@@ -321,14 +321,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val session = login.login(principal, password, otp)
                 sessionToken = session.sessionToken
                 sessionStore.saveSession(session.sessionToken, session.userId, conversationId)
-                // Registering the device key is what makes the red tier usable.
-                // A failure here is reported but does not block login: green and
-                // yellow operations need no device key at all.
-                val enrolled = enrollDevice(session.sessionToken, session.userId)
-                // Notifications can only be addressed to an enrolled device, and
-                // only once a Firebase project is configured - an unconfigured
-                // build simply registers nothing here.
-                if (enrolled) registerPushToken(session.sessionToken, session.userId)
+                // A valid banking session is enough to enter the app. Device-key
+                // enrollment and FCM are optional post-login work: on some real
+                // devices Play Services can take seconds (or never answer), and
+                // awaiting it here left the login form spinning even though the
+                // session had already been persisted. A process restart then
+                // restored that session, which made the symptom look random.
                 _state.update {
                     it.copy(
                         busy = false,
@@ -339,14 +337,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         authenticated = true,
                         messages = listOf(welcome()),
                         otpRequiredAtLogin = false,
-                        notice = if (enrolled) {
-                            "会话有效期 ${session.ttlSeconds} 秒；本机设备已注册"
-                        } else {
-                            "会话已建立，但本机设备未注册：红色风险操作暂不可用"
-                        },
+                        notice = "会话有效期 ${session.ttlSeconds} 秒；正在初始化本机安全能力",
                     )
                 }
                 persistMessages()
+                initializeDeviceAfterLogin(session.sessionToken, session.userId)
             } catch (failure: GatewayException) {
                 _state.update {
                     it.copy(
@@ -361,7 +356,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun enrollDevice(token: String, principal: String): Boolean = try {
+    /** Complete red-tier and push setup without blocking the successful login. */
+    private fun initializeDeviceAfterLogin(token: String, principal: String) {
+        viewModelScope.launch {
+            val enrolledDeviceId = enrollDevice(token, principal)
+            // Logout or a second login may have replaced this session while the
+            // network/Keystore work was running. Never repopulate cleared local
+            // state, nor publish a notice for another principal.
+            if (sessionToken != token || !_state.value.authenticated || _state.value.principal != principal) {
+                return@launch
+            }
+            if (enrolledDeviceId == null) {
+                _state.update { it.copy(notice = "会话已建立，但本机设备未注册：红色风险操作暂不可用") }
+                return@launch
+            }
+            deviceId = enrolledDeviceId
+            sessionStore.saveDeviceId(enrolledDeviceId)
+            _state.update { it.copy(notice = "本机设备已注册，高风险操作可用") }
+            // Notifications are best-effort and have their own bounded wait.
+            // Their availability must not affect navigation or red-tier setup.
+            registerPushToken(enrolledDeviceId, token, principal)
+        }
+    }
+
+    private suspend fun enrollDevice(token: String, principal: String): String? = try {
         val label = "${Build.MANUFACTURER} ${Build.MODEL}".trim().ifBlank { "Android 设备" }
         // Keystore 读取/首次生成密钥都会阻塞，放到 IO 上；主线程只负责状态。
         val spki = withContext(Dispatchers.IO) { deviceKeys.publicKeySpkiBase64() }
@@ -371,11 +389,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             sessionToken = token,
             label = label,
         )
-        deviceId = device.deviceId
-        sessionStore.saveDeviceId(device.deviceId)
-        true
+        device.deviceId.takeIf { it.isNotBlank() }
     } catch (failure: Exception) {
-        false
+        null
     }
 
     /**
@@ -386,8 +402,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * no token to register, and inventing one would make the server's delivery
      * log claim something that cannot happen.
      */
-    private suspend fun registerPushToken(sessionToken: String, principal: String) = withContext(Dispatchers.IO) {
-        val device = deviceId ?: return@withContext
+    private suspend fun registerPushToken(device: String, sessionToken: String, principal: String) = withContext(Dispatchers.IO) {
         val token = PushNotifications.currentToken(getApplication()) ?: return@withContext
         runCatching { devices.registerPushToken(device, token, principal, sessionToken) }
         Unit

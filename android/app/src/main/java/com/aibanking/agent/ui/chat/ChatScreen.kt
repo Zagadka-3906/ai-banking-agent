@@ -10,9 +10,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,26 +23,47 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -49,6 +73,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -56,6 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.DeviceView
@@ -80,7 +107,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
 
-    // 卡片页优先级最高：与旧版“后写的覆盖层在最上面”的绘制顺序一致。
+    // 页面状态映射
     val page = when {
         state.showCards -> AppPage.CARDS
         state.showWealth -> AppPage.WEALTH
@@ -88,27 +115,46 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         else -> AppPage.CHAT
     }
 
-    // 顶层页面切换：聊天 ↔ 卡片/理财/联系人，3D 立方体翻页转场——页面进出
-    // 本身零动画，旋转/透视/暗角全部由 cubeFlip 按各页进度驱动。
-    // 预测性返回：覆盖页上滑返回时整层跟手缩放/圆角，露出的聊天页视差推入；
-    // 只有越过提交阈值才真正关闭覆盖页，取消则弹回原位。
-    PredictiveBackPreview(
-        enabled = page != AppPage.CHAT,
-        onBack = viewModel::dismissPanels,
-        beneath = { ChatHome(state, viewModel, activity, listState, snackbar) },
-    ) {
-        AnimatedContent(
-            targetState = page,
-            transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
-            modifier = Modifier.fillMaxSize(),
-            label = "appPage",
-        ) { current ->
-            Box(Modifier.fillMaxSize().cubeFlip(this)) {
-                when (current) {
-                    AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, snackbar)
-                    AppPage.CARDS -> CardsUi(state, viewModel)
-                    AppPage.WEALTH -> WealthUi(state, viewModel)
-                    AppPage.CONTACTS -> ContactsUi(state, viewModel)
+    // 主骨架：屏幕底部常驻现代化 NavigationBar
+    Scaffold(
+        bottomBar = {
+            BankBottomNavigation(
+                currentPage = page,
+                onSelectPage = { targetPage ->
+                    when (targetPage) {
+                        AppPage.CHAT -> viewModel.dismissPanels()
+                        AppPage.CARDS -> viewModel.openCards()
+                        AppPage.WEALTH -> viewModel.openWealth()
+                        AppPage.CONTACTS -> viewModel.openContacts()
+                    }
+                },
+            )
+        },
+    ) { outerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = outerPadding.calculateBottomPadding()),
+        ) {
+            PredictiveBackPreview(
+                enabled = page != AppPage.CHAT,
+                onBack = viewModel::dismissPanels,
+                beneath = { ChatHome(state, viewModel, activity, listState, snackbar) },
+            ) {
+                AnimatedContent(
+                    targetState = page,
+                    transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+                    modifier = Modifier.fillMaxSize(),
+                    label = "appPage",
+                ) { current ->
+                    Box(Modifier.fillMaxSize().cubeFlip(this)) {
+                        when (current) {
+                            AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, snackbar)
+                            AppPage.CARDS -> CardsUi(state, viewModel)
+                            AppPage.WEALTH -> WealthUi(state, viewModel)
+                            AppPage.CONTACTS -> ContactsUi(state, viewModel)
+                        }
+                    }
                 }
             }
         }
@@ -134,6 +180,130 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
 }
 
 /**
+ * 屏幕下端现代化导航栏 (Bottom Navigation Bar)。
+ *
+ * 采用 Material 3 标准规范，支持触控缩放、胶囊高亮背景，并绑定 UiTags 兼容自动化测试。
+ */
+@Composable
+private fun BankBottomNavigation(
+    currentPage: AppPage,
+    onSelectPage: (AppPage) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 8.dp,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        NavigationBar(
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+            modifier = Modifier.height(68.dp),
+        ) {
+            NavigationBarItem(
+                selected = currentPage == AppPage.CHAT,
+                onClick = { onSelectPage(AppPage.CHAT) },
+                icon = {
+                    Icon(
+                        Icons.Default.Home,
+                        contentDescription = "智能助手",
+                        modifier = Modifier.size(24.dp),
+                    )
+                },
+                label = {
+                    Text(
+                        "助手",
+                        fontSize = 12.sp,
+                        fontWeight = if (currentPage == AppPage.CHAT) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                ),
+            )
+
+            NavigationBarItem(
+                selected = currentPage == AppPage.CARDS,
+                onClick = { onSelectPage(AppPage.CARDS) },
+                icon = {
+                    Icon(
+                        Icons.Default.AccountBox,
+                        contentDescription = "我的卡包",
+                        modifier = Modifier.size(24.dp),
+                    )
+                },
+                label = {
+                    Text(
+                        "卡包",
+                        fontSize = 12.sp,
+                        fontWeight = if (currentPage == AppPage.CARDS) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                ),
+                modifier = Modifier.testTag(UiTags.OPEN_CARDS),
+            )
+
+            NavigationBarItem(
+                selected = currentPage == AppPage.WEALTH,
+                onClick = { onSelectPage(AppPage.WEALTH) },
+                icon = {
+                    Icon(
+                        Icons.Default.Star,
+                        contentDescription = "财富管理",
+                        modifier = Modifier.size(24.dp),
+                    )
+                },
+                label = {
+                    Text(
+                        "理财",
+                        fontSize = 12.sp,
+                        fontWeight = if (currentPage == AppPage.WEALTH) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                ),
+                modifier = Modifier.testTag(UiTags.OPEN_WEALTH),
+            )
+
+            NavigationBarItem(
+                selected = currentPage == AppPage.CONTACTS,
+                onClick = { onSelectPage(AppPage.CONTACTS) },
+                icon = {
+                    Icon(
+                        Icons.Default.Person,
+                        contentDescription = "常用联系人",
+                        modifier = Modifier.size(24.dp),
+                    )
+                },
+                label = {
+                    Text(
+                        "联系人",
+                        fontSize = 12.sp,
+                        fontWeight = if (currentPage == AppPage.CONTACTS) FontWeight.Bold else FontWeight.Normal,
+                    )
+                },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                ),
+                modifier = Modifier.testTag(UiTags.OPEN_CONTACTS),
+            )
+        }
+    }
+}
+
+
+/**
  * 聊天主页本体。会话列表滚动位置与 Snackbar 状态放在 [ChatScreen] 根上，
  * 访问覆盖页返回后不丢失。
  */
@@ -149,7 +319,12 @@ private fun ChatHome(
     // Keep the newest bubble in view.  A LazyColumn does not follow appended
     // items on its own, so without this the answer to a question scrolls in
     // below the fold and the user sees nothing happen.
-    LaunchedEffect(state.messages.size, state.pending) {
+    LaunchedEffect(
+        state.messages.size,
+        state.pending,
+        state.messages.lastOrNull()?.text,
+        state.messages.lastOrNull()?.traceId,
+    ) {
         val itemCount = state.messages.size + if (state.pending != null) 1 else 0
         if (itemCount > 0) {
             listState.animateScrollToItem(itemCount - 1)
@@ -167,30 +342,98 @@ private fun ChatHome(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("AI 银行助手") },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.primary,
+                                            MaterialTheme.colorScheme.secondary,
+                                        )
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Column {
+                            Text(
+                                "安言 AI 银行",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF10B981))
+                                )
+                                Text(
+                                    "风控就绪 · 确定性沙箱",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                },
                 actions = {
-                    TextButton(
-                        onClick = viewModel::openCards,
-                        modifier = Modifier.testTag(UiTags.OPEN_CARDS),
-                    ) { Text("卡片") }
-                    TextButton(
-                        onClick = viewModel::openWealth,
-                        modifier = Modifier.testTag(UiTags.OPEN_WEALTH),
-                    ) { Text("理财") }
                     TextButton(
                         onClick = viewModel::openTasks,
                         modifier = Modifier.testTag(UiTags.OPEN_TASKS),
-                    ) { Text("任务") }
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Text("任务", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
                     TextButton(
                         onClick = viewModel::openDevices,
                         modifier = Modifier.testTag(UiTags.OPEN_DEVICES),
-                    ) { Text("设备") }
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Text("设备", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
                     TextButton(
-                        onClick = viewModel::openContacts,
-                        modifier = Modifier.testTag(UiTags.OPEN_CONTACTS),
-                    ) { Text("联系人") }
-                    TextButton(onClick = viewModel::logout) { Text("退出") }
+                        onClick = viewModel::logout,
+                        modifier = Modifier.testTag(UiTags.LOGOUT),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ExitToApp,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                            Text(
+                                "退出",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -207,8 +450,8 @@ private fun ChatHome(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(state.messages) { message ->
                     MessageBubble(message, Modifier.verificationFrost(redVerification))
@@ -239,8 +482,16 @@ private fun ChatHome(
                 }
             }
             if (state.busy) {
-                Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 2.5.dp,
+                    )
                 }
             }
             // 逐题风险测评：固定出现在输入框上端，点选即进下一题。
@@ -259,12 +510,16 @@ private fun ChatHome(
                         .fillMaxWidth()
                         .verificationFrost(redVerification),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 ) {
                     items(state.suggestions.size) { index ->
                         SuggestionChip(
                             onClick = { viewModel.onSuggestionClick(state.suggestions[index]) },
-                            label = { Text(state.suggestions[index]) },
+                            label = { Text(state.suggestions[index], fontSize = 12.sp) },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            ),
                         )
                     }
                 }
@@ -287,28 +542,77 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
+        if (!isUser) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 4.dp, end = 8.dp)
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.secondary,
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.AccountCircle,
+                    contentDescription = "AI 助手",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
         Card(
+            shape = RoundedCornerShape(
+                topStart = 18.dp,
+                topEnd = 18.dp,
+                bottomStart = if (isUser) 18.dp else 4.dp,
+                bottomEnd = if (isUser) 4.dp else 18.dp,
+            ),
             colors = CardDefaults.cardColors(
                 containerColor = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             ),
-            modifier = Modifier.fillMaxWidth(0.92f),
+            elevation = CardDefaults.cardElevation(defaultElevation = if (isUser) 1.dp else 3.dp),
+            modifier = Modifier.fillMaxWidth(if (isUser) 0.85f else 0.88f),
         ) {
-            Column {
+            Column(Modifier.padding(12.dp)) {
                 Text(
                     text = message.text,
-                    modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodyMedium,
+                    color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                 )
                 // Structured facts (balances, category totals, anomaly flags,
                 // the task DAG, the birthday memo) render below the prose.
                 ResultExtras(message.result)
                 message.traceId?.let { traceId ->
-                    Text(
-                        text = "链路编号 $traceId",
-                        modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(12.dp),
+                            )
+                            Text(
+                                text = "链路编号 $traceId",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -337,64 +641,104 @@ private fun ApprovalCard(
         }
     }
     Card(
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isRed) Color(0xFFFFDAD6) else Color(0xFFFFE0B2),
+            containerColor = if (isRed) Color(0xFFFFF1F0) else Color(0xFFFFFBEB),
         ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (isRed) Color(0xFFFCA5A5) else Color(0xFFFCD34D),
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    if (isRed) Icons.Default.Warning else Icons.Default.Info,
+                    contentDescription = null,
+                    tint = if (isRed) Color(0xFFDC2626) else Color(0xFFD97706),
+                    modifier = Modifier.size(22.dp),
+                )
+                Text(
+                    text = if (isRed) "红色风险：必须完成服务端多因子认证" else "黄色风险：请确认本次操作",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isRed) Color(0xFF991B1B) else Color(0xFF92400E),
+                )
+            }
             Text(
-                text = if (isRed) "红色风险：必须完成服务端多因子认证" else "黄色风险：请确认本次操作",
-                style = MaterialTheme.typography.titleSmall,
+                approval.summary,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
             )
-            Text(approval.summary, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                text = "审批编号 ${approval.approvalId} · " +
-                    if (remainingSeconds > 0) "剩余 $remainingSeconds 秒" else "已超时，请重新发起操作",
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-            )
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = (if (isRed) Color(0xFFFEE2E2) else Color(0xFFFEF3C7)),
+            ) {
+                Text(
+                    text = "审批编号 ${approval.approvalId} · " +
+                        if (remainingSeconds > 0) "剩余 $remainingSeconds 秒" else "已超时，请重新发起操作",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
             if (isRed) {
                 OutlinedTextField(
                     value = otp,
                     onValueChange = onOtpChange,
-                    label = { Text("短信验证码") },
+                    label = { Text("短信验证码（测试码：888888）") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_OTP),
                 )
                 if (!canPromptBiometric) {
                     Text(
-                        "本设备既未录入生物识别，也未设置锁屏凭据，无法完成红色风险操作。",
+                        "本设备未录入生物识别凭据，无法完成红色风险强验证。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (isRed) {
                     Button(
                         onClick = onBiometricApprove,
                         enabled = !busy && canPromptBiometric && otp.length >= 6,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
                         modifier = Modifier.testTag(UiTags.APPROVAL_APPROVE),
-                    ) { Text("用生物识别签名并执行") }
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text("生物识别签名并执行")
+                        }
+                    }
                 } else {
                     Button(
                         onClick = onApprove,
                         enabled = !busy,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.testTag(UiTags.APPROVAL_APPROVE),
                     ) { Text("确认执行") }
                 }
                 OutlinedButton(
                     onClick = onReject,
                     enabled = !busy,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.testTag(UiTags.APPROVAL_REJECT),
                 ) { Text("取消操作") }
             }
             Text(
-                "确认由核心银行服务端校验；客户端无法自行完成资金变更。",
+                "确认由核心银行服务端原子校验与记账；客户端不持有任何写账特权。",
                 style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -471,23 +815,50 @@ private fun InputRow(
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     modifier: Modifier = Modifier,
-) {    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shadowElevation = 8.dp,
+        modifier = modifier.fillMaxWidth(),
     ) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            placeholder = { Text("例如：给李四转 300 元") },
-            modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT),
-            maxLines = 3,
-            shape = RoundedCornerShape(12.dp),
-        )
-        Button(onClick = onSend, enabled = enabled, modifier = Modifier.testTag(UiTags.CHAT_SEND)) { Text("发送") }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                placeholder = { Text("例如：给李四转 300 元 / 查一下余额", fontSize = 14.sp) },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag(UiTags.CHAT_INPUT),
+                maxLines = 3,
+                shape = RoundedCornerShape(22.dp),
+            )
+            Button(
+                onClick = onSend,
+                enabled = enabled,
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier
+                    .height(48.dp)
+                    .testTag(UiTags.CHAT_SEND),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text("发送", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
 

@@ -14,6 +14,7 @@ object UiTags {
 
     const val CHAT_INPUT = "chat_input"
     const val CHAT_SEND = "chat_send"
+    const val LOGOUT = "logout"
 
     const val OPEN_DEVICES = "open_devices"
     const val OPEN_TASKS = "open_tasks"

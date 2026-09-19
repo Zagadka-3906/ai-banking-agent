@@ -51,10 +51,18 @@ internal fun ComposeContentTestRule.ensureLoggedIn(password: String, timeoutMs: 
  * card never appeared", which points at the wrong thing entirely.
  */
 internal fun ComposeContentTestRule.sendChatMessage(text: String) {
-    onNodeWithTag(UiTags.CHAT_INPUT).performTextInput(text)
-    repeat(2) {
-        onNodeWithTag(UiTags.CHAT_SEND).performClick()
-        if (runCatching { waitUntil(timeoutMillis = 5_000) { inputCleared() } }.isSuccess) return
+    waitForIdle()
+    repeat(3) {
+        val typed = runCatching {
+            waitForIdle()
+            onNodeWithTag(UiTags.CHAT_INPUT).performTextInput(text)
+        }.isSuccess
+        if (typed) {
+            repeat(3) {
+                onNodeWithTag(UiTags.CHAT_SEND).performClick()
+                if (runCatching { waitUntil(timeoutMillis = 5_000) { inputCleared() } }.isSuccess) return
+            }
+        }
     }
     throw AssertionError("the app never accepted the message; the input field still holds it")
 }

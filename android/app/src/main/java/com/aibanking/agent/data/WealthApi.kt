@@ -41,6 +41,7 @@ data class ManagerView(
     val title: String? = null,
     @SerializedName("managed_scale_billion") val managedScaleBillion: Double? = null,
     @SerializedName("annualized_yield_pct") val annualizedYieldPct: Double? = null,
+    @SerializedName("tenure_return_pct") val tenureReturnPct: Double? = null,
     @SerializedName("avatar_url") val avatarUrl: String? = null,
 )
 
@@ -53,6 +54,8 @@ data class TopHoldingView(
     val name: String = "",
     val category: String? = null,
     val percentage: Double? = null,
+    val code: String? = null,
+    @SerializedName("daily_change_pct") val dailyChangePct: Double? = null,
 )
 
 /**
@@ -90,6 +93,13 @@ data class ProductView(
     @SerializedName("established_at") val establishedAt: String? = null,
     @SerializedName("scale_billion") val scaleBillion: Double? = null,
     @SerializedName("manager_company") val managerCompany: String? = null,
+    @SerializedName("custodian") val custodian: String? = null,
+    @SerializedName("fund_type") val fundType: String? = null,
+    @SerializedName("dividend_mode") val dividendMode: String? = null,
+    @SerializedName("original_fee_rate") val originalFeeRate: Double? = null,
+    @SerializedName("discount_fee_rate") val discountFeeRate: Double? = null,
+    @SerializedName("rating_agency") val ratingAgency: String? = null,
+    @SerializedName("award_title") val awardTitle: String? = null,
     @SerializedName("purchase_rule") val purchaseRule: String? = null,
     @SerializedName("redemption_rule") val redemptionRule: String? = null,
     @SerializedName("confirm_time") val confirmTime: String? = null,
