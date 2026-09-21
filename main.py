@@ -86,7 +86,14 @@ app = FastAPI(
     description="银行 AI 智能体受控沙箱环境（含分级权限与审计）",
     version="2.0.0",
 )
-_cors_origins = [origin.strip() for origin in os.getenv("BANK_CORS_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501").split(",") if origin.strip()]
+_cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "BANK_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8501,http://127.0.0.1:8501",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,

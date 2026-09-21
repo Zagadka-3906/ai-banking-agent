@@ -45,7 +45,10 @@ app = FastAPI(
 
 _cors_origins = [
     origin.strip()
-    for origin in os.getenv("BANK_CORS_ORIGINS", "http://localhost:8501,http://127.0.0.1:8501").split(",")
+    for origin in os.getenv(
+        "BANK_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8501,http://127.0.0.1:8501",
+    ).split(",")
     if origin.strip()
 ]
 app.add_middleware(
