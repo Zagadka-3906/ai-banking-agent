@@ -129,6 +129,9 @@ class ContactRepository(private val api: ContactApi) {
 
     companion object {
         fun create(baseUrl: String = BuildConfig.CORE_BASE_URL): ContactRepository {
+            if (BuildConfig.STANDALONE_MODE) {
+                return ContactRepository(com.aibanking.agent.data.standalone.StandaloneBank.contactApi)
+            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)

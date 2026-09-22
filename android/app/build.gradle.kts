@@ -14,6 +14,10 @@ plugins {
 // app/src/main/java/com/aibanking/agent/push/PushNotifications.kt.
 val googleServicesConfig = file("google-services.json")
 val scenarioTests = providers.gradleProperty("bankScenarioTests").orNull == "true"
+// A normal APK is self-contained: it uses the on-device mock ledger and agent
+// instead of assuming a developer machine is listening on 10.0.2.2.  Pass
+// -PbankStandalone=false only when explicitly testing the Android/IM backend.
+val standaloneMode = if (scenarioTests) false else providers.gradleProperty("bankStandalone").orNull != "false"
 if (googleServicesConfig.exists() && !scenarioTests) {
     apply(plugin = libs.plugins.google.services.get().pluginId)
     logger.lifecycle("google-services.json found: Firebase push is enabled for this build.")
@@ -55,6 +59,7 @@ android {
         // resolvedEndpoint above).
         buildConfigField("String", "GATEWAY_BASE_URL", "\"$gatewayUrl\"")
         buildConfigField("String", "CORE_BASE_URL", "\"$coreUrl\"")
+        buildConfigField("boolean", "STANDALONE_MODE", standaloneMode.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -74,6 +79,7 @@ android {
             matchingFallbacks += listOf("debug")
             buildConfigField("String", "GATEWAY_BASE_URL", "\"http://127.0.0.1:18810/\"")
             buildConfigField("String", "CORE_BASE_URL", "\"http://127.0.0.1:18800/\"")
+            buildConfigField("boolean", "STANDALONE_MODE", "false")
         }
     }
     testBuildType = if (scenarioTests) "scenario" else "debug"

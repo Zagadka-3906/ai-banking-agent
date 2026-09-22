@@ -36,7 +36,11 @@ import java.net.URL
  * exercises the parts that only compiling cannot prove - the Compose tree, the
  * streaming client, the Keystore enrolment and the approval flow.
  *
- * Requirements (they are integration tests, not unit tests):
+ * The normal debug build is self-contained and needs only an emulator. For the
+ * optional network build (`-PbankStandalone=false`), the integration services
+ * must be reachable on 10.0.2.2.
+ *
+ * Network-mode-only requirements:
  *
  *  * the banking stack running on the host, reachable as 10.0.2.2:8000 (core)
  *    and 10.0.2.2:8100 (gateway);
@@ -156,11 +160,15 @@ class LoginAndChatUiTest {
         // there too.
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { moneyIsVisible() }
 
-        // ...and the core must be able to answer for the id the app shows.  That
-        // is what "one audit trace across app and core" means in practice: the
-        // correlation id survives the channel hop and still resolves.
-        val trace = fetchCoreTrace(traceId)
-        assertTrue("core trace for $traceId was: $trace", trace.contains("BALANCE_QUERY"))
+        if (BuildConfig.STANDALONE_MODE) {
+            // A local_ id proves this result was produced inside the APK. The
+            // structured amount above proves the local ledger result rendered.
+            assertTrue("unexpected standalone trace id: $traceId", traceId.startsWith("local_"))
+        } else {
+            // In network mode the same id must resolve in the Core audit chain.
+            val trace = fetchCoreTrace(traceId)
+            assertTrue("core trace for $traceId was: $trace", trace.contains("BALANCE_QUERY"))
+        }
     }
 
     @Test

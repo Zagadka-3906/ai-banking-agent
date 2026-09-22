@@ -80,7 +80,7 @@
 
 ## 录制前检查清单
 
-- 双击根目录 `start-emulator.bat`；脚本会重新构建当前 Android 源码、检查并启动 Core 与 Gateway、覆盖安装 APK 后打开应用。构建或安装失败时不会打开旧版本。
+- 双击根目录 `start-emulator.bat`；脚本会重新构建无需电脑后端的独立 APK、覆盖安装后打开应用。需要演示服务端或 IM 协同时使用 `start-emulator.bat -NetworkMode`，此时才会检查并启动 Core 与 Gateway。构建或安装失败时不会打开旧版本。
 - 如需分开启动，先运行 `.\.venv\Scripts\python.exe -m uvicorn main:app --port 8000` 与 `.\.venv\Scripts\python.exe -m uvicorn agent_api:app --port 8100`，再从 Android Studio 或 Gradle 安装 Debug APK。
 - 确认 `DEEPSEEK_API_KEY` 通过安全环境变量注入；不要把 `.env` 或密钥录入视频。
 - 如演示 IM，仅在进程环境临时注入 `BANK_IM_PROVIDER_SECRETS=provider=<随机测试值>`，录制画面只显示 provider 名称，不显示 secret；演示结束后清除。

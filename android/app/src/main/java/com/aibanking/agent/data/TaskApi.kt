@@ -82,6 +82,9 @@ class TaskRepository(private val api: TaskApi) {
 
     companion object {
         fun create(baseUrl: String = BuildConfig.CORE_BASE_URL): TaskRepository {
+            if (BuildConfig.STANDALONE_MODE) {
+                return TaskRepository(com.aibanking.agent.data.standalone.StandaloneBank.taskApi)
+            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)

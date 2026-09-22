@@ -158,6 +158,9 @@ class AgentRepository(
         private const val DATA_PREFIX = "data:"
 
         fun create(baseUrl: String = BuildConfig.GATEWAY_BASE_URL): AgentRepository {
+            if (BuildConfig.STANDALONE_MODE) {
+                return AgentRepository(com.aibanking.agent.data.standalone.StandaloneBank.agentApi)
+            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 // A turn runs an LLM call plus a core precheck, so it is slower

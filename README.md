@@ -1,6 +1,6 @@
 # 安言：Android 与 IM 银行智能体沙箱
 
-> 当前仓库只交付 Android 原生客户端和签名 IM webhook。两条渠道共享同一个 Agent 网关、同一套业务编排与同一个 Mock Core 记账边界。
+> Android 默认产出无需连接电脑后端的独立 APK；签名 IM webhook 与 Android 联网联调模式继续使用 Agent 网关和 Mock Core。
 
 [![Backend](https://img.shields.io/badge/Backend-FastAPI-green.svg)](https://fastapi.tiangolo.com/)
 [![Orchestration](https://img.shields.io/badge/Orchestration-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
@@ -12,7 +12,8 @@
 
 | 层 | 主要文件 | 职责 |
 | --- | --- | --- |
-| Android 客户端 | `android/` | 登录、SSE 对话、快捷建议、确认卡、OTP、BiometricPrompt、Android Keystore P-256 签名、结果页与推送 |
+| Android 独立版 | `android/` | 应用内 Mock 账户、确定性对话编排、卡片/理财/订阅/联系人/任务持久化、确认卡、OTP、BiometricPrompt 与 Android Keystore P-256 验签 |
+| Android 联网版 | `android/` + `-PbankStandalone=false` | 复用相同 UI，通过 HTTPS/SSE 连接网关与 Core，用于 IM 协同和服务端联调 |
 | IM 渠道 | `im_webhook.py` | 已登录会话签发绑定码；校验 provider HMAC、时间戳和事件编号；拒绝过期与重放事件 |
 | Agent 网关 | `agent_api.py`、`conversation.py` | 校验 Core 会话、隔离渠道会话、持久化 checkpoint、审批句柄、SSE 终态协议 |
 | 编排与策略 | `agent.py`、`planner.py`、`scheduler.py` | 意图白名单、槽位回填、风险路由、LangGraph 中断恢复、任务 DAG 与到期执行 |
@@ -36,13 +37,18 @@ Agent 会处理模糊表达、省略上下文和多轮回指。例如“钱都�
 
 ```mermaid
 flowchart LR
-    A[Android App] -->|登录会话 + HTTPS/SSE| G[Agent Gateway :8100]
+    A[Android 默认独立 APK] --> O[应用内 Agent 与 Mock Core]
+    O --> L[(应用私有 Mock 账本)]
+    O --> K[审批 / 审计链 / Keystore 验签]
+    N[Android 联网构建] -->|登录会话 + HTTPS/SSE| G[Agent Gateway :8100]
     I[签名 IM Provider] -->|HMAC webhook| G
     G --> P[LangGraph / Planner]
-    P -->|只通过 HTTP| C[Mock Core :8000]
-    C --> L[(Mock Ledger)]
-    C --> S[审计 / 熔断 / 设备信任根]
+    P --> C[Mock Core :8000]
 ```
+
+独立版和联网版使用同一套 Android API 契约与界面。独立版把确定性业务引擎、虚构账户事实和授权执行器放进 APK，并把状态保存在应用私有目录，因此拔掉电脑服务后仍可登录、对话和办理完整演示流程。它不会连接真实银行、调用在线模型或提供公网 IM webhook；IM 本身仍需要可访问的服务端。
+
+联网 Android 与 IM 的服务端边界如下：
 
 1. 客户端先调用 `POST /api/v1/auth/login`，之后以 `X-Session-Token` 访问网关。网关每次都回 Core 校验会话，客户端自报的 `X-User-Id` 不能替代凭证。
 2. Green 查询可直接执行；Yellow 操作需要明确确认；Red 操作还需要 OTP 与已登记 Android 设备对一次性 challenge 的 P-256 签名。
@@ -50,7 +56,7 @@ flowchart LR
 4. Core 在执行前再次校验主体、金额、收款人、余额、卡状态、风险级别、TTL、单次性和幂等键。Agent 文本不能构成授权，也不能作为交易成功证据。
 5. IM 可以查询、澄清和发起流程；需要确认或 MFA 时必须回到 Android/API 完成，IM webhook 不能代替用户授权。
 
-更完整的设计见 [架构说明](docs/architecture.md)、[安全自评](docs/security-self-assessment.md) 和 [设备验收](docs/device-verification.md)。
+更完整的设计见 [独立 APK 说明](docs/standalone-apk.md)、[架构说明](docs/architecture.md)、[安全自评](docs/security-self-assessment.md) 和 [设备验收](docs/device-verification.md)。
 
 ## 本地运行
 
@@ -62,7 +68,7 @@ py -3.12 -m venv .venv
 Copy-Item .env.example .env
 ```
 
-`.env` 只用于本机，不能提交。Android/网关必须通过口令登录取得会话。内置沙箱账户 `user_zhang`、`user_li`、`user_wife` 的本地测试口令为 `Bank@2026`；它们只用于虚构数据演示。
+`.env` 只用于本机，不能提交。内置沙箱账户 `user_zhang`、`user_li`、`user_wife` 的测试口令为 `Bank@2026`；它们只用于虚构数据演示。默认独立 APK 不需要 Python、Docker 或 `.env`。
 
 分别启动 Core 与网关：
 
@@ -81,7 +87,7 @@ Compose 只包含 `core` 与 `gateway` 两个服务，并默认要求登录会�
 
 ## 构建并打开最新 Android 版本
 
-项目根目录的一键脚本每次都会先从当前源码重新构建 APK，再检查后端、启动或复用 `bankagent` 模拟器、覆盖安装并打开应用。构建或安装失败时不会继续打开旧 APK。
+项目根目录的一键脚本每次都会从当前源码构建独立 APK，启动或复用 `bankagent` 模拟器、覆盖安装并打开应用。默认不检查或启动电脑后端；构建或安装失败时不会继续打开旧 APK。
 
 ```powershell
 .\start-emulator.bat
@@ -89,14 +95,22 @@ Compose 只包含 `core` 与 `gateway` 两个服务，并默认要求登录会�
 .\start-emulator.bat -Offline
 ```
 
+需要联调 IM/网关/Core 时显式使用联网模式；此时脚本才会检查并启动两个电脑后端：
+
+```powershell
+.\start-emulator.bat -NetworkMode
+```
+
 分步构建：
 
 ```powershell
 cd android
 .\gradlew.bat --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+# 联网变体
+.\gradlew.bat --no-daemon :app:assembleDebug -PbankStandalone=false
 ```
 
-Debug APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。设备密钥由 Android Keystore 生成，私钥不会离开设备；服务端仅保存公钥。
+Debug APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。独立版默认把公钥登记到应用内安全引擎，联网版登记到 Core；两种模式的设备私钥都由 Android Keystore 生成且不会离开设备。
 
 ## IM 渠道
 

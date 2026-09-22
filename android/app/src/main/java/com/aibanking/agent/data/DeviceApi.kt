@@ -162,6 +162,9 @@ class DeviceRepository(private val api: DeviceApi) {
 
     companion object {
         fun create(baseUrl: String = BuildConfig.CORE_BASE_URL): DeviceRepository {
+            if (BuildConfig.STANDALONE_MODE) {
+                return DeviceRepository(com.aibanking.agent.data.standalone.StandaloneBank.deviceApi)
+            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)

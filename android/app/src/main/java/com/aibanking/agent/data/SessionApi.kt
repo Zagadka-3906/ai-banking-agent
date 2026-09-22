@@ -130,6 +130,9 @@ class LoginRepository(private val api: SessionApi) {
 
     companion object {
         fun create(baseUrl: String = BuildConfig.CORE_BASE_URL): LoginRepository {
+            if (BuildConfig.STANDALONE_MODE) {
+                return LoginRepository(com.aibanking.agent.data.standalone.StandaloneBank.sessionApi)
+            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 // argon2 verification costs tens of milliseconds by design; the

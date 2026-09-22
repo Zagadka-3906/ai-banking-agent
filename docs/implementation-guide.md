@@ -1,6 +1,8 @@
 # 从 Mock Core 到 Android/IM 参赛版：实施指南
 
-> 当前仓库只交付 Android 原生客户端与签名 IM webhook；两者共享渠道网关、Agent 编排和 Mock Core。
+> Android 默认使用应用内演示引擎；签名 IM webhook 与 Android 联网构建共享渠道网关、Agent 编排和 Mock Core。
+
+Android 默认构建为自包含演示沙箱：`StandaloneBank` 实现和 Retrofit 相同的 API 接口，并在应用私有目录维护虚构账户状态。使用 `-PbankStandalone=false` 才切换为下述服务端边界；签名 IM 始终属于服务端模式，因为 webhook 必须能被 provider 访问。
 
 ## 1. 固定基线
 
@@ -11,7 +13,7 @@
 
 ## 2. 保持唯一记账边界
 
-账户、流水、卡片、订阅和任务状态只在 `main.py` 变更。Android、IM、网关和 Agent 不能导入或直接修改账本对象。所有写操作走“预检 → 授权 → 执行”：
+在联网/IM 模式中，账户、流水、卡片、订阅和任务状态只在 `main.py` 变更，Android、IM、网关和 Agent 不能导入或直接修改账本对象。独立 APK 的等价边界是 `StandaloneBank`，界面层只能通过 API 接口访问它。两种模式的所有写操作都走“预检 → 授权 → 执行”：
 
 ```text
 POST /risk/precheck[/operation|/lock|/unlock]
@@ -28,7 +30,7 @@ POST /transfers/execute 或 /operations/execute
 
 ## 4. 建立真实会话和设备验证
 
-Android 必须通过 `/auth/login` 获取会话。网关收到 `X-Session-Token` 后回 Core 校验，不能信任裸 `X-User-Id`。红区设备因子使用 Android Keystore P-256 密钥：登录后登记公钥，BiometricPrompt 后对 Core 一次性 challenge 签名。服务端不接受 `face_verified` 布尔值或共享客户端密钥。
+联网 Android 必须通过 `/auth/login` 获取会话；独立版由应用内会话接口签发本地 token。网关收到 `X-Session-Token` 后回 Core 校验，不能信任裸 `X-User-Id`。红区设备因子使用 Android Keystore P-256 密钥：登录后登记公钥，BiometricPrompt 后对一次性 challenge 签名。任一模式都不接受 `face_verified` 布尔值或共享客户端密钥。
 
 IM 只能绑定一个已登录会话。Provider webhook 必须验证 HMAC、时间窗和事件编号；事件体自带的用户标识一律忽略。确认和 MFA 回 Android/API 完成。
 
@@ -68,7 +70,7 @@ cd android
 .\gradlew.bat --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-随后运行根目录 `start-emulator.bat`，确认脚本从当前源码构建、覆盖安装并打开应用。按 [设备验收](device-verification.md) 完成登录、查询、Yellow 确认、Red 设备签名、登出和推送验证；按 IM 测试覆盖绑定、签名、过期、重放、未知 provider 与审批回流。
+随后运行根目录 `start-emulator.bat`，确认脚本从当前源码构建独立 APK、覆盖安装并打开应用。按 [设备验收](device-verification.md) 完成断开电脑后端时的登录、查询、Yellow 确认、Red 设备签名和登出；推送与 IM 验证使用 `start-emulator.bat -NetworkMode`，并覆盖绑定、签名、过期、重放、未知 provider 与审批回流。
 
 参赛交付同时维护 [架构说明](architecture.md)、[安全自评](security-self-assessment.md)、[自然语言评测](agent-natural-language-evaluation.md)、[安全评测](agent-security-evaluation.md)、[演示脚本](demo-script.md) 和 [答辩提纲](答辩提纲.md)。
 

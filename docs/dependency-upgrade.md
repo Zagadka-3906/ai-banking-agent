@@ -1,6 +1,6 @@
 # 依赖与安全升级记录
 
-> 当前仓库只交付 Android 原生客户端与签名 IM webhook；Python 依赖仅服务 Core、渠道网关、Agent、IM、安全与测试，Android 依赖由 Gradle 管理。
+> 当前仓库交付独立/联网两种 Android 构建与签名 IM webhook；独立 APK 不需要 Python 运行时，Python 依赖仅服务 Core、渠道网关、Agent、IM、安全与测试，Android 依赖由 Gradle 管理。
 
 ## 1. Python 运行依赖
 

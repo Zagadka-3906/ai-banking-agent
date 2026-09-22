@@ -8,13 +8,13 @@
 
 ## 一键启动当前源码的最新版
 
-完成工具链和 Python 虚拟环境配置后，双击项目根目录的 `start-emulator.bat`。脚本会依次构建当前源码的 Debug APK、检查并启动两个后端、启动或复用 `bankagent` 模拟器、覆盖安装 APK，再重启应用。每次都执行 Gradle 构建；构建或安装失败会停止，不会继续打开旧 APK。覆盖安装保留应用数据与设备密钥。
+完成 Android 工具链配置后，双击项目根目录的 `start-emulator.bat`。脚本会构建当前源码的独立 Debug APK、启动或复用 `bankagent` 模拟器、覆盖安装 APK，再重启应用；它不需要 Python 虚拟环境，也不启动电脑后端。每次都执行 Gradle 构建；构建或安装失败会停止，不会继续打开旧 APK。覆盖安装保留应用数据与设备密钥。
 
-模拟器设置了 PIN 时，请在窗口中解锁，脚本会等待解锁完成后继续。启动与解锁各自默认最多等待 180 秒。后台服务与模拟器日志保存在 `build/quick-start/`，构建日志显示在启动窗口中。
+模拟器设置了 PIN 时，请在窗口中解锁，脚本会等待解锁完成后继续。启动与解锁各自默认最多等待 180 秒。模拟器日志保存在 `build/quick-start/`，构建日志显示在启动窗口中。
 
-依赖已缓存且需要离线启动时，可在项目根目录执行 `./start-emulator.bat -Offline`；这只关闭 Gradle 联网，仍会构建当前源码。其他模拟器可用 `-AvdName 名称` 指定，慢速设备可用 `-BootTimeoutSeconds 300` 延长等待。以下章节保留分步骤验收方式。
+依赖已缓存且需要完全离线构建时，可在项目根目录执行 `./start-emulator.bat -Offline`；这会关闭 Gradle 联网并继续构建独立 APK。其他模拟器可用 `-AvdName 名称` 指定，慢速设备可用 `-BootTimeoutSeconds 300` 延长等待。需要验证原有服务端链路时使用 `./start-emulator.bat -NetworkMode`，只有这个模式会启动 Core 与 Gateway。以下后端章节仅适用于联网模式。
 
-## 1. 先起后端
+## 1. 联网模式：先起后端
 
 设备上的 App 连的是宿主机，模拟器里对应 `10.0.2.2`。
 

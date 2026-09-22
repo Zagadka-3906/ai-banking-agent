@@ -2,6 +2,7 @@ package com.aibanking.agent.ui.chat
 
 import android.app.Application
 import android.os.Build
+import com.aibanking.agent.BuildConfig
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibanking.agent.data.CardView
@@ -420,6 +421,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * log claim something that cannot happen.
      */
     private suspend fun registerPushToken(device: String, sessionToken: String, principal: String) = withContext(Dispatchers.IO) {
+        if (BuildConfig.STANDALONE_MODE) return@withContext
         val token = PushNotifications.currentToken(getApplication()) ?: return@withContext
         runCatching { devices.registerPushToken(device, token, principal, sessionToken) }
         Unit

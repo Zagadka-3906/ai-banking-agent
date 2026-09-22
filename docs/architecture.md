@@ -1,6 +1,6 @@
 # Android 与 IM 渠道架构
 
-> 当前仓库只交付 Android 原生客户端与签名 IM webhook；两者共享渠道网关、Agent 编排和 Mock Core。
+> Android 默认以独立 APK 运行；签名 IM webhook 与 Android 联网构建共享渠道网关、Agent 编排和 Mock Core。
 
 ## 1. 分层
 
@@ -15,7 +15,10 @@
 
 ```mermaid
 flowchart LR
-    A[Android App] -->|X-Session-Token / SSE| G[Agent Gateway :8100]
+    A[Android 独立 APK] --> O[StandaloneBank]
+    O --> L[(应用私有 Mock 状态)]
+    O --> K[本地审批 / 审计 / 验签]
+    AN[Android 联网构建] -->|X-Session-Token / SSE| G[Agent Gateway :8100]
     I[IM Provider] -->|HMAC signed webhook| G
     G --> C[Conversation Service]
     C --> P[Intent + Policy + LangGraph]
@@ -24,6 +27,10 @@ flowchart LR
     B --> D[(Device public keys)]
     B --> U[(Audit chain)]
 ```
+
+默认构建的 `BuildConfig.STANDALONE_MODE=true`。各 Repository 仍依赖 `AgentApi`、`SessionApi`、`CardsApi` 等接口，但实现改由 `StandaloneBank` 提供；联网构建把同一接口交给 Retrofit。这个边界让 Compose 页面、审批 UI 和结果渲染在两种模式下保持一致。
+
+独立引擎只处理仓库内定义的虚构数据：会话、Mock 余额、联系人、银行卡、订阅、持仓与任务写入应用私有 SharedPreferences；短时审批和一次性 challenge 只保留在进程内。红区仍要求 OTP、BiometricPrompt 和已登记 Android Keystore 公钥的 ECDSA 签名。清除应用数据会重置整个演示沙箱。
 
 Docker Compose 只启动 Core 和 Gateway。
 

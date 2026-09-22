@@ -6,12 +6,16 @@
 .EXAMPLE
     .\start-emulator.bat -Offline
     Use cached Gradle dependencies; the app is still rebuilt from current sources.
+.EXAMPLE
+    .\start-emulator.bat -NetworkMode
+    Build the backend-connected variant and start Core/Gateway for integration testing.
 #>
 [CmdletBinding()]
 param(
     [string]$AvdName = 'bankagent',
     [ValidateRange(30, 900)][int]$BootTimeoutSeconds = 180,
-    [switch]$Offline
+    [switch]$Offline,
+    [switch]$NetworkMode
 )
 
 $ErrorActionPreference = 'Stop'
@@ -123,7 +127,8 @@ try {
     Write-Host '[2/5] Building the latest app from current sources...'
     Push-Location $androidRoot
     try {
-        $gradleArgs = @(':app:assembleDebug', '--console=plain',
+        $standalone = if ($NetworkMode) { 'false' } else { 'true' }
+        $gradleArgs = @(':app:assembleDebug', '--console=plain', "-PbankStandalone=$standalone",
             '-PbankCoreUrl=http://10.0.2.2:8000/', '-PbankGatewayUrl=http://10.0.2.2:8100/')
         if ($Offline) { $gradleArgs += '--offline' }
         & '.\gradlew.bat' @gradleArgs
@@ -131,9 +136,13 @@ try {
     } finally { Pop-Location }
     if (-not (Test-Path -LiteralPath $apk)) { throw "Build output missing: $apk" }
 
-    Write-Host '[3/5] Checking backend services...'
-    Start-Backend 'main' 8000 'mock-banking-core'
-    Start-Backend 'agent_api' 8100 'banking-agent-gateway'
+    if ($NetworkMode) {
+        Write-Host '[3/5] Checking backend services for network mode...'
+        Start-Backend 'main' 8000 'mock-banking-core'
+        Start-Backend 'agent_api' 8100 'banking-agent-gateway'
+    } else {
+        Write-Host '[3/5] Standalone mode: no computer backend is needed.'
+    }
 
     Write-Host "[4/5] Starting or reusing emulator $AvdName..."
     & $adb start-server
@@ -189,7 +198,8 @@ try {
     if ($launch -match '(?im)^Error' -or $launch -notmatch '(?m)^Status: ok\s*$') {
         throw 'The updated app could not be opened. Check the emulator screen.'
     }
-    Write-Host "`nLatest app built, installed and launched successfully." -ForegroundColor Green
+    $mode = if ($NetworkMode) { 'network integration' } else { 'standalone' }
+    Write-Host "`nLatest $mode app built, installed and launched successfully." -ForegroundColor Green
     Write-Host "APK: $apk"
     Write-Host "Logs: $logDir"
     exit 0

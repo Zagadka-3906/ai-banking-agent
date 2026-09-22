@@ -138,6 +138,9 @@ class CardsRepository(private val api: CardsApi) {
 
     companion object {
         fun create(baseUrl: String = BuildConfig.CORE_BASE_URL): CardsRepository {
+            if (BuildConfig.STANDALONE_MODE) {
+                return CardsRepository(com.aibanking.agent.data.standalone.StandaloneBank.cardsApi)
+            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)
