@@ -9,6 +9,7 @@ import pytest
 
 import sandbox
 from test_agent_gateway import gateway  # noqa: F401
+from support import login_session
 
 
 @pytest.mark.parametrize("expression", [
@@ -47,6 +48,7 @@ def test_shared_nested_values_cannot_amplify_total_serialized_size():
 
 def test_execution_rejection_audit_does_not_include_expression_or_account_data(monkeypatch):
     import security
+
     events = []
     monkeypatch.setattr(security, "audit_event", lambda *args, **kwargs: events.append((args, kwargs)))
     with pytest.raises(sandbox.SandboxError):
@@ -125,7 +127,7 @@ def test_gateway_bill_sandbox_audit_is_bound_to_verified_subject_and_server_requ
 
     client, core = gateway
     monkeypatch.setattr(agent, "llm", None)
-    token = core.post("/api/v1/auth/session", json={"user_id": "user_zhang"}).json()["session_token"]
+    token = login_session(core)
     response = client.post("/api/v1/agent/messages", json={
         "text": "分析本月账单", "conversation_id": "sandbox-audit-link",
     }, headers={"X-Session-Token": token, "X-User-Id": "user_li", "X-Request-Id": "forged-client-chain"})
@@ -143,7 +145,7 @@ def test_core_bill_sandbox_audit_keeps_verified_subject_and_analysis_request(gat
     import security
 
     _, core = gateway
-    token = core.post("/api/v1/auth/session", json={"user_id": "user_zhang"}).json()["session_token"]
+    token = login_session(core)
     request_id = "direct-core-sandbox-analysis"
     response = core.get("/api/v1/accounts/user_zhang/bill-analysis", headers={
         "X-Session-Token": token, "X-User-Id": "user_li", "X-Request-Id": request_id,

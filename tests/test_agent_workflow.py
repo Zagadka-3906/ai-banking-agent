@@ -14,7 +14,7 @@ from langgraph.types import Command
 
 import agent
 import main
-import security
+from support import sign_face_attestation
 
 
 def _approve_red(wired, token: str) -> str:
@@ -24,7 +24,7 @@ def _approve_red(wired, token: str) -> str:
     assert wired.post("/api/v1/auth/confirm", json={}, headers=headers).status_code == 200
     challenge = wired.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=headers)
     assert challenge.status_code == 200, challenge.text
-    attestation = security.sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    attestation = sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
     mfa = wired.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=headers)
     assert mfa.status_code == 200, mfa.text
     return mfa.json()["mfa_proof"]
@@ -77,7 +77,7 @@ def test_agent_run_links_core_decision_chain(wired):
     token = snapshot.values["auth_token"]
     request_id = snapshot.values["request_id"]
     assert request_id
-    # The web channel resumes with the request id from the interrupt payload;
+    # The channel resumes with the request id from the interrupt payload;
     # do the same here so confirmation shares the same chain.
     confirm = wired.post("/api/v1/auth/confirm", json={}, headers={"X-User-Id": "user_zhang", "X-Auth-Token": token, "X-Request-Id": request_id})
     assert confirm.status_code == 200

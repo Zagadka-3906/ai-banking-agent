@@ -7,7 +7,6 @@ env
 __pycache__
 *.pyc
 .env
-.streamlit
 # docker compose 的只读挂载源：放进去的是 firebase 服务账号私钥。镜像会被构建、
 # 缓存、拉取，而 COPY . . 会把构建上下文整个搬进去——私钥不能出现在任何一层里。
 secrets

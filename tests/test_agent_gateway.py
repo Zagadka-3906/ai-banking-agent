@@ -29,6 +29,7 @@ import agent  # noqa: E402
 import conversation  # noqa: E402
 import main  # noqa: E402
 import security  # noqa: E402
+from support import login_session, sign_face_attestation
 from bank_tools import BankAPIError  # noqa: E402
 
 os.environ.setdefault("BANK_DEMO_MODE", "1")
@@ -36,6 +37,7 @@ os.environ.setdefault("BANK_DEMO_MODE", "1")
 # Every session credential the graph handed to the core during a test.  The
 # fixture clears it; ``fake_http`` fills it.
 FORWARDED_SESSIONS: list = []
+GATEWAY_SESSIONS: dict[str, str] = {}
 
 
 class _CoreClient:
@@ -101,7 +103,7 @@ class _CoreClient:
             self._raise(response)
         return response.json()
 
-    def verify_mfa(self, auth_token, *, otp, face_attestation=None, face_verified=None, request_id=None):
+    def verify_mfa(self, auth_token, *, otp, face_attestation=None, request_id=None):
         body = {"otp": otp}
         if face_attestation:
             body["face_attestation"] = face_attestation
@@ -131,6 +133,9 @@ def gateway(monkeypatch):
     FORWARDED_SESSIONS.clear()
 
     core = TestClient(main.app)
+    GATEWAY_SESSIONS.clear()
+    for user_id in ("user_zhang", "user_li", "user_wife"):
+        GATEWAY_SESSIONS[user_id] = login_session(core, user_id)
 
     def fake_http(method, path, *, state, json_body=None, headers=None):
         # Mirror the real ``agent._http`` contract: both the request id from
@@ -165,11 +170,12 @@ def gateway(monkeypatch):
     yield TestClient(agent_api.app), core
 
     conversation.SERVICE.reset()
+    GATEWAY_SESSIONS.clear()
     main.reset_state()
 
 
 def _headers(principal: str = "user_zhang"):
-    return {"X-User-Id": principal}
+    return {"X-User-Id": principal, "X-Session-Token": GATEWAY_SESSIONS[principal]}
 
 
 def _send(client, text, *, conversation_id, message_id=None, principal="user_zhang"):
@@ -184,7 +190,7 @@ def _send(client, text, *, conversation_id, message_id=None, principal="user_zha
 # -- green ----------------------------------------------------------------
 
 
-def test_green_turn_completes_without_any_credential(gateway):
+def test_green_turn_completes_through_authenticated_gateway(gateway):
     client, _ = gateway
     envelope = _send(client, "查一下余额", conversation_id="c-green")
     assert envelope["status"] == "COMPLETED"
@@ -268,7 +274,7 @@ def test_red_approval_settles_with_otp_and_device_attestation(gateway):
     challenge = client.post(f"/api/v1/agent/approvals/{approval_id}/face-challenge", json={}, headers=_headers())
     assert challenge.status_code == 200, challenge.text
     challenge_body = challenge.json()
-    attestation = security.sign_face_attestation(
+    attestation = sign_face_attestation(
         challenge_body["challenge_id"],
         user_id="user_zhang",
         token_jti=challenge_body["auth_token_jti"],
@@ -366,11 +372,8 @@ def test_conversation_id_cannot_address_another_principals_thread(gateway):
         conversation.conversation_thread_id("user_zhang", "../../etc/passwd")
 
 
-def test_missing_identity_is_refused(gateway, monkeypatch):
+def test_missing_identity_is_refused(gateway):
     client, _ = gateway
-    import agent_api
-
-    monkeypatch.setattr(agent_api, "_demo_identity_allowed", lambda: False)
     response = client.post("/api/v1/agent/messages", json={"text": "查余额", "conversation_id": "c-anon"})
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "AUTHENTICATION_REQUIRED"
@@ -380,9 +383,7 @@ def test_missing_identity_is_refused(gateway, monkeypatch):
 
 
 def _session_token(core: TestClient, user_id: str) -> str:
-    response = core.post("/api/v1/auth/session", json={"user_id": user_id})
-    assert response.status_code == 200, response.text
-    return response.json()["session_token"]
+    return login_session(core, user_id)
 
 
 def test_a_session_credential_alone_authenticates_the_caller(gateway):
@@ -500,7 +501,7 @@ def test_red_chain_covers_challenge_and_mfa(gateway):
     envelope = _send(client, "给李四转 2000 元", conversation_id="c-audit-red")
     approval_id = envelope["approval"]["approval_id"]
     challenge = client.post(f"/api/v1/agent/approvals/{approval_id}/face-challenge", json={}, headers=_headers()).json()
-    attestation = security.sign_face_attestation(
+    attestation = sign_face_attestation(
         challenge["challenge_id"], user_id="user_zhang", token_jti=challenge["auth_token_jti"]
     )
     resolved = client.post(

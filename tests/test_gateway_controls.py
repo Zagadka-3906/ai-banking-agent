@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 import main
 import security
+from support import login_session
 
 
 @pytest.fixture()
@@ -33,10 +34,7 @@ def client(monkeypatch):
 
 
 def _session(client: TestClient, user_id: str = "user_zhang") -> str:
-    issued = client.post("/api/v1/auth/session", json={"user_id": user_id})
-    assert issued.status_code == 200, issued.text
-    assert issued.json()["user_id"] == user_id
-    return issued.json()["session_token"]
+    return login_session(client, user_id)
 
 
 def test_session_token_authenticates_reads_without_identity_header(client: TestClient):

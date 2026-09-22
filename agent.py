@@ -2908,8 +2908,8 @@ def route_after_human_review(state: BankingAgentState) -> str:
 def build_graph(checkpointer: Any = None) -> Any:
     """Compile the banking agent graph against an explicit checkpointer.
 
-    ``agent.app`` - the module-level graph used by the Streamlit demo and the
-    unit tests - keeps the in-process :class:`MemorySaver`.  A channel service
+    ``agent.app`` - the module-level graph used by unit tests and local
+    evaluators - keeps the in-process :class:`MemorySaver`.  A channel service
     that must survive a restart, or that has to answer an approval arriving on
     a *later* HTTP request (possibly served by another worker), injects a
     durable checkpointer instead.  See ``conversation.py``.

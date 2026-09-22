@@ -17,9 +17,6 @@ __pycache__/
 .env
 *.key
 
-# Streamlit 缓存
-.streamlit/
-
 # 会话检查点（渠道网关）：本地运行产物，不入库
 agent_conversations.sqlite3*
 *.sqlite3-shm

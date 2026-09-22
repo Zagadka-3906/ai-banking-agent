@@ -9,7 +9,6 @@ services:
       BANK_DEMO_MODE: ${BANK_DEMO_MODE:-1}
       BANK_MFA_TEST_OTP: ${BANK_MFA_TEST_OTP:-888888}
       BANK_MFA_OTP: ${BANK_MFA_OTP:-}
-      BANK_FACE_ATTEST_SECRET: ${BANK_FACE_ATTEST_SECRET:-demo-face-attest-secret-change-me}
       BANK_FACE_CHALLENGE_TTL_SECONDS: ${BANK_FACE_CHALLENGE_TTL_SECONDS:-60}
       BANK_REQUIRE_CLIENT_AUTH: ${BANK_REQUIRE_CLIENT_AUTH:-1}
       BANK_ADMIN_AUDIT_TOKEN: ${BANK_ADMIN_AUDIT_TOKEN:-}
@@ -28,7 +27,6 @@ services:
       BANK_AUTH_TOKEN_MAX_RECORDS: ${BANK_AUTH_TOKEN_MAX_RECORDS:-20000}
       BANK_IDEMPOTENCY_TTL_SECONDS: ${BANK_IDEMPOTENCY_TTL_SECONDS:-86400}
       BANK_IDEMPOTENCY_MAX_RECORDS: ${BANK_IDEMPOTENCY_MAX_RECORDS:-10000}
-      BANK_CORS_ORIGINS: ${BANK_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
       # Push delivery (server half).  This is the *in-container* path; the key is
       # bind-mounted read-only from ./secrets below.  With no key present the
       # server degrades honestly: /api/v1/security/health reports
@@ -61,10 +59,10 @@ services:
       timeout: 5s
       retries: 5
 
-  # Channel gateway: the HTTP surface a native client (the Android app) drives
-  # the agent through.  It owns conversations, durable checkpoints and the
-  # server-side approval registry; it never touches the ledger itself, and it
-  # never hands a signed nonce or an MFA proof to a client.
+  # Channel gateway: the HTTP surface for the Android app and signed IM
+  # webhook. It owns conversations, durable checkpoints and the server-side
+  # approval registry; it never touches the ledger itself or hands a signed
+  # nonce or an MFA proof to a channel.
   gateway:
     build: .
     command: uvicorn agent_api:app --host 0.0.0.0 --port 8100
@@ -83,49 +81,15 @@ services:
       BANK_APPROVAL_TTL_SECONDS: ${BANK_APPROVAL_TTL_SECONDS:-110}
       BANK_AGENT_RATE_LIMIT_PER_MINUTE: ${BANK_AGENT_RATE_LIMIT_PER_MINUTE:-60}
       BANK_HTTP_TIMEOUT_SECONDS: ${BANK_HTTP_TIMEOUT_SECONDS:-8}
-      BANK_CORS_ORIGINS: ${BANK_CORS_ORIGINS:-http://localhost:8501,http://127.0.0.1:8501}
-      # Only meaningful until the login milestone lands: in demo mode a bare
-      # X-User-Id is accepted because no credential exists yet.  Turn it off
-      # together with switching the deployment to session-only writes.
-      BANK_DEMO_MODE: ${BANK_DEMO_MODE:-1}
+      # Empty means no IM provider is accepted. Inject provider=secret pairs
+      # through the deployment environment or secret manager.
+      BANK_IM_PROVIDER_SECRETS: ${BANK_IM_PROVIDER_SECRETS:-}
     ports:
       - "8100:8100"
     volumes:
       - agent-conversations:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=3)"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      core:
-        condition: service_healthy
-
-  web:
-    build: .
-    command: streamlit run web_app.py --server.address 0.0.0.0 --server.port 8501
-    environment:
-      BANK_API_BASE: http://core:8000/api/v1
-      BANK_DEMO_USER_ID: user_zhang
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      BANK_DEMO_MODE: ${BANK_DEMO_MODE:-1}
-      # The Streamlit process signs face challenges on behalf of the simulated
-      # device SDK; it must share the same attestation key as the core.
-      BANK_FACE_ATTEST_SECRET: ${BANK_FACE_ATTEST_SECRET:-demo-face-attest-secret-change-me}
-      BANK_FACE_CHALLENGE_TTL_SECONDS: ${BANK_FACE_CHALLENGE_TTL_SECONDS:-60}
-      BANK_HTTP_TIMEOUT_SECONDS: ${BANK_HTTP_TIMEOUT_SECONDS:-8}
-      BANK_SANDBOX_TIMEOUT_SECONDS: ${BANK_SANDBOX_TIMEOUT_SECONDS:-1.5}
-      BANK_SANDBOX_MAX_EXPRESSION: ${BANK_SANDBOX_MAX_EXPRESSION:-1000}
-      BANK_SANDBOX_MAX_INPUT_BYTES: ${BANK_SANDBOX_MAX_INPUT_BYTES:-200000}
-      BANK_SANDBOX_MAX_RESULT_BYTES: ${BANK_SANDBOX_MAX_RESULT_BYTES:-200000}
-    ports:
-      - "8501:8501"
-    # The Dockerfile healthcheck targets the Core API on port 8000.  This
-    # service runs Streamlit instead, so override it to avoid reporting the
-    # UI container as permanently unhealthy.
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5

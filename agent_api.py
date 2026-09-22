@@ -1,6 +1,6 @@
 """Channel gateway: the HTTP surface a native client drives the agent through.
 
-This is the service the Android app (and later the IM adapters) talk to.  It is
+This is the service the Android app and signed IM adapter talk to.  It is
 deliberately *thin*: it authenticates the caller, derives the principal, and
 forwards the turn to :mod:`conversation`; all policy, risk classification,
 authorization and ledger work stays in the core banking API.
@@ -30,7 +30,6 @@ from typing import Any, Iterator, Optional
 from fastapi import FastAPI, Header, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -45,21 +44,6 @@ app = FastAPI(
     version="1.0.0",
 )
 
-_cors_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "BANK_CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8501,http://127.0.0.1:8501",
-    ).split(",")
-    if origin.strip()
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-User-Id", "X-Session-Token", "X-Request-Id", "Idempotency-Key", "X-IM-Provider", "X-IM-Timestamp", "X-IM-Event-Id", "X-IM-Signature"],
-)
 app.include_router(im_router)
 
 try:
@@ -71,18 +55,6 @@ except (TypeError, ValueError):
 # per-principal window on top of the core's own limit.
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_STATE: dict[str, dict[str, Any]] = {}
-
-
-def _demo_identity_allowed() -> bool:
-    """Whether a bare ``X-User-Id`` may stand in for a session.
-
-    Only inside ``BANK_DEMO_MODE``.  The real login endpoint arrives with the
-    authentication milestone; until then a local demo must stay runnable
-    without a credential, and that exception must be impossible to enable by
-    accident in a deployment.
-    """
-
-    return os.getenv("BANK_DEMO_MODE", "1").lower() in {"1", "true", "yes", "on"}
 
 
 def _rate_limit_remaining(key: str) -> Optional[int]:
@@ -259,9 +231,6 @@ def principal_for(
             raise ConversationError("会话凭证缺少用户主体", 401, "INVALID_SESSION")
         return principal
 
-    if _demo_identity_allowed() and x_user_id:
-        # Demo-only short cut: no credential exists yet under BANK_DEMO_MODE.
-        return sanitize_text(x_user_id, field="用户标识", max_length=128)
     raise ConversationError("请先完成登录认证", 401, "AUTHENTICATION_REQUIRED")
 
 

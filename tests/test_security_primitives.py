@@ -89,11 +89,11 @@ def test_audit_event_result_is_not_a_live_record():
     assert verify_audit_chain()["valid"]
 
 
-def test_http_client_rejects_non_boolean_mfa_flag():
-    """The transport adapter must not coerce the string ``"false"`` to true."""
+def test_http_client_does_not_expose_legacy_biometric_flag():
+    """Only enrolled-device attestations belong in the client contract."""
 
     client = BankClient(user_id="user_zhang")
-    with pytest.raises(TypeError, match="JSON boolean"):
+    with pytest.raises(TypeError, match="face_verified"):
         client.verify_mfa("token", otp="000000", face_verified="false")  # type: ignore[arg-type]
 
 

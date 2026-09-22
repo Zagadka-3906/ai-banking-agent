@@ -29,7 +29,6 @@ with a session credential rather than an asserted identity header.
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import sys
@@ -45,12 +44,7 @@ try:  # Windows consoles default to a legacy code page; keep the report readable
 except Exception:  # pragma: no cover - older interpreters
     pass
 
-from cryptography.hazmat.primitives import hashes  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat  # noqa: E402
-
-import security  # noqa: E402
-from security import sign_face_attestation  # noqa: E402  (path set up above)
+from scripts.device_signer import DeviceSigner  # noqa: E402
 
 GATEWAY = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8100").rstrip("/")
 CORE = (sys.argv[2] if len(sys.argv) > 2 else "http://127.0.0.1:8000").rstrip("/")
@@ -217,6 +211,8 @@ def main() -> int:
     check("无因子被拒(400)", no_factors.status_code == 400, f"HTTP {no_factors.status_code} {no_factors.text[:160]}")
 
     print("  · 领取人脸挑战并由“设备”签名")
+    signer = DeviceSigner()
+    signer.enroll(CORE, headers(), label="gateway-e2e-probe")
     challenge = requests.post(
         f"{GATEWAY}/api/v1/agent/approvals/{red_id}/face-challenge",
         json={},
@@ -226,7 +222,7 @@ def main() -> int:
     check("挑战获取成功", challenge.status_code == 200, f"HTTP {challenge.status_code} {challenge.text[:200]}")
     challenge_body = challenge.json()
     check("挑战不含 auth_token", "auth_token" not in str(challenge_body).replace("auth_token_jti", ""), str(challenge_body))
-    attestation = sign_face_attestation(
+    attestation = signer.sign(
         challenge_body["challenge_id"],
         user_id=PRINCIPAL,
         token_jti=challenge_body["auth_token_jti"],
@@ -285,124 +281,18 @@ def main() -> int:
         )
         check("跨主体使用句柄被拒(403)", stolen.status_code == 403, f"HTTP {stolen.status_code} {stolen.text[:160]}")
 
-    # -- 6. device-signed red tier (the path a real app takes) ------------
-    #
-    # Steps [3] used the shared-key demo ticket.  This step walks the production
-    # path instead: a session credential, an enrolled P-256 public key, and a
-    # signature over the canonical liveness payload - exactly what
-    # DeviceKeyManager produces on the phone (the private key here lives in the
-    # probe only because there is no Keystore in Python).
-    print("\n[6] 红区（设备签名）：App 的 Keystore 路径")
-    # The session was obtained in step [0]; the device key below stands in for
-    # the Android Keystore, which has no Python equivalent.
-    session_token = SESSION_TOKENS.get(PRINCIPAL)
-    authorized = headers()
-    check("已有可用会话凭证", bool(session_token), "未取得会话")
-
-    device_key = ec.generate_private_key(ec.SECP256R1())
-    spki = base64.b64encode(
-        device_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-    ).decode("ascii")
-    registered = requests.post(
-        f"{CORE}/api/v1/devices/register",
-        json={"public_key": spki, "label": "e2e-probe", "platform": "python", "app_version": "probe"},
-        headers=authorized,
-        timeout=10,
-    )
-    check("设备公钥注册成功", registered.status_code == 200, f"HTTP {registered.status_code} {registered.text[:200]}")
-    registration = registered.json() if registered.status_code == 200 else {}
-    device_id = registration.get("device_id", "")
-    check("注册返回设备指纹", bool(registration.get("fingerprint")), str(registration)[:200])
-
-    print("  · 未带会话凭证的注册必须被拒")
-    unauthenticated = requests.post(
-        f"{CORE}/api/v1/devices/register",
-        json={"public_key": spki},
-        # Deliberately NOT ``headers()``: that helper now attaches the session,
-        # which would defeat the point of this check.
-        headers={"X-User-Id": PRINCIPAL},
-        timeout=10,
-    )
-    check("无会话注册被拒(401)", unauthenticated.status_code == 401, f"HTTP {unauthenticated.status_code}")
-
-    before_device = core_balance()
-    conversation = f"c-{uuid.uuid4().hex[:8]}"
-    device_turn = requests.post(
-        f"{GATEWAY}/api/v1/agent/messages",
-        json={"text": "给李四转 2000 元", "conversation_id": conversation},
-        headers=authorized,
-        timeout=60,
-    )
-    check("会话身份可驱动网关", device_turn.status_code == 200, f"HTTP {device_turn.status_code} {device_turn.text[:200]}")
-    turn_body = device_turn.json() if device_turn.status_code == 200 else {}
-    check("取得红区审批", turn_body.get("status") == "APPROVAL_REQUIRED" and turn_body.get("risk_level") == "RED", str(turn_body)[:200])
-    device_approval = (turn_body.get("approval") or {}).get("approval_id")
-
-    challenge_response = requests.post(
-        f"{GATEWAY}/api/v1/agent/approvals/{device_approval}/face-challenge",
-        json={},
-        headers=authorized,
-        timeout=30,
-    )
-    check("取得人脸挑战", challenge_response.status_code == 200, f"HTTP {challenge_response.status_code} {challenge_response.text[:200]}")
-    challenge_body = challenge_response.json() if challenge_response.status_code == 200 else {}
-    challenge_id = challenge_body.get("challenge_id", "")
-    auth_token_jti = challenge_body.get("auth_token_jti", "")
-
-    # Written out literally, exactly as DeviceKeyManager.canonicalPayload() does
-    # on the phone, so a change to either side of the wire format is caught here
-    # instead of showing up as an unexplained InvalidSignature later.
-    payload_text = f"bank-agent-face-v1|{challenge_id}|{PRINCIPAL}|{auth_token_jti}"
-    check(
-        "探针载荷与服务端范本一致",
-        security.device_facing_payload(challenge_id, PRINCIPAL, auth_token_jti) == payload_text.encode("utf-8"),
-        payload_text,
-    )
-    signature = device_key.sign(payload_text.encode("utf-8"), ec.ECDSA(hashes.SHA256()))
-    envelope = {
-        "device_id": device_id,
-        "challenge_id": challenge_id,
-        "signature": base64.b64encode(signature).decode("ascii"),
-    }
-    device_attestation = security.FACE_ATTESTATION_V2_PREFIX + base64.b64encode(json.dumps(envelope).encode("utf-8")).decode("ascii")
-
-    device_resolved = requests.post(
-        f"{GATEWAY}/api/v1/agent/approvals/{device_approval}",
-        json={"decision": "approve", "otp": OTP, "face_attestation": device_attestation},
-        headers=authorized,
-        timeout=60,
-    )
-    check("设备签名审批成功", device_resolved.status_code == 200, f"HTTP {device_resolved.status_code} {device_resolved.text[:300]}")
-    device_body = device_resolved.json() if device_resolved.status_code == 200 else {}
-    check("状态为 COMPLETED", device_body.get("status") == "COMPLETED", str(device_body.get("status")))
-    after_device = core_balance()
-    check("余额减少 2000", abs((before_device - after_device) - 2000.0) < 0.01, f"{before_device} -> {after_device}")
-
-    print("  · 停用设备")
-    revoked = requests.post(f"{CORE}/api/v1/devices/{device_id}/revoke", headers=authorized, timeout=10)
-    check("设备停用成功", revoked.status_code == 200, f"HTTP {revoked.status_code} {revoked.text[:160]}")
-    listing = requests.get(f"{CORE}/api/v1/devices", headers=authorized, timeout=10)
-    devices = listing.json().get("data", []) if listing.status_code == 200 else []
-    check("设备列表显示已停用", any(item.get("device_id") == device_id and item.get("status") == "REVOKED" for item in devices), str(devices)[:200])
-    check("设备列表不返回密钥材料", "public_key" not in json.dumps(listing.json()), "")
-
-    device_chain = trace_actions(device_body.get("request_id"))
-    print(f"  · 设备签名决策链: {device_chain}")
-    for required in ("RISK_PRECHECK", "MFA_VERIFY", "TRANSFER_EXECUTE"):
-        check(f"设备签名链路包含 {required}", required in device_chain, str(device_chain))
-
-    # -- 7. streamed turn (SSE) -------------------------------------------
+    # -- 6. streamed turn (SSE) -------------------------------------------
     #
     # Read incrementally with stream=True: buffering the whole body first would
     # hide whether the server actually flushes progress, which is the entire
     # point of the endpoint.
-    print("\n[7] 消息流（SSE）：阶段进度与结构化结果")
+    print("\n[6] 消息流（SSE）：阶段进度与结构化结果")
     stream_conversation = f"c-{uuid.uuid4().hex[:8]}"
     frames: list[tuple[str, Any]] = []
     with requests.post(
         f"{GATEWAY}/api/v1/agent/messages/stream",
         json={"text": "查一下余额", "conversation_id": stream_conversation},
-        headers=authorized,
+        headers=headers(),
         stream=True,
         timeout=60,
     ) as response:

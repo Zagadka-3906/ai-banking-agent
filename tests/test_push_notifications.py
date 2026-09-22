@@ -34,6 +34,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import main  # noqa: E402
 import notifications  # noqa: E402
 import security  # noqa: E402
+from support import login_session  # noqa: E402
 
 
 def new_device_key():
@@ -41,9 +42,7 @@ def new_device_key():
 
 
 def session_headers(client: TestClient, user_id: str) -> dict[str, str]:
-    response = client.post("/api/v1/auth/session", json={"user_id": user_id})
-    assert response.status_code == 200, response.text
-    return {"X-User-Id": user_id, "X-Session-Token": response.json()["session_token"]}
+    return {"X-User-Id": user_id, "X-Session-Token": login_session(client, user_id)}
 
 
 def enroll(client: TestClient, headers: dict[str, str]) -> str:

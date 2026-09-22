@@ -9,6 +9,7 @@ import agent_api
 import main
 import security
 from bank_tools import BankAPIError
+from support import login_session
 
 
 @pytest.fixture()
@@ -20,8 +21,8 @@ def boundary(monkeypatch):
     main.reset_state()
     agent_api.RATE_LIMIT_STATE.clear()
     core = TestClient(main.app)
-    token = core.post("/api/v1/auth/session", json={"user_id": "user_zhang"}).json()["session_token"]
-    other_token = core.post("/api/v1/auth/session", json={"user_id": "user_li"}).json()["session_token"]
+    token = login_session(core)
+    other_token = login_session(core, "user_li")
 
     def lookup(session_token, request_id):
         response = core.get("/api/v1/auth/session", headers={"X-Session-Token": session_token, "X-Request-Id": request_id})

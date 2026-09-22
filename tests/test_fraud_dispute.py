@@ -8,7 +8,7 @@ pytest.importorskip("httpx")
 
 import main
 from planner import build_task_plan
-from security import sign_face_attestation
+from support import sign_face_attestation
 
 
 @pytest.fixture()

@@ -1,5 +1,7 @@
 # 5 分钟演示脚本（答辩/录屏）
 
+> 当前仓库只交付 Android 原生客户端与签名 IM webhook；本脚本所有交互均在 Android 模拟器中完成，IM 为可选签名渠道演示。
+
 目标：在 5 分钟内展示“自然语言 → 意图解析 → 分级风控 → 人机确认/MFA → 核心记账 → 可核验结果”的闭环。所有账户和验证码均为沙箱数据。
 
 ## 0. 开场（0:00–0:25）
@@ -34,11 +36,11 @@
 
 输入：`给李四转 2000 元`（若当日累计尚未超过阈值，可先演示一笔 1000 元黄色交易，或在沙箱重置计数）。
 
-预期：风险卡标为 RED，先显示 MFA challenge。故意不完成验证并尝试继续，核心服务应拒绝且余额不变；随后完成短信验证码与设备人脸票据（勾选活体核验后由模拟设备 SDK 对服务端挑战签名），才允许记账。
+预期：风险卡标为 RED，先显示 MFA challenge。故意不完成验证并尝试继续，核心服务应拒绝且余额不变；随后完成短信验证码与 Android BiometricPrompt，由 Keystore 设备密钥对服务端挑战签名，才允许记账。
 
 讲解词：
 
-> 红区安全边界在服务端，不在浏览器按钮。测试结束后可在审计记录中看到 challenge、审批和执行结果。
+> 红区安全边界在服务端，不在 Android 按钮。测试结束后可在审计记录中看到 challenge、审批和执行结果。
 
 > 本地演示可使用 .env 中的测试码；验证码由 Core `/auth/mfa/verify` 服务端校验并换发一次性 proof，不能把固定码当作生产控制。
 
@@ -74,14 +76,14 @@
 
 用同一条生日订单草稿演示到期闭环：调用 `POST /api/v1/tasks/run-due` 后展示任务变为 `WAITING_USER`；调用 `POST /api/v1/tasks/{task_id}/precheck` 取得新的授权，再以新的 `Idempotency-Key` 调用 `/execute`。转账会重新校验余额和日累计，订单草稿只显示 `provider-mock` 零资金完成，绝不声称已向真实商户下单。
 
-若展示 IM，先在已登录 API 会话调用 `POST /api/v1/im/bindings`，将一次性绑定码交给已配置的 provider；webhook 请求须带签名头。只展示消息解析或“请回 APP/API 确认”的审批提示，不在视频中显示 `BANK_IM_PROVIDER_SECRETS` 或任何真实凭证。
+若展示 IM，先在已登录 API 会话调用 `POST /api/v1/im/bindings`，将一次性绑定码交给已配置的 provider；webhook 请求须带签名头。只展示消息解析或“请回 Android/API 确认”的审批提示，不在视频中显示 `BANK_IM_PROVIDER_SECRETS` 或任何真实凭证。
 
 ## 录制前检查清单
 
-- 启动 Core：`.\.venv\Scripts\python.exe -m uvicorn main:app --port 8000`。
-- 启动前端：`.\.venv\Scripts\python.exe -m streamlit run web_app.py`。
+- 双击根目录 `start-emulator.bat`；脚本会重新构建当前 Android 源码、检查并启动 Core 与 Gateway、覆盖安装 APK 后打开应用。构建或安装失败时不会打开旧版本。
+- 如需分开启动，先运行 `.\.venv\Scripts\python.exe -m uvicorn main:app --port 8000` 与 `.\.venv\Scripts\python.exe -m uvicorn agent_api:app --port 8100`，再从 Android Studio 或 Gradle 安装 Debug APK。
 - 确认 `DEEPSEEK_API_KEY` 通过安全环境变量注入；不要把 `.env` 或密钥录入视频。
 - 如演示 IM，仅在进程环境临时注入 `BANK_IM_PROVIDER_SECRETS=provider=<随机测试值>`，录制画面只显示 provider 名称，不显示 secret；演示结束后清除。
 - 清空/重置沙箱账户和每日累计，保证演示结果可重复。
-- 预先运行 `pytest -q`（全量 22 个测试文件 / 385 个用例；P1 focused suite 44 tests），记录版本和失败用例。
+- 预先运行 `pytest -q`、Android 单元测试与 APK 构建，记录提交号和实际通过数量，不沿用历史统计。
 - 准备离线降级话术：LLM/API 不可用时只展示“无法完成，请稍后重试”，不声称交易成功。

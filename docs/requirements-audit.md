@@ -1,5 +1,7 @@
 # 赛题要求逐项验收表（演示沙箱）
 
+> 当前仓库只交付 Android 原生客户端与签名 IM webhook；表内业务能力均通过两条渠道共用的 Agent 与 Mock Core 实现。
+
 本表把题目要求映射到可运行的模块和验收动作，避免把“已规划”误写成“已上线”。
 
 | 题目要求 | 当前证据 | 验收方式 / 边界 |
@@ -13,7 +15,7 @@
 | 联系人簿与 AA 分摊 | 姓名/电话/关系/生日，App 可增删；AA 分摊真实扣参与者账户 | 只凭输入手机号建立的关联为**临时**关联：可付款、不可代扣（AA 返回 `PARTICIPANT_NOT_AUTHORIZED`），且不回显号主真实姓名；双方各自把对方号码录入自己的联系人簿后才成为已确认联系人 |
 | 密码修改 | `PASSWORD_CHANGE` 通过统一 operation gateway | 红区 OTP+人脸票据；Mock 只轮换凭证版本，不处理明文密码，生产交给 IdP |
 | 订阅/代扣 | 列表、活跃扣费识别、续费提醒落任务中心（提前 2 天、幂等）、取消 | 查询绿区；提醒创建为可审计写操作；取消订阅级联撤回其待办提醒；仅 Mock 数据 |
-| IM 渠道 | `POST /api/v1/im/bindings` + `POST /api/v1/im/webhook`；provider-neutral 绑定码/HMAC/时间窗/重放防护 | 绑定必须来自已登录会话；IM 只做消息入口，黄色/红色确认与 MFA 回 APP/API；provider secret 仅环境注入，绑定与重放状态为进程内，非真实 provider 集成 |
+| IM 渠道 | `POST /api/v1/im/bindings` + `POST /api/v1/im/webhook`；provider-neutral 绑定码/HMAC/时间窗/重放防护 | 绑定必须来自已登录会话；IM 只做消息入口，黄色/红色确认与 MFA 回 Android/API；provider secret 仅环境注入，绑定与重放状态为进程内，非真实 provider 集成 |
 | 跨场景联动 | 生日锁资 + 依赖任务 + 生日前两天提醒/鲜花蛋糕 `ORDER_DRAFT`；到期任务可重新预检/执行 | 生日日期不可解析时只澄清；`REMINDER.run_at` 必须等于事件前两天；订单草稿到期通知并进入 `WAITING_USER`，经新授权后仅完成 provider-mock 零资金结算；真实商户下单为扩展项 |
 | 意图理解与多轮 | 离线规则解析 + LLM 槽位抽取 + 隐含意图映射表 + `missing_slots` 定向澄清 + `context.pending_clarification` 回填 + 回指解析 | 模糊/省略表达须落在白名单意图；隐含说法（“钱都花哪儿去了”“卡被盗刷”“不想被扣会员费”）映射到具体操作；澄清后的裸答按槽位类型解释；本地解析到的日期/金额/收款人优先于模型输出；**一句话多个只读诉求拆解为有序 DAG 依次执行**，含变更类子请求时提示逐条办理；不猜测缺失槽位 |
 | 权限分级 | Core `GENERIC_OPERATION_RISK` 与转账日累计策略 | 绿区自动、黄区确认、红区 OTP+挑战-签名人脸票据；策略不依赖前端布尔字段；写操作可用会话令牌替代自称身份（`BANK_REQUIRE_SESSION=1` 强制） |

@@ -11,8 +11,8 @@ configured-but-broken deployment a success:
    both must be present for anything below to mean something;
 3. run one cross-scene request through the *channel* API (a birthday lock, which
    the agent turns into a red-tier approval);
-4. settle the approval with click + SMS + liveness - the demo device SDK stands
-   in for the Keystore key the Android app would use;
+4. enroll a disposable P-256 probe device and settle with click + SMS + the
+   same signed liveness envelope used by Android Keystore;
 5. run the scheduler, which moves the resulting order drafts to ``WAITING_USER``
    and - this is the assertion - dispatches a push;
 6. require the audit trail to say ``SENT`` with ``delivered >= 1``.  A ``NOT_SENT``
@@ -38,8 +38,7 @@ Usage::
     python scripts/fcm_delivery_e2e.py [gateway_url] [core_url]
 
 Requires ``BANK_FCM_CREDENTIALS`` to point at a Firebase service-account key
-outside the repository, ``BANK_DEMO_MODE=1`` (the demo liveness signer is
-deliberately unreachable outside demo mode), and a signed-in app on a device.
+outside the repository and a signed-in app on a device.
 """
 
 from __future__ import annotations
@@ -58,7 +57,7 @@ try:  # Windows consoles default to a legacy code page; keep the report readable
 except Exception:  # pragma: no cover - older interpreters
     pass
 
-from security import sign_face_attestation  # noqa: E402  (path set up above)
+from scripts.device_signer import DeviceSigner  # noqa: E402
 
 GATEWAY = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8100").rstrip("/")
 CORE = (sys.argv[2] if len(sys.argv) > 2 else "http://127.0.0.1:8000").rstrip("/")
@@ -105,6 +104,8 @@ def main() -> int:
     session = login.json().get("session_token")
     check("拿到会话凭证", bool(session))
     headers = {"X-Session-Token": str(session), "X-User-Id": PRINCIPAL}
+    signer = DeviceSigner()
+    signer.enroll(CORE, headers, label="fcm-e2e-probe")
 
     section("1. preconditions the probe depends on")
     health = requests.get(f"{CORE}/api/v1/security/health", timeout=20).json()
@@ -153,7 +154,7 @@ def main() -> int:
         if challenge.status_code != 200:
             return 1
         challenge_body = challenge.json()
-        attestation = sign_face_attestation(
+        attestation = signer.sign(
             challenge_body["challenge_id"],
             user_id=PRINCIPAL,
             token_jti=challenge_body["auth_token_jti"],

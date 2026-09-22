@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import main
 import security
+from support import sign_face_attestation
 
 
 @pytest.fixture()
@@ -205,8 +206,7 @@ def test_scheduled_large_transfer_is_red_and_cannot_skip_mfa(client: TestClient)
     assert execute.status_code in {403, 428}
 
 
-def test_mfa_biometric_flag_must_be_a_json_boolean(client: TestClient):
-    """String truthiness must not satisfy the simulated biometric factor."""
+def test_legacy_biometric_flag_cannot_satisfy_mfa(client: TestClient):
 
     precheck = client.post(
         "/api/v1/risk/precheck",
@@ -220,14 +220,14 @@ def test_mfa_biometric_flag_must_be_a_json_boolean(client: TestClient):
         json={"auth_token": token, "otp": "888888", "face_verified": "yes"},
         headers=auth(token),
     )
-    assert response.status_code == 422
+    assert response.status_code == 403
 
 
 def test_face_attestation_ticket_is_required_and_bound(client: TestClient):
     """The biometric factor now requires a signed single-use ticket.
 
-    A bare JSON boolean no longer satisfies the factor, forged tickets fail
-    closed, a valid ticket is bound to the token jti, and the challenge is
+    The removed boolean field cannot satisfy MFA, forged tickets fail closed, a
+    valid ticket is bound to the token jti, and the challenge is
     consumed on success so the same attestation cannot open another token.
     """
 
@@ -241,7 +241,6 @@ def test_face_attestation_ticket_is_required_and_bound(client: TestClient):
 
     boolean_only = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=auth(token))
     assert boolean_only.status_code == 403
-    assert boolean_only.json()["detail"]["code"] == "MFA_FAILED"
 
     forged = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": "forged.body"}, headers=auth(token))
     assert forged.status_code == 403
@@ -249,7 +248,7 @@ def test_face_attestation_ticket_is_required_and_bound(client: TestClient):
 
     challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=auth(token))
     assert challenge.status_code == 200, challenge.text
-    attestation = security.sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    attestation = sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
     ok = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=auth(token))
     assert ok.status_code == 200, ok.text
 
@@ -532,7 +531,7 @@ def test_large_fund_reservation_requires_red_mfa(client: TestClient):
     assert blocked.status_code == 403
     challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=auth(token))
     assert challenge.status_code == 200, challenge.text
-    attestation = security.sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    attestation = sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
     mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=auth(token))
     assert mfa.status_code == 200
     completed = client.post(

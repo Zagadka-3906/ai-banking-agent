@@ -15,6 +15,7 @@ import pytest
 import conversation
 import main
 import security
+from support import login_session, sign_face_attestation
 import agent
 from bank_tools import BankAPIError
 from test_agent_gateway import gateway, _headers, _send  # noqa: F401
@@ -339,7 +340,7 @@ def test_cancel_nonce_is_subject_bound_idempotent_and_invalidates_mfa(gateway):
     challenge = core.post("/api/v1/risk/mfa/face/challenge", json={"auth_token": token}, headers=auth_headers)
     assert challenge.status_code == 200, challenge.text
     challenge_id = challenge.json()["challenge_id"]
-    attestation = security.sign_face_attestation(challenge_id, user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    attestation = sign_face_attestation(challenge_id, user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
     mfa = core.post("/api/v1/risk/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=auth_headers)
     assert mfa.status_code == 200, mfa.text
     proof = mfa.json()["mfa_proof"]
@@ -360,7 +361,7 @@ def test_cancel_nonce_is_subject_bound_idempotent_and_invalidates_mfa(gateway):
 
 def test_cancel_nonce_requires_its_original_session(gateway):
     _, core = gateway
-    sessions = [core.post("/api/v1/auth/session", json={"user_id": "user_zhang"}).json()["session_token"] for _ in range(2)]
+    sessions = [login_session(core) for _ in range(2)]
     pre = core.post("/api/v1/risk/precheck", json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 20}, headers={**_headers(), "X-Session-Token": sessions[0]})
     assert pre.status_code == 200, pre.text
     token = pre.json()["auth_token"]
@@ -409,6 +410,7 @@ def test_streamed_correction_then_cancellation_uses_the_same_safe_path(gateway):
     def stream(text, message_id):
         events = list(conversation.SERVICE.start_turn_stream(
             principal="user_zhang", conversation_id=cid, message_id=message_id, text=text,
+            session_token=_headers()["X-Session-Token"],
         ))
         terminals = [item for item in events if item["event"] in {"result", "approval", "error"}]
         assert len(terminals) == 1, json.dumps(events, ensure_ascii=False)
@@ -467,6 +469,7 @@ def test_simultaneous_duplicate_correction_creates_only_one_new_approval(gateway
         return conversation.SERVICE.start_turn(
             principal="user_zhang", conversation_id=cid,
             message_id="same-edit", text="改成20元",
+            session_token=_headers()["X-Session-Token"],
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -498,7 +501,7 @@ def test_vague_correction_revokes_old_approval_and_waits_for_real_replacement(ga
 def test_same_session_correction_wins_lock_before_old_confirmation(gateway, monkeypatch):
     _, core = gateway
     cid = "human-session-edit-race"
-    session = core.post("/api/v1/auth/session", json={"user_id": "user_zhang"}).json()["session_token"]
+    session = login_session(core)
     service = conversation.SERVICE
     first = service.start_turn(principal="user_zhang", conversation_id=cid, message_id="initial", text="给李四转50元", session_token=session)
     factory = service._client_factory

@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 import main
 import security
+from support import sign_face_attestation
 
 
 @pytest.fixture()
@@ -71,7 +72,7 @@ def red_operation(client: TestClient, operation: str, **kwargs):
     assert client.post("/api/v1/auth/confirm", json={}, headers=auth(token)).status_code == 200
     challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=auth(token))
     assert challenge.status_code == 200, challenge.text
-    attestation = security.sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    attestation = sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
     mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": attestation}, headers=auth(token))
     assert mfa.status_code == 200, mfa.text
     proof = mfa.json()["mfa_proof"]

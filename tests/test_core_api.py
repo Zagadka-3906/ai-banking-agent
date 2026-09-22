@@ -1,7 +1,7 @@
 """Core banking API contract and security regression tests.
 
 These tests deliberately exercise the FastAPI app in-process.  They do not
-start uvicorn, call DeepSeek, or require a running Streamlit front end.  The
+start uvicorn, call DeepSeek, or require a running Android/IM channel.  The
 fixture restores the module-level sandbox state after every test because the
 demo core currently stores data in memory.
 
@@ -135,7 +135,7 @@ def _token(response) -> str:
 def _face_attest(client: TestClient, token: str, *, user_id: str = "user_zhang") -> str:
     """Run the challenge → simulated-device-sign flow for red-zone MFA."""
 
-    from security import sign_face_attestation
+    from support import sign_face_attestation
 
     challenge = client.post(
         "/api/v1/auth/mfa/face/challenge",

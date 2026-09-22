@@ -135,14 +135,8 @@ STRICT_CLIENT_AUTH = os.getenv("BANK_REQUIRE_CLIENT_AUTH", "0").lower() in {
 DEMO_MODE = os.getenv("BANK_DEMO_MODE", "1").lower() in {"1", "true", "yes", "on"}
 MFA_TEST_OTP = os.getenv("BANK_MFA_TEST_OTP", "888888")
 
-# The biometric factor is ticket-based: the server issues a liveness challenge
-# bound to an auth-token jti, and the simulated device SDK (the Streamlit
-# frontend, playing the role of the mobile biometric SDK) signs it with this
-# attestation key.  A deployment must inject a random value and keep it out of
-# the agent/LLM path; the demo fallback only keeps the local demo runnable.
-_configured_face_secret = os.getenv("BANK_FACE_ATTEST_SECRET")
-FACE_ATTEST_SECRET_CONFIGURED = bool(_configured_face_secret)
-FACE_ATTEST_SECRET = (_configured_face_secret or "demo-face-attest-secret-change-me").encode("utf-8")
+# The server issues a short-lived liveness challenge bound to an authorization
+# jti.  Only a P-256 signature from an enrolled Android device can satisfy it.
 FACE_CHALLENGE_TTL_SECONDS = _env_int("BANK_FACE_CHALLENGE_TTL_SECONDS", 60, 10, 300)
 
 
@@ -1344,9 +1338,8 @@ def _purge_face_challenges() -> None:
 def issue_face_challenge(auth_token: str, *, user_id: Optional[str] = None, request_id: Optional[str] = None) -> dict[str, Any]:
     """Issue a short-lived liveness challenge bound to a RED auth token.
 
-    The returned ``challenge_id`` must be signed by the simulated biometric SDK
-    (``sign_face_attestation``) and presented to :func:`verify_mfa`.  A bare
-    boolean ``face_verified`` flag is no longer an accepted factor.
+    The returned ``challenge_id`` must be signed by an enrolled Android device
+    and presented to :func:`verify_mfa`.
     """
 
     with STATE_LOCK:
@@ -1385,29 +1378,6 @@ def issue_face_challenge(auth_token: str, *, user_id: Optional[str] = None, requ
         return {"challenge_id": challenge_id, "expires_at": now + FACE_CHALLENGE_TTL_SECONDS, "auth_token_jti": payload.get("jti")}
 
 
-def sign_face_attestation(challenge_id: str, *, user_id: str, token_jti: str) -> str:
-    """Simulated biometric-device SDK used by the demo frontend.
-
-    Production biometric SDKs sign a liveness challenge inside the device
-    secure enclave; this demo helper plays that role and must never be
-    reachable from the agent/LLM path.
-    """
-
-    now = int(time.time())
-    payload = {
-        "typ": "face_attestation",
-        "ver": 1,
-        "challenge_id": str(challenge_id),
-        "jti": str(token_jti),
-        "sub": str(user_id),
-        "liveness": "SIMULATED_DEMO",
-        "nonce": secrets.token_urlsafe(12),
-        "iat": now,
-        "exp": now + FACE_CHALLENGE_TTL_SECONDS,
-    }
-    return _signed_payload(payload, secret=FACE_ATTEST_SECRET)
-
-
 # ---------------------------------------------------------------------------
 # Device trust root
 #
@@ -1425,8 +1395,8 @@ DEVICE_MAX_RECORDS = _env_int("BANK_DEVICE_MAX_RECORDS", 2_000, 16, 200_000)
 DEVICE_STATUS_ACTIVE = "ACTIVE"
 DEVICE_STATUS_REVOKED = "REVOKED"
 
-# Prefix of an attestation produced by a real device (JSON envelope, base64).
-# Anything else is treated as a legacy ticket and only accepted in demo mode.
+# Prefix of an attestation produced by an enrolled Android device (JSON
+# envelope, base64).
 FACE_ATTESTATION_V2_PREFIX = "v2:"
 # Must match DeviceKeyManager.canonicalPayload() in the Android client byte for
 # byte; a mismatch shows up as an InvalidSignature, never as a silent accept.
@@ -2031,42 +2001,11 @@ def _verify_device_attestation(
 
 
 def verify_face_attestation(attestation: Optional[str], *, auth_payload: Mapping[str, Any], user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
-    """Validate a face attestation; return its live challenge record.
+    """Validate an enrolled-device P-256 attestation."""
 
-    Two formats exist.  A ``v2:`` envelope carries a P-256 signature from an
-    enrolled device and is always accepted.  Anything else is a legacy ticket
-    signed with the shared demo key, which is only honoured while
-    ``BANK_DEMO_MODE`` is on - that key would have to ship inside the client, so
-    outside a demo it is not a factor at all.
-
-    Returns ``None`` when any binding fails: format, signature, token jti,
-    subject, device ownership/status, challenge existence, single-use or expiry.
-    """
-
-    if not isinstance(attestation, str) or not attestation:
+    if not isinstance(attestation, str) or not attestation.startswith(FACE_ATTESTATION_V2_PREFIX):
         return None
-
-    if attestation.startswith(FACE_ATTESTATION_V2_PREFIX):
-        return _verify_device_attestation(attestation, auth_payload=auth_payload, user_id=user_id)
-
-    if not demo_mode():
-        return None
-    try:
-        att = _decode_signed(attestation, "face_attestation", secret=FACE_ATTEST_SECRET)
-    except SecurityError:
-        return None
-    if att.get("jti") != auth_payload.get("jti") or att.get("sub") != auth_payload.get("from_user"):
-        return None
-    if user_id and att.get("sub") != user_id:
-        return None
-    challenge = FACE_CHALLENGES.get(att.get("challenge_id"))
-    if not challenge or challenge.get("used") or challenge.get("jti") != auth_payload.get("jti"):
-        return None
-    if challenge.get("sub") != auth_payload.get("from_user"):
-        return None
-    if float(challenge.get("expires", 0)) <= time.time():
-        return None
-    return challenge
+    return _verify_device_attestation(attestation, auth_payload=auth_payload, user_id=user_id)
 
 
 def verify_login_otp(otp: Any) -> bool:
@@ -2111,7 +2050,6 @@ def verify_mfa(
     auth_token: str,
     *,
     otp: Optional[str],
-    face_verified: Optional[bool] = None,
     face_attestation: Optional[str] = None,
     user_id: Optional[str] = None,
     request_id: Optional[str] = None,
@@ -2119,10 +2057,9 @@ def verify_mfa(
     """Validate red-zone factors on the server and issue a bound proof.
 
     Factors are derived from the precheck token's ``required_actions`` and
-    resolved through the :data:`MFA_FACTORS` registry.  A bare boolean
-    ``face_verified`` no longer satisfies the biometric factor: a signed,
-    single-use attestation ticket bound to a server-issued challenge and this
-    token's ``jti`` is required.
+    resolved through the :data:`MFA_FACTORS` registry.  The biometric factor is
+    a single-use device signature bound to a server challenge and this token's
+    ``jti``.
     """
 
     with STATE_LOCK:
@@ -2153,7 +2090,6 @@ def verify_mfa(
                 raise SecurityError(f"未知的 MFA 因子: {action}", 500, "MFA_NOT_CONFIGURED")
             ctx: dict[str, Any] = {
                 "otp": otp,
-                "face_verified": face_verified,
                 "face_attestation": face_attestation,
                 "auth_payload": payload,
                 "user_id": principal,
@@ -2350,13 +2286,8 @@ def security_health() -> dict[str, Any]:
                 "locked_principals": sum(1 for state in SECURITY_STATE.values() if float(state.get("locked_until", 0)) > now),
             },
             "face_attestation": {
-                # A device-signed (P-256) attestation is the real factor and is
-                # always accepted; the shared-key ticket would have to ship
-                # inside the client, so it stays a demo affordance.
                 "device_signature": "enabled" if DEVICE_KEYS_AVAILABLE else "unavailable",
-                "legacy_shared_key": "demo_only" if demo_mode() else "disabled",
                 "curve": DEVICE_CURVE,
-                "secret_configured": FACE_ATTEST_SECRET_CONFIGURED,
                 "challenge_ttl_seconds": FACE_CHALLENGE_TTL_SECONDS,
                 "active_challenges": sum(1 for rec in FACE_CHALLENGES.values() if not rec.get("used") and float(rec.get("expires", 0)) > time.time()),
             },

@@ -8,9 +8,8 @@ Settings are forced so the suite is hermetic with respect to a developer's local
   mode forbids.  The tests that *do* exercise strict mode turn it on themselves
   with ``monkeypatch.setenv``.  Without this pin, copying ``.env.example`` (which
   ships the secure default, ``BANK_REQUIRE_SESSION=1``) would break the suite.
-* ``BANK_DEMO_MODE=1`` - the shared-key face ticket and the demo session
-  endpoint are demo affordances; the tests that assert they are *refused*
-  outside demo mode flip it explicitly.
+* ``BANK_DEMO_MODE=1`` - deterministic local OTPs stay available. Device
+  attestations still use enrolled P-256 keys, matching the Android contract.
 * ``DEEPSEEK_API_KEY=""`` - the suite must not depend on a paid,
   nondeterministic external service.  With a real key present (a developer's
   ``.env``), ``agent.llm`` is live and one test was observed to fail
@@ -46,4 +45,3 @@ os.environ["BANK_DEVICE_STORE_PATH"] = ""
 os.environ["BANK_AUDIT_LOG_PATH"] = ""
 os.environ["BANK_LEDGER_STORE_PATH"] = ""
 os.environ["BANK_APPROVAL_STORE_PATH"] = "memory"
-

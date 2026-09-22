@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 import agent
 import conversation
 import main
-import security
+from support import sign_face_attestation
 from bank_tools import BankClient
 
 
@@ -83,7 +83,7 @@ class Dialogue:
         kwargs = {}
         if decision == "approve" and self.last["risk_level"] == "RED":
             challenge = self.service.face_challenge(principal=USER, approval_id=approval["approval_id"])
-            kwargs = {"otp": "888888", "face_attestation": security.sign_face_attestation(
+            kwargs = {"otp": "888888", "face_attestation": sign_face_attestation(
                 challenge["challenge_id"], user_id=USER, token_jti=challenge["auth_token_jti"],
             )}
         envelope = self.service.resolve_approval(

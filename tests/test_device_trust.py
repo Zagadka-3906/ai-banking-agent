@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402
 import security  # noqa: E402
+from support import login_session  # noqa: E402
 
 VALID_OTP = os.getenv("BANK_MFA_TEST_OTP", "888888")
 # The authorization nonce binds the remark as well, so precheck and execute must
@@ -53,9 +54,7 @@ def spki_b64(private_key) -> str:
 
 
 def session_headers(client: TestClient, user_id: str) -> dict[str, str]:
-    response = client.post("/api/v1/auth/session", json={"user_id": user_id})
-    assert response.status_code == 200, response.text
-    return {"X-User-Id": user_id, "X-Session-Token": response.json()["session_token"]}
+    return {"X-User-Id": user_id, "X-Session-Token": login_session(client, user_id)}
 
 
 def enroll(client: TestClient, headers: dict[str, str], private_key, label: str = "Pixel-Test") -> str:
@@ -250,39 +249,18 @@ def test_device_signature_is_verified_even_outside_demo_mode(client, monkeypatch
     assert verify_mfa(client, headers, token, attestation).status_code == 200
 
 
-def test_health_marks_the_shared_key_as_demo_only(client, monkeypatch):
-    monkeypatch.setenv("BANK_DEMO_MODE", "0")
-    health = client.get("/api/v1/security/health").json()
-    assert health["face_attestation"]["legacy_shared_key"] == "disabled"
-
-
 # ---------------------------------------------------------------------------
 # forgery attempts
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_shared_key_ticket_is_refused_when_demo_mode_is_off(client, monkeypatch):
+def test_non_device_attestation_is_refused_even_in_demo_mode(client):
     headers = session_headers(client, "user_zhang")
     token = red_precheck(client, headers)["auth_token"]
-    challenge = face_challenge(client, headers, token)
-    legacy = security.sign_face_attestation(challenge["challenge_id"], user_id="user_zhang", token_jti=challenge["auth_token_jti"])
-
-    monkeypatch.setenv("BANK_DEMO_MODE", "0")
-    monkeypatch.setenv("BANK_MFA_OTP", VALID_OTP)
-    refused = verify_mfa(client, headers, token, legacy)
+    face_challenge(client, headers, token)
+    refused = verify_mfa(client, headers, token, "legacy.shared-key-ticket")
     assert refused.status_code == 403
     assert refused.json()["detail"]["code"] == "MFA_FAILED"
-
-
-def test_legacy_shared_key_ticket_still_works_in_demo_mode(client):
-    """The Streamlit demo relies on this path; removing it must be a decision,
-    not a side effect."""
-
-    headers = session_headers(client, "user_zhang")
-    token = red_precheck(client, headers)["auth_token"]
-    challenge = face_challenge(client, headers, token)
-    legacy = security.sign_face_attestation(challenge["challenge_id"], user_id="user_zhang", token_jti=challenge["auth_token_jti"])
-    assert verify_mfa(client, headers, token, legacy).status_code == 200
 
 
 def test_signature_from_a_different_key_is_rejected(client):

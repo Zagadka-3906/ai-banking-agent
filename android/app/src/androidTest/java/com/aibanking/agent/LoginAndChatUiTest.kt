@@ -1,8 +1,6 @@
 package com.aibanking.agent
 
 import android.Manifest
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -87,33 +85,21 @@ class LoginAndChatUiTest {
     private fun moneyIsVisible(): Boolean =
         ui.onAllNodesWithText("¥", substring = true).fetchSemanticsNodes().isNotEmpty()
 
-    /**
-     * Every audit trace id currently on screen, oldest first.
-     *
-     * The transcript is deliberately persistent, so a test that ran earlier in
-     * the same class leaves its own reply - and its own ¥ figure and trace id -
-     * on screen.  JUnit does not order methods, so reading "the newest thing on
-     * screen" made a test assert against the *previous* test's turn: the
-     * read-only case fetched the yellow transfer's trace and failed looking for
-     * BALANCE_QUERY.  Capture what is there before sending, then wait for
-     * something that was not.
-     */
-    private fun visibleTraceIds(): List<String> =
-        ui.onAllNodesWithText(TRACE_PREFIX, substring = true)
-            .fetchSemanticsNodes()
-            .mapNotNull { node ->
-                node.config.getOrNull(SemanticsProperties.Text)
-                    ?.joinToString("") { it.text }
-                    ?.substringAfter(TRACE_PREFIX)
-                    ?.trim()
-                    ?.ifBlank { null }
-            }
+    private lateinit var observedViewModel: ChatViewModel
+
+    /** Every audit trace id in the transcript, including off-screen lazy items. */
+    private fun messageTraceIds(): List<String> {
+        if (!::observedViewModel.isInitialized) {
+            ui.runOnIdle { observedViewModel = ViewModelProvider(ui.activity)[ChatViewModel::class.java] }
+        }
+        return observedViewModel.state.value.messages.mapNotNull { it.traceId?.ifBlank { null } }
+    }
 
     /** Wait for the trace id of *this* turn: the first one that was not there before. */
     private fun awaitNewTraceId(previous: List<String>): String {
         var found: String? = null
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
-            found = visibleTraceIds().lastOrNull { it !in previous }
+            found = messageTraceIds().lastOrNull { it !in previous }
             found != null
         }
         return checkNotNull(found) { "no new audit trace id appeared for this turn" }
@@ -158,7 +144,7 @@ class LoginAndChatUiTest {
     @Test
     fun a_read_only_turn_returns_a_verified_reply_with_structured_facts() {
         ensureLoggedIn()
-        val before = visibleTraceIds()
+        val before = messageTraceIds()
         send("查一下余额")
 
         // A trace id that was not on screen before is this turn's reply: it proves
@@ -295,8 +281,6 @@ class LoginAndChatUiTest {
         const val DEMO_PASSWORD = "Bank@2026"
         const val LOGIN_TIMEOUT_MS = 30_000L
         const val TURN_TIMEOUT_MS = 45_000L
-        /** Matches the label ChatScreen prints above the correlation id. */
-        const val TRACE_PREFIX = "链路编号"
         const val PRINCIPAL = "user_zhang"
         const val CORE_BASE = "http://10.0.2.2:8000"
     }

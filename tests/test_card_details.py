@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 import main
+from support import login_session
 
 
 @pytest.fixture()
@@ -13,9 +14,7 @@ def client():
 
 
 def _session(client: TestClient) -> dict[str, str]:
-    result = client.post("/api/v1/auth/session", json={"user_id": "user_zhang"}, headers={"X-User-Id": "user_zhang"})
-    assert result.status_code == 200, result.text
-    return {"X-Session-Token": result.json()["session_token"], "X-User-Id": "user_zhang"}
+    return {"X-Session-Token": login_session(client), "X-User-Id": "user_zhang"}
 
 
 def test_card_binding_projects_only_safe_fields(client: TestClient):

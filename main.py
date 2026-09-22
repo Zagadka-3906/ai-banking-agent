@@ -24,7 +24,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
@@ -44,7 +43,6 @@ from security import (
     circuit_status,
     cancel_auth_token,
     confirm_auth_token,
-    demo_mode,
     ensure_circuit_closed,
     enroll_device,
     get_audit_logs,
@@ -87,22 +85,6 @@ app = FastAPI(
     description="银行 AI 智能体受控沙箱环境（含分级权限与审计）",
     version="2.0.0",
 )
-_cors_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "BANK_CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8501,http://127.0.0.1:8501",
-    ).split(",")
-    if origin.strip()
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-User-Id", "X-Session-Token", "X-Auth-Token", "X-MFA-Proof", "X-User-Confirmation", "X-Request-Id", "Idempotency-Key", "X-Admin-Token"],
-)
-
 # Keep the HTTP edge defensive even when the mock is run directly under
 # Uvicorn (without a reverse proxy/WAF).  The body limit is deliberately
 # generous for normal JSON requests but prevents an untrusted channel from
@@ -116,11 +98,10 @@ except (TypeError, ValueError):
 # (container probes and the interactive API docs).
 _HEALTH_PATHS = {"/healthz", "/api/v1/security/health"}
 _DOCS_PREFIXES = ("/docs", "/redoc", "/openapi.json")
-_SESSION_ISSUE_PATH = "/api/v1/auth/session"
 # Endpoints that must stay reachable *before* a session exists.  Without this,
 # strict session mode would refuse the login request itself and no client could
 # ever obtain the credential it is being asked for.
-_SESSION_BOOTSTRAP_PATHS = {_SESSION_ISSUE_PATH, "/api/v1/auth/login"}
+_SESSION_BOOTSTRAP_PATHS = {"/api/v1/auth/login"}
 RATE_LIMIT_WINDOW_SECONDS = 60
 # Per-principal request windows.  The demo has no reverse proxy, so a simple
 # in-process fixed window is the cheapest way to blunt accidental or hostile
@@ -981,8 +962,8 @@ def _ledger_transaction():
 # rather than implying a protection that is not there.  A file that fails its
 # digest, or that holds a structurally invalid record, is neither loaded nor
 # overwritten: writes are frozen so the next mutation cannot quietly destroy
-# the evidence.  Owned by the core process, which is the only writer; the
-# gateway and the Streamlit demo never touch it.
+# the evidence. Owned by the core process, which is the only writer; the
+# Android/IM gateway never touches it.
 # ---------------------------------------------------------------------------
 
 LEDGER_STORE_VERSION = 1
@@ -1388,11 +1369,6 @@ class MFAVerifyRequest(StrictModel):
     auth_token: Optional[str] = None
     otp: Optional[str] = None
     sms_code: Optional[str] = None
-    # Kept as StrictBool so attacker-controlled strings such as ``"yes"``
-    # still fail schema validation.  The field alone no longer satisfies the
-    # biometric factor: a signed, single-use face attestation ticket bound to
-    # a server-issued challenge is required (``face_attestation``).
-    face_verified: StrictBool = False
     face_attestation: Optional[str] = None
     user_id: Optional[str] = None
 
@@ -1400,11 +1376,6 @@ class MFAVerifyRequest(StrictModel):
 class FaceChallengeRequest(StrictModel):
     auth_token: str
     user_id: Optional[str] = None
-
-
-class SessionRequest(StrictModel):
-    user_id: str
-    ttl_seconds: Optional[int] = None
 
 
 class LoginRequest(StrictModel):
@@ -3423,28 +3394,6 @@ def login(req: LoginRequest, x_request_id: Optional[str] = Header(None, alias="X
     return {"code": 200, **result}
 
 
-@app.post("/api/v1/auth/session")
-def create_session(req: SessionRequest, x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    """Issue a session credential without authenticating anybody.
-
-    Kept for the demo console and the offline test suite, where there is no
-    password to present.  It is gated on ``BANK_DEMO_MODE``: an endpoint that
-    mints a credential for any claimed identity would make ``/auth/login``
-    pointless, so outside a demo it refuses rather than quietly undermines the
-    real login path.
-    """
-
-    if not demo_mode():
-        raise HTTPException(status_code=403, detail={"code": "DEMO_ENDPOINT_DISABLED", "message": "演示会话接口已停用，请使用口令登录"})
-    request_id = _request_id(x_request_id)
-    try:
-        _ensure_account(req.user_id)
-        result = issue_session_token(req.user_id, ttl_seconds=req.ttl_seconds, request_id=request_id)
-    except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=req.user_id, action="SESSION_ISSUE", request_id=request_id)
-    return {"code": 200, **result}
-
-
 @app.get("/api/v1/auth/session")
 def resolve_session_endpoint(
     x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
@@ -3663,7 +3612,7 @@ def mfa_verify(req: MFAVerifyRequest, x_auth_token: Optional[str] = Header(None,
         if not auth_token:
             raise SecurityError("缺少安全授权凭证", 403, "TOKEN_REQUIRED")
         actor = _require_token_subject(auth_token, body_user=req.user_id, header_user=x_user_id, action="MFA_VERIFY", request_id=request_id)
-        result = verify_mfa(auth_token, otp=otp, face_verified=req.face_verified, face_attestation=req.face_attestation, user_id=actor, request_id=request_id)
+        result = verify_mfa(auth_token, otp=otp, face_attestation=req.face_attestation, user_id=actor, request_id=request_id)
     except SecurityError as exc:
         _record_failure_and_raise(exc, user_id=actor, action="MFA_VERIFY", request_id=request_id)
     return {"code": 200, **result}

@@ -41,7 +41,7 @@ def approve(client: TestClient, operation: str, **kwargs):
 def face_attest(client: TestClient, token: str) -> str:
     """Run the challenge → simulated-device-sign flow for red-zone MFA."""
 
-    from security import sign_face_attestation
+    from support import sign_face_attestation
 
     challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=headers(token))
     assert challenge.status_code == 200, challenge.text
@@ -112,8 +112,7 @@ def test_wealth_purchase_requires_server_mfa(client: TestClient):
     client.post("/api/v1/auth/confirm", json={}, headers=headers(token))
     blocked = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄", "auth_token": token}, headers=headers(token))
     assert blocked.status_code in {403, 428}
-    # The red-zone flow now requires a signed face attestation ticket; a bare
-    # boolean must not satisfy the factor (defense in depth).
+    # The Android/IM contract has no client-asserted biometric boolean.
     boolean_only = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=headers(token))
     assert boolean_only.status_code == 403
     mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": face_attest(client, token)}, headers=headers(token))

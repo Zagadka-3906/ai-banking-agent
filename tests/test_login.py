@@ -8,8 +8,7 @@ turn it into a real boundary:
 * unknown account, disabled account and wrong password are indistinguishable, so
   the endpoint is not an account-enumeration oracle;
 * repeated failures count towards the same per-account breaker as a faulty nonce;
-* the demo "issue a session for whoever asks" endpoint stops working outside demo
-  mode, and the login endpoint stays reachable *before* a session exists;
+* the login endpoint stays reachable *before* a session exists;
 * rotating a credential invalidates the sessions obtained with the old one.
 """
 
@@ -23,6 +22,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402
 import security  # noqa: E402
+from support import sign_face_attestation
 
 DEMO_PASSWORD = "Bank@2026"
 VALID_OTP = os.getenv("BANK_MFA_TEST_OTP", "888888")
@@ -138,19 +138,8 @@ def test_sms_code_is_enforced_when_the_deployment_asks_for_it(client, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# the demo bypass and strict session mode
+# strict session mode
 # ---------------------------------------------------------------------------
-
-
-def test_the_demo_session_endpoint_is_disabled_outside_demo_mode(client, monkeypatch):
-    monkeypatch.setenv("BANK_DEMO_MODE", "0")
-
-    bypass = client.post("/api/v1/auth/session", json={"user_id": "user_zhang"})
-    assert bypass.status_code == 403
-    assert bypass.json()["detail"]["code"] == "DEMO_ENDPOINT_DISABLED"
-
-    # ...while the real login path is unaffected.
-    assert login(client).status_code == 200
 
 
 def test_strict_mode_refuses_bare_identity_writes_but_still_allows_login(client, monkeypatch):
@@ -225,7 +214,7 @@ def _approve_red(client: TestClient, operation: str, payload: dict, token_header
     client.post("/api/v1/auth/confirm", json={}, headers={**headers, "X-Auth-Token": token})
     challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers={**headers, "X-Auth-Token": token})
     assert challenge.status_code == 200, challenge.text
-    attestation = security.sign_face_attestation(
+    attestation = sign_face_attestation(
         challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"]
     )
     mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": VALID_OTP, "face_attestation": attestation}, headers={**headers, "X-Auth-Token": token})
@@ -269,21 +258,6 @@ def test_a_too_short_new_password_is_refused(client):
     assert response.json()["detail"]["code"] == "WEAK_PASSWORD"
 
 
-def test_turning_demo_mode_off_at_runtime_closes_the_session_endpoint(client, monkeypatch):
-    """The documented way to disable demo mode must actually work.
-
-    Regression: ``security.demo_mode()`` returned the value captured at import
-    while its own docstring (and ``agent_api``, which does read the
-    environment) promised a per-call read.  Setting ``BANK_DEMO_MODE=0``
-    therefore disabled the gateway's demo identity shortcut but left the core
-    still minting password-free session credentials here.
-    """
-
-    assert client.post("/api/v1/auth/session", json={"user_id": "user_li"}).status_code == 200
-
+def test_demo_mode_health_reflects_runtime_configuration(client, monkeypatch):
     monkeypatch.setenv("BANK_DEMO_MODE", "0")
-
-    refused = client.post("/api/v1/auth/session", json={"user_id": "user_li"})
-    assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"]["code"] == "DEMO_ENDPOINT_DISABLED"
     assert client.get("/api/v1/security/health").json()["demo_mode"] is False
