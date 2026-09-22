@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """Clarification text matches missing slots through the real channel gateway."""
 
 import os

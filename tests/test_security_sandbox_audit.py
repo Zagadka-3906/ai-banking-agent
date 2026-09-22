@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """Real worker negative tests; no live banking services or large allocations."""
 
 from concurrent.futures import ProcessPoolExecutor

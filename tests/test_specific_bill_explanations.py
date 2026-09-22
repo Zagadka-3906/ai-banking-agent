@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """Specific transaction questions through the real in-process gateway/core."""
 
 from copy import deepcopy

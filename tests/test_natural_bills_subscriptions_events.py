@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """Human dialogue acceptance: real graph + real in-process core, no live services.
 
 Each scenario states the desired behaviour, including failures found during the

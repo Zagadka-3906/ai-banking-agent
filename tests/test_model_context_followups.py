@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """A model's isolated read classification must not erase a pending mutation.
 
 No remote model or service is contacted: the model outputs are fixed, while the

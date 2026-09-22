@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """Human transfer conversations against the real graph and in-process core.
 
 The imported gateway fixture redirects every core request into TestClient and

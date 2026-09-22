@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """Fact-consistency audit: rejected or inconsistent receipts cannot claim success."""
 
 import os

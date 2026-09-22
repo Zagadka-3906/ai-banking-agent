@@ -1,3 +1,4 @@
+# ruff: noqa: F811  # imported pytest fixtures are injected by parameter name
 """Explicit negations and quoted instructions are not financial authorizations."""
 from copy import deepcopy
 from datetime import datetime
