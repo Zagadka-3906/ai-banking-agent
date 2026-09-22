@@ -49,6 +49,8 @@ data class ChatMessage(
     val role: ChatRole,
     val text: String,
     val riskLevel: String? = null,
+    /** Temporary summary shown only while its approval is still actionable. */
+    val approvalPreview: Boolean = false,
     /**
      * Structured result payload from the gateway (`chart_data`, `todo_card`,
      * `plan`, `execution_result`), kept so the result view can render facts
@@ -251,7 +253,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // user already received; it is stored sealed, like the credential.
         val restored = stored.messages?.let { json ->
             runCatching { gson.fromJson(json, Array<ChatMessage>::class.java).toList() }.getOrNull()
-        }.orEmpty()
+        }.orEmpty().filterNot { it.isApprovalPreviewMessage() }
         _state.update {
             it.copy(
                 principal = storedPrincipal,
@@ -949,20 +951,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 conversationId = envelope.conversationId.ifBlank { conversationId }
                 _state.update { state ->
+                    val replaced = state.messages.map {
+                        if (it.id == placeholder.id) {
+                            ChatMessage(
+                                id = placeholder.id,
+                                role = ChatRole.ASSISTANT,
+                                text = displayText(envelope.reply, envelope.result),
+                                riskLevel = envelope.riskLevel,
+                                approvalPreview = envelope.approval != null,
+                                result = envelope.result,
+                                traceId = envelope.requestId,
+                            )
+                        } else {
+                            it
+                        }
+                    }
                     state.copy(
                         busy = false,
-                        messages = state.messages.map {
-                            if (it.id == placeholder.id) {
-                                ChatMessage(
-                                    role = ChatRole.ASSISTANT,
-                                    text = displayText(envelope.reply, envelope.result),
-                                    riskLevel = envelope.riskLevel,
-                                    result = envelope.result,
-                                    traceId = envelope.requestId,
-                                )
-                            } else {
-                                it
-                            }
+                        // A corrected request can replace an earlier approval.
+                        // Keep at most the preview belonging to this response.
+                        messages = replaced.filterNot {
+                            it.id != placeholder.id && it.isApprovalPreviewMessage()
                         },
                         pending = envelope.approval,
                         otp = "",
@@ -1060,7 +1069,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         busy = false,
                         pending = null,
                         otp = "",
-                        messages = state.messages + ChatMessage(
+                        messages = state.messages.filterNot { it.isApprovalPreviewMessage() } + ChatMessage(
                             role = ChatRole.ASSISTANT,
                             text = displayText(resolved.reply, resolved.result),
                             riskLevel = resolved.riskLevel,
@@ -1098,7 +1107,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         quiz = parseQuiz(envelope.result),
                         profileResult = envelope.result?.get("profile_result") as? Map<String, Any>,
                         suggestions = (envelope.result?.get("suggestions") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList(),
-                        messages = state.messages + ChatMessage(
+                        messages = state.messages.filterNot { it.isApprovalPreviewMessage() } + ChatMessage(
                             role = ChatRole.ASSISTANT,
                             text = displayText(envelope.reply, envelope.result),
                             riskLevel = envelope.riskLevel,
@@ -1174,6 +1183,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_PERSISTED_MESSAGES = 100
     }
 }
+
+/** Also recognizes preview cards persisted before [ChatMessage.approvalPreview] existed. */
+private fun ChatMessage.isApprovalPreviewMessage(): Boolean =
+    approvalPreview || (role == ChatRole.ASSISTANT && text.trimStart().startsWith("您正准备进行："))
 
 /**
  * Everything [SessionStore] hands back at start-up.

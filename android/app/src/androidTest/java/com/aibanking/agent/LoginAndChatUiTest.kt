@@ -14,9 +14,11 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.chat.ChatViewModel
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -211,6 +213,17 @@ class LoginAndChatUiTest {
             ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()
         }
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { moneyIsVisible() }
+        ui.runOnIdle {
+            val messages = ViewModelProvider(ui.activity)[ChatViewModel::class.java].state.value.messages
+            assertTrue(
+                "settled transfers must not retain their approval preview",
+                messages.none { it.approvalPreview || it.text.trimStart().startsWith("您正准备进行：") },
+            )
+        }
+        assertTrue(
+            ui.onAllNodesWithText("您正准备进行", substring = true, useUnmergedTree = true)
+                .fetchSemanticsNodes().isEmpty(),
+        )
     }
 
     private companion object {
