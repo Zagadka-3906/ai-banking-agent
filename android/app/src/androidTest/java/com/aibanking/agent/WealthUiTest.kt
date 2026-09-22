@@ -4,6 +4,7 @@ import android.Manifest
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onParent
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -45,7 +46,9 @@ class WealthUiTest {
         assertTrue(ui.onAllNodesWithText("10,000元起购", substring = true).fetchSemanticsNodes().isNotEmpty())
 
         listOf("近1月", "近3月", "近6月", "近1年", "成立以来").forEach { ui.onNodeWithTag(UiTags.wealthRange(it)).assertExists() }
-        ui.onNodeWithTag(UiTags.wealthRange("近6月")).performClick()
+        // 先把筛选行滚入详情视口，再在横向筛选行内定位目标区间。
+        ui.onNodeWithTag(UiTags.wealthRange("近6月")).onParent().performScrollTo()
+        ui.onNodeWithTag(UiTags.wealthRange("近6月")).performScrollTo().performClick()
         ui.waitUntil(5_000) {
             ui.onAllNodesWithText("● 近6月", substring = true).fetchSemanticsNodes().isNotEmpty()
         }

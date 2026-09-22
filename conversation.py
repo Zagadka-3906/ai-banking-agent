@@ -606,6 +606,92 @@ class ConversationService:
         }
 
     @staticmethod
+    def _dialogue_control(text: str) -> Optional[str]:
+        """Only explicit controls may replace an outstanding approval.
+
+        A fresh request (including "再给王美转50元") keeps waiting on the
+        original approval. Cancellation of another service such as a named
+        subscription is likewise not a cancellation of the current transfer.
+        """
+
+        text = sanitize_text(text, field="用户指令", max_length=2000)
+        compact = re.sub(r"[\s，,。.!！?？、]", "", text)
+        if re.fullmatch(
+            r"(?:算了|不用了|取消|取消吧|取消它|取消掉|不要了|别转了|不转了|不办了|先不办了|先别办了|先别转了|先不转了|"
+            r"算了(?:这笔|这次)?(?:不转了|不办了|取消吧)?|"
+            r"(?:取消|撤销|终止)(?:这笔|这一笔|本次|这次|当前|刚才|上次)(?:转账|操作|申请|任务|预约)?|"
+            r"(?:这笔|这次|当前)(?:不转了|不办了|取消了|取消吧))", compact,
+        ):
+            return "cancel"
+        if re.match(
+            r"^(?:(?:不对|等一下|等等|说错了)[，,：:\s]*)?"
+            r"(?:(?:把)?(?:金额|收款人|对象|参与人|日期|时间|备注)[，,：:\s]*)?"
+            r"(?:改成|改为|改到|改一下|换成|换为|调整为)", text.strip(),
+        ):
+            return "revise"
+        return None
+
+    def _prepare_dialogue_control(
+        self, *, principal: str, conversation_id: str, thread_id: str,
+        text: str, request_id: str, session_token: Optional[str],
+    ) -> tuple[Optional[dict[str, Any]], dict[str, Any]]:
+        """Cancel or revise under the same conversation lock as settlement."""
+
+        pending = self._pending_approval(thread_id)
+        control = self._dialogue_control(text)
+        if pending is not None and control is None:
+            return self._approval_envelope(pending), {}
+        if control is None:
+            return None, {}
+
+        graph = get_graph()
+        config = self._config(thread_id)
+        state = dict(graph.get_state(config).values or {})
+        context = dict(state.get("context") or {})
+        has_incomplete_task = bool(context.get("pending_clarification") or context.get("risk_quiz"))
+        if pending is None and not has_incomplete_task:
+            return None, {}
+
+        if pending is not None:
+            # Revoke the actual nonce before touching the graph or preparing
+            # another approval; a failed core cancellation leaves it pending.
+            cancelled = self.resolve_approval(
+                principal=principal, approval_id=pending.approval_id,
+                decision="reject", session_token=session_token,
+            )
+            if control == "cancel":
+                return cancelled, {}
+
+        if control == "cancel":
+            cleared = {
+                **self._turn_input(principal, text), "request_id": request_id,
+                "context": {}, "intent": "UNKNOWN", "target": None,
+                "amount": None, "participants": [], "product_ids": [],
+                "slots": {}, "scheduled_at": None, "event_at": None,
+                "sub_requests": None, "plan": None, "risk_level": "UNKNOWN",
+                "final_response": "已取消当前待办操作，没有执行任何资金变更。",
+            }
+            graph.update_state(config, cleared)
+            envelope = self._envelope_from_state(
+                conversation_id=conversation_id, state=cleared, request_id=request_id,
+            )
+            self._audit_response(principal, envelope)
+            return envelope, {}
+
+        if pending is not None:
+            # The parser's existing slot merger handles short corrections
+            # against a normalized payload, never by replaying old raw prose.
+            payload = {key: state.get(key) for key in (
+                "intent", "target", "amount", "date_scope", "extra_info",
+                "participants", "product_ids", "slots", "scheduled_at", "event_at",
+            )}
+            context["pending_clarification"] = {
+                "intent": state.get("intent"), "payload": payload,
+                "missing": [], "confidence": 0.86, "revision": True,
+            }
+        return None, {"context": context}
+
+    @staticmethod
     def _audit_response(principal: str, envelope: dict[str, Any], client_request_id: Optional[str] = None) -> None:
         """Record a redacted gateway response; never persist reply or inputs."""
         audit_event(
@@ -685,17 +771,24 @@ class ConversationService:
 
         request_id = request_id or f"gw_{uuid.uuid4().hex}"
         with self._thread_lock(thread_id):
-            pending = self._pending_approval(thread_id)
-            if pending is not None:
-                # The conversation is mid-approval.  Answering a fresh request
-                # here would silently abandon it, so the client is told to
-                # resolve the outstanding approval first.
-                return self._approval_envelope(pending)
+            # Two identical deliveries can both miss the optimistic lookup
+            # before either obtains the conversation lock.
+            cached = self._cached_turn(principal, conversation_id, safe_message_id)
+            if cached is not None:
+                return cached
+            handled, turn_overrides = self._prepare_dialogue_control(
+                principal=principal, conversation_id=conversation_id,
+                thread_id=thread_id, text=text, request_id=request_id,
+                session_token=session_token,
+            )
+            if handled is not None:
+                self._remember_turn(principal, conversation_id, safe_message_id, handled)
+                return handled
 
             graph = get_graph()
             config = self._config(thread_id)
             with channel_session(session_token):
-                graph.invoke({**self._turn_input(principal, text), "request_id": request_id}, config)
+                graph.invoke({**self._turn_input(principal, text), **turn_overrides, "request_id": request_id}, config)
             envelope = self._settle_turn(
                 principal=principal,
                 conversation_id=conversation_id,
@@ -705,7 +798,7 @@ class ConversationService:
                 client_request_id=client_request_id,
             )
 
-        self._remember_turn(principal, conversation_id, safe_message_id, envelope)
+            self._remember_turn(principal, conversation_id, safe_message_id, envelope)
         return envelope
 
     def _turn_events(
@@ -739,15 +832,25 @@ class ConversationService:
 
         request_id = request_id or f"gw_{uuid.uuid4().hex}"
         with self._thread_lock(thread_id):
-            pending = self._pending_approval(thread_id)
-            if pending is not None:
-                yield {"event": "approval", "data": self._approval_envelope(pending)}
+            cached = self._cached_turn(principal, conversation_id, safe_message_id)
+            if cached is not None:
+                yield {"event": "result", "data": cached}
+                return
+            handled, turn_overrides = self._prepare_dialogue_control(
+                principal=principal, conversation_id=conversation_id,
+                thread_id=thread_id, text=text, request_id=request_id,
+                session_token=session_token,
+            )
+            if handled is not None:
+                self._remember_turn(principal, conversation_id, safe_message_id, handled)
+                event = "approval" if handled.get("status") == "APPROVAL_REQUIRED" else "result"
+                yield {"event": event, "data": handled}
                 return
 
             graph = get_graph()
             config = self._config(thread_id)
             with channel_session(session_token):
-                for chunk in graph.stream({**self._turn_input(principal, text), "request_id": request_id}, config, stream_mode="updates"):
+                for chunk in graph.stream({**self._turn_input(principal, text), **turn_overrides, "request_id": request_id}, config, stream_mode="updates"):
                     for node in chunk:
                         label = _STAGE_LABELS.get(str(node))
                         if label:
@@ -761,7 +864,7 @@ class ConversationService:
                 client_request_id=client_request_id,
             )
 
-        self._remember_turn(principal, conversation_id, safe_message_id, envelope)
+            self._remember_turn(principal, conversation_id, safe_message_id, envelope)
         event = "approval" if envelope.get("status") == "APPROVAL_REQUIRED" else "result"
         yield {"event": event, "data": envelope}
 
@@ -789,6 +892,19 @@ class ConversationService:
 
         events: "queue.Queue[Optional[dict[str, Any]]]" = queue.Queue()
 
+        def emit_failure(code: str, message: str) -> None:
+            # A stream has already sent HTTP headers, so its terminal error
+            # must carry its own correlation and audit. Never log the caught
+            # exception or its message: upstream details can contain secrets.
+            audit_event(
+                "AGENT_STREAM_FAILED", user_id=principal, decision="BLOCK",
+                outcome="FAILURE", reason=code, request_id=request_id,
+                metadata={"transport": "sse"},
+            )
+            events.put({"event": "error", "data": {
+                "code": code, "message": message, "request_id": request_id,
+            }})
+
         def worker() -> None:
             try:
                 for item in self._turn_events(
@@ -802,10 +918,10 @@ class ConversationService:
                 ):
                     events.put(item)
             except SecurityError as exc:
-                events.put({"event": "error", "data": {"code": exc.code, "message": exc.detail}})
+                code = exc.code if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", str(exc.code)) else "REQUEST_REJECTED"
+                emit_failure(code, "请求未完成，请检查当前操作状态后重试")
             except Exception:  # pragma: no cover - defensive
-                logger.exception("streamed turn failed")
-                events.put({"event": "error", "data": {"code": "CORE_ERROR", "message": "处理失败，请稍后重试"}})
+                emit_failure("CORE_ERROR", "处理失败，请稍后重试")
             finally:
                 events.put(None)
 
@@ -880,8 +996,17 @@ class ConversationService:
                 raise ConversationError("审批已超时，请重新发起操作", 410, "APPROVAL_EXPIRED")
 
             if normalized == "reject":
-                # A rejection consumes the handle: the nonce is never used and
-                # simply expires at the core.
+                # A superseded card must lose its actual core authorization,
+                # not merely disappear from the channel's approval registry.
+                if approval.auth_token:
+                    try:
+                        cancelled = self._client(principal, session_token).cancel(
+                            approval.auth_token, request_id=approval.request_id,
+                        )
+                    except BankAPIError as exc:
+                        raise self._core_failure(exc) from exc
+                    if not isinstance(cancelled, dict) or cancelled.get("cancelled") is not True:
+                        raise ConversationError("核心服务未确认取消，请稍后重试", 502, "CORE_PROTOCOL_ERROR")
                 self._mark_resolved(approval)
                 audit_event(
                     "CHANNEL_APPROVAL_REJECTED",
@@ -992,6 +1117,16 @@ class ConversationService:
         # was not actually applied and the client has to know.
         if self._pending_interrupt(graph, config) is not None:
             raise ConversationError("审批未生效，操作仍在等待确认", 409, "APPROVAL_STILL_PENDING")
+        if not payload.get("confirmed"):
+            # Neither bare amounts nor pronouns after cancellation may revive
+            # an operation the user just explicitly abandoned.
+            cleared = {
+                "context": {}, "auth_token": None, "mfa_proof": None,
+                "user_confirmed": False, "clarification_required": False,
+                "plan": None,
+            }
+            graph.update_state(config, cleared)
+            state.update(cleared)
         envelope = self._envelope_from_state(
             conversation_id=approval.conversation_id,
             state=state,

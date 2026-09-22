@@ -1,0 +1,1835 @@
+[
+  {
+    "id": "T01",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转点钱",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "金额",
+            "多少"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "五十元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 50,
+            "target": "李四"
+          },
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -50,
+          "reply_any": [
+            "成功",
+            "完成"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "T02",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给13900139000转账",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "金额",
+            "多少"
+          ]
+        }
+      },
+      {
+        "input": "五十",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 50,
+            "target": "13900139000"
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T03",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转账，备注午饭钱",
+        "expect": {
+          "approval": false
+        }
+      },
+      {
+        "input": "50元",
+        "expect": {
+          "approval": true,
+          "reply_any": [
+            "午饭钱"
+          ],
+          "parsed": {
+            "amount": 50
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "T04",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "明天下午三点给李四转50元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "SCHEDULED_TRANSFER",
+            "amount": 50
+          },
+          "time_contains": "T15:00",
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": 0,
+          "state": {
+            "scheduled_transfers": [
+              {
+                "amount": 50,
+                "status": "SCHEDULED"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "T05",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "预约给李四转账50元，备注房租",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "时间",
+            "日期"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "下周三上午十点",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "SCHEDULED_TRANSFER"
+          },
+          "time_contains": "T10:00",
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T06",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转10元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -10
+        }
+      },
+      {
+        "input": "再转一次，不过这次20元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 20,
+            "target": "李四"
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T07",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转50元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "input": "算了，不转了",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "取消",
+            "拒绝"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "那查一下余额",
+        "expect": {
+          "parsed": {
+            "intent": "BALANCE_QUERY"
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T08",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转50元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "input": "不对，改成20元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 20
+          },
+          "new_approval": true,
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -20
+        }
+      }
+    ]
+  },
+  {
+    "id": "T09",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转50元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "input": "换成王美",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "王美",
+            "amount": 50
+          },
+          "new_approval": true,
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T10",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给她转五十块",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "收款人",
+            "姓名",
+            "哪位"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "李四",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 50,
+            "target": "李四"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "T11",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "三个人吃饭一共300元，帮我AA",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "参与人",
+            "参与者"
+          ],
+          "unchanged": true,
+          "no_claim": [
+            "总金额和参与人",
+            "请补充总金额",
+            "请提供总金额"
+          ]
+        }
+      },
+      {
+        "input": "和李四、王美",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "SPLIT_BILL",
+            "amount": 300
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "T12",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "和李四、王美AA分摊300元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "reply_any": [
+            "人均",
+            "分摊"
+          ],
+          "balance_delta": 200,
+          "state": {
+            "splits": [
+              {
+                "amount": 300,
+                "per_person": 100,
+                "collected_amount": 200,
+                "status": "SETTLED"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "T13",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转-50元",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      },
+      {
+        "input": "先不办了",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T14",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转个几百块",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "金额",
+            "明确",
+            "多少"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "B01",
+    "direction": "账单分析",
+    "turns": [
+      {
+        "input": "分析本月账单",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "MONTH"
+          },
+          "unchanged": true,
+          "reply_all": [
+            "2,555.00"
+          ]
+        }
+      },
+      {
+        "input": "那上个月呢",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "LAST_MONTH"
+          },
+          "unchanged": true,
+          "reply_all": [
+            "100.00"
+          ]
+        }
+      },
+      {
+        "input": "今年整体呢",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "YEAR"
+          },
+          "unchanged": true,
+          "reply_all": [
+            "2,655.00"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "B02",
+    "direction": "账单分析",
+    "turns": [
+      {
+        "input": "查看本月交易记录",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_QUERY",
+            "date_scope": "MONTH"
+          }
+        }
+      },
+      {
+        "input": "按类别分析一下",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "MONTH"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "B03",
+    "direction": "账单分析",
+    "turns": [
+      {
+        "input": "这个月钱都花哪儿去了",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "MONTH"
+          }
+        }
+      },
+      {
+        "input": "餐饮花了多少",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "MONTH"
+          },
+          "unchanged": true,
+          "reply_all": [
+            "餐饮",
+            "200"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "B04",
+    "direction": "账单分析",
+    "turns": [
+      {
+        "input": "分析上月账单",
+        "expect": {
+          "parsed": {
+            "date_scope": "LAST_MONTH"
+          }
+        }
+      },
+      {
+        "input": "里面有没有异常交易",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "LAST_MONTH"
+          },
+          "approval": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "B05",
+    "direction": "账单分析",
+    "turns": [
+      {
+        "input": "那笔境外消费怎么回事",
+        "expect": {
+          "approval": false,
+          "parsed": {
+            "intent": "BILL_ANALYSIS"
+          },
+          "unchanged": true,
+          "reply_all": [
+            "境外未知商户",
+            "2,000.00",
+            "境外商户"
+          ],
+          "no_claim": [
+            "已冻结",
+            "已创建争议"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "B06",
+    "direction": "账单分析",
+    "turns": [
+      {
+        "input": "请给我今年年度账单报告",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "YEAR"
+          }
+        }
+      },
+      {
+        "input": "换成本月",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "MONTH"
+          }
+        }
+      },
+      {
+        "input": "再看一遍",
+        "expect": {
+          "parsed": {
+            "intent": "BILL_ANALYSIS",
+            "date_scope": "MONTH"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "W01",
+    "direction": "理财操作",
+    "turns": [
+      {
+        "input": "现在有哪些在售理财",
+        "expect": {
+          "parsed": {
+            "intent": "WEALTH_QUERY"
+          },
+          "approval": false
+        }
+      },
+      {
+        "input": "帮我比较CJ01002和AY90204",
+        "expect": {
+          "parsed": {
+            "intent": "WEALTH_COMPARE"
+          },
+          "reply_any": [
+            "安逸",
+            "对比",
+            "比较"
+          ],
+          "approval": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "W02",
+    "direction": "理财操作",
+    "turns": [
+      {
+        "input": "比较理财",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "两",
+            "编号",
+            "产品"
+          ]
+        }
+      },
+      {
+        "input": "CJ01002和AY90204",
+        "expect": {
+          "parsed": {
+            "intent": "WEALTH_COMPARE"
+          },
+          "approval": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "W03",
+    "direction": "理财操作",
+    "turns": [
+      {
+        "input": "我想做风险测评",
+        "expect": {
+          "reply_any": [
+            "测评",
+            "第1",
+            "第 1"
+          ]
+        }
+      },
+      {
+        "input": "1Z",
+        "expect": {
+          "reply_any": [
+            "无效",
+            "选项",
+            "有效"
+          ]
+        }
+      },
+      {
+        "input": "取消测评",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "取消",
+            "退出"
+          ]
+        }
+      },
+      {
+        "input": "查一下余额",
+        "expect": {
+          "parsed": {
+            "intent": "BALANCE_QUERY"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "W04",
+    "direction": "理财操作",
+    "turns": [
+      {
+        "input": "我有点闲钱，想买点稳健的理财",
+        "expect": {
+          "reply_any": [
+            "测评"
+          ]
+        }
+      },
+      {
+        "input": "1B 2B 3B 4B 5B 6B 7B 8B",
+        "expect": {
+          "reply_any": [
+            "C2",
+            "稳健",
+            "谨慎"
+          ]
+        }
+      },
+      {
+        "input": "再推荐适合我的理财",
+        "expect": {
+          "parsed": {
+            "intent": "WEALTH_RECOMMEND"
+          },
+          "approval": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "W05",
+    "direction": "理财操作",
+    "risk_profile": true,
+    "turns": [
+      {
+        "input": "申购CJ01002",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "金额",
+            "多少"
+          ]
+        }
+      },
+      {
+        "input": "100元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "CJ01002",
+            "amount": 100
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "W06",
+    "direction": "理财操作",
+    "risk_profile": true,
+    "turns": [
+      {
+        "input": "申购CJ01002 100元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "balance_delta": -100,
+          "reply_any": [
+            "成功",
+            "完成",
+            "已申购",
+            "申购已由核心确认"
+          ],
+          "state": {
+            "holdings": [
+              {
+                "product_id": "CJ01002",
+                "principal": 100
+              }
+            ]
+          }
+        }
+      },
+      {
+        "input": "那个产品赎回50元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "CJ01002",
+            "amount": 50
+          }
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "balance_delta": 50,
+          "state": {
+            "holdings": [
+              {
+                "product_id": "CJ01002",
+                "principal": 50
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "W07",
+    "direction": "理财操作",
+    "risk_profile": true,
+    "turns": [
+      {
+        "input": "申购CJ01002 100元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "balance_delta": -100
+        }
+      },
+      {
+        "input": "那个产品再申购20元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "CJ01002",
+            "amount": 20
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "W08",
+    "direction": "理财操作",
+    "risk_profile": true,
+    "turns": [
+      {
+        "input": "申购AY90204 10元",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "起购",
+            "最低",
+            "1000",
+            "1,000"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "赎回CJ01002 999999元",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "不足",
+            "持仓",
+            "超"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "C01",
+    "direction": "卡片管理",
+    "turns": [
+      {
+        "input": "帮我看看我的卡",
+        "expect": {
+          "parsed": {
+            "intent": "CARD_QUERY"
+          }
+        }
+      },
+      {
+        "input": "申请一张虚拟卡",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "reply_any": [
+            "成功",
+            "卡",
+            "申请"
+          ]
+        }
+      },
+      {
+        "input": "再看看我的卡",
+        "expect": {
+          "parsed": {
+            "intent": "CARD_QUERY"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "C02",
+    "direction": "卡片管理",
+    "turns": [
+      {
+        "input": "CARD-001调额",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "金额",
+            "额度",
+            "多少"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "5000元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 5000,
+            "target": "CARD-001"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "C03",
+    "direction": "卡片管理",
+    "two_cards": true,
+    "turns": [
+      {
+        "input": "我的卡丢了",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "哪",
+            "指定",
+            "卡片编号"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "CARD-001",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "CARD-001"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "C04",
+    "direction": "卡片管理",
+    "two_cards": true,
+    "turns": [
+      {
+        "input": "尾号1111的卡额度改到3000元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "CARD-002",
+            "amount": 3000
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "C05",
+    "direction": "卡片管理",
+    "turns": [
+      {
+        "input": "CARD-001额度设为0元",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      },
+      {
+        "input": "CARD-001额度设为-500元",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "C06",
+    "direction": "卡片管理",
+    "turns": [
+      {
+        "input": "冻结卡片CARD-001",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "reply_any": [
+            "冻结",
+            "FROZEN"
+          ],
+          "state": {
+            "cards": [
+              {
+                "card_id": "CARD-001",
+                "status": "FROZEN"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "input": "把这张卡解冻",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "CARD-001"
+          }
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "reply_any": [
+            "解冻",
+            "ACTIVE",
+            "正常"
+          ],
+          "state": {
+            "cards": [
+              {
+                "card_id": "CARD-001",
+                "status": "ACTIVE"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "C07",
+    "direction": "卡片管理",
+    "turns": [
+      {
+        "input": "CARD-001丢了，帮我挂失",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "reply_any": [
+            "挂失",
+            "LOST"
+          ],
+          "state": {
+            "cards": [
+              {
+                "card_id": "CARD-001",
+                "status": "LOST"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "input": "卡找到了，取消挂失CARD-001",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "reply_any": [
+            "解挂",
+            "正常",
+            "ACTIVE",
+            "取消挂失"
+          ],
+          "state": {
+            "cards": [
+              {
+                "card_id": "CARD-001",
+                "status": "ACTIVE"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "C08",
+    "direction": "卡片管理",
+    "turns": [
+      {
+        "input": "冻结卡片CARD-404",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "不存在",
+            "未找到",
+            "找不到"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "S01",
+    "direction": "订阅代扣",
+    "turns": [
+      {
+        "input": "帮我看看有没有乱扣费",
+        "expect": {
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY"
+          },
+          "approval": false
+        }
+      },
+      {
+        "input": "下次什么时候续费",
+        "expect": {
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY"
+          },
+          "reply_any": [
+            "扣",
+            "续费"
+          ],
+          "approval": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "S02",
+    "direction": "订阅代扣",
+    "turns": [
+      {
+        "input": "我有哪些订阅",
+        "expect": {
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY"
+          }
+        }
+      },
+      {
+        "input": "把它取消掉",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "哪",
+            "名称",
+            "商户"
+          ]
+        }
+      },
+      {
+        "input": "Apple那个",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "Apple"
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "S03",
+    "direction": "订阅代扣",
+    "turns": [
+      {
+        "input": "我不想再被扣会员费了",
+        "expect": {
+          "approval": false
+        }
+      },
+      {
+        "input": "视频会员",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "SUBSCRIPTION_CANCEL",
+            "target": "视频会员"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "S04",
+    "direction": "订阅代扣",
+    "turns": [
+      {
+        "input": "Apple订阅下次什么时候扣款",
+        "expect": {
+          "approval": false,
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY"
+          }
+        }
+      },
+      {
+        "input": "续费前两天提醒我",
+        "expect": {
+          "approval": false,
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY"
+          },
+          "reply_any": [
+            "提醒",
+            "任务"
+          ],
+          "no_claim": [
+            "已取消"
+          ],
+          "state": {
+            "tasks": [
+              {
+                "task_type": "RENEWAL_REMINDER",
+                "payload": {
+                  "merchant": "Apple 订阅",
+                  "days_before": 2
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "S05",
+    "direction": "订阅代扣",
+    "turns": [
+      {
+        "input": "取消Apple订阅",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "reply_any": [
+            "已取消",
+            "取消成功"
+          ],
+          "state": {
+            "subscriptions": [
+              {
+                "merchant": "Apple 订阅",
+                "status": "CANCELLED"
+              },
+              {
+                "merchant": "视频会员",
+                "status": "ACTIVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "input": "再看看我的订阅",
+        "expect": {
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY"
+          },
+          "approval": false,
+          "reply_all": [
+            "原计划扣款",
+            "已取消"
+          ],
+          "no_claim": [
+            "取消 Apple 订阅",
+            "Apple 订阅 ｜ 每期 ¥15.00 ｜ 下次扣款"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "S06",
+    "direction": "订阅代扣",
+    "turns": [
+      {
+        "input": "取消自动扣费",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "哪",
+            "名称",
+            "商户"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "X01",
+    "direction": "跨场景联动",
+    "turns": [
+      {
+        "input": "我爱人生日快到了，帮我锁定1000元，生日前两天提醒我订花和蛋糕",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "日期",
+            "哪天"
+          ]
+        }
+      },
+      {
+        "input": "下周六",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "CROSS_SCENE_LOCK",
+            "amount": 1000
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "X02",
+    "direction": "跨场景联动",
+    "turns": [
+      {
+        "input": "我爱人生日是2099-10-03，提前两天提醒订花和蛋糕",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "金额",
+            "多少"
+          ],
+          "no_claim": [
+            "金额和生日日期",
+            "请补充生日日期",
+            "请提供生日日期"
+          ]
+        }
+      },
+      {
+        "input": "1000元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 1000
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "X03",
+    "direction": "跨场景联动",
+    "turns": [
+      {
+        "input": "过生日用，锁定1000元，2099-10-03前两天提醒订花和蛋糕",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "谁",
+            "对象",
+            "哪位"
+          ]
+        }
+      },
+      {
+        "input": "是我爱人",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "爱人"
+          },
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "X04",
+    "direction": "跨场景联动",
+    "turns": [
+      {
+        "input": "我爱人生日是2099-10-03，锁定1000元，提前两天提醒我买花和蛋糕",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "reply_any": [
+            "锁定",
+            "预留"
+          ],
+          "locked_delta": 1000
+        }
+      },
+      {
+        "input": "花和蛋糕已经买好了吗",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "未",
+            "没有",
+            "草稿",
+            "尚"
+          ],
+          "no_claim": [
+            "已购买",
+            "已买好",
+            "已下单成功"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "X05",
+    "direction": "跨场景联动",
+    "turns": [
+      {
+        "input": "爱人生日快到了，锁1000元提醒订花",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "日期",
+            "哪天"
+          ]
+        }
+      },
+      {
+        "input": "3000",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "日期",
+            "哪天"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "X06",
+    "direction": "跨场景联动",
+    "turns": [
+      {
+        "input": "我爱人生日是2099-10-03，锁定1000元提前两天提醒订花和蛋糕",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "input": "先别办了",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "取消",
+            "拒绝"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T15",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给通讯录里的老李转账",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "金额",
+            "多少"
+          ]
+        }
+      },
+      {
+        "input": "二十元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "老李",
+            "amount": 20
+          }
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -20
+        }
+      }
+    ]
+  },
+  {
+    "id": "T16",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转账",
+        "expect": {
+          "approval": false
+        }
+      },
+      {
+        "input": "两三百",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      },
+      {
+        "input": "一两百",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      },
+      {
+        "input": "100多",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      },
+      {
+        "input": "一百多",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      },
+      {
+        "input": "那就八十元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "amount": 80,
+            "target": "李四"
+          }
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -80
+        }
+      }
+    ]
+  },
+  {
+    "id": "T17",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "帮我转账50元",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "收款人"
+          ]
+        }
+      },
+      {
+        "input": "13900139000",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "13900139000",
+            "amount": 50
+          }
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -50
+        }
+      }
+    ]
+  },
+  {
+    "id": "T18",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转10元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -10
+        }
+      },
+      {
+        "input": "帮我转账20元",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "收款人"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "T19",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转50元",
+        "expect": {
+          "approval": true
+        }
+      },
+      {
+        "input": "不对改一下",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      },
+      {
+        "input": "金额改成20元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "李四",
+            "amount": 20
+          }
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": -20
+        }
+      }
+    ]
+  },
+  {
+    "id": "T20",
+    "direction": "智能转账",
+    "turns": [
+      {
+        "input": "给李四转账",
+        "expect": {
+          "approval": false
+        }
+      },
+      {
+        "input": "算了不转了",
+        "expect": {
+          "approval": false
+        }
+      },
+      {
+        "input": "50元",
+        "expect": {
+          "approval": false,
+          "unchanged": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "C09",
+    "direction": "卡片管理",
+    "turns": [
+      {
+        "input": "尾号3082的卡调额",
+        "expect": {
+          "approval": false,
+          "reply_any": [
+            "额度",
+            "金额",
+            "多少"
+          ]
+        }
+      },
+      {
+        "input": "3000元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "target": "CARD-001",
+            "amount": 3000
+          }
+        }
+      },
+      {
+        "action": "approve_red",
+        "expect": {
+          "state": {
+            "cards": [
+              {
+                "card_id": "CARD-001",
+                "daily_limit": 3000
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "S07",
+    "direction": "订阅代扣",
+    "turns": [
+      {
+        "input": "Apple订阅续费前两天提醒我",
+        "expect": {
+          "approval": false,
+          "reply_all": [
+            "提醒",
+            "Apple"
+          ],
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY",
+            "target": "Apple",
+            "slots": {
+              "renewal_reminder": true,
+              "days_before": 2
+            }
+          },
+          "state": {
+            "tasks": [
+              {
+                "task_type": "RENEWAL_REMINDER",
+                "payload": {
+                  "merchant": "Apple 订阅",
+                  "days_before": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "input": "同样的提醒再设置一次",
+        "expect": {
+          "approval": false,
+          "no_claim": [
+            "已取消"
+          ],
+          "parsed": {
+            "intent": "SUBSCRIPTION_QUERY",
+            "target": "Apple",
+            "slots": {
+              "renewal_reminder": true,
+              "days_before": 2
+            }
+          },
+          "state": {
+            "tasks": [
+              {
+                "task_type": "RENEWAL_REMINDER",
+                "payload": {
+                  "merchant": "Apple 订阅",
+                  "days_before": 2
+                }
+              }
+            ]
+          },
+          "reply_any": [
+            "提醒",
+            "任务"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "W09",
+    "direction": "理财操作",
+    "turns": [
+      {
+        "input": "比较理财CJ01002",
+        "expect": {
+          "approval": false,
+          "reply_all": [
+            "一个",
+            "产品编号"
+          ],
+          "no_claim": [
+            "两个"
+          ],
+          "unchanged": true
+        }
+      },
+      {
+        "input": "AY90204",
+        "expect": {
+          "approval": false,
+          "parsed": {
+            "intent": "WEALTH_COMPARE",
+            "product_ids": [
+              "CJ01002",
+              "AY90204"
+            ]
+          },
+          "reply_all": [
+            "CJ01002",
+            "AY90204"
+          ],
+          "unchanged": true
+        }
+      }
+    ]
+  }
+]

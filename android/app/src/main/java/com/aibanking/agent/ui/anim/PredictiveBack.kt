@@ -2,6 +2,7 @@ package com.aibanking.agent.ui.anim
 
 import androidx.activity.BackEventCompat
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -19,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import kotlin.coroutines.cancellation.CancellationException
@@ -31,10 +31,10 @@ import kotlinx.coroutines.launch
  * 用户从屏幕边缘内滑时，[PredictiveBackHandler] 以 0..1 的进度回报手指位移；
  * 本组件把进度直接映射到两层变换上，页面跟着手指走而不是等返回落地才动画：
  *
- *  * 顶层（当前页）：等比缩放 1.0 → 0.92，圆角 0 → 24dp，向手势侧轻微位移，
+ *  * 顶层（当前页）：等比缩放 1.0 → 0.96，圆角 0 → 24dp，向手势侧轻微位移，
  *    并随进度升起投影——与系统预测性返回的层级观感一致；
- *  * 底层（被露出的上一层级页）：从手势对侧视差推入约 18% 屏宽，透明度
- *    0.85 → 1.0，位移方向与手指一致但幅度更小，形成纵深视差。
+ *  * 底层（被露出的上一层级页）：从手势对侧视差推入约 6% 屏宽，透明度
+ *    0.92 → 1.0，位移方向与手指一致但幅度更小，形成纵深视差。
  *
  * 手势完成（越过提交阈值）：立即收起底层预览并执行 [onBack]（真正的状态切
  * 换，由调用方既有的页面转场接力演出），顶层变换在 180ms 内解除，两段动画
@@ -44,19 +44,19 @@ import kotlinx.coroutines.launch
  * 不下发逐帧进度，手势退化为普通返回（本组件依然正确提交）。
  */
 
-// 顶层页面规格：缩放 1.0 → 0.92、圆角 → 24dp、轻微跟手位移与投影。
-private const val TOP_MAX_SHRINK = 0.08f
-private const val TOP_MAX_SHIFT = 0.05f
+// 顶层页面规格：缩放 1.0 → 0.96、圆角 → 24dp、轻微跟手位移与投影。
+private const val TOP_MAX_SHRINK = 0.04f
+private const val TOP_MAX_SHIFT = 0.03f
 private val TOP_MAX_CORNER = 24.dp
-private const val TOP_MAX_SHADOW_DP = 18f
+private const val TOP_MAX_SHADOW_DP = 8f
 
-// 底层页面规格：视差推入行程 18% 屏宽（15%~20% 取中）、透明度 0.85 → 1.0。
-private const val BENEATH_MAX_PARALLAX = 0.18f
-private const val BENEATH_MIN_ALPHA = 0.85f
+// 底层页面规格：视差推入行程 6% 屏宽、透明度 0.92 → 1.0。
+private const val BENEATH_MAX_PARALLAX = 0.06f
+private const val BENEATH_MIN_ALPHA = 0.92f
 
-// 取消回弹：高阻尼弹性曲线——低弹跳比 + 中低刚度，回程快且带一丝回弹。
+// 取消回弹：无过冲弹簧，保持手势取消后的稳定收束。
 private val CancelSpring = spring<Float>(
-    dampingRatio = Spring.DampingRatioLowBouncy,
+    dampingRatio = Spring.DampingRatioNoBouncy,
     stiffness = Spring.StiffnessMediumLow,
 )
 
@@ -83,6 +83,11 @@ fun PredictiveBackPreview(
     beneath: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
+    if (!LocalBankMotionEnabled.current) {
+        BackHandler(enabled = enabled, onBack = onBack)
+        Box(modifier.fillMaxSize()) { content() }
+        return
+    }
     val progress = remember { Animatable(0f) }
     var edgeSign by remember { mutableFloatStateOf(1f) }
     // 底层预览的挂载开关只在「手势出现第一帧 / 提交 / 回弹结束」三个离散时刻
@@ -120,8 +125,8 @@ fun PredictiveBackPreview(
                     Modifier
                         .matchParentSize()
                         .graphicsLayer {
-                            // 底层跟随手指同向推入：起点偏移 18% 屏宽，随进度归零；
-                            // 透明度从 0.85 恢复到 1.0，读作“从深处浮现”。
+                            // 底层跟随手指同向推入：起点偏移 6% 屏宽，随进度归零；
+                            // 透明度从 0.92 恢复到 1.0，读作“从深处浮现”。
                             val p = progress.value
                             translationX = -edgeSign * BENEATH_MAX_PARALLAX * (1f - p) * size.width
                             alpha = BENEATH_MIN_ALPHA + (1f - BENEATH_MIN_ALPHA) * p

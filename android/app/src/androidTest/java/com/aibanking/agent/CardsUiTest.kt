@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
@@ -62,9 +63,9 @@ class CardsUiTest {
         check(ui.onAllNodesWithTag(UiTags.CARD_CAMERA).fetchSemanticsNodes().isNotEmpty())
         // This case owns the 5555 fixture.  The second-card action case owns
         // 4111, so either JUnit execution order remains duplicate-free.
-        ui.onNodeWithTag(UiTags.CARD_NUMBER).performTextInput("5555555555554444")
-        ui.onNodeWithTag(UiTags.CARD_CONFIRM).performClick()
-        ui.onNodeWithTag(UiTags.CARD_ADD).performClick()
+        ui.onNodeWithTag(UiTags.CARD_NUMBER).performScrollTo().performTextInput("5555555555554444")
+        ui.onNodeWithTag(UiTags.CARD_CONFIRM).performScrollTo().performClick()
+        ui.onNodeWithTag(UiTags.CARD_ADD).performScrollTo().performClick()
 
         // 顶部计数来自刷新后的卡片列表，说明新卡确实进了列表，而不是只在提示里。
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { cardCount() == before + 1 }
@@ -84,8 +85,8 @@ class CardsUiTest {
         check(ui.onAllNodesWithText("**** **** **** 3082").fetchSemanticsNodes().isEmpty())
         ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
         check(ui.onAllNodesWithText("6222020000023082").fetchSemanticsNodes().isEmpty())
-        ui.onNodeWithTag(UiTags.CARD_PIN).performTextInput("24681012")
-        ui.onNodeWithTag(UiTags.CARD_REVEAL).performClick()
+        ui.onNodeWithTag(UiTags.CARD_PIN).performScrollTo().performTextInput("24681012")
+        ui.onNodeWithTag(UiTags.CARD_REVEAL).performScrollTo().performClick()
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithText("户名：张三").fetchSemanticsNodes().isNotEmpty() }
         check(ui.onAllNodesWithText("户名：张三").fetchSemanticsNodes().isNotEmpty())
         check(ui.onAllNodesWithText("卡号：6222020000023082").fetchSemanticsNodes().isNotEmpty())
@@ -100,8 +101,8 @@ class CardsUiTest {
     fun wrong_pin_never_shows_sensitive_data() {
         openCardsAndWaitForRows()
         ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
-        ui.onNodeWithTag(UiTags.CARD_PIN).performTextInput("00000000")
-        ui.onNodeWithTag(UiTags.CARD_REVEAL).performClick()
+        ui.onNodeWithTag(UiTags.CARD_PIN).performScrollTo().performTextInput("00000000")
+        ui.onNodeWithTag(UiTags.CARD_REVEAL).performScrollTo().performClick()
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithText("验证失败，请检查取款密码").fetchSemanticsNodes().isNotEmpty() }
         check(ui.onAllNodesWithText("6222020000023082").fetchSemanticsNodes().isEmpty())
     }
@@ -110,38 +111,40 @@ class CardsUiTest {
     fun card_shortcuts_target_id_and_open_wealth() {
         openCardsAndWaitForRows()
         ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
-        ui.onNodeWithTag(UiTags.CARD_TRANSFER).performClick()
+        ui.onNodeWithTag(UiTags.CARD_TRANSFER).performScrollTo().performClick()
         check(ui.chatInputText()?.contains("CARD-001") == true)
         check(ui.chatInputText()?.contains("6222020000023082") != true)
         ui.onNodeWithTag(UiTags.OPEN_CARDS).performClick()
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithTag("${UiTags.CARD_DETAIL}:CARD-001").fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
-        ui.onNodeWithTag(UiTags.CARD_WEALTH).performClick()
+        ui.onNodeWithTag(UiTags.CARD_WEALTH).performScrollTo().performClick()
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithTag(UiTags.WEALTH_LIST).fetchSemanticsNodes().isNotEmpty() }
     }
 
     @Test
     fun a_second_cards_action_targets_that_card() {
         openCardsAndWaitForRows()
-        if (renderedCardCount() < 2) {
+        if (awaitCardCount() < 2) {
             // 绑定卡需明确确认，不需要红色审批；两张卡才谈得上“第二张”。
             ui.onNodeWithTag(UiTags.CARD_OPEN_ADD).performClick()
-            ui.onNodeWithTag(UiTags.CARD_NUMBER).performTextInput("4111111111111111")
-            ui.onNodeWithTag(UiTags.CARD_CONFIRM).performClick()
-            ui.onNodeWithTag(UiTags.CARD_ADD).performClick()
-            ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { renderedCardCount() >= 2 }
+            ui.onNodeWithTag(UiTags.CARD_NUMBER).performScrollTo().performTextInput("4111111111111111")
+            ui.onNodeWithTag(UiTags.CARD_CONFIRM).performScrollTo().performClick()
+            ui.onNodeWithTag(UiTags.CARD_ADD).performScrollTo().performClick()
+            ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { (cardCount() ?: 0) >= 2 }
         }
 
-        // 按屏幕顺序分组：第一组是最上面那张卡，第二组是下一张。
-        val byCard = cardActionButtons().groupBy { it.cardId }
-        check(byCard.size >= 2) { "卡片页只渲染出 ${byCard.size} 张卡，无法验证“第二张卡”的操作指向" }
-        val firstCard = byCard.keys.elementAt(0)
-        val secondCard = byCard.keys.elementAt(1)
-        val target = byCard.getValue(secondCard).firstOrNull { it.action == "freeze" }
-            ?: byCard.getValue(secondCard).first()
+        // 大卡面在小屏上逐张展示；按列表顺序滚动读取，不能把懒加载数量当成总卡数。
+        ui.onNodeWithTag(UiTags.CARD_LIST).performScrollToIndex(0)
+        val firstCard = cardActionButtons().first().cardId
+        ui.onNodeWithTag(UiTags.CARD_LIST).performScrollToIndex(1)
+        val secondActions = cardActionButtons().filter { it.cardId != firstCard }
+        check(secondActions.isNotEmpty()) { "滚动后仍未找到第二张卡，无法验证操作指向" }
+        val secondCard = secondActions.first().cardId
+        val target = secondActions.firstOrNull { it.cardId == secondCard && it.action == "freeze" }
+            ?: secondActions.first()
         val verb = checkNotNull(ACTION_VERBS[target.action]) { "未知的卡片操作 ${target.action}" }
 
-        ui.onNodeWithTag(UiTags.cardAction(target.cardId, target.action)).performClick()
+        ui.onNodeWithTag(UiTags.cardAction(target.cardId, target.action)).performScrollTo().performClick()
 
         // 操作只预填话术并回到对话：话术里的卡号必须是第二张卡，不能是第一张
         // （点错卡等于对一个用户没指定的卡片发起红色审批，核心按 card_id 执行）。
@@ -170,9 +173,6 @@ class CardsUiTest {
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { cardCount() != null }
         return checkNotNull(cardCount()) { "卡片页始终没有显示卡片数量" }
     }
-
-    /** 屏幕上渲染出来的卡片张数（按操作按钮归属的 cardId 去重）。 */
-    private fun renderedCardCount(): Int = cardActionButtons().map { it.cardId }.distinct().size
 
     /** 顶栏的“N 张”，加载中或不在卡片页时为 null。 */
     private fun cardCount(): Int? =
@@ -253,10 +253,12 @@ class CardsPanelActionsTest {
         check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-009", "unreport_lost")).fetchSemanticsNodes().isNotEmpty())
         check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-009", "unfreeze")).fetchSemanticsNodes().isEmpty())
         // 每张卡、每个操作各自可寻址：两张卡三颗按钮，互不遮蔽。
+        ui.onNodeWithTag(UiTags.CARD_LIST).performScrollToIndex(1)
         check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-010", "freeze")).fetchSemanticsNodes().isNotEmpty())
         check(ui.onAllNodesWithTag(UiTags.cardAction("CARD-010", "report_lost")).fetchSemanticsNodes().isNotEmpty())
 
-        ui.onNodeWithTag(UiTags.cardAction("CARD-009", "unreport_lost")).performClick()
+        ui.onNodeWithTag(UiTags.CARD_LIST).performScrollToIndex(0)
+        ui.onNodeWithTag(UiTags.cardAction("CARD-009", "unreport_lost")).performScrollTo().performClick()
 
         assertEquals("解挂卡片 CARD-009", viewModel.state.value.input)
     }

@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.aibanking.agent.ui.UiTags
 
@@ -30,8 +31,8 @@ internal fun ComposeContentTestRule.ensureLoggedIn(password: String, timeoutMs: 
             onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty()
     }
     if (onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty()) {
-        onNodeWithTag(UiTags.LOGIN_PASSWORD).performTextInput(password)
-        onNodeWithTag(UiTags.LOGIN_BUTTON).performClick()
+        onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextInput(password)
+        onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
     }
     waitUntil(timeoutMs) {
         // Exactly one: a leftover Activity from an earlier test in the same

@@ -3,7 +3,7 @@
     <!-- Compose supplies the real Material 3 palette; this framework theme only
          needs to remove the action bar and paint the window background. -->
     <style name="Theme.BankAgent" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">@color/bank_window_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
 </resources>

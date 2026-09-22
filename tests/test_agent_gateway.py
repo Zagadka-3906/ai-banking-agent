@@ -82,6 +82,15 @@ class _CoreClient:
             self._raise(response)
         return response.json()
 
+    def cancel(self, auth_token, *, request_id=None):
+        response = self.core.post(
+            "/api/v1/risk/cancel", json={},
+            headers=self._headers(auth_token=auth_token, request_id=request_id),
+        )
+        if response.status_code >= 400:
+            self._raise(response)
+        return response.json()
+
     def request_face_challenge(self, auth_token, *, request_id=None):
         response = self.core.post(
             "/api/v1/risk/mfa/face/challenge",
@@ -590,3 +599,17 @@ def test_stream_authenticates_before_opening_the_stream(gateway):
     response = _stream(client, "查余额", conversation_id="c-stream-anon", headers={"X-Session-Token": "not-a-session"})
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "INVALID_SESSION"
+def test_rate_limit_exhaustion_returns_retry_seconds_and_window_recovers(monkeypatch):
+    import agent_api
+
+    monkeypatch.setenv("BANK_AGENT_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setattr(agent_api, "RATE_LIMIT_STATE", {})
+    instant = [100.0]
+    monkeypatch.setattr(agent_api.time, "monotonic", lambda: instant[0])
+    assert agent_api._rate_limit_remaining("scenario-principal") is None
+    assert agent_api._rate_limit_remaining("scenario-principal") is None
+    instant[0] += 3
+    assert agent_api._rate_limit_remaining("scenario-principal") == 57
+    assert agent_api._rate_limit_remaining("other-principal") is None
+    instant[0] += 60
+    assert agent_api._rate_limit_remaining("scenario-principal") is None

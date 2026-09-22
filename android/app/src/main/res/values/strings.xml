@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AI 银行助手</string>
+    <string name="app_name">安言 AI 银行</string>
     <string name="login_title">登录</string>
     <string name="chat_hint">请输入银行业务指令…</string>
     <string name="send">发送</string>

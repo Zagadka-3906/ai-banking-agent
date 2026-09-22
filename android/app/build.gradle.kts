@@ -13,7 +13,8 @@ plugins {
 // Without the file, the app builds and runs with push simply disabled - see
 // app/src/main/java/com/aibanking/agent/push/PushNotifications.kt.
 val googleServicesConfig = file("google-services.json")
-if (googleServicesConfig.exists()) {
+val scenarioTests = providers.gradleProperty("bankScenarioTests").orNull == "true"
+if (googleServicesConfig.exists() && !scenarioTests) {
     apply(plugin = libs.plugins.google.services.get().pluginId)
     logger.lifecycle("google-services.json found: Firebase push is enabled for this build.")
 } else {
@@ -67,7 +68,15 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        create("scenario") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".scenariotest"
+            matchingFallbacks += listOf("debug")
+            buildConfigField("String", "GATEWAY_BASE_URL", "\"http://127.0.0.1:18810/\"")
+            buildConfigField("String", "CORE_BASE_URL", "\"http://127.0.0.1:18800/\"")
+        }
     }
+    testBuildType = if (scenarioTests) "scenario" else "debug"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -101,6 +110,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.compose.shimmer)
+    implementation(libs.commonmark)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // The red authorization tier needs a real device-side biometric prompt.
@@ -126,4 +137,5 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.rules)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    add("scenarioImplementation", libs.androidx.compose.ui.test.manifest)
 }

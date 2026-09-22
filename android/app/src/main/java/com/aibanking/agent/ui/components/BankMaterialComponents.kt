@@ -1,59 +1,81 @@
 package com.aibanking.agent.ui.components
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
+import com.aibanking.agent.ui.anim.SkeletonBlock
+import com.aibanking.agent.ui.anim.bankPressScale
 import com.aibanking.agent.ui.theme.BankSpacing
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 
 @Composable
 fun BankSurfaceContainer(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Surface(modifier = modifier.fillMaxWidth()) {
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-            Column(
-                modifier = Modifier.widthIn(max = BankSpacing.contentMaxWidth).fillMaxWidth(),
-                content = { content() },
-            )
+    Surface(modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Column(Modifier.widthIn(max = BankSpacing.contentMaxWidth).fillMaxWidth()) { content() }
         }
     }
 }
 
 @Composable
-fun BankSectionHeader(
+fun BankScreenHeading(
     title: String,
-    modifier: Modifier = Modifier,
     subtitle: String? = null,
+    eyebrow: String? = null,
+    modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth().heightIn(min = BankSpacing.minTouchTarget),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(BankSpacing.sm),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Row(modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (eyebrow != null) Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+            Text(title, style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onBackground)
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        trailing?.invoke()
+    }
+}
+
+@Composable
+fun BankSectionHeader(title: String, modifier: Modifier = Modifier, subtitle: String? = null, trailing: (@Composable () -> Unit)? = null) {
+    Row(modifier.fillMaxWidth().heightIn(min = BankSpacing.minTouchTarget), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         trailing?.invoke()
@@ -61,25 +83,31 @@ fun BankSectionHeader(
 }
 
 @Composable
-fun BankSectionCard(
-    modifier: Modifier = Modifier,
-    outlined: Boolean = false,
-    content: @Composable () -> Unit,
-) {
-    val contentModifier = Modifier.fillMaxWidth().padding(BankSpacing.md)
-    if (outlined) OutlinedCard(modifier = modifier.fillMaxWidth()) { Column(contentModifier) { content() } }
-    else ElevatedCard(modifier = modifier.fillMaxWidth(), elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)) { Column(contentModifier) { content() } }
+fun BankSectionCard(modifier: Modifier = Modifier, outlined: Boolean = false, content: @Composable () -> Unit) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (outlined) 1f else 0.55f)),
+    ) { Column(Modifier.fillMaxWidth().padding(BankSpacing.lg), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() } }
+}
+
+/** Hero content intentionally uses a stable light foreground in both themes. */
+@Composable
+fun BankHeroCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val gradient = LocalBankSemanticColors.current.primaryGradient
+    CompositionLocalProvider(LocalContentColor provides Color(0xFFF3FBF4)) {
+        Column(
+            modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).background(gradient).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content,
+        )
+    }
 }
 
 @Composable
-fun BankMetricCard(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier,
-    supporting: String? = null,
-    valueColor: Color = MaterialTheme.colorScheme.onSurface,
-) {
-    BankSectionCard(modifier = modifier) {
+fun BankMetricCard(label: String, value: String, modifier: Modifier = Modifier, supporting: String? = null, valueColor: Color = MaterialTheme.colorScheme.onSurface) {
+    BankSectionCard(modifier) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.headlineSmall, color = valueColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (supporting != null) Text(supporting, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -89,12 +117,7 @@ fun BankMetricCard(
 enum class BankSemanticStatus { Positive, Negative, Neutral, RiskGreen, RiskYellow, RiskRed }
 
 @Composable
-fun BankStatusChip(
-    label: String,
-    status: BankSemanticStatus,
-    modifier: Modifier = Modifier,
-    containerColor: Color? = null,
-) {
+fun BankStatusChip(label: String, status: BankSemanticStatus, modifier: Modifier = Modifier, containerColor: Color? = null) {
     val colors = LocalBankSemanticColors.current
     val color = when (status) {
         BankSemanticStatus.Positive -> colors.positive
@@ -104,65 +127,89 @@ fun BankStatusChip(
         BankSemanticStatus.RiskYellow -> colors.riskYellow
         BankSemanticStatus.RiskRed -> colors.riskRed
     }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = containerColor ?: color.copy(alpha = 0.12f),
-        contentColor = color,
-    ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xxs),
-            style = MaterialTheme.typography.labelMedium,
-        )
+    Surface(modifier, shape = RoundedCornerShape(50), color = containerColor ?: color.copy(alpha = 0.10f), contentColor = color) {
+        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
 
 @Composable
-fun BankActionRow(
-    primaryLabel: String,
-    onPrimary: () -> Unit,
-    modifier: Modifier = Modifier,
-    secondaryLabel: String? = null,
-    onSecondary: (() -> Unit)? = null,
-    primaryEnabled: Boolean = true,
-) {
-    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
-        if (secondaryLabel != null && onSecondary != null) OutlinedButton(onClick = onSecondary, modifier = Modifier.weight(1f).heightIn(min = BankSpacing.minTouchTarget)) { Text(secondaryLabel) }
-        Button(onClick = onPrimary, enabled = primaryEnabled, modifier = Modifier.weight(1f).heightIn(min = BankSpacing.minTouchTarget)) { Text(primaryLabel) }
+fun BankPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, loading: Boolean = false) {
+    val interaction = remember { MutableInteractionSource() }
+    Button(
+        onClick = onClick,
+        enabled = enabled && !loading,
+        modifier = modifier.heightIn(min = 52.dp).bankPressScale(interaction, enabled && !loading),
+        interactionSource = interaction,
+        shape = RoundedCornerShape(16.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 24.dp, vertical = 14.dp),
+    ) {
+        if (loading) {
+            if (LocalBankMotionEnabled.current) CircularProgressIndicator(Modifier.size(18.dp), color = LocalContentColor.current, strokeWidth = 2.dp)
+            else BankIcon(BankIconKind.More, Modifier.size(18.dp))
+        }
+        Text(text, modifier = if (loading) Modifier.padding(start = 10.dp) else Modifier, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable
+fun BankSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    val interaction = remember { MutableInteractionSource() }
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.heightIn(min = 52.dp).bankPressScale(interaction, enabled),
+        interactionSource = interaction,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surface),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+    ) { Text(text, style = MaterialTheme.typography.labelLarge) }
+}
+
+@Composable
+fun BankActionRow(primaryLabel: String, onPrimary: () -> Unit, modifier: Modifier = Modifier, secondaryLabel: String? = null, onSecondary: (() -> Unit)? = null, primaryEnabled: Boolean = true) {
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (secondaryLabel != null && onSecondary != null) BankSecondaryButton(secondaryLabel, onSecondary, Modifier.weight(1f))
+        BankPrimaryButton(primaryLabel, onPrimary, Modifier.weight(1f), primaryEnabled)
     }
 }
 
 @Composable
 fun BankLoadingState(modifier: Modifier = Modifier, message: String = "正在加载…") {
-    Column(modifier = modifier.fillMaxWidth().padding(BankSpacing.xl), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
-        CircularProgressIndicator()
+    Column(modifier.fillMaxWidth().padding(BankSpacing.xl).semantics { liveRegion = LiveRegionMode.Polite }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SkeletonBlock(height = 8.dp, width = 96.dp, corner = 4.dp)
         Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
 fun BankEmptyState(message: String, modifier: Modifier = Modifier, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
-    Column(modifier = modifier.fillMaxWidth().padding(BankSpacing.xl), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
-        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (actionLabel != null && onAction != null) TextButton(onClick = onAction, modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget)) { Text(actionLabel) }
+    Column(modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+            BankIcon(BankIconKind.Wallet, Modifier.padding(18.dp).size(28.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        }
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        if (actionLabel != null && onAction != null) BankSecondaryButton(actionLabel, onAction)
     }
 }
 
 @Composable
 fun BankErrorState(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
-    Column(modifier = modifier.fillMaxWidth().padding(BankSpacing.xl), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
-        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-        if (onRetry != null) OutlinedButton(onClick = onRetry, modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget)) { Text("重试") }
+    Column(modifier.fillMaxWidth().padding(24.dp).semantics { liveRegion = LiveRegionMode.Polite }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.errorContainer) {
+            BankIcon(BankIconKind.Shield, Modifier.padding(16.dp).size(24.dp), tint = MaterialTheme.colorScheme.onErrorContainer)
+        }
+        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+        if (onRetry != null) BankSecondaryButton("重新加载", onRetry)
     }
 }
 
 @Composable
 fun BankIconTextRow(icon: @Composable () -> Unit, text: String, modifier: Modifier = Modifier, supporting: String? = null) {
-    Row(modifier = modifier.fillMaxWidth().heightIn(min = BankSpacing.minTouchTarget), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
+    Row(modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         icon()
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(text, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (supporting != null) Text(supporting, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

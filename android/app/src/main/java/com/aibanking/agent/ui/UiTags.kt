@@ -13,6 +13,7 @@ object UiTags {
     const val LOGIN_BUTTON = "login_button"
 
     const val CHAT_INPUT = "chat_input"
+    const val CHAT_LIST = "chat_list"
     const val CHAT_SEND = "chat_send"
     const val LOGOUT = "logout"
 

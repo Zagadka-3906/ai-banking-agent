@@ -1,87 +1,36 @@
 package com.aibanking.agent.ui.chat
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.togetherWith
+import android.os.SystemClock
+
+import androidx.compose.animation.*
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ExitToApp
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AccountBox
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SuggestionChip
-import androidx.compose.material3.SuggestionChipDefaults
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.DeviceView
@@ -89,14 +38,13 @@ import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
-import com.aibanking.agent.ui.anim.cubeFlip
+import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.verificationFrost
-import com.aibanking.agent.ui.components.BankSectionCard
-import com.aibanking.agent.ui.components.BankSemanticStatus
-import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.BankSpacing
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -104,12 +52,29 @@ import java.time.format.DateTimeFormatter
 /** 聊天之外的三个全屏覆盖页；聊天页是层级最浅的主页。 */
 private enum class AppPage { CHAT, CARDS, WEALTH, CONTACTS }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
+    LaunchedEffect(state.error, state.notice) {
+        // Background session/device setup does not need a notification over the editor.
+        val notice = state.notice?.takeUnless {
+            it.startsWith("会话有效期") || it == "本机设备已注册，高风险操作可用"
+        }
+        val message = state.error ?: notice
+        if (message != null) {
+            snackbar.showSnackbar(message)
+        }
+        if (state.error != null || state.notice != null) {
+            viewModel.dismissMessages()
+        }
+    }
+    // The deadline survives destination changes and Activity recreation.
+    val approvalDeadlineMillis = rememberSaveable(state.pending?.approvalId) {
+        state.pending?.let { SystemClock.elapsedRealtime() + it.expiresIn.coerceAtLeast(0) * 1_000L } ?: 0L
+    }
 
     // 页面状态映射
     val page = when {
@@ -119,20 +84,24 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         else -> AppPage.CHAT
     }
 
-    // 主骨架：屏幕底部常驻现代化 NavigationBar
+    // Leave more space for the editor while the keyboard is open.
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            BankBottomNavigation(
-                currentPage = page,
-                onSelectPage = { targetPage ->
-                    when (targetPage) {
-                        AppPage.CHAT -> viewModel.dismissPanels()
-                        AppPage.CARDS -> viewModel.openCards()
-                        AppPage.WEALTH -> viewModel.openWealth()
-                        AppPage.CONTACTS -> viewModel.openContacts()
-                    }
-                },
-            )
+            if (!WindowInsets.isImeVisible) {
+                BankBottomNavigation(
+                    currentPage = page,
+                    onSelectPage = { targetPage ->
+                        when (targetPage) {
+                            AppPage.CHAT -> viewModel.dismissPanels()
+                            AppPage.CARDS -> viewModel.openCards()
+                            AppPage.WEALTH -> viewModel.openWealth()
+                            AppPage.CONTACTS -> viewModel.openContacts()
+                        }
+                    },
+                )
+            }
         },
     ) { outerPadding ->
         Box(
@@ -143,19 +112,19 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             PredictiveBackPreview(
                 enabled = page != AppPage.CHAT,
                 onBack = viewModel::dismissPanels,
-                beneath = { ChatHome(state, viewModel, activity, listState, snackbar) },
+                beneath = { ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis) },
             ) {
                 AnimatedContent(
                     targetState = page,
-                    transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+                    transitionSpec = { pageSlideSpec(AppPage::ordinal) },
                     modifier = Modifier.fillMaxSize(),
                     label = "appPage",
                 ) { current ->
-                    Box(Modifier.fillMaxSize().cubeFlip(this)) {
+                    Box(Modifier.fillMaxSize()) {
                         when (current) {
-                            AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, snackbar)
+                            AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis)
                             AppPage.CARDS -> CardsUi(state, viewModel)
-                            AppPage.WEALTH -> WealthUi(state, viewModel)
+                            AppPage.WEALTH -> WealthUi(state, viewModel, snackbar)
                             AppPage.CONTACTS -> ContactsUi(state, viewModel)
                         }
                     }
@@ -183,129 +152,49 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     }
 }
 
-/**
- * 屏幕下端现代化导航栏 (Bottom Navigation Bar)。
- *
- * 采用 Material 3 标准规范，支持触控缩放、胶囊高亮背景，并绑定 UiTags 兼容自动化测试。
- */
+/** Material navigation keeps every destination reachable and gives selection a quiet spring. */
 @Composable
 private fun BankBottomNavigation(
     currentPage: AppPage,
     onSelectPage: (AppPage) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 8.dp,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        NavigationBar(
-            containerColor = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-            modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget),
-        ) {
-            NavigationBarItem(
-                selected = currentPage == AppPage.CHAT,
-                onClick = { onSelectPage(AppPage.CHAT) },
-                icon = {
-                    Icon(
-                        Icons.Default.Home,
-                        contentDescription = "智能助手",
-                        modifier = Modifier.size(24.dp),
+    val destinations = listOf(
+        Triple(AppPage.CHAT, "助手", BankIconKind.Chat),
+        Triple(AppPage.CARDS, "卡包", BankIconKind.Card),
+        Triple(AppPage.WEALTH, "理财", BankIconKind.Chart),
+        Triple(AppPage.CONTACTS, "联系人", BankIconKind.People),
+    )
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = modifier.fillMaxWidth()) {
+        Column {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                destinations.forEach { (page, label, icon) ->
+                    val selected = currentPage == page
+                    val scale by animateFloatAsState(if (selected) 1.08f else 1f, spring(dampingRatio = 0.85f), label = "navIcon")
+                    val tag = when (page) {
+                        AppPage.CHAT -> "open_assistant"
+                        AppPage.CARDS -> UiTags.OPEN_CARDS
+                        AppPage.WEALTH -> UiTags.OPEN_WEALTH
+                        AppPage.CONTACTS -> UiTags.OPEN_CONTACTS
+                    }
+                    NavigationBarItem(
+                        selected = selected, onClick = { if (!selected) onSelectPage(page) },
+                        icon = { BankIcon(icon, Modifier.size(24.dp).graphicsLayer { scaleX = scale; scaleY = scale }) },
+                        label = { Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        modifier = Modifier.testTag(tag),
                     )
-                },
-                label = {
-                    Text(
-                        "助手",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = if (currentPage == AppPage.CHAT) FontWeight.Bold else FontWeight.Normal,
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                ),
-            )
-
-            NavigationBarItem(
-                selected = currentPage == AppPage.CARDS,
-                onClick = { onSelectPage(AppPage.CARDS) },
-                icon = {
-                    Icon(
-                        Icons.Default.AccountBox,
-                        contentDescription = "我的卡包",
-                        modifier = Modifier.size(24.dp),
-                    )
-                },
-                label = {
-                    Text(
-                        "卡包",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = if (currentPage == AppPage.CARDS) FontWeight.Bold else FontWeight.Normal,
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                ),
-                modifier = Modifier.testTag(UiTags.OPEN_CARDS),
-            )
-
-            NavigationBarItem(
-                selected = currentPage == AppPage.WEALTH,
-                onClick = { onSelectPage(AppPage.WEALTH) },
-                icon = {
-                    Icon(
-                        Icons.Default.Star,
-                        contentDescription = "财富管理",
-                        modifier = Modifier.size(24.dp),
-                    )
-                },
-                label = {
-                    Text(
-                        "理财",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = if (currentPage == AppPage.WEALTH) FontWeight.Bold else FontWeight.Normal,
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                ),
-                modifier = Modifier.testTag(UiTags.OPEN_WEALTH),
-            )
-
-            NavigationBarItem(
-                selected = currentPage == AppPage.CONTACTS,
-                onClick = { onSelectPage(AppPage.CONTACTS) },
-                icon = {
-                    Icon(
-                        Icons.Default.Person,
-                        contentDescription = "常用联系人",
-                        modifier = Modifier.size(24.dp),
-                    )
-                },
-                label = {
-                    Text(
-                        "联系人",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = if (currentPage == AppPage.CONTACTS) FontWeight.Bold else FontWeight.Normal,
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                ),
-                modifier = Modifier.testTag(UiTags.OPEN_CONTACTS),
-            )
+                }
+            }
         }
     }
 }
-
 
 /**
  * 聊天主页本体。会话列表滚动位置与 Snackbar 状态放在 [ChatScreen] 根上，
@@ -318,152 +207,82 @@ private fun ChatHome(
     viewModel: ChatViewModel,
     activity: FragmentActivity,
     listState: LazyListState,
-    snackbar: SnackbarHostState,
+    approvalDeadlineMillis: Long?,
 ) {
+    val showWelcome = state.messages.none { it.role == ChatRole.USER }
     // Keep the newest bubble in view.  A LazyColumn does not follow appended
     // items on its own, so without this the answer to a question scrolls in
     // below the fold and the user sees nothing happen.
     LaunchedEffect(
         state.messages.size,
         state.pending,
+        state.quiz?.answered,
         state.messages.lastOrNull()?.text,
         state.messages.lastOrNull()?.traceId,
     ) {
-        val itemCount = state.messages.size + if (state.pending != null) 1 else 0
-        if (itemCount > 0) {
+        val itemCount = state.messages.size + (if (state.pending != null) 1 else 0) + (if (state.quiz != null) 1 else 0) + (if (showWelcome) 1 else 0)
+        if (itemCount > 0 && (!showWelcome || state.pending != null)) {
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= itemCount }
             listState.animateScrollToItem(itemCount - 1)
         }
     }
 
-    LaunchedEffect(state.error, state.notice) {
-        val message = state.error ?: state.notice
-        if (message != null) {
-            snackbar.showSnackbar(message)
-            viewModel.dismissMessages()
-        }
-    }
-
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(MaterialTheme.shapes.medium)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary,
-                                            MaterialTheme.colorScheme.secondary,
-                                        )
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(20.dp),
-                            )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.size(40.dp).clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+                            BankIcon(BankIconKind.Bank, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onPrimary)
                         }
                         Column {
-                            Text(
-                                "安言 AI 银行",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(LocalBankSemanticColors.current.riskGreen)
-                                )
-                                Text(
-                                    "风控就绪 · 确定性沙箱",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                            Text("安言 AI 银行", style = MaterialTheme.typography.titleMedium)
+                            Text("随时为您，安心打理", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 },
                 actions = {
-                    TextButton(
-                        onClick = viewModel::openTasks,
-                        modifier = Modifier.testTag(UiTags.OPEN_TASKS),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Text("任务", style = MaterialTheme.typography.labelMedium)
-                        }
+                    IconButton(onClick = viewModel::openTasks, modifier = Modifier.testTag(UiTags.OPEN_TASKS)) {
+                        BankIcon(BankIconKind.Check, contentDescription = "待办任务")
                     }
-                    TextButton(
-                        onClick = viewModel::openDevices,
-                        modifier = Modifier.testTag(UiTags.OPEN_DEVICES),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Text("设备", style = MaterialTheme.typography.labelMedium)
-                        }
+                    IconButton(onClick = viewModel::openDevices, modifier = Modifier.testTag(UiTags.OPEN_DEVICES)) {
+                        BankIcon(BankIconKind.Shield, contentDescription = "设备管理")
                     }
-                    TextButton(
-                        onClick = viewModel::logout,
-                        modifier = Modifier.testTag(UiTags.LOGOUT),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.ExitToApp,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.error,
-                            )
-                            Text(
-                                "退出",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
+                    IconButton(onClick = viewModel::logout, modifier = Modifier.testTag(UiTags.LOGOUT)) {
+                        BankIcon(BankIconKind.Logout, contentDescription = "退出登录")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
-        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        // 红色风险验证挂起（MFA 审批在台上）：聊天背景进入磨砂玻璃态——
-        // 消息/建议/输入行连续模糊并提亮，审批卡保持清晰聚焦。
+        // Keep transaction context legible while the approval asks for confirmation.
         val redVerification = state.pending?.mfaRequired == true
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
                 .imePadding(),
         ) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag(UiTags.CHAT_LIST),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(state.messages) { message ->
-                    MessageBubble(message, Modifier.verificationFrost(redVerification))
+                if (showWelcome) {
+                    item(key = "welcome") { ChatWelcome(onSuggestion = viewModel::onInputChange) }
+                }
+                items(state.messages, key = { it.id }) { message ->
+                    MessageBubble(message, Modifier.animateItem().verificationFrost(redVerification))
                 }
                 state.pending?.let { approval ->
-                    item {
+                    item(key = "approval:${approval.approvalId}") {
                         ApprovalCard(
                             approval = approval,
+                            deadlineMillis = requireNotNull(approvalDeadlineMillis),
                             otp = state.otp,
                             busy = state.busy,
                             onOtpChange = viewModel::onOtpChange,
@@ -484,28 +303,23 @@ private fun ChatHome(
                         )
                     }
                 }
+                state.quiz?.let { quiz ->
+                    item(key = "risk_quiz") {
+                        RiskQuizPanel(quiz, state.busy, viewModel::onQuizAnswer, viewModel::giveUpQuiz)
+                    }
+                }
             }
-            if (state.busy) {
-                Box(
+            AnimatedVisibility(state.busy) {
+                Row(
                     Modifier
                         .fillMaxWidth()
                         .padding(8.dp),
-                    contentAlignment = Alignment.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(28.dp),
-                        strokeWidth = 2.5.dp,
-                    )
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("安言正在为您处理…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-            // 逐题风险测评：固定出现在输入框上端，点选即进下一题。
-            state.quiz?.let { quiz ->
-                RiskQuizPanel(
-                    quiz = quiz,
-                    busy = state.busy,
-                    onAnswer = viewModel::onQuizAnswer,
-                    onGiveUp = viewModel::giveUpQuiz,
-                )
             }
             // 快捷输入建议：点击填入输入框（可修改后再发送）。
             if (state.suggestions.isNotEmpty() && state.quiz == null) {
@@ -514,11 +328,12 @@ private fun ChatHome(
                         .fillMaxWidth()
                         .verificationFrost(redVerification),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp),
                 ) {
                     items(state.suggestions.size) { index ->
                         SuggestionChip(
                             onClick = { viewModel.onSuggestionClick(state.suggestions[index]) },
+                            enabled = !state.busy && state.pending == null,
                             label = { Text(state.suggestions[index], style = MaterialTheme.typography.labelMedium) },
                             colors = SuggestionChipDefaults.suggestionChipColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -539,80 +354,60 @@ private fun ChatHome(
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
-    val isUser = message.role == ChatRole.USER
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-    ) {
-        if (!isUser) {
-            Box(
-                modifier = Modifier
-                    .padding(top = 4.dp, end = 8.dp)
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.secondary,
-                            )
-                        )
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.AccountCircle,
-                    contentDescription = "AI 助手",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(18.dp),
-                )
+private fun ChatWelcome(onSuggestion: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        BankHeroCard {
+            Text("YOUR EVERYDAY BANK", style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(14.dp))
+            Text("财务大小事，\n交给一句话。", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            Text("查余额、转账、做规划，安言陪您一起打理。", style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                BankIcon(BankIconKind.Shield, Modifier.size(16.dp))
+                Text("每笔资金操作，始终由您确认", style = MaterialTheme.typography.labelSmall)
             }
         }
-        Card(
-            shape = MaterialTheme.shapes.large,
-            colors = CardDefaults.cardColors(
-                containerColor = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = if (isUser) 1.dp else 3.dp),
-            modifier = Modifier.fillMaxWidth(if (isUser) 0.85f else 0.88f),
-        ) {
-            Column(Modifier.padding(12.dp)) {
-                Text(
-                    text = message.text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                )
-                // Structured facts (balances, category totals, anomaly flags,
-                // the task DAG, the birthday memo) render below the prose.
-                ResultExtras(message.result)
-                message.traceId?.let { traceId ->
-                    Spacer(Modifier.height(8.dp))
-                    Surface(
-                        shape = MaterialTheme.shapes.extraSmall,
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = LocalBankSemanticColors.current.riskGreen,
-                                modifier = Modifier.size(12.dp),
-                            )
-                            Text(
-                                text = "链路编号 $traceId",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+        Text("从这里开始", style = MaterialTheme.typography.titleMedium)
+        val actions = listOf(
+            Triple("查余额", "查一下余额", BankIconKind.Wallet),
+            Triple("转一笔", "我想转账", BankIconKind.Transfer),
+            Triple("看账单", "查看最近的交易记录", BankIconKind.Card),
+            Triple("做规划", "我想做风险测评", BankIconKind.Chart),
+        )
+        actions.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { (label, prompt, icon) ->
+                    Surface(onClick = { onSuggestion(prompt) }, shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                        modifier = Modifier.weight(1f)) {
+                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            BankIcon(icon, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            BankIcon(BankIconKind.ArrowForward, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
             }
+        }
+        Text("与安言对话", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
+    if (message.role == ChatRole.ASSISTANT) {
+        AgentReplyCard(message, modifier)
+        return
+    }
+    Column(modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = Alignment.End) {
+        Surface(
+            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomEnd = 6.dp, bottomStart = 22.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(0.88f),
+        ) {
+            Text(message.text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
         }
     }
 }
@@ -620,6 +415,7 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier) {
 @Composable
 private fun ApprovalCard(
     approval: ApprovalView,
+    deadlineMillis: Long,
     otp: String,
     busy: Boolean,
     canPromptBiometric: Boolean,
@@ -629,14 +425,13 @@ private fun ApprovalCard(
     onBiometricApprove: () -> Unit,
 ) {
     val isRed = approval.mfaRequired
-    // The handle really does expire server-side, so the countdown must move:
-    // a frozen number invites an approve tap the core is guaranteed to refuse.
-    var remainingSeconds by remember(approval.approvalId) { mutableIntStateOf(approval.expiresIn) }
-    LaunchedEffect(approval.approvalId) {
-        while (remainingSeconds > 0) {
-            delay(1_000)
-            remainingSeconds -= 1
-        }
+    fun secondsLeft(): Int = ((deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999L).div(1_000L).toInt()
+    var remainingSeconds by remember(approval.approvalId, deadlineMillis) { mutableIntStateOf(secondsLeft()) }
+    LaunchedEffect(approval.approvalId, deadlineMillis) {
+        do {
+            remainingSeconds = secondsLeft()
+            if (remainingSeconds > 0) delay(250)
+        } while (remainingSeconds > 0)
     }
     val riskColors = LocalBankSemanticColors.current
     BankSectionCard(outlined = true) {
@@ -652,7 +447,7 @@ private fun ApprovalCard(
                     modifier = Modifier.size(22.dp),
                 )
                 Text(
-                    text = if (isRed) "红色风险：必须完成服务端多因子认证" else "黄色风险：请确认本次操作",
+                    text = if (isRed) "红色风险：需要验证身份" else "黄色风险：请确认本次操作",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = if (isRed) riskColors.riskRed else riskColors.riskYellow,
@@ -667,8 +462,7 @@ private fun ApprovalCard(
                 color = MaterialTheme.colorScheme.surfaceVariant,
             ) {
                 Text(
-                    text = "审批编号 ${approval.approvalId} · " +
-                        if (remainingSeconds > 0) "剩余 $remainingSeconds 秒" else "已超时，请重新发起操作",
+                    text = if (remainingSeconds > 0) "请在 $remainingSeconds 秒内确认" else "已超时，请重新发起操作",
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -692,36 +486,24 @@ private fun ApprovalCard(
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (isRed) {
-                    Button(
-                        onClick = onBiometricApprove,
-                        enabled = !busy && canPromptBiometric && otp.length >= 6,
-                        shape = MaterialTheme.shapes.small,
-                        colors = ButtonDefaults.buttonColors(containerColor = riskColors.riskRed),
-                        modifier = Modifier.testTag(UiTags.APPROVAL_APPROVE),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Text("生物识别签名并执行")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                BankPrimaryButton(
+                    text = if (isRed) "生物识别签名并执行" else "确认执行",
+                    onClick = {
+                        remainingSeconds = secondsLeft()
+                        if (remainingSeconds > 0) {
+                            if (isRed) onBiometricApprove() else onApprove()
                         }
-                    }
-                } else {
-                    Button(
-                        onClick = onApprove,
-                        enabled = !busy,
-                        modifier = Modifier.testTag(UiTags.APPROVAL_APPROVE),
-                    ) { Text("确认执行") }
-                }
-                OutlinedButton(
-                    onClick = onReject,
-                    enabled = !busy,
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.testTag(UiTags.APPROVAL_REJECT),
-                ) { Text("取消操作") }
+                    },
+                    enabled = !busy && remainingSeconds > 0 && (!isRed || (canPromptBiometric && otp.length >= 6)),
+                    loading = busy,
+                    modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
+                )
+                BankSecondaryButton("取消操作", onReject, enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_REJECT))
             }
             Text(
-                "确认由核心银行服务端原子校验与记账；客户端不持有任何写账特权。",
+                "请核对收款人和金额。只有确认后，才会继续执行本次操作。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -730,7 +512,7 @@ private fun ApprovalCard(
 }
 
 /**
- * 逐题风险测评组件：固定出现在输入框上端，一题一屏、点选即进下一题；
+ * 逐题风险测评组件：随会话滚动，点选即进下一题；
  * 答满 8 题自动汇成一条作答消息提交（评分与定档都在服务端）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -743,7 +525,7 @@ private fun RiskQuizPanel(
 ) {
     val question = quiz.currentQuestion ?: return
     BankSectionCard(modifier = Modifier.fillMaxWidth().padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xxs)) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
+        Column(Modifier.fillMaxWidth().animateContentSize(), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -767,9 +549,10 @@ private fun RiskQuizPanel(
                     enabled = !busy,
                     shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             option.key,
                             style = MaterialTheme.typography.titleSmall,
@@ -798,45 +581,24 @@ private fun InputRow(
     onSend: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 8.dp,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+    val focus = LocalFocusManager.current
+    val send = { if (enabled) { focus.clearFocus(); onSend() } }
+    Surface(color = MaterialTheme.colorScheme.background, modifier = modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                placeholder = { Text("例如：给李四转 300 元 / 查一下余额", style = MaterialTheme.typography.bodyMedium) },
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(UiTags.CHAT_INPUT),
-                maxLines = 3,
+                value = value, onValueChange = onValueChange,
+                placeholder = { Text("说说您想办的事…", style = MaterialTheme.typography.bodyMedium) },
+                shape = MaterialTheme.shapes.large,
+                colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT), maxLines = 4,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { send() }),
             )
-            Button(
-                onClick = onSend,
-                enabled = enabled,
-                modifier = Modifier
-                    .height(48.dp)
-                    .testTag(UiTags.CHAT_SEND),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Text("发送", fontWeight = FontWeight.Bold)
-                }
+            FilledIconButton(onClick = send, enabled = enabled,
+                shape = MaterialTheme.shapes.large, modifier = Modifier.size(56.dp).testTag(UiTags.CHAT_SEND)) {
+                BankIcon(BankIconKind.Send, contentDescription = "发送")
             }
         }
     }
@@ -851,60 +613,41 @@ private fun DevicePanel(
     onRevoke: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("已注册设备", style = MaterialTheme.typography.titleMedium)
-            if (busy) {
-                CircularProgressIndicator()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.background) {
+        LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+            item {
+                BankScreenHeading("已注册设备", subtitle = "管理可访问您账户的设备", eyebrow = "SECURITY")
             }
-            if (!busy && devices.isEmpty()) {
-                Text("没有已注册的设备。", style = MaterialTheme.typography.bodyMedium)
-            }
-            devices.forEach { device ->
-                BankSectionCard(outlined = true) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(device.label ?: "未知设备", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "${device.deviceId}\n指纹 ${device.fingerprint.take(16)}…",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                )
-                                Text(
-                                    buildString {
-                                        append(if (device.status == "ACTIVE") "已启用" else "已停用")
-                                        append(" · ")
-                                        append(if (device.pushEnabled) "推送已开启" else "推送未开启")
-                                        if (device.createdAt > 0) append(" · 注册于 ${formatEpochSeconds(device.createdAt)}")
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+            if (busy) item { BankLoadingState(message = "正在更新设备…") }
+            if (!busy && devices.isEmpty()) item { BankEmptyState("没有已注册的设备。") }
+            items(devices, key = { it.deviceId }) { device ->
+                BankSectionCard(modifier = Modifier.animateItem()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            BankIcon(BankIconKind.Shield, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(device.label ?: "未知设备", style = MaterialTheme.typography.titleMedium)
+                                Text(if (device.pushEnabled) "推送已开启" else "推送未开启", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (device.status == "ACTIVE") {
-                                OutlinedButton(
-                                    onClick = { onRevoke(device.deviceId) },
-                                    enabled = !busy,
-                                    modifier = Modifier.testTag(UiTags.DEVICE_REVOKE),
-                                ) { Text("停用") }
-                            }
+                            BankStatusChip(if (device.status == "ACTIVE") "已启用" else "已停用",
+                                if (device.status == "ACTIVE") BankSemanticStatus.RiskGreen else BankSemanticStatus.Neutral)
+                        }
+                        if (device.createdAt > 0) Text("注册于 ${formatEpochSeconds(device.createdAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        var showDetails by rememberSaveable(device.deviceId) { mutableStateOf(false) }
+                        TextButton(onClick = { showDetails = !showDetails }, contentPadding = PaddingValues(0.dp)) {
+                            Text(if (showDetails) "收起设备信息" else "查看设备信息", style = MaterialTheme.typography.labelMedium)
+                        }
+                        AnimatedVisibility(showDetails) {
+                            Text("${device.deviceId}\n指纹 ${device.fingerprint.take(16)}…", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
                         }
                         if (device.deviceId == currentDeviceId && device.status == "ACTIVE") {
-                            Text(
-                                "这是本机：停用后红色风险操作在本机将不可用。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
+                            Text("这是本机：停用后红色风险操作在本机将不可用。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
+                        if (device.status == "ACTIVE") {
+                            BankSecondaryButton("停用", { onRevoke(device.deviceId) }, enabled = !busy,
+                                modifier = Modifier.fillMaxWidth().testTag(UiTags.DEVICE_REVOKE))
                         }
                     }
                 }
@@ -921,56 +664,62 @@ private fun TaskPanel(
     onCancel: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("待办任务", style = MaterialTheme.typography.titleMedium)
-            if (busy) {
-                CircularProgressIndicator()
-            }
-            if (!busy && tasks.isEmpty()) {
-                Text("当前没有任务。", style = MaterialTheme.typography.bodyMedium)
-            }
-            tasks.forEach { task ->
-                BankSectionCard(outlined = true) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(task.taskType, style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "${task.status}${task.runAt?.let { " · 到期 $it" } ?: ""}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                taskSummary(task)?.let { detail ->
-                                    Text(detail, style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            if (task.status in CANCELLABLE_TASK_STATUSES) {
-                                OutlinedButton(
-                                    onClick = { onCancel(task.taskId) },
-                                    enabled = !busy,
-                                    modifier = Modifier.testTag(UiTags.TASK_CANCEL),
-                                ) { Text("取消") }
-                            }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.background) {
+        LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+            item { BankScreenHeading("待办任务", subtitle = "计划有序，生活从容", eyebrow = "YOUR PLANS") }
+            if (busy) item { BankLoadingState(message = "正在更新任务…") }
+            if (!busy && tasks.isEmpty()) item { BankEmptyState("当前没有任务。") }
+            items(tasks, key = { it.taskId }) { task ->
+                BankSectionCard(modifier = Modifier.animateItem()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            BankIcon(BankIconKind.Check, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(taskTypeLabel(task.taskType), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            BankStatusChip(taskStatusLabel(task.status), when (task.status) {
+                                "COMPLETED", "SUCCESS", "SUCCEEDED" -> BankSemanticStatus.RiskGreen
+                                "FAILED" -> BankSemanticStatus.RiskRed
+                                "WAITING_USER" -> BankSemanticStatus.RiskYellow
+                                else -> BankSemanticStatus.Neutral
+                            })
+                        }
+                        taskSummary(task)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                        task.runAt?.let { Text("计划时间 · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        if (task.status in CANCELLABLE_TASK_STATUSES) {
+                            BankSecondaryButton("取消", { onCancel(task.taskId) }, enabled = !busy,
+                                modifier = Modifier.fillMaxWidth().testTag(UiTags.TASK_CANCEL))
                         }
                     }
                 }
             }
-            Text(
-                "到期需要资金的任务会先暂停并推送提醒，确认后才会执行。",
-                style = MaterialTheme.typography.labelSmall,
-            )
+            item {
+                Text("到期需要资金的任务会先暂停并推送提醒，确认后才会执行。", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+            }
         }
     }
+}
+
+private fun taskStatusLabel(status: String): String = when (status) {
+    "PENDING" -> "待执行"
+    "WAITING_USER" -> "待您确认"
+    "RUNNING" -> "执行中"
+    "HUMAN_TAKEOVER" -> "转人工处理"
+    "COMPLETED", "SUCCESS", "SUCCEEDED" -> "已完成"
+    "FAILED" -> "未完成"
+    "CANCELLED", "CANCELED" -> "已取消"
+    else -> status
+}
+
+private fun taskTypeLabel(type: String): String = when (type.uppercase()) {
+    "TRANSFER", "SCHEDULED_TRANSFER" -> "预约转账"
+    "REMINDER", "BIRTHDAY_REMINDER" -> "日程提醒"
+    "PAYMENT", "BILL_PAYMENT" -> "账单支付"
+    "SUBSCRIPTION", "SUBSCRIPTION_RENEWAL", "RENEWAL_REMINDER" -> "订阅续费"
+    "ORDER_DRAFT" -> "购物计划"
+    "FUND_RESERVATION" -> "资金预留"
+    else -> type
 }
 
 /** Only tasks that have not settled yet may be cancelled from the phone. */

@@ -262,6 +262,16 @@ class BankClient:
             headers=self._headers(principal=self.user_id, auth_token=auth_token, confirmation=True, request_id=request_id),
         ).json()
 
+    def cancel(self, auth_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
+        """Revoke a rejected or superseded approval at its issuing core."""
+
+        if not self.user_id:
+            raise ValueError("user_id is required for cancellation")
+        return self._request(
+            "POST", "risk/cancel", json={},
+            headers=self._headers(principal=self.user_id, auth_token=auth_token, request_id=request_id),
+        ).json()
+
     def request_face_challenge(self, auth_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
         """Ask the core for a liveness challenge the device SDK must sign."""
 

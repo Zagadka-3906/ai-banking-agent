@@ -28,6 +28,8 @@ import uuid
 from typing import Any, Iterator, Optional
 
 from fastapi import FastAPI, Header, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -97,7 +99,7 @@ def _rate_limit_remaining(key: str) -> Optional[int]:
         return None
     record["count"] = int(record.get("count", 0)) + 1
     if record["count"] > limit:
-        return max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - float(record["start"], now))))
+        return max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - float(record.get("start", now)))))
     return None
 
 
@@ -127,26 +129,68 @@ class ApprovalRequest(StrictModel):
 
 @app.middleware("http")
 async def gateway_middleware(request: Request, call_next):
+    # Assign correlation before any rejection, including malformed metadata.
+    # A caller-supplied id is never an authority for an audit chain.
+    request.state.request_id = f"gw_{uuid.uuid4().hex}"
     path = request.url.path
     if path != "/healthz":
         content_length = request.headers.get("content-length")
         if content_length:
             try:
                 if int(content_length) > _MAX_REQUEST_BYTES:
-                    return _security_headers(
-                        JSONResponse(status_code=413, content={"detail": {"code": "REQUEST_TOO_LARGE", "message": "请求体超过安全限制"}})
-                    )
+                    return _rejection_response(request, SecurityError("请求体超过安全限制", 413, "REQUEST_TOO_LARGE"))
             except ValueError:
-                return _security_headers(
-                    JSONResponse(status_code=400, content={"detail": {"code": "INVALID_CONTENT_LENGTH", "message": "请求长度字段无效"}})
-                )
+                return _rejection_response(request, SecurityError("请求长度字段无效", 400, "INVALID_CONTENT_LENGTH"))
     response = await call_next(request)
+    response.headers["X-Request-Id"] = request.state.request_id
     return _security_headers(response)
 
 
 @app.exception_handler(SecurityError)
-async def security_error_handler(_: Request, exc: SecurityError) -> JSONResponse:
-    headers = {}
+async def security_error_handler(request: Request, exc: SecurityError) -> JSONResponse:
+    return _rejection_response(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    request_id = _audit_rejection(request, code="INVALID_REQUEST", status_code=422)
+    # Preserve FastAPI's field-error contract in the response, but never copy
+    # errors()/body into the audit record: both may contain secret input values.
+    return _security_headers(JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors()), "request_id": request_id},
+        headers={"X-Request-Id": request_id},
+    ))
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, _: Exception) -> JSONResponse:
+    return _rejection_response(request, SecurityError("服务暂时不可用，请稍后重试", 500, "INTERNAL_ERROR"))
+
+
+def _audit_rejection(request: Request, *, code: str, status_code: int) -> str:
+    request_id = request.state.request_id
+    principal = getattr(request.state, "principal", None)
+    route = request.scope.get("route")
+    audit_event(
+        "AGENT_INPUT_REJECTED" if code in {"PROMPT_INJECTION_BLOCKED", "EMPTY_MESSAGE", "INVALID_REQUEST"} else "AGENT_REQUEST_REJECTED",
+        user_id=principal,
+        decision="BLOCK",
+        outcome="FAILURE",
+        reason=code,
+        request_id=request_id,
+        # Never store input text, arbitrary headers, credentials or the error
+        # message, which may include values supplied by an upstream service.
+        metadata={"method": request.method, "route": getattr(route, "path", None),
+                  "status_code": status_code,
+                  "identity_source": getattr(request.state, "identity_source", "unverified")},
+    )
+    return request_id
+
+
+def _rejection_response(request: Request, exc: SecurityError) -> JSONResponse:
+    request_id = _audit_rejection(request, code=exc.code, status_code=exc.status_code)
+    headers = {"X-Request-Id": request_id}
     # Surface the retry hint instead of making the client guess.
     retry_after = getattr(exc, "retry_after", None)
     if retry_after:
@@ -156,7 +200,7 @@ async def security_error_handler(_: Request, exc: SecurityError) -> JSONResponse
     return _security_headers(
         JSONResponse(
             status_code=exc.status_code,
-            content={"detail": {"code": exc.code, "message": exc.detail}},
+            content={"detail": {"code": exc.code, "message": exc.detail, "request_id": request_id}},
             headers=headers or None,
         )
     )
@@ -198,7 +242,7 @@ def principal_for(
         except BankAPIError as exc:
             audit_event(
                 action,
-                user_id=x_user_id,
+                user_id=None,
                 decision="BLOCK",
                 outcome="FAILURE",
                 reason="SESSION_UNVERIFIED",
@@ -229,10 +273,18 @@ def _guard_rate_limit(principal: str) -> None:
         raise response
 
 
-def _turn_request_id(client_value: Optional[str]) -> tuple[str, Optional[str]]:
+def _turn_request_id(client_value: Optional[str], *, request_id: str) -> tuple[str, Optional[str]]:
     """Create the server correlation id; retain client id only as metadata."""
     client_id = sanitize_text(client_value, field="客户端请求编号", max_length=128) if client_value else None
-    return f"gw_{uuid.uuid4().hex}", (client_id or None)
+    return request_id, (client_id or None)
+
+
+def _request_principal(request: Request, *, session_token: Optional[str], user_id: Optional[str], action: str) -> str:
+    principal = principal_for(x_session_token=session_token, x_user_id=user_id, action=action,
+                              request_id=request.state.request_id)
+    request.state.principal = principal
+    request.state.identity_source = "session" if session_token else "demo_header"
+    return principal
 
 
 @app.get("/healthz")
@@ -255,6 +307,7 @@ def healthz() -> dict[str, Any]:
 @app.post("/api/v1/agent/messages")
 def post_message(
     req: MessageRequest,
+    request: Request,
     x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
@@ -266,8 +319,8 @@ def post_message(
     another message: a new message would otherwise abandon a pending approval.
     """
 
-    request_id, client_request_id = _turn_request_id(x_request_id)
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_MESSAGE", request_id=request_id)
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_MESSAGE")
+    request_id, client_request_id = _turn_request_id(x_request_id, request_id=request.state.request_id)
     _guard_rate_limit(principal)
     text = sanitize_text(req.text, field="用户指令", max_length=2000)
     if not text:
@@ -298,6 +351,7 @@ def _sse(event: str, data: Any) -> str:
 @app.post("/api/v1/agent/messages/stream")
 def post_message_stream(
     req: MessageRequest,
+    request: Request,
     x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
@@ -310,8 +364,8 @@ def post_message_stream(
     ordinary HTTP responses instead of in-band events a client might ignore.
     """
 
-    request_id, client_request_id = _turn_request_id(x_request_id)
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_MESSAGE", request_id=request_id)
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_MESSAGE")
+    request_id, client_request_id = _turn_request_id(x_request_id, request_id=request.state.request_id)
     _guard_rate_limit(principal)
     text = sanitize_text(req.text, field="用户指令", max_length=2000)
     if not text:
@@ -345,16 +399,18 @@ def post_message_stream(
 @app.get("/api/v1/agent/traces/{request_id}")
 def get_agent_trace(
     request_id: str,
+    request: Request,
     x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_TRACE")
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_TRACE")
     return {"code": 200, **SERVICE.aggregate_trace(principal=principal, request_id=sanitize_text(request_id, field="请求编号", max_length=128), session_token=x_session_token)}
 
 
 @app.post("/api/v1/agent/approvals/{approval_id}/face-challenge")
 def post_face_challenge(
     approval_id: str,
+    request: Request,
     x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
@@ -365,7 +421,7 @@ def post_face_challenge(
     nonce identifier to bind its signature) but never the authorization nonce.
     """
 
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_FACE_CHALLENGE", request_id=x_request_id)
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_FACE_CHALLENGE")
     _guard_rate_limit(principal)
     return {"code": 200, **SERVICE.face_challenge(principal=principal, approval_id=approval_id, session_token=x_session_token)}
 
@@ -374,13 +430,14 @@ def post_face_challenge(
 def post_approval(
     approval_id: str,
     req: ApprovalRequest,
+    request: Request,
     x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
 ):
     """Apply the user's decision and, when approved, settle the operation."""
 
-    principal = principal_for(x_session_token=x_session_token, x_user_id=x_user_id, action="AGENT_APPROVAL", request_id=x_request_id)
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_APPROVAL")
     _guard_rate_limit(principal)
     return SERVICE.resolve_approval(
         principal=principal,

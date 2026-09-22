@@ -144,7 +144,9 @@ data class ChatUiState(
      */
     val panelError: String? = null,
 ) {
-    val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy && pending == null
+    // A pending approval still permits natural-language correction/cancellation.
+    // The gateway withdraws the previous authorization before issuing a revision.
+    val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy
 
     /** 当前打开的理财详情产品。 */
     val selectedProduct: ProductView?

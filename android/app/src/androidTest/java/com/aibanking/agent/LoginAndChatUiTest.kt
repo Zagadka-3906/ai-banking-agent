@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -138,8 +139,8 @@ class LoginAndChatUiTest {
             }
         }
 
-        ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performTextInput(DEMO_PASSWORD)
-        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performClick()
+        ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextInput(DEMO_PASSWORD)
+        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
 
         // Device enrollment and FCM token acquisition continue in the
         // background. A valid session must navigate immediately instead of
@@ -186,7 +187,7 @@ class LoginAndChatUiTest {
             ui.onRoot().printToLog("YELLOWTIER")
             throw timeout
         }
-        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performClick()
+        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
 
         // The card goes away only once the core has settled the transfer.
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
@@ -254,12 +255,12 @@ class RedTierUiTest {
             ui.onAllNodesWithTag(UiTags.APPROVAL_OTP).fetchSemanticsNodes().isNotEmpty(),
         )
 
-        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performTextInput(OTP)
+        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextInput(OTP)
         // A disabled button makes the click below a silent no-op, which would
         // surface only as a confusing timeout.  Fail here instead, naming the
         // reason: no usable authenticator on this device.
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).assertIsEnabled()
-        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performClick()
+        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
 
         // A disabled button (no usable authenticator on the device) would make
         // this a silent no-op; assert we got past the gate instead.

@@ -42,6 +42,7 @@ from security import (
     behavior_large_amount_cents,
     behavior_status,
     circuit_status,
+    cancel_auth_token,
     confirm_auth_token,
     demo_mode,
     ensure_circuit_closed,
@@ -2640,7 +2641,7 @@ def get_bill_analysis(user_id: str, date_scope: str = "ALL", x_user_id: Optional
     if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_DATE_SCOPE", "message": "不支持的时间范围"})
     rows = filter_transactions([tx.copy() for tx in TRANSACTIONS if tx.get("account_id") == user_id], scope)
-    facts = analyze_transactions(rows)
+    facts = analyze_transactions(rows, user_id=actor, request_id=request_id)
     audit_event("BILL_ANALYSIS", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"date_scope": scope, "record_count": facts["record_count"]})
     return {"code": 200, "date_scope": scope, "facts": facts, "records": rows}
 
@@ -2670,14 +2671,15 @@ def get_wealth_holdings(user_id: str, x_user_id: Optional[str] = Header(None, al
 
 
 @app.get("/api/v1/wealth/recommend")
-def recommend_wealth(user_id: Optional[str] = None, risk_profile: str = "CONSERVATIVE", x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+def recommend_wealth(user_id: Optional[str] = None, risk_profile: Optional[str] = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     requested = user_id or x_user_id
     if not requested:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
     request_id = _request_id(x_request_id)
     actor = _get_actor(requested, x_user_id, action="WEALTH_RECOMMEND", request_id=request_id)
     _ensure_account(requested)
-    profile = str(risk_profile or "CONSERVATIVE").upper()
+    stored_profile = (WEALTH_RISK_PROFILES.get(requested) or {}).get("risk_profile")
+    profile = str(risk_profile or stored_profile or "CONSERVATIVE").upper()
     if profile not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE", "C1", "C2", "C3", "C4", "C5"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_RISK_PROFILE", "message": "风险偏好无效"})
     max_risk = profile_rank(profile) or 1
@@ -2906,23 +2908,29 @@ def detect_subscriptions(user_id: str, x_user_id: Optional[str] = Header(None, a
 
 
 @app.post("/api/v1/subscriptions/{user_id}/reminders")
-def create_renewal_reminders(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    """Create idempotent renewal reminders (two days before the charge).
+def create_renewal_reminders(user_id: str, merchant: Optional[str] = None, days_before: int = 2, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Create idempotent renewal reminders, optionally for one named merchant.
 
     No money moves here, so this is a green write: it only materialises the
-    detected renewals as auditable task-center items.  Repeating the call for
-    the same subscription and charge date returns the existing task instead of
-    duplicating it.
+    detected renewals as auditable task-center items.  Two days is the default;
+    the caller may explicitly choose an offset from zero to 365 days. Repeating
+    the same subscription/date/offset returns the existing task without a duplicate.
     """
 
     request_id = _request_id(x_request_id)
     actor = _get_actor(user_id, x_user_id, action="SUBSCRIPTION_REMINDER", request_id=request_id)
     _ensure_account(user_id)
+    if isinstance(days_before, bool) or not 0 <= days_before <= 365:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_REMINDER_DAYS", "message": "提醒提前天数须在 0 到 365 天之间"})
     created: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     with STATE_LOCK:
         with _ledger_transaction():
-            for row in SUBSCRIPTIONS.get(user_id, []):
+            try:
+                selected_rows = [_resolve_subscription(user_id, merchant, None)] if merchant else list(SUBSCRIPTIONS.get(user_id, []))
+            except SecurityError as exc:
+                _record_failure_and_raise(exc, user_id=actor, action="SUBSCRIPTION_REMINDER_CREATE", request_id=request_id)
+            for row in selected_rows:
                 if row.get("status") != "ACTIVE":
                     continue
                 try:
@@ -2930,7 +2938,7 @@ def create_renewal_reminders(user_id: str, x_user_id: Optional[str] = Header(Non
                 except (TypeError, ValueError):
                     skipped.append({"subscription_id": row.get("subscription_id"), "reason": "INVALID_NEXT_CHARGE"})
                     continue
-                run_at = (charge_date - timedelta(days=2)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
+                run_at = (charge_date - timedelta(days=days_before)).replace(hour=9, minute=0, second=0, microsecond=0).isoformat()
                 task = TASK_STORE.create(
                     actor,
                     "RENEWAL_REMINDER",
@@ -2939,10 +2947,11 @@ def create_renewal_reminders(user_id: str, x_user_id: Optional[str] = Header(Non
                         "merchant": row.get("merchant"),
                         "amount": row.get("amount"),
                         "next_charge": row.get("next_charge"),
+                        "days_before": days_before,
                         "message": f"{row.get('merchant')} 将于 {row.get('next_charge')} 扣款 ¥{float(row.get('amount') or 0):,.2f}，需要取消请提前操作",
                     },
                     run_at=run_at,
-                    idempotency_key=f"renewal:{row['subscription_id']}:{row.get('next_charge')}",
+                    idempotency_key=f"renewal:{row['subscription_id']}:{row.get('next_charge')}" + (f":days-{days_before}" if days_before != 2 else ""),
                 )
                 created.append(task.to_dict())
     audit_event(
@@ -3254,7 +3263,9 @@ def operation_precheck(
         if operation == "WEALTH_PURCHASE":
             if req.user_id not in WEALTH_RISK_PROFILES:
                 raise SecurityError("申购前请先完成风险评估", 428, "RISK_ASSESSMENT_REQUIRED")
-            _ensure_product_suitable(req.user_id, req.product_id or req.target or "")
+            product = _ensure_product_suitable(req.user_id, req.product_id or req.target or "")
+            if amount < float(product["min_amount"]):
+                raise SecurityError("申购金额低于产品起购金额", 400, "MIN_AMOUNT_NOT_MET")
         if operation == "WEALTH_COMPARE":
             product_ids = list(req.product_ids or [])
             if len(product_ids) < 2:
@@ -3265,11 +3276,18 @@ def operation_precheck(
                 raise SecurityError("理财产品不存在", 404, "PRODUCT_NOT_FOUND")
         # Validate a product/card target before issuing a credential where
         # possible.  Unknown targets are rejected, never silently remapped.
-        if operation in {"WEALTH_PURCHASE", "WEALTH_REDEEM"} and req.product_id:
-            if operation == "WEALTH_PURCHASE":
-                _ensure_product_suitable(req.user_id, req.product_id)
-            elif not any(p["product_id"] == req.product_id for p in WEALTH_PRODUCTS):
+        if operation == "WEALTH_REDEEM":
+            product_id = req.product_id or req.target
+            if not any(p["product_id"] == product_id for p in WEALTH_PRODUCTS):
                 raise SecurityError("理财产品不存在", 404, "PRODUCT_NOT_FOUND")
+            with STATE_LOCK:
+                available_cents = sum(
+                    max(0, int(round(float(holding.get("principal", 0)) * 100)))
+                    for holding in WEALTH_HOLDINGS.get(req.user_id, [])
+                    if holding.get("product_id") == product_id
+                )
+            if available_cents < amount_to_cents(amount):
+                raise SecurityError("没有足够的持仓可赎回", 400, "HOLDING_NOT_FOUND")
         if operation.startswith("CARD_"):
             # CARD_APPLY opens a *new* card, so it is the one operation with no
             # card to resolve; everything else must name an unambiguous one.
@@ -3600,6 +3618,34 @@ def confirm_operation(req: ConfirmationRequest, x_auth_token: Optional[str] = He
         result = confirm_auth_token(auth_token, user_id=actor, request_id=request_id)
     except SecurityError as exc:
         _record_failure_and_raise(exc, user_id=actor, action="USER_CONFIRMATION", request_id=request_id)
+    return {"code": 200, **result}
+
+
+@app.post("/api/v1/risk/cancel")
+def cancel_operation(
+    req: ConfirmationRequest,
+    request: Request,
+    x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    """Cancel a nonce owned by the presented principal and original session."""
+
+    request_id = _request_id(x_request_id)
+    try:
+        if not x_user_id:
+            raise SecurityError("需要用户身份", 401, "AUTHENTICATION_REQUIRED")
+        if req.user_id and req.user_id != x_user_id:
+            raise SecurityError("请求用户与登录身份不一致", 403, "IDENTITY_MISMATCH")
+        auth_token = req.auth_token or x_auth_token
+        if not auth_token:
+            raise SecurityError("缺少安全授权凭证", 403, "TOKEN_REQUIRED")
+        result = cancel_auth_token(
+            auth_token, user_id=x_user_id, presented_session=_presented_session(request),
+            request_id=request_id,
+        )
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=x_user_id, action="AUTH_TOKEN_CANCEL", request_id=request_id)
     return {"code": 200, **result}
 
 
@@ -3991,14 +4037,30 @@ def execute_operation(
                         result.update({"status": "PURCHASED", "product": product, "holding": holding})
                     else:
                         holdings = WEALTH_HOLDINGS.setdefault(req.user_id, [])
-                        index = next((i for i, h in enumerate(holdings) if h.get("product_id") == product_id and float(h.get("principal", 0)) >= amount), None)
-                        if index is None:
+                        # A product can have several purchase lots. Redeem the
+                        # requested total across them in their existing order,
+                        # atomically and in cents, without changing other products.
+                        lots = [
+                            (holding, int(round(float(holding.get("principal", 0)) * 100)))
+                            for holding in holdings
+                            if holding.get("product_id") == product_id and float(holding.get("principal", 0)) > 0
+                        ]
+                        remaining_cents = amount_to_cents(amount)
+                        if sum(cents for _, cents in lots) < remaining_cents:
                             raise SecurityError("没有足够的持仓可赎回", 400, "HOLDING_NOT_FOUND")
-                        holding = holdings[index]
-                        holding["principal"] = round(float(holding["principal"]) - amount, 2)
+                        for holding, principal_cents in lots:
+                            if remaining_cents == 0:
+                                break
+                            redeemed_cents = min(principal_cents, remaining_cents)
+                            residual_cents = principal_cents - redeemed_cents
+                            if residual_cents == 0:
+                                holdings.remove(holding)
+                            else:
+                                holding["principal"] = residual_cents / 100.0
+                                if "estimated_value" in holding:
+                                    holding["estimated_value"] = round(float(holding["estimated_value"]) * residual_cents / principal_cents, 2)
+                            remaining_cents -= redeemed_cents
                         account["balance"] = round(account["balance"] + amount, 2)
-                        if holding["principal"] <= 0:
-                            holdings.pop(index)
                         result.update({"status": "REDEEMED", "product": product, "redeemed_amount": amount})
                 elif operation == "CARD_APPLY":
                     # Same issuance path (and the same per-user ceiling) as the

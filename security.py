@@ -1084,6 +1084,45 @@ def confirm_auth_token(token: str, *, user_id: Optional[str] = None, request_id:
         return {"confirmed": True, "expires_at": payload.get("exp"), "risk_level": payload.get("risk_level")}
 
 
+def cancel_auth_token(
+    token: str, *, user_id: str, presented_session: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Revoke one pending authorization atomically with all of its factors.
+
+    Cancellation and settlement use the same lock, so a nonce cannot settle
+    while it is being cancelled. Retrying a successful cancellation is safe.
+    """
+
+    with STATE_LOCK:
+        payload = _decode_signed(token, "transfer_auth")
+        if not user_id or payload.get("from_user") != user_id:
+            raise SecurityError("取消身份与凭证不一致", 403, "IDENTITY_MISMATCH")
+        assert_session_still_valid(payload.get("session_fp"), presented_session)
+        record = AUTH_TOKENS.get(token)
+        if not record:
+            raise SecurityError("安全凭证不存在或已失效", 403, "TOKEN_NOT_FOUND")
+        if record.get("jti") != payload.get("jti") or record.get("token_hash") != credential_fingerprint(token):
+            raise SecurityError("安全凭证状态异常", 403, "TOKEN_INVALID")
+        if record.get("cancelled"):
+            return {"cancelled": True, "status": "CANCELLED"}
+        if record.get("used"):
+            raise SecurityError("安全凭证已使用，不能取消已完成的操作", 409, "TOKEN_REPLAY")
+        record.update(used=True, cancelled=True, cancelled_at=int(time.time()))
+        for proof in MFA_PROOFS.values():
+            if proof.get("parent_jti") == payload.get("jti"):
+                proof["used"] = True
+        for challenge in FACE_CHALLENGES.values():
+            if challenge.get("jti") == payload.get("jti"):
+                challenge["used"] = True
+        audit_event(
+            "AUTH_TOKEN_CANCEL", user_id=user_id, risk_level=payload.get("risk_level"),
+            decision="BLOCK", outcome="CANCELLED", request_id=request_id,
+            metadata={"jti": payload.get("jti"), "operation": payload.get("operation")},
+        )
+        return {"cancelled": True, "status": "CANCELLED"}
+
+
 def _issue_mfa_proof(payload: Mapping[str, Any], auth_token: str) -> str:
     now = int(time.time())
     proof_jti = secrets.token_urlsafe(18)

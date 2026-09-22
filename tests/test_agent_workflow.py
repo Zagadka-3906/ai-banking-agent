@@ -120,13 +120,20 @@ def test_settle_retries_once_with_same_idempotency_key(wired, monkeypatch):
 
 
 def test_failed_lock_settle_triggers_compensation_verification(wired, monkeypatch):
-    """A failed reserve_funds step marks the DAG FAILED and runs compensation."""
+    """An explicit core rejection marks the DAG FAILED and runs compensation.
+
+    A lost transport response cannot prove rejection: the separate security
+    audit suite covers a committed operation whose reply is lost.
+    """
 
     real_http = agent._http
 
     def flaky(method, path, *, state, json_body=None, headers=None):
         if method == "POST" and "lock_fund" in path:
-            raise requests.RequestException("network down")
+            response = requests.Response()
+            response.status_code = 503
+            response._content = b'{"detail":{"code":"CORE_UNAVAILABLE","message":"Core rejected the request"}}'
+            return response
         return real_http(method, path, state=state, json_body=json_body, headers=headers)
 
     monkeypatch.setattr(agent, "_http", flaky)

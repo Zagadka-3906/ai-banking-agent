@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -42,8 +43,8 @@ class AntiFraudUiTest {
         assertTrue(ui.onAllNodesWithText("境外", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(ui.onAllNodesWithText("红色", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(ui.onAllNodesWithTag(UiTags.APPROVAL_OTP).fetchSemanticsNodes().isNotEmpty())
-        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performTextInput(OTP)
-        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performClick()
+        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextInput(OTP)
+        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()
         }

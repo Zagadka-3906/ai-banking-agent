@@ -17,6 +17,7 @@ from concurrent.futures.process import BrokenProcessPool
 import json
 import math
 import os
+import operator
 import threading
 import time
 from typing import Any, Optional
@@ -51,6 +52,8 @@ MAX_AST_NODES = _env_int("BANK_SANDBOX_MAX_AST_NODES", 256, 32, 4096)
 MAX_COLLECTION_ITEMS = _env_int("BANK_SANDBOX_MAX_COLLECTION_ITEMS", 1000, 16, 100_000)
 MAX_INTEGER_BITS = _env_int("BANK_SANDBOX_MAX_INTEGER_BITS", 4096, 64, 1_000_000)
 MAX_POWER_EXPONENT = _env_int("BANK_SANDBOX_MAX_POWER_EXPONENT", 10000, 1, 1_000_000)
+MAX_VALUE_DEPTH = 32
+MAX_VALUE_NODES = 20_000
 DEFAULT_TIMEOUT_SECONDS = _env_float("BANK_SANDBOX_TIMEOUT_SECONDS", 1.5, 0.1, 10.0)
 
 
@@ -64,6 +67,7 @@ _TELEMETRY: dict[str, Any] = {
     "fallbacks": 0,
     "timeouts": 0,
     "failures": 0,
+    "rejections": 0,
     "last_transition_timestamp": None,
 }
 
@@ -257,14 +261,111 @@ def validate_expression(expression: str) -> ast.Expression:
     return tree
 
 
+def _bounded_value(value: Any, *, depth: int = 0, budget: list[int] | None = None,
+                   byte_limit: int = MAX_RESULT_BYTES) -> Any:
+    """Bound every intermediate, not only the tiny result of e.g. len(x*N)."""
+    if budget is None:
+        budget = [MAX_VALUE_NODES, byte_limit]
+    budget[0] -= 1
+    budget[1] -= 8  # container/scalar syntax and separators
+    if depth > MAX_VALUE_DEPTH or budget[0] < 0:
+        raise SandboxError("沙箱数据结构超过限制")
+    if isinstance(value, int) and value.bit_length() > MAX_INTEGER_BITS:
+        raise SandboxError("沙箱整数结果超过位数限制")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise SandboxError("沙箱数值结果必须有限")
+    if isinstance(value, str) and len(value.encode("utf-8")) > MAX_RESULT_BYTES:
+        raise SandboxError("沙箱字符串超过大小限制")
+    if isinstance(value, str):
+        budget[1] -= len(value.encode("utf-8"))
+    elif isinstance(value, int):
+        budget[1] -= value.bit_length() // 3 + 1
+    elif isinstance(value, float):
+        budget[1] -= 24
+    if budget[1] < 0:
+        raise SandboxError("沙箱数据累计大小超过限制")
+    if isinstance(value, (list, tuple, set, dict)):
+        if len(value) > MAX_COLLECTION_ITEMS:
+            raise SandboxError("沙箱集合元素过多")
+        items = value.items() if isinstance(value, dict) else value
+        for item in items:
+            _bounded_value(item, depth=depth + 1, budget=budget)
+    elif not isinstance(value, (str, int, float, bool, type(None))):
+        raise SandboxError("沙箱结果类型不受支持")
+    return value
+
+
+_BINARY_OPERATORS = {
+    "Add": operator.add, "Sub": operator.sub, "Mult": operator.mul,
+    "Div": operator.truediv, "FloorDiv": operator.floordiv,
+    "Mod": operator.mod, "Pow": operator.pow,
+}
+
+
+def _bounded_binary(operation: str, left: Any, right: Any) -> Any:
+    if operation == "Mult":
+        sequence, count = (left, right) if isinstance(right, int) else (right, left)
+        if isinstance(sequence, (str, list, tuple)) and isinstance(count, int):
+            limit = MAX_RESULT_BYTES if isinstance(sequence, str) else MAX_COLLECTION_ITEMS
+            if len(sequence) * max(count, 0) > limit:
+                raise SandboxError("沙箱重复分配超过限制")
+        elif isinstance(left, int) and isinstance(right, int):
+            if left and right and left.bit_length() + right.bit_length() - 1 > MAX_INTEGER_BITS:
+                raise SandboxError("沙箱整数乘积超过限制")
+    elif operation == "Add" and isinstance(left, (str, list, tuple)) and isinstance(right, type(left)):
+        limit = MAX_RESULT_BYTES if isinstance(left, str) else MAX_COLLECTION_ITEMS
+        if len(left) + len(right) > limit:
+            raise SandboxError("沙箱合并结果超过限制")
+    elif operation == "Mod" and isinstance(left, str):
+        # A width such as %999999999s allocates before result validation.
+        raise SandboxError("沙箱不允许字符串格式化运算")
+    elif operation == "Pow" and isinstance(left, int) and isinstance(right, int):
+        if abs(left) > 1 and right > 0 and left.bit_length() * right > MAX_INTEGER_BITS:
+            raise SandboxError("沙箱幂运算结果超过位数限制")
+    return _bounded_value(_BINARY_OPERATORS[operation](left, right))
+
+
+class _BoundIntermediateOperations(ast.NodeTransformer):
+    def visit_BinOp(self, node: ast.BinOp) -> ast.AST:
+        self.generic_visit(node)
+        return ast.copy_location(ast.Call(
+            func=ast.Name(id="_bounded_binary", ctx=ast.Load()),
+            args=[ast.Constant(type(node.op).__name__), node.left, node.right], keywords=[],
+        ), node)
+
+
 def _evaluate_worker(expression: str, data: Any) -> Any:
     tree = validate_expression(expression)
+    _bounded_value(data, byte_limit=MAX_INPUT_BYTES)
+    tree = ast.fix_missing_locations(_BoundIntermediateOperations().visit(tree))
     # No imports, filesystem, network, classes or mutable global state are
     # exposed.  ``__builtins__`` is an empty dict even though the AST has
     # already rejected calls other than the explicit safe functions.
-    globals_dict = {"__builtins__": {}, **_SAFE_FUNCTIONS}
+    def bounded_function(function):
+        def call(*args):
+            return _bounded_value(function(*args))
+        return call
+    globals_dict = {"__builtins__": {}, "_bounded_binary": _bounded_binary,
+                    **{name: bounded_function(fn) for name, fn in _SAFE_FUNCTIONS.items()}}
     locals_dict = {"data": data}
-    return eval(compile(tree, "<bank-sandbox>", "eval"), globals_dict, locals_dict)
+    result = _bounded_value(eval(compile(tree, "<bank-sandbox>", "eval"), globals_dict, locals_dict))
+    # Enforce the output bound before IPC/pickling allocates it in the parent.
+    if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > MAX_RESULT_BYTES:
+        raise SandboxError("沙箱结果超过大小限制")
+    return result
+
+
+def _terminate_process_workers(executor: Any) -> None:
+    """Future.cancel cannot stop running Python; terminate this disposable pool."""
+    processes = list((getattr(executor, "_processes", None) or {}).values())
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    for process in processes:
+        process.join(timeout=0.2)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=0.2)
 
 
 def _thread_fallback_executor(previous: Any) -> ThreadPoolExecutor:
@@ -286,9 +387,10 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
     deployments should retain the process or container isolation instead.
     """
 
-    executor: Any = ProcessPoolExecutor(max_workers=1)
+    executor: Any = None
     using_process = True
     try:
+        executor = ProcessPoolExecutor(max_workers=1)
         future = executor.submit(_evaluate_worker, expression, safe_data)
     except (PermissionError, OSError, RuntimeError) as exc:
         # Managed environments may deny child-process spawning, and Windows
@@ -315,6 +417,8 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
         return result
     except FutureTimeoutError as exc:
         future.cancel()
+        if using_process:
+            _terminate_process_workers(executor)
         _record_telemetry(
             executor="process" if using_process else "thread_fallback",
             timeout=True,
@@ -349,19 +453,20 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
         )
         raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
     finally:
-        # ``wait=False`` avoids blocking the agent on a runaway child.  Normal
-        # completed workers exit immediately; timed-out workers are cancelled.
+        # A process timed out above has been terminated. Threads cannot be
+        # forcibly stopped; their fallback retains only logical/API bounds.
         try:
             executor.shutdown(wait=False, cancel_futures=True)
         except TypeError:  # Python < 3.9 compatibility
             executor.shutdown(wait=False)
 
 
-def evaluate_expression(expression: str, data: Any, *, timeout_seconds: Optional[float] = None) -> Any:
-    """Evaluate a pure expression against JSON-like data with hard bounds."""
+def _evaluate_expression(expression: str, data: Any, *, timeout_seconds: Optional[float] = None) -> Any:
+    """Evaluate a pure expression with logical bounds and a process deadline."""
 
     tree = validate_expression(expression)
     del tree  # validation happens before serializing/starting a worker
+    _bounded_value(data, byte_limit=MAX_INPUT_BYTES)
     try:
         encoded = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
@@ -391,6 +496,36 @@ def evaluate_expression(expression: str, data: Any, *, timeout_seconds: Optional
     return result
 
 
+def evaluate_expression(expression: str, data: Any, *, timeout_seconds: Optional[float] = None,
+                        user_id: Optional[str] = None, request_id: Optional[str] = None) -> Any:
+    """Audit accepted/rejected calculations without logging expressions or data."""
+    try:
+        result = _evaluate_expression(expression, data, timeout_seconds=timeout_seconds)
+    except Exception as exc:
+        with _TELEMETRY_LOCK:
+            _TELEMETRY["rejections"] += 1
+            _TELEMETRY["last_transition_timestamp"] = time.time()
+        _audit_execution(False, user_id=user_id, request_id=request_id)
+        if isinstance(exc, SandboxError):
+            raise
+        raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
+    _audit_execution(True, user_id=user_id, request_id=request_id)
+    return result
+
+
+def _audit_execution(succeeded: bool, *, user_id: Optional[str] = None,
+                     request_id: Optional[str] = None) -> None:
+    try:
+        from security import audit_event
+        audit_event("SANDBOX_EXECUTION", decision="ALLOW" if succeeded else "BLOCK",
+                    outcome="SUCCESS" if succeeded else "FAILURE",
+                    user_id=user_id, request_id=request_id,
+                    reason=None if succeeded else "POLICY_OR_EXECUTION_REJECTED")
+    except Exception:
+        # Health counters remain available even without the optional audit sink.
+        pass
+
+
 def sandbox_health() -> dict[str, Any]:
     return {
         "status": "OK",
@@ -400,6 +535,14 @@ def sandbox_health() -> dict[str, Any]:
         "timeout_seconds": DEFAULT_TIMEOUT_SECONDS,
         "max_ast_nodes": MAX_AST_NODES,
         "max_power_exponent": MAX_POWER_EXPONENT,
+        "max_integer_bits": MAX_INTEGER_BITS,
+        "max_input_bytes": MAX_INPUT_BYTES,
+        "max_result_bytes": MAX_RESULT_BYTES,
+        "max_collection_items": MAX_COLLECTION_ITEMS,
+        "max_value_depth": MAX_VALUE_DEPTH,
+        "max_value_nodes": MAX_VALUE_NODES,
+        "memory_limit": "bounded_values_not_os_rss",
+        "thread_timeout": "caller_deadline_not_thread_termination",
         "safe_functions": sorted(_SAFE_FUNCTIONS),
         "preferred_executor": "process",
         **_sandbox_telemetry(),

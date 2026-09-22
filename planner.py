@@ -193,6 +193,18 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                 # allowed to influence a later prompt or tool call.
                 continue
         safe_slots[key] = value
+    # Renewal scheduling is opt-in and only meaningful for subscription reads.
+    # Never let truthy strings or unrestricted day offsets create reminders.
+    if intent == Intent.SUBSCRIPTION_QUERY.value and slots.get("renewal_reminder") is True:
+        safe_slots["renewal_reminder"] = True
+        days_before = slots.get("days_before", 2)
+        if isinstance(days_before, int) and not isinstance(days_before, bool) and 0 <= days_before <= 365:
+            safe_slots["days_before"] = days_before
+        else:
+            raise ValueError("续费提醒需指定 0 到 365 天内的提前天数")
+    else:
+        safe_slots.pop("renewal_reminder", None)
+        safe_slots.pop("days_before", None)
     raw_participants = payload.get("participants")
     if not isinstance(raw_participants, list):
         raw_participants = []
@@ -292,6 +304,8 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
     if intent == Intent.CROSS_SCENE_LOCK.value:
         # A reservation that promises a birthday reminder must carry an
         # explicit, parseable event date; never silently assume “next week”.
+        if not parsed.get("target"):
+            missing.append("target")
         if parsed.get("amount") in (None, 0):
             missing.append("amount")
         if not (parsed.get("scheduled_at") or parsed.get("event_at")):
@@ -537,7 +551,10 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
         tasks = [Task("card_operation", intent, risk_level=level, details=base)]
     elif intent.startswith("SUBSCRIPTION_"):
         level = risk_for_intent(intent)
-        tasks = [Task("subscription_operation", intent, risk_level=level, details=base)]
+        slots = parsed.get("slots") or {}
+        action = "SUBSCRIPTION_REMINDER" if intent == Intent.SUBSCRIPTION_QUERY.value and slots.get("renewal_reminder") is True else intent
+        details = {**base, "days_before": slots.get("days_before", 2)} if action == "SUBSCRIPTION_REMINDER" else base
+        tasks = [Task("subscription_operation", action, risk_level=level, details=details)]
     elif intent in {Intent.BALANCE_QUERY.value}:
         tasks = [Task("fetch_balance", "FETCH_BALANCE", risk_level="GREEN", details=base)]
     else:
@@ -679,7 +696,8 @@ def _aggregate_bill_amounts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"spent": round(spent, 2), "refunds": round(refunds, 2), "categories": by_category}
 
 
-def _aggregate_bill_amounts_sandboxed(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], str]:
+def _aggregate_bill_amounts_sandboxed(rows: list[dict[str, Any]], *, user_id: Optional[str] = None,
+                                     request_id: Optional[str] = None) -> tuple[dict[str, Any], str]:
     """Run the bill aggregation inside the read-only expression sandbox.
 
     Returns ``(aggregation, engine)``.  When the sandbox cannot run (standalone
@@ -691,7 +709,8 @@ def _aggregate_bill_amounts_sandboxed(rows: list[dict[str, Any]]) -> tuple[dict[
     if evaluate_expression is None:
         return _aggregate_bill_amounts(rows), "sandbox_unavailable"
     try:
-        result = evaluate_expression(_SANDBOX_AGGREGATION_EXPRESSION, rows)
+        result = evaluate_expression(_SANDBOX_AGGREGATION_EXPRESSION, rows,
+                                     user_id=user_id, request_id=request_id)
         if not isinstance(result, dict) or not isinstance(result.get("categories"), dict):
             raise SandboxError("沙箱聚合结果结构异常")
         spent = _row_amount(result.get("spent"))
@@ -702,7 +721,8 @@ def _aggregate_bill_amounts_sandboxed(rows: list[dict[str, Any]]) -> tuple[dict[
         return _aggregate_bill_amounts(rows), "sandbox_fallback"
 
 
-def analyze_transactions(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def analyze_transactions(records: Iterable[Mapping[str, Any]], *, user_id: Optional[str] = None,
+                         request_id: Optional[str] = None) -> dict[str, Any]:
     """Compute auditable bill facts and conservative anomaly flags.
 
     The result contains only values derived from the supplied records.  A
@@ -718,7 +738,7 @@ def analyze_transactions(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]
     """
 
     rows = [dict(r) for r in records]
-    aggregation, engine = _aggregate_bill_amounts_sandboxed(rows)
+    aggregation, engine = _aggregate_bill_amounts_sandboxed(rows, user_id=user_id, request_id=request_id)
     spent = aggregation["spent"]
     refunds = aggregation["refunds"]
     by_category = aggregation["categories"]
