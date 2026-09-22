@@ -810,7 +810,7 @@ def _local_parse(text: str) -> dict[str, Any]:
         intent = Intent.WEALTH_RISK_ASSESSMENT.value
     elif any(x in text for x in ("对比理财", "比较理财", "产品对比", "比较产品")) or (len(product_ids) >= 2 and any(x in text for x in ("对比", "比较"))):
         intent = Intent.WEALTH_COMPARE.value
-    elif any(x in text for x in ("在售", "理财列表", "理财产品列表")) or (
+    elif re.fullmatch(r"(?:投资)?理财[。！？!?]?", text.strip()) or any(x in text for x in ("在售", "理财列表", "理财产品列表")) or (
         any(x in text for x in ("理财", "产品")) and any(x in text for x in ("查看", "查询", "有哪些", "列表", "在售", "多少钱起"))
     ):
         # Listing what the bank offers is a plain fact query; it must not be
@@ -1259,8 +1259,12 @@ def _merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentStat
             flags=re.IGNORECASE,
         ) is not None
     )
-    if (incoming_intent not in {Intent.UNKNOWN.value, pending_intent}
+    if (incoming_intent != Intent.UNKNOWN.value
             and not needs_clarification(parsed) and not bare_target_answer):
+        # A complete restatement is authoritative even when it names the same
+        # intent.  Otherwise a low-confidence clarification created by an older
+        # parser can trap a now-valid request forever (for example repeatedly
+        # asking what "理财" means after it became a WEALTH_QUERY entry point).
         return parsed
     merged: dict[str, Any] = dict(pending_payload)
     for key in ("target", "amount", "participants", "product_ids", "scheduled_at", "event_at"):

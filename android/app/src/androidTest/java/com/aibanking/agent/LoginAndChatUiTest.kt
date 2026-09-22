@@ -173,6 +173,23 @@ class LoginAndChatUiTest {
     }
 
     @Test
+    fun a_bare_wealth_message_returns_products_without_internal_steps() {
+        ensureLoggedIn()
+        send("理财")
+
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+            ui.onAllNodesWithText("在售理财产品共 4 款", substring = true, useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty() &&
+                ui.onAllNodesWithText("稳健添利·日日盈", substring = true, useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue(
+            "internal processing steps must never be rendered in a reply card",
+            ui.onAllNodesWithText("处理步骤", useUnmergedTree = true).fetchSemanticsNodes().isEmpty(),
+        )
+    }
+
+    @Test
     fun a_yellow_transfer_waits_for_confirmation_and_then_settles() {
         ensureLoggedIn()
         send("给李四转 300 元")

@@ -160,6 +160,40 @@ def test_browse_then_compare_real_products(dialogue):
     assert not main.WEALTH_RISK_PROFILES
 
 
+def test_bare_wealth_entry_lists_products(dialogue):
+    response = dialogue.say("理财")
+    dialogue.completed("WEALTH_QUERY")
+    assert response["reply"] and "CJ01002" in response["reply"] and "QK36509" in response["reply"]
+    assert (response.get("result") or {}).get("execution_result", {}).get("type") == "WEALTH_QUERY"
+    assert not response.get("approval") and not main.WEALTH_RISK_PROFILES
+
+
+def test_bare_wealth_recovers_stale_clarification(dialogue):
+    dialogue.say("现在有哪些在售理财？")
+    payload = agent._local_parse("理财")
+    payload.pop("confidence", None)
+    thread = conversation.conversation_thread_id(USER, dialogue.case_id)
+    conversation.get_graph().update_state(
+        {"configurable": {"thread_id": thread}},
+        {
+            "clarification_required": True,
+            "context": {
+                "pending_clarification": {
+                    "intent": "WEALTH_QUERY",
+                    "missing": [],
+                    "confidence": 0.6,
+                    "payload": payload,
+                },
+            },
+        },
+    )
+
+    response = dialogue.say("理财")
+    dialogue.completed("WEALTH_QUERY")
+    assert "CJ01002" in response["reply"] and "QK36509" in response["reply"]
+    assert dialogue.state["clarification_required"] is False
+
+
 def test_compare_accepts_bare_product_pair_after_clarification(dialogue):
     assert "两个" in dialogue.say("比较理财")["reply"]
     dialogue.say("CJ01002 和 AY90204")

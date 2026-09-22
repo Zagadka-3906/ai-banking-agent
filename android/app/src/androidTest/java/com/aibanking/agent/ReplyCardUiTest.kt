@@ -79,6 +79,10 @@ class ReplyCardUiTest {
                         "remaining_available" to 8754.33,
                     ),
                 ),
+                "plan" to mapOf(
+                    "plan_id" to "internal-plan",
+                    "tasks" to listOf(mapOf("action" to "TRANSFER", "status" to "SUCCEEDED")),
+                ),
             ),
         )
         val traceId = checkNotNull(message.traceId)
@@ -89,6 +93,8 @@ class ReplyCardUiTest {
         ui.onNodeWithText(traceId, substring = true, useUnmergedTree = true).assertDoesNotExist()
         ui.onNodeWithText("¥12,345.67", substring = true, useUnmergedTree = true).assertExists()
         ui.onNodeWithText("¥8,754.33", substring = true, useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("处理步骤", useUnmergedTree = true).assertDoesNotExist()
+        ui.onNodeWithText("步已完成", substring = true, useUnmergedTree = true).assertDoesNotExist()
         screenshot("reply-light")
 
         ui.onNodeWithText("回复详情").performScrollTo().performClick()

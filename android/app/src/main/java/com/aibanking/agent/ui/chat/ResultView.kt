@@ -1,12 +1,7 @@
 package com.aibanking.agent.ui.chat
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -14,7 +9,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,7 +44,6 @@ fun ResultExtras(result: Map<String, Any?>?) {
         }
         result.child("profile_result")?.let { RiskProfileCard(it) }
         result.child("todo_card")?.let { TodoCard(it) }
-        result.child("plan")?.let { PlanCard(it) }
     }
 }
 
@@ -382,56 +375,6 @@ private fun TodoCard(card: Map<String, Any?>) {
     }
 }
 
-@Composable
-private fun PlanCard(plan: Map<String, Any?>) {
-    val tasks = plan.children("tasks")
-    if (tasks.isEmpty()) return
-    var expanded by remember(plan.text("plan_id")) { mutableStateOf(false) }
-    BankSectionCard {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SectionTitle("处理步骤")
-                Text("${tasks.count { it.text("status") == "SUCCEEDED" }} / ${tasks.size} 步已完成", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "展开") }
-        }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn(tween(180)) + expandVertically(tween(220)),
-            exit = fadeOut(tween(140)) + shrinkVertically(tween(180)),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                tasks.forEachIndexed { index, task ->
-                    val status = task.text("status").orEmpty()
-                    val accent = when (status) {
-                        "SUCCEEDED" -> LocalBankSemanticColors.current.riskGreen
-                        "FAILED" -> LocalBankSemanticColors.current.riskRed
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Surface(shape = CircleShape, color = accent.copy(alpha = 0.10f), contentColor = accent) {
-                            Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
-                                if (status == "SUCCEEDED") BankIcon(BankIconKind.Check, Modifier.size(16.dp))
-                                else Text("${index + 1}", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            val action = task.text("action").orEmpty()
-                            Text(ACTION_LABELS[action] ?: action, style = MaterialTheme.typography.bodyMedium)
-                            Text(displayStatus(status), style = MaterialTheme.typography.labelMedium, color = accent)
-                            task.text("error")?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                            task.text("risk_level")?.let { Text("风险等级：" + when (it) { "GREEN" -> "绿色"; "YELLOW" -> "黄色"; "RED" -> "红色"; else -> it }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                            val deps = (task["depends_on"] as? List<*>)?.joinToString("、").orEmpty()
-                            if (deps.isNotEmpty()) Text("前置步骤：$deps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                plan.text("policy_version")?.let { Text("策略版本：$it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            }
-        }
-    }
-}
-
 private fun executionTitle(type: String?): String = when (type) {
     "BALANCE" -> "账户余额"
     "TRANSFER_SUCCESS" -> "转账回执"
@@ -513,16 +456,6 @@ private fun displayStatus(status: String): String = when (status) {
     "PASSWORD_CHANGED" -> "密码已修改"
     else -> status
 }
-private val ACTION_LABELS = mapOf(
-    "VALIDATE_EVENT" to "核对安排", "LOCK_FUND" to "预留资金", "SCHEDULE_REMINDER" to "设置提醒",
-    "VERIFY_TRANSACTION" to "核验交易", "EXPLAIN_RISK" to "说明交易风险", "MFA_CONFIRM" to "验证操作身份",
-    "FREEZE_CARD" to "冻结关联卡片", "CREATE_DISPUTE_CASE" to "建立争议工单",
-    "VALIDATE_TRANSFER" to "核对转账信息", "SCHEDULE_TRANSFER" to "安排预约转账", "TRANSFER" to "执行转账",
-    "VALIDATE_SPLIT" to "核对分摊信息", "CREATE_SPLIT_REQUEST" to "建立分摊请求", "NOTIFY_PARTICIPANTS" to "通知参与人",
-    "FETCH_TRANSACTIONS" to "查询交易记录", "COMPUTE_BILL_FACTS" to "统计账单", "FETCH_WEALTH_DATA" to "查询理财产品",
-    "WEALTH_RISK_ASSESSMENT" to "评估风险偏好", "BALANCE_QUERY" to "查询余额", "BILL_QUERY" to "查询账单",
-)
-
 /** Unknown shapes remain absent; numeric facts must be finite. */
 private fun Map<String, Any?>.child(key: String): Map<String, Any?>? {
     val value = this[key] as? Map<*, *> ?: return null
