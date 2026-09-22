@@ -18,6 +18,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.chat.ChatRole
 import com.aibanking.agent.ui.chat.ChatViewModel
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -192,6 +193,38 @@ class LoginAndChatUiTest {
     }
 
     @Test
+    fun predicted_quick_option_sends_immediately() {
+        ensureLoggedIn()
+        lateinit var viewModel: ChatViewModel
+        lateinit var prompt: String
+        var previousMatches = 0
+        ui.runOnIdle {
+            viewModel = ViewModelProvider(ui.activity)[ChatViewModel::class.java]
+            prompt = viewModel.state.value.suggestions.first()
+            previousMatches = viewModel.state.value.messages.count {
+                it.role == ChatRole.USER && it.text == prompt
+            }
+        }
+        ui.waitUntil(timeoutMillis = LOGIN_TIMEOUT_MS) {
+            ui.onAllNodesWithTag(UiTags.QUICK_SUGGESTIONS).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        ui.onNodeWithTag(UiTags.quickSuggestion(0)).performClick()
+
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+            viewModel.state.value.messages.count {
+                it.role == ChatRole.USER && it.text == prompt
+            } > previousMatches
+        }
+        ui.runOnIdle { assertTrue(viewModel.state.value.input.isEmpty()) }
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { !viewModel.state.value.busy }
+        ui.runOnIdle {
+            assertTrue("follow-up suggestions missing", viewModel.state.value.suggestions.isNotEmpty())
+        }
+        assertTrue(ui.onAllNodesWithTag(UiTags.QUICK_SUGGESTIONS).fetchSemanticsNodes().isNotEmpty())
+    }
+
+    @Test
     fun a_yellow_transfer_waits_for_confirmation_and_then_settles() {
         ensureLoggedIn()
         send("给李四转 300 元")
@@ -214,11 +247,12 @@ class LoginAndChatUiTest {
         }
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { moneyIsVisible() }
         ui.runOnIdle {
-            val messages = ViewModelProvider(ui.activity)[ChatViewModel::class.java].state.value.messages
+            val currentState = ViewModelProvider(ui.activity)[ChatViewModel::class.java].state.value
             assertTrue(
                 "settled transfers must not retain their approval preview",
-                messages.none { it.approvalPreview || it.text.trimStart().startsWith("您正准备进行：") },
+                currentState.messages.none { it.approvalPreview || it.text.trimStart().startsWith("您正准备进行：") },
             )
+            assertTrue("transfer follow-up suggestions missing", currentState.suggestions.contains("查看账户余额"))
         }
         assertTrue(
             ui.onAllNodesWithText("您正准备进行", substring = true, useUnmergedTree = true)

@@ -273,7 +273,7 @@ private fun ChatHome(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (showWelcome) {
-                    item(key = "welcome") { ChatWelcome(onSuggestion = viewModel::onInputChange) }
+                    item(key = "welcome") { ChatWelcome(onSuggestion = viewModel::onSuggestionClick) }
                 }
                 items(state.messages, key = { it.id }) { message ->
                     MessageBubble(message, Modifier.animateItem().verificationFrost(redVerification))
@@ -321,24 +321,36 @@ private fun ChatHome(
                     Text("安言正在为您处理…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            // 快捷输入建议：点击填入输入框（可修改后再发送）。
+            // Predicted next requests stay directly above the editor. A tap sends
+            // immediately; write operations still enter the server approval flow.
             if (state.suggestions.isNotEmpty() && state.quiz == null) {
-                LazyRow(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .testTag(UiTags.QUICK_SUGGESTIONS)
                         .verificationFrost(redVerification),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp),
                 ) {
-                    items(state.suggestions.size) { index ->
-                        SuggestionChip(
-                            onClick = { viewModel.onSuggestionClick(state.suggestions[index]) },
-                            enabled = !state.busy && state.pending == null,
-                            label = { Text(state.suggestions[index], style = MaterialTheme.typography.labelMedium) },
-                            colors = SuggestionChipDefaults.suggestionChipColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                            ),
-                        )
+                    Text(
+                        "猜你想问",
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp),
+                    ) {
+                        itemsIndexed(state.suggestions, key = { _, suggestion -> suggestion }) { index, suggestion ->
+                            SuggestionChip(
+                                onClick = { viewModel.onSuggestionClick(suggestion) },
+                                enabled = !state.busy,
+                                modifier = Modifier.testTag(UiTags.quickSuggestion(index)),
+                                label = { Text(suggestion, style = MaterialTheme.typography.labelMedium) },
+                                colors = SuggestionChipDefaults.suggestionChipColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                ),
+                            )
+                        }
                     }
                 }
             }

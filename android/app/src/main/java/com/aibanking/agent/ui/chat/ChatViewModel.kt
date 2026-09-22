@@ -21,6 +21,7 @@ import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.data.RiskProfileView
 import com.aibanking.agent.data.TaskRepository
 import com.aibanking.agent.data.TaskView
+import com.aibanking.agent.data.TurnEnvelope
 import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.push.PushNotifications
 import com.aibanking.agent.security.DeviceKeyManager
@@ -43,6 +44,13 @@ enum class ContactsScreen { LIST, DETAIL, ADD }
 
 /** 理财页两个页面：产品超市 → 产品详情（申购预填回聊天）。 */
 enum class WealthScreen { LIST, DETAIL }
+
+private val DEFAULT_PREDICTED_SUGGESTIONS = listOf(
+    "查一下余额",
+    "查看本月账单",
+    "理财",
+    "查看我的订阅",
+)
 
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
@@ -110,8 +118,8 @@ data class ChatUiState(
     val quiz: RiskQuizUi? = null,
     /** 测评完成后的档案结果（渲染彩色结果卡）。 */
     val profileResult: Map<String, Any>? = null,
-    /** 回复末尾的快捷输入建议（点击填入输入框）。 */
-    val suggestions: List<String> = emptyList(),
+    /** Predicted next requests shown above the editor; tapping sends immediately. */
+    val suggestions: List<String> = DEFAULT_PREDICTED_SUGGESTIONS,
     /** 银行卡管理页：卡片列表 + 添加表单。 */
     val showCards: Boolean = false,
     val cards: List<CardView> = emptyList(),
@@ -254,12 +262,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val restored = stored.messages?.let { json ->
             runCatching { gson.fromJson(json, Array<ChatMessage>::class.java).toList() }.getOrNull()
         }.orEmpty().filterNot { it.isApprovalPreviewMessage() }
+        val restoredSuggestions = restored.asReversed()
+            .firstOrNull { it.role == ChatRole.ASSISTANT }
+            ?.let { predictedSuggestions(TurnEnvelope(result = it.result)) }
+            ?: DEFAULT_PREDICTED_SUGGESTIONS
         _state.update {
             it.copy(
                 principal = storedPrincipal,
                 authenticated = true,
                 restoring = false,
                 messages = if (restored.isNotEmpty()) restored else listOf(welcome()),
+                suggestions = restoredSuggestions,
                 // 未答完的问卷组件（含已作答进度）一并恢复，不然重启会退回第一题。
                 quiz = parseStoredQuiz(stored.quiz),
             )
@@ -916,8 +929,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sendInternal(text)
     }
 
-    /** 点击快捷建议：填入输入框，用户可修改后自行发送。 */
-    fun onSuggestionClick(suggestion: String) = onInputChange(suggestion)
+    /** Send a predicted request immediately, matching the one-tap affordance. */
+    fun onSuggestionClick(suggestion: String) {
+        val prompt = suggestion.trim()
+        val current = _state.value
+        if (!current.authenticated || current.busy || current.quiz != null || prompt.isEmpty()) return
+        _state.update { it.copy(input = "") }
+        sendInternal(prompt)
+    }
 
     private fun sendInternal(text: String, echoUser: Boolean = true) {
         val current = _state.value
@@ -977,7 +996,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         otp = "",
                         quiz = parseQuiz(envelope.result),
                         profileResult = envelope.result?.get("profile_result") as? Map<String, Any>,
-                        suggestions = (envelope.result?.get("suggestions") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList(),
+                        suggestions = predictedSuggestions(envelope),
                     )
                 }
                 persistMessages()
@@ -1069,6 +1088,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         busy = false,
                         pending = null,
                         otp = "",
+                        suggestions = predictedSuggestions(resolved),
                         messages = state.messages.filterNot { it.isApprovalPreviewMessage() } + ChatMessage(
                             role = ChatRole.ASSISTANT,
                             text = displayText(resolved.reply, resolved.result),
@@ -1106,7 +1126,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         otp = "",
                         quiz = parseQuiz(envelope.result),
                         profileResult = envelope.result?.get("profile_result") as? Map<String, Any>,
-                        suggestions = (envelope.result?.get("suggestions") as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList(),
+                        suggestions = predictedSuggestions(envelope),
                         messages = state.messages.filterNot { it.isApprovalPreviewMessage() } + ChatMessage(
                             role = ChatRole.ASSISTANT,
                             text = displayText(envelope.reply, envelope.result),
@@ -1187,6 +1207,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 /** Also recognizes preview cards persisted before [ChatMessage.approvalPreview] existed. */
 private fun ChatMessage.isApprovalPreviewMessage(): Boolean =
     approvalPreview || (role == ChatRole.ASSISTANT && text.trimStart().startsWith("您正准备进行："))
+
+/** Derive bounded, actionable next turns from the completed server turn. */
+internal fun predictedSuggestions(envelope: TurnEnvelope): List<String> {
+    // Approval controls always win. Graph state can retain suggestions from an
+    // earlier turn, and those must never displace the safe revision choices.
+    if (envelope.approval != null) {
+        return listOf("取消这次操作", "修改这次操作", "更换办理对象")
+    }
+
+    val serverSuggestions = (envelope.result?.get("suggestions") as? List<*>)
+        .orEmpty()
+        .mapNotNull { value ->
+            value?.toString()?.trim()?.takeIf { it.isNotEmpty() && it.length <= 80 }
+        }
+        .distinct()
+        .take(4)
+
+    val executionType = (envelope.result?.get("execution_result") as? Map<*, *>)
+        ?.get("type")?.toString().orEmpty()
+    val context = (envelope.intent.orEmpty() + " " + executionType).uppercase()
+    // Server-authored choices belong to the just-completed risk assessment.
+    // In other flows they may be stale LangGraph state, so the current intent
+    // and verified execution result must determine the next actions instead.
+    val currentRiskAssessment =
+        envelope.result?.get("profile_result") != null || "WEALTH_RISK_ASSESSMENT" in context
+    if (currentRiskAssessment && serverSuggestions.isNotEmpty()) return serverSuggestions
+
+    return when {
+        "TRANSFER" in context || "SPLIT_BILL" in context ->
+            listOf("查看账户余额", "查询最近转账", "再转一笔")
+        "BALANCE" in context ->
+            listOf("查看本月账单", "分析本月消费", "给联系人转账")
+        "BILL" in context || "TRANSACTION" in context ->
+            listOf("分析本月消费", "查找异常交易", "查看账户余额")
+        "WEALTH" in context ->
+            listOf("查看理财产品", "比较理财产品", "查看我的持仓")
+        "CARD" in context ->
+            listOf("查看我的卡片", "调整卡片额度", "挂失银行卡")
+        "SUBSCRIPTION" in context ->
+            listOf("查看我的订阅", "查看下次扣费", "分析订阅支出")
+        "CROSS_SCENE" in context || "LOCK_FUND" in context ->
+            listOf("查看账户余额", "查看本月账单", "查看我的订阅")
+        else -> serverSuggestions.ifEmpty { DEFAULT_PREDICTED_SUGGESTIONS }
+    }
+}
 
 /**
  * Everything [SessionStore] hands back at start-up.
