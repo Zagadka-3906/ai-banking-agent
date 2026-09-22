@@ -48,4 +48,48 @@ class PredictedSuggestionsTest {
 
         assertEquals(listOf("查看理财产品", "查看我的持仓"), suggestions)
     }
+
+    @Test
+    fun subscription_query_offers_named_cancel_action_first() {
+        val suggestions = predictedSuggestions(
+            TurnEnvelope(
+                intent = "SUBSCRIPTION_QUERY",
+                result = mapOf(
+                    "execution_result" to mapOf(
+                        "type" to "SUBSCRIPTION_QUERY",
+                        "data" to mapOf(
+                            "code" to 200,
+                            "data" to listOf(
+                                mapOf("merchant" to "Apple 订阅", "status" to "ACTIVE"),
+                                mapOf("merchant" to "视频会员", "status" to "ACTIVE"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("取消 Apple 订阅", "查看下次扣费", "分析订阅支出"), suggestions)
+    }
+
+    @Test
+    fun subscription_query_never_offers_cancel_for_inactive_items() {
+        val suggestions = predictedSuggestions(
+            TurnEnvelope(
+                intent = "SUBSCRIPTION_QUERY",
+                result = mapOf(
+                    "execution_result" to mapOf(
+                        "type" to "SUBSCRIPTION_QUERY",
+                        "data" to mapOf(
+                            "data" to listOf(
+                                mapOf("merchant" to "Apple 订阅", "status" to "CANCELLED"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertTrue(suggestions.none { it.startsWith("取消 Apple") })
+    }
 }

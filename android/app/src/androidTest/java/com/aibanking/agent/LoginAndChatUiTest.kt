@@ -4,11 +4,13 @@ import android.Manifest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -222,6 +224,35 @@ class LoginAndChatUiTest {
             assertTrue("follow-up suggestions missing", viewModel.state.value.suggestions.isNotEmpty())
         }
         assertTrue(ui.onAllNodesWithTag(UiTags.QUICK_SUGGESTIONS).fetchSemanticsNodes().isNotEmpty())
+    }
+
+    @Test
+    fun subscription_query_offers_named_cancel_shortcut() {
+        ensureLoggedIn()
+        send("查看我的订阅")
+        lateinit var viewModel: ChatViewModel
+        ui.runOnIdle { viewModel = ViewModelProvider(ui.activity)[ChatViewModel::class.java] }
+
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+            !viewModel.state.value.busy &&
+                viewModel.state.value.suggestions.firstOrNull() == "取消 Apple 订阅"
+        }
+
+        ui.onNodeWithText("取消 Apple 订阅", useUnmergedTree = true).assertIsDisplayed()
+        ui.onNodeWithTag(UiTags.QUICK_SUGGESTIONS).assertIsDisplayed()
+        ui.onNodeWithText("取消 Apple 订阅", useUnmergedTree = true).performClick()
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+            !viewModel.state.value.busy && viewModel.state.value.pending != null
+        }
+        ui.runOnIdle {
+            val state = viewModel.state.value
+            assertTrue(state.messages.any { it.role == ChatRole.USER && it.text == "取消 Apple 订阅" })
+            assertTrue(state.pending?.summary?.contains("Apple") == true)
+            viewModel.reject()
+        }
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+            !viewModel.state.value.busy && viewModel.state.value.pending == null
+        }
     }
 
     @Test

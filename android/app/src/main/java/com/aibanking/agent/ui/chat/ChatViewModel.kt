@@ -1224,8 +1224,8 @@ internal fun predictedSuggestions(envelope: TurnEnvelope): List<String> {
         .distinct()
         .take(4)
 
-    val executionType = (envelope.result?.get("execution_result") as? Map<*, *>)
-        ?.get("type")?.toString().orEmpty()
+    val execution = envelope.result?.get("execution_result") as? Map<*, *>
+    val executionType = execution?.get("type")?.toString().orEmpty()
     val context = (envelope.intent.orEmpty() + " " + executionType).uppercase()
     // Server-authored choices belong to the just-completed risk assessment.
     // In other flows they may be stale LangGraph state, so the current intent
@@ -1245,12 +1245,35 @@ internal fun predictedSuggestions(envelope: TurnEnvelope): List<String> {
             listOf("查看理财产品", "比较理财产品", "查看我的持仓")
         "CARD" in context ->
             listOf("查看我的卡片", "调整卡片额度", "挂失银行卡")
-        "SUBSCRIPTION" in context ->
-            listOf("查看我的订阅", "查看下次扣费", "分析订阅支出")
+        "SUBSCRIPTION" in context -> {
+            val cancelSuggestion = activeSubscriptionCancelSuggestion(execution)
+            if (cancelSuggestion != null) {
+                listOf(cancelSuggestion, "查看下次扣费", "分析订阅支出")
+            } else {
+                listOf("查看我的订阅", "查看下次扣费", "分析订阅支出")
+            }
+        }
         "CROSS_SCENE" in context || "LOCK_FUND" in context ->
             listOf("查看账户余额", "查看本月账单", "查看我的订阅")
         else -> serverSuggestions.ifEmpty { DEFAULT_PREDICTED_SUGGESTIONS }
     }
+}
+
+/** Build a cancellation action only from an active subscription returned by the core. */
+private fun activeSubscriptionCancelSuggestion(execution: Map<*, *>?): String? {
+    if (execution?.get("type")?.toString() != "SUBSCRIPTION_QUERY") return null
+    val response = execution["data"] as? Map<*, *> ?: return null
+    val subscriptions = response["data"] as? List<*> ?: return null
+    val merchant = subscriptions.asSequence()
+        .mapNotNull { it as? Map<*, *> }
+        .firstOrNull { it["status"]?.toString() == "ACTIVE" }
+        ?.get("merchant")
+        ?.toString()
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() && it.length <= 60 }
+        ?: return null
+    val subscriptionName = if (merchant.endsWith("订阅")) merchant else "$merchant 订阅"
+    return "取消 $subscriptionName"
 }
 
 /**
