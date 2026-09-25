@@ -54,3 +54,6 @@ android/app/google-services.json
 secrets/
 
 .tmp-screenshots/
+
+# 实测过程的临时录屏与中间帧（仅本地，证据截图已复制到 docs/testing-evidence/）
+test-shots/
