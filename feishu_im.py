@@ -19,6 +19,7 @@ from fastapi import APIRouter, Header, Request
 
 from agent import _local_parse
 from bank_tools import BankAPIError, BankClient
+from feishu_cards import FeishuReply, query_card
 from planner import Intent
 from security import SecurityError, audit_event, sanitize_text
 
@@ -49,7 +50,7 @@ def reset_state() -> None:
         _BOT_STATE = "disabled"
 
 
-def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[str, str]:
+def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[str, str | FeishuReply]:
     """Only fixed Core GET routes are reachable from the IM channel."""
     parsed = _local_parse(message)
     intent = str(parsed.get("intent") or "")
@@ -75,24 +76,7 @@ def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[
         raise SecurityError("核心银行查询失败，请稍后重试", 503, "FEISHU_CORE_READ_FAILED") from exc
     if not isinstance(result, dict) or result.get("code") != 200:
         raise SecurityError("核心银行结果格式无效", 502, "FEISHU_CORE_PROTOCOL_ERROR")
-    if intent == Intent.BALANCE_QUERY.value:
-        reply = f"当前可用余额 ¥{float(result['available_balance']):,.2f}；总余额 ¥{float(result['total_balance']):,.2f}，已锁定 ¥{float(result['locked_amount']):,.2f}。"
-    elif intent == Intent.BILL_QUERY.value:
-        rows = result.get("data") or []
-        reply = f"{scope} 流水共 {result.get('total_records', len(rows))} 笔。" + "；".join(f"{row.get('merchant', '交易')} ¥{float(row.get('amount', 0)):,.2f}" for row in rows[:5])
-    elif intent == Intent.BILL_ANALYSIS.value:
-        facts = result.get("facts") or {}
-        reply = f"{scope} 账单共 {facts.get('record_count', 0)} 笔，支出 ¥{float(facts.get('total_spent', 0)):,.2f}。" + "；".join(f"{row.get('category')} ¥{float(row.get('amount', 0)):,.2f}" for row in (facts.get("category_breakdown") or [])[:5])
-    elif intent == Intent.SUBSCRIPTION_QUERY.value:
-        rows = result.get("data") or []
-        reply = "订阅与周期扣费：" + ("；".join(f"{row.get('merchant')} ¥{float(row.get('amount', 0)):,.2f}（{'待核实' if row.get('status') == 'CANDIDATE' else row.get('status')}）" for row in rows[:8]) or "暂无记录")
-    elif intent == Intent.CARD_QUERY.value:
-        rows = result.get("data") or []
-        reply = "卡片：" + ("；".join(f"{row.get('number_masked') or row.get('card_id')}（{row.get('status')}）" for row in rows[:8]) or "暂无卡片")
-    else:
-        rows = result.get("data") or []
-        reply = "理财产品：" + ("；".join(str(row.get("name") or row.get("product_id") or "产品") for row in rows[:8]) or "暂无产品")
-    return "COMPLETED", reply[:1800]
+    return "COMPLETED", query_card(intent, scope, result)
 
 
 @router.post("/binding-code")
@@ -147,7 +131,7 @@ def _remember_event(event_id: str, created_ms: int) -> bool:
     return True
 
 
-def process_message(event: Any) -> tuple[str, str] | None:
+def process_message(event: Any) -> tuple[str, str | FeishuReply] | None:
     """Process a verified SDK event; return (chat_id, reply) for one private chat."""
     if not _enabled():
         return None
@@ -235,12 +219,13 @@ def process_message(event: Any) -> tuple[str, str] | None:
     return chat_id, reply
 
 
-def _send_text(client: Any, chat_id: str, text: str, event_id: str) -> bool:
+def _send_reply(client: Any, chat_id: str, reply: str | FeishuReply, event_id: str) -> bool:
     from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
+    payload = reply if isinstance(reply, FeishuReply) else FeishuReply.text(reply)
     request = (CreateMessageRequest.builder().receive_id_type("chat_id")
                .request_body(CreateMessageRequestBody.builder().receive_id(chat_id)
-                             .msg_type("text").content(json.dumps({"text": text}, ensure_ascii=False))
+                             .msg_type(payload.msg_type).content(json.dumps(payload.content, ensure_ascii=False))
                              .uuid(event_id).build()).build())
     response = client.im.v1.message.create(request)
     return bool(response.success())
@@ -280,7 +265,7 @@ def start_bot() -> None:
                     if result is None:
                         continue
                     chat_id, reply = result
-                    if _send_text(api_client, chat_id, reply, str(event.header.event_id)):
+                    if _send_reply(api_client, chat_id, reply, str(event.header.event_id)):
                         continue
                 except Exception:
                     pass
