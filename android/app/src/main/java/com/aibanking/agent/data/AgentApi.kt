@@ -5,6 +5,7 @@ import com.google.gson.annotations.SerializedName
 import okhttp3.ResponseBody
 import retrofit2.HttpException
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -67,6 +68,14 @@ data class FaceChallengeView(
     @SerializedName("expires_in") val expiresIn: Int? = null,
 )
 
+data class FeishuBindingCodeView(
+    val code: Int = 0,
+    @SerializedName("binding_code") val bindingCode: String = "",
+    @SerializedName("expires_in") val expiresIn: Int = 0,
+)
+
+data class FeishuUnbindView(val code: Int = 0, val status: String = "")
+
 /** A normalized gateway/transport failure, so the UI never shows a raw stack. */
 class GatewayException(
     val code: String?,
@@ -113,6 +122,16 @@ sealed interface StreamEvent {
 }
 
 interface AgentApi {
+
+    @POST("api/v1/im/feishu/binding-code")
+    suspend fun issueFeishuBindingCode(
+        @Header("X-Session-Token") sessionToken: String,
+    ): FeishuBindingCodeView
+
+    @DELETE("api/v1/im/feishu/binding")
+    suspend fun unbindFeishu(
+        @Header("X-Session-Token") sessionToken: String,
+    ): FeishuUnbindView
 
     @POST("api/v1/agent/messages")
     suspend fun sendMessage(

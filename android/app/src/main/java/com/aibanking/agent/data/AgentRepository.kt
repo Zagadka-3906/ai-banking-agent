@@ -26,6 +26,14 @@ class AgentRepository(
     private val gson: Gson = Gson(),
 ) {
 
+    suspend fun issueFeishuBindingCode(sessionToken: String): FeishuBindingCodeView = normalizing {
+        api.issueFeishuBindingCode(sessionToken)
+    }
+
+    suspend fun unbindFeishu(sessionToken: String): FeishuUnbindView = normalizing {
+        api.unbindFeishu(sessionToken)
+    }
+
     suspend fun sendMessage(
         principal: String,
         sessionToken: String?,

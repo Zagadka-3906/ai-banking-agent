@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -139,8 +140,13 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         DevicePanel(
             devices = state.devices,
             busy = state.panelBusy,
+            feishuBindingCode = state.feishuBindingCode,
+            feishuCodeExpiresAtMillis = state.feishuCodeExpiresAtMillis,
+            feishuBusy = state.feishuBusy,
             currentDeviceId = viewModel.currentDeviceId(),
             onRevoke = viewModel::revokeDevice,
+            onIssueFeishuCode = viewModel::issueFeishuBindingCode,
+            onUnbindFeishu = viewModel::unbindFeishu,
             onDismiss = viewModel::dismissPanels,
         )
     }
@@ -630,8 +636,13 @@ private fun InputRow(
 private fun DevicePanel(
     devices: List<DeviceView>,
     busy: Boolean,
+    feishuBindingCode: String?,
+    feishuCodeExpiresAtMillis: Long,
+    feishuBusy: Boolean,
     currentDeviceId: String?,
     onRevoke: (String) -> Unit,
+    onIssueFeishuCode: () -> Unit,
+    onUnbindFeishu: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -640,6 +651,23 @@ private fun DevicePanel(
             verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
             item {
                 BankScreenHeading("已注册设备", subtitle = "管理可访问您账户的设备", eyebrow = "SECURITY")
+            }
+            item {
+                BankSectionCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("飞书私聊查询", style = MaterialTheme.typography.titleMedium)
+                        Text("获取一次性绑定码后，在飞书机器人私聊发送“/绑定 绑定码”。余额与账单可在飞书查询；转账和审批仍需回到本应用。",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (feishuBindingCode != null && System.currentTimeMillis() < feishuCodeExpiresAtMillis) {
+                            SelectionContainer {
+                                Text("/绑定 $feishuBindingCode", style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+                            }
+                            Text("绑定码 5 分钟内有效，仅在此处显示一次。", style = MaterialTheme.typography.bodySmall)
+                        }
+                        BankSecondaryButton("获取绑定码", onIssueFeishuCode, enabled = !feishuBusy, modifier = Modifier.fillMaxWidth())
+                        TextButton(onClick = onUnbindFeishu, enabled = !feishuBusy) { Text("解除飞书绑定") }
+                    }
+                }
             }
             if (busy) item { BankLoadingState(message = "正在更新设备…") }
             if (!busy && devices.isEmpty()) item { BankEmptyState("没有已注册的设备。") }

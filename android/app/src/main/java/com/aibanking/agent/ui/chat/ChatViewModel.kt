@@ -27,6 +27,7 @@ import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.security.DeviceKeyManager
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -111,6 +112,9 @@ data class ChatUiState(
     /** Device-management panel visibility and its server-backed rows. */
     val showDevices: Boolean = false,
     val devices: List<DeviceView> = emptyList(),
+    val feishuBindingCode: String? = null,
+    val feishuCodeExpiresAtMillis: Long = 0,
+    val feishuBusy: Boolean = false,
     /** Task-centre panel visibility and its server-backed rows. */
     val showTasks: Boolean = false,
     val tasks: List<TaskView> = emptyList(),
@@ -440,8 +444,43 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // -- device management panel -------------------------------------------
 
     fun openDevices() {
-        _state.update { it.copy(showDevices = true, showTasks = false, panelBusy = true) }
+        _state.update { it.copy(showDevices = true, showTasks = false, panelBusy = true, feishuBindingCode = null) }
         refreshDevices()
+    }
+
+    fun issueFeishuBindingCode() {
+        val token = sessionToken ?: return
+        _state.update { it.copy(feishuBusy = true, feishuBindingCode = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) { agent.issueFeishuBindingCode(token) }
+                _state.update { it.copy(feishuBusy = false, feishuBindingCode = response.bindingCode,
+                    feishuCodeExpiresAtMillis = System.currentTimeMillis() + response.expiresIn * 1000L) }
+                delay(response.expiresIn * 1000L)
+                _state.update { current ->
+                    if (current.feishuBindingCode == response.bindingCode) current.copy(feishuBindingCode = null) else current
+                }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(feishuBusy = false, error = failure.message) }
+            } catch (failure: Exception) {
+                _state.update { it.copy(feishuBusy = false, error = "无法获取飞书绑定码") }
+            }
+        }
+    }
+
+    fun unbindFeishu() {
+        val token = sessionToken ?: return
+        _state.update { it.copy(feishuBusy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { agent.unbindFeishu(token) }
+                _state.update { it.copy(feishuBusy = false, feishuBindingCode = null, notice = "飞书绑定已解除") }
+            } catch (failure: GatewayException) {
+                _state.update { it.copy(feishuBusy = false, error = failure.message) }
+            } catch (failure: Exception) {
+                _state.update { it.copy(feishuBusy = false, error = "飞书解绑失败") }
+            }
+        }
     }
 
     fun refreshDevices() {
@@ -690,7 +729,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false, showCards = false) }
+    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false, showCards = false, feishuBindingCode = null) }
 
     // -- bank cards (银行卡管理) ----------------------------------------------
 

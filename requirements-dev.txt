@@ -1,4 +1,4 @@
--r requirements.txt
+-r requirements-feishu.txt
 pytest==8.3.5
 httpx==0.28.1
 ruff>=0.6.9

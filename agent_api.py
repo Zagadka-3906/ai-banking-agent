@@ -25,6 +25,7 @@ import json
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Iterator, Optional
 
 from fastapi import FastAPI, Header, Request
@@ -36,16 +37,22 @@ from pydantic import BaseModel, ConfigDict, Field
 from bank_tools import BankAPIError, BankClient
 from conversation import SERVICE, ConversationError
 from security import SecurityError, audit_event, sanitize_text
+from feishu_im import router as feishu_im_router, start_bot as start_feishu_bot
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    start_feishu_bot()
+    yield
 
 app = FastAPI(
     title="Banking Agent Channel Gateway",
     description="渠道网关：自然语言会话与人工审批（不持有账本、不做风控判定）",
     version="1.0.0",
+    lifespan=_lifespan,
 )
 
-from feige_relay import router as feige_relay_router
-
-app.include_router(feige_relay_router)
+app.include_router(feishu_im_router)
 
 try:
     _MAX_REQUEST_BYTES = max(4_096, min(int(os.getenv("BANK_MAX_REQUEST_BYTES", "1048576")), 10_000_000))

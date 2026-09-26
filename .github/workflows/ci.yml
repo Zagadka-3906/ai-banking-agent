@@ -25,7 +25,7 @@ jobs:
         # so local, no-network machines keep the rest of the suite green.
         run: |
           if python -m pip_audit --version >/dev/null 2>&1 && python -c "import urllib.request; urllib.request.urlopen('https://pypi.org/simple/', timeout=10)" 2>/dev/null; then
-            python -m pip_audit -r requirements.txt --progress-spinner off
+            python -m pip_audit -r requirements-feishu.txt --progress-spinner off
           else
             echo "pip-audit skipped: network unreachable (offline run)."
           fi
