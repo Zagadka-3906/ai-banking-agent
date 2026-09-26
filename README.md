@@ -16,8 +16,10 @@
 | 5 分钟内演示视频分镜、动效、转场 | [演示视频方案](docs/演示视频.md) |
 | 权限分级与已知风险 | [安全自评报告](docs/安全自评报告.md) |
 | 可复现测试步骤 | [测试用例](docs/测试用例.md) |
+| 已执行验证结果与限制 | [验证记录](docs/验证记录.md) |
+| 飞鸽 IM 本机中继与待接平台协议 | [接入说明](docs/飞鸽IM接入.md) |
 
-仓库保留本机 Core/Gateway、Android 模拟器客户端及其测试和运行脚本。旧独立 APK、IM webhook、Docker/Compose、FCM 推送和过时的成片与截图已移除。AA 结果保存在本机账本事件记录中，可经 Core API 查询；待办在应用任务页查询。
+仓库保留本机 Core/Gateway、Android 模拟器客户端及其测试和运行脚本。旧独立 APK、Docker/Compose、FCM 推送和过时的成片与截图已移除。AA 请求由发起人创建，各参与人须登录自己的账户并确认付款；待付款项在应用任务页展示。飞鸽 IM 已有本机中继边界，真实平台适配和联调尚待确定具体产品；状态见[接入说明](docs/飞鸽IM接入.md)。
 
 ## 系统架构
 
@@ -79,9 +81,9 @@ Copy-Item .env.example .env
 | 功能 | 典型输入 | 要求 |
 | --- | --- | --- |
 | 余额、账单、理财查询 | “查余额”“上月钱花哪儿了” | 登录会话，GREEN |
-| 模拟转账、AA、预约 | “给李四转 300 元” | 预检 + 确认，通常 YELLOW；当日转账累计超过 1000 元升 RED |
+| 模拟转账、AA、预约 | “给李四转 300 元” | 转账预检 + 确认；AA 先发请求，各参与人独立授权付款；当日转账累计超过 1000 元升 RED |
 | 理财申赎、卡片敏感变更 | “申购 200 元”“挂失卡片” | RED，OTP + 设备签名 |
-| 订阅取消、生日锁资 | “取消订阅”“锁定 1000 元” | YELLOW，逐项确认 |
+| 订阅识别、取消、生日锁资 | “识别周期扣费”“取消订阅”“锁定 1000 元” | 检测只产生待核实候选；取消已登记代扣与锁资为 YELLOW；模拟商户下单到期后再次确认 |
 
 模型只输出受约束的意图 JSON；`planner.py` 校验意图和槽位。Core 以短期、单次凭证重新核对主体、金额、对象、余额与风险等级。审批仅向 Android 返回不透明句柄。完整调用链见[技术文档](docs/技术文档.md)。
 
@@ -102,8 +104,8 @@ Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂�
 
 | 路径 | 作用 |
 | --- | --- |
-| `main.py`、`security.py` | Core、登录、授权、设备信任、账本与审计 |
-| `agent_api.py`、`conversation.py` | Android 对话网关、SSE、审批句柄与 checkpoint |
+| `main.py`、`security.py`、`mock_merchant.py`、`subscription_detector.py` | Core、授权、虚构账本与商户、周期扣费候选识别 |
+| `agent_api.py`、`conversation.py`、`feige_relay.py` | Android 对话网关、SSE、审批句柄和本机飞鸽中继 |
 | `agent.py`、`planner.py`、`sandbox.py` | LangGraph、意图与任务规划、只读分析沙箱 |
 | `scheduler.py`、`notification_outbox.py` | 本机任务状态与 AA 事件记录 |
 | `android/app/src/main/` | Android 客户端 |

@@ -74,6 +74,7 @@ from scheduler import TASK_STORE, TaskState
 from planner import analyze_transactions, filter_transactions
 from sandbox import sandbox_health
 from notification_outbox import OUTBOX, enqueue as enqueue_notification, visible as visible_notifications
+from mock_merchant import CATALOG as MOCK_MERCHANT_CATALOG, place_order, quote_cents
 
 
 logger = logging.getLogger("mock_banking.core")
@@ -137,7 +138,7 @@ def _rate_limit_key(request: "Request") -> str:
 
 
 def _strict_session_required() -> bool:
-    return os.getenv("BANK_REQUIRE_SESSION", "0").lower() in {"1", "true", "yes", "on"}
+    return os.getenv("BANK_REQUIRE_SESSION", "1").lower() in {"1", "true", "yes", "on"}
 
 
 def _rate_limit_check(key: str) -> Optional[int]:
@@ -193,9 +194,9 @@ async def request_safety_middleware(request: Request, call_next):
         # Downstream handlers read this to bind approvals to the session that
         # requested them, so revoking the session invalidates them.
         request.state.session_token = session_token
-    elif _strict_session_required() and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not _rate_limit_exempt(path) and path not in _SESSION_BOOTSTRAP_PATHS:
+    elif _strict_session_required() and path.startswith("/api/v1/") and not _rate_limit_exempt(path) and path not in _SESSION_BOOTSTRAP_PATHS:
         return _apply_security_headers(
-            JSONResponse(status_code=401, content={"detail": {"code": "SESSION_REQUIRED", "message": "写操作需要会话凭证"}}),
+            JSONResponse(status_code=401, content={"detail": {"code": "SESSION_REQUIRED", "message": "银行数据访问需要会话凭证"}}),
             path,
         )
     # 2) Per-principal request window (probes and docs are exempt).
@@ -249,6 +250,7 @@ ACCOUNTS: dict[str, dict[str, Any]] = {
 }
 
 CONTACTS: dict[str, str] = {
+    "张三": "user_zhang",
     "李四": "user_li",
     "爱人": "user_wife",
     "老婆": "user_wife",
@@ -299,7 +301,7 @@ CONTACT_MAX_PER_USER = max(1, int(os.getenv("BANK_MAX_CONTACTS_PER_USER", "200")
 # Whether a contact-book entry that resolves to a *real* account carries that
 # account owner's consent.  A typed phone number proves nothing on its own, so
 # a provisional link is good enough to pay *to* (the caller's own money) but
-# never good enough to debit from - see ``_aa_debit_authorized``.
+# never proof of account ownership; see ``_aa_request_eligible``.
 LINK_VERIFIED = "OWNER_CONSENTED"
 LINK_UNVERIFIED = "PROVISIONAL"
 
@@ -705,7 +707,9 @@ def profile_rank(profile: Optional[str]) -> Optional[int]:
 CARDS: dict[str, list[dict[str, Any]]] = {
     "user_zhang": [
         {"card_id": "CARD-001", "pan_ref": "MOCK-PAN-001", "number_masked": "**** **** **** 3082", "last4": "3082", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "工资卡"}
-    ]
+    ],
+    "user_li": [{"card_id": "CARD-002", "number_masked": "**** **** **** 0022", "last4": "0022", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "演示借记卡"}],
+    "user_wife": [{"card_id": "CARD-003", "number_masked": "**** **** **** 0033", "last4": "0033", "type": "借记卡", "status": "ACTIVE", "daily_limit": 5000.0, "label": "演示借记卡"}],
 }
 # Mock PANs live in a separate, read-only vault.  The ledger only stores the
 # opaque reference and a masked projection; never put a full PAN or PIN here.
@@ -884,17 +888,19 @@ CARD_DAILY_SPENT_DATE: dict[str, str] = {}
 SUBSCRIPTIONS: dict[str, list[dict[str, Any]]] = {
     "user_zhang": [
         {"subscription_id": "SUB-APPLE", "merchant": "Apple 订阅", "amount": 15.0, "next_charge": "2026-10-03", "status": "ACTIVE"},
-        {"subscription_id": "SUB-VIDEO", "merchant": "视频会员", "amount": 25.0, "next_charge": "2026-09-15", "status": "ACTIVE"},
+        {"subscription_id": "SUB-VIDEO", "merchant": "视频会员", "amount": 25.0, "next_charge": (datetime.now().date() + timedelta(days=7)).isoformat(), "status": "ACTIVE"},
     ]
 }
 SCHEDULED_TRANSFERS: list[dict[str, Any]] = []
 SPLIT_REQUESTS: list[dict[str, Any]] = []
+MOCK_ORDERS: list[dict[str, Any]] = []
 TRANSACTIONS: list[dict[str, Any]] = [
     {"tx_id": "TX1000", "account_id": "user_zhang", "merchant": "咖啡店", "category": "餐饮", "amount": 28.0, "time": f"{datetime.now().strftime('%Y-%m-%d')} 09:15:00"},
     {"tx_id": "TX1001", "account_id": "user_zhang", "merchant": "美团外卖", "category": "餐饮", "amount": 45.0, "time": "2026-08-01 12:30:00"},
     {"tx_id": "TX1002", "account_id": "user_zhang", "merchant": "Apple 订阅", "category": "订阅代扣", "amount": 15.0, "time": "2026-08-03 08:00:00"},
     {"tx_id": "TX1003", "account_id": "user_zhang", "merchant": "海底捞火锅", "category": "餐饮", "amount": 320.0, "time": "2026-08-05 19:20:00"},
     {"tx_id": "TX1004", "account_id": "user_zhang", "merchant": "境外未知商户", "category": "可疑交易", "amount": 999.0, "time": "2026-08-07 03:15:00", "card_id": "CARD-001", "country": "US"},
+    *[{"tx_id": f"TX-CLOUD-{offset}", "account_id": "user_zhang", "merchant": "云端存储", "category": "订阅代扣", "amount": 19.9, "time": f"{(datetime.now().date() - timedelta(days=offset)).isoformat()} 09:00:00"} for offset in (60, 30, 0)],
 ]
 DISPUTE_CASES: list[dict[str, Any]] = []
 
@@ -922,6 +928,7 @@ def _ledger_transaction():
         "SUBSCRIPTIONS",
         "SCHEDULED_TRANSFERS",
         "SPLIT_REQUESTS",
+        "MOCK_ORDERS",
         "DISPUTE_CASES",
         "TRANSACTIONS",
         "OUTBOX",
@@ -988,6 +995,7 @@ LEDGER_STATE_NAMES = (
     "SUBSCRIPTIONS",
     "SCHEDULED_TRANSFERS",
     "SPLIT_REQUESTS",
+    "MOCK_ORDERS",
     "DISPUTE_CASES",
     "TRANSACTIONS",
     "OUTBOX",
@@ -1075,8 +1083,8 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
         container = state.get(name)
         if not isinstance(container, dict):
             return False
-    for name in ("SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "TRANSACTIONS"):
-        rows = state.get(name)
+    for name in ("SCHEDULED_TRANSFERS", "SPLIT_REQUESTS", "TRANSACTIONS", "MOCK_ORDERS"):
+        rows = state.get(name, [] if name == "MOCK_ORDERS" else None)
         if not isinstance(rows, list):
             return False
     for row in state.get("TRANSACTIONS") or []:
@@ -1222,7 +1230,7 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
     with STATE_LOCK:
         for name in LEDGER_STATE_NAMES:
             container = globals()[name]
-            restored = deepcopy(state.get(name, [] if name == "OUTBOX" else None))
+            restored = deepcopy(state.get(name, [] if name in {"OUTBOX", "MOCK_ORDERS"} else None))
             if isinstance(container, dict):
                 container.clear()
                 if isinstance(restored, dict):
@@ -1677,55 +1685,67 @@ def _split_shares(total_cents: int, participant_count: int) -> tuple[int, int]:
     return participant_share, initiator_share
 
 
-def _collect_split_shares(actor: str, user_id: str, total: float, participants: list[str], target: Optional[str]) -> dict[str, Any]:
-    """Collect each participant's AA share into the initiator's account.
-
-    The demo settles AA requests against the mock accounts of the resolved
-    contacts: each participant's share is debited, the initiator is credited,
-    and both sides get an itemised transaction.  A participant with
-    insufficient funds is reported as failed instead of blocking the others,
-    and the request ends as SETTLED or PARTIAL accordingly.
-    """
+def _prepare_split_shares(user_id: str, total: float, participants: list[str], target: Optional[str]) -> dict[str, Any]:
+    """Create payment requests; only each participant can authorize a debit."""
 
     total_cents = int(round(total * 100))
     participant_share_cents, initiator_share_cents = _split_shares(total_cents, len(participants))
-    initiator = _ensure_account(user_id)
-    collected_cents = 0
+    _ensure_account(user_id)
     rows: list[dict[str, Any]] = []
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for name in participants:
         target_id, account = _resolve_target(name, from_user=user_id)
         share = participant_share_cents / 100.0
-        status = "COLLECTED"
-        reason: Optional[str] = None
-        if target_id == user_id:
-            status, reason = "SKIPPED", "SELF_PARTICIPANT"
-        elif account.get("status") != "ACTIVE":
-            status, reason = "FAILED", "ACCOUNT_LOCKED"
-        elif round(float(account["balance"]) - float(account.get("locked_amount", 0.0)), 2) < share:
-            status, reason = "FAILED", "INSUFFICIENT_FUNDS"
-        if status == "COLLECTED":
-            account["balance"] = round(float(account["balance"]) - share, 2)
-            initiator["balance"] = round(float(initiator["balance"]) + share, 2)
-            collected_cents += participant_share_cents
-            TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": target_id, "merchant": f"AA 分摊给 {initiator['name']}", "category": "AA 支出", "amount": share, "time": timestamp})
-            TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": user_id, "merchant": f"AA 收款 - {account['name']}", "category": "AA 收款", "amount": share, "time": timestamp})
-        rows.append({"name": name, "account_id": target_id, "display_name": account.get("name"), "share": share, "status": status, "reason": reason})
-    collected = collected_cents / 100.0
-    # Outstanding is what the participants still owe: the initiator's own
-    # share is never "collected", so it must not be reported as arrears.
-    outstanding_cents = max(0, total_cents - collected_cents - initiator_share_cents)
-    outstanding = outstanding_cents / 100.0
+        rows.append({"name": name, "account_id": target_id, "display_name": account.get("name"), "share": share, "status": "PENDING", "reason": None})
+    outstanding = participant_share_cents * len(participants) / 100.0
     return {
         "collection": rows,
-        "collected_amount": collected,
+        "collected_amount": 0.0,
         "outstanding_amount": outstanding,
         "participant_share": participant_share_cents / 100.0,
         "initiator_share": initiator_share_cents / 100.0,
-        "status": "SETTLED" if outstanding <= 0 else "PARTIAL",
-        "collected_at": timestamp,
+        "status": "PENDING",
+        "created_at": timestamp,
         "target": target,
     }
+
+
+def _record_split_payment(*, split_id: str, payer_id: str, recipient_id: str, amount: float, transaction_id: str) -> dict[str, Any]:
+    """Reconcile one independently authorized transfer with an AA request."""
+
+    split = next((row for row in SPLIT_REQUESTS if row.get("split_id") == split_id), None)
+    if not split or split.get("user_id") != recipient_id:
+        raise SecurityError("AA 收款请求不存在或收款人不匹配", 404, "SPLIT_NOT_FOUND")
+    participant = next((row for row in split["collection"] if row.get("account_id") == payer_id), None)
+    if not participant or participant.get("status") != "PENDING":
+        raise SecurityError("该 AA 份额不存在或已处理", 409, "SPLIT_SHARE_NOT_PENDING")
+    if amount_to_cents(participant["share"]) != amount_to_cents(amount):
+        raise SecurityError("AA 付款金额与待付份额不符", 409, "SPLIT_AMOUNT_MISMATCH")
+    participant.update(status="COLLECTED", transaction_id=transaction_id, collected_at=datetime.now().isoformat())
+    split["collected_amount"] = round(float(split["collected_amount"]) + amount, 2)
+    split["outstanding_amount"] = round(float(split["outstanding_amount"]) - amount, 2)
+    _refresh_split_status(split)
+    split["collected_at"] = datetime.now().isoformat()
+    return split
+
+
+def _refresh_split_status(split: dict[str, Any]) -> None:
+    shares = split.get("collection", [])
+    if all(item.get("status") == "COLLECTED" for item in shares):
+        split["status"] = "SETTLED"
+    elif float(split.get("collected_amount", 0)) > 0:
+        split["status"] = "PARTIAL"
+    elif any(item.get("status") == "PENDING" for item in shares):
+        split["status"] = "PENDING"
+    else:
+        split["status"] = "DECLINED"
+
+
+def _split_id_from_remark(remark: str) -> Optional[str]:
+    match = re.fullmatch(r"AA:(SPL[A-Z0-9]+)", remark, re.IGNORECASE)
+    if not match:
+        match = re.search(r"(?:备注|附言)\s*[:：为是]?\s*AA:(SPL[A-Z0-9]+)\s*$", remark, re.IGNORECASE)
+    return match.group(1).upper() if match else None
 
 
 def _card_daily_spent(card_id: str) -> float:
@@ -1868,12 +1888,12 @@ def _pending_transfer_amount(user_id: str, *, exclude_schedule_id: Optional[str]
             if record.get("used") or float(record.get("expires_at", 0)) <= now:
                 continue
             payload = record.get("payload") or {}
-            if payload.get("from_user") == user_id and payload.get("operation", "TRANSFER") in {"TRANSFER", "SCHEDULED_TRANSFER", "SPLIT_BILL"}:
+            if payload.get("from_user") == user_id and payload.get("operation", "TRANSFER") in {"TRANSFER", "SCHEDULED_TRANSFER"}:
                 try:
                     total += float(payload.get("amount_cents", 0)) / 100.0
                 except (TypeError, ValueError):
                     continue
-        # Once a scheduled/AA approval nonce is consumed, the resulting task
+        # Once a scheduled approval nonce is consumed, the resulting task
         # remains an outstanding money-movement reservation. Keep it in the
         # cumulative risk calculation until cancelled or settled, preventing a
         # user from consuming a yellow nonce and immediately obtaining another
@@ -1882,11 +1902,6 @@ def _pending_transfer_amount(user_id: str, *, exclude_schedule_id: Optional[str]
             float(row.get("amount", 0) or 0)
             for row in SCHEDULED_TRANSFERS
             if row.get("user_id") == user_id and row.get("schedule_id") != exclude_schedule_id and row.get("status") in {"SCHEDULED", "WAITING_USER"}
-        )
-        total += sum(
-            float(row.get("amount", 0) or 0)
-            for row in SPLIT_REQUESTS
-            if row.get("user_id") == user_id and row.get("status") in {"OPEN", "WAITING_USER"}
         )
     return round(total, 2)
 
@@ -2084,13 +2099,11 @@ def _validate_split_participants(user_id: str, participants: Optional[list[str]]
     for value in values:
         display = sanitize_text(value, field="分摊参与人", max_length=120)
         target_id, _ = _resolve_target(display, from_user=user_id)
-        # AA really debits the participant, so a contact-book entry that only
-        # *claims* a phone number is not enough: without this, adding someone
-        # else's phone number to your own book was enough to pull money out of
-        # their account.
-        if not _aa_debit_authorized(user_id, display):
+        # An AA request only names a verified contact. Money moves later only
+        # when the participant authenticates and approves an ordinary transfer.
+        if not _aa_request_eligible(user_id, display):
             raise SecurityError(
-                f"“{display}”尚未确认可代为扣款，AA 分摊只能向已确认的联系人发起",
+                f"“{display}”尚未确认关联账户，AA 请求只能发给已确认的联系人",
                 403,
                 "PARTICIPANT_NOT_AUTHORIZED",
             )
@@ -2104,12 +2117,11 @@ def _validate_split_participants(user_id: str, participants: Optional[list[str]]
 def _operation_risk_level(user_id: str, operation: str, amount: float) -> str:
     """Return the core-owned risk class for a generic operation.
 
-    Scheduled transfers and AA requests are still money movement. Their
-    cumulative same-day total therefore uses the same 1,000-yuan boundary as
-    immediate transfers instead of inheriting a permanently yellow class.
+    An AA request does not debit anyone. Each participant's eventual payment
+    uses the ordinary transfer risk check on that participant's daily total.
     """
 
-    if operation not in {"SCHEDULED_TRANSFER", "SPLIT_BILL"}:
+    if operation not in {"SCHEDULED_TRANSFER"}:
         return GENERIC_OPERATION_RISK[operation]
     with STATE_LOCK:
         accumulated_after = round(_daily_spent(user_id) + _pending_transfer_amount(user_id) + float(amount), 2)
@@ -2333,7 +2345,6 @@ def _contact_public_view(row: dict[str, Any], *, caller_id: Optional[str] = None
     account_id = str(row.get("account_id") or "")
     verification = _contact_link_status(row, caller_id=caller_id)
     link_verified = verification == LINK_VERIFIED
-    link_verified = verification == LINK_VERIFIED
     linked_name = ACCOUNTS.get(account_id, {}).get("name") if account_id and link_verified else None
     return {
         "contact_id": row.get("contact_id"),
@@ -2346,7 +2357,7 @@ def _contact_public_view(row: dict[str, Any], *, caller_id: Optional[str] = None
         "linked_existing": bool(row.get("linked_existing")),
         "account_name": linked_name,
         "link_verification": verification,
-        "debit_authorized": link_verified,
+        "link_verified": link_verified,
         "created_at": row.get("created_at"),
     }
 
@@ -2367,9 +2378,8 @@ def _contact_consent(account_id: str, phone: str, *, caller_id: Optional[str]) -
 
     A phone number alone is *not* proof of anything: it is a string the caller
     typed.  Linking it is fine for a payee the caller is paying (their own
-    money, their own choice), but it must not hand the caller the ability to
-    *debit* that account - which is what treating a typed phone number as an
-    authorized AA participant did.
+    money, their own choice), but it must not let them target that account
+    with an AA request or infer the holder's real name.
 
     Consent exists when the two parties have each registered the other: the
     account holder's own book contains this phone, or the caller is paying with
@@ -2405,13 +2415,8 @@ def _contact_link_status(row: Mapping[str, Any], *, caller_id: Optional[str] = N
     return _contact_consent(account_id, str(row.get("phone") or ""), caller_id=owner_id or None)
 
 
-def _aa_debit_authorized(user_id: str, name: str) -> bool:
-    """Whether ``name`` may be *debited* by an AA split initiated by ``user_id``.
-
-    The AA flow really moves money out of the participant's account, so the
-    participant must be someone the core can vouch for - a built-in allow-list
-    entry, or a contact-book entry whose owner has consented to the link.
-    """
+def _aa_request_eligible(user_id: str, name: str) -> bool:
+    """Whether ``name`` resolves to a verified recipient of an AA request."""
 
     with STATE_LOCK:
         for row in USER_CONTACTS.get(user_id, []):
@@ -2863,9 +2868,14 @@ def detect_subscriptions(user_id: str, x_user_id: Optional[str] = Header(None, a
     request_id = _request_id(x_request_id)
     actor = _get_actor(user_id, x_user_id, action="SUBSCRIPTION_DETECT", request_id=request_id)
     _ensure_account(user_id)
-    candidates = [dict(row) for row in SUBSCRIPTIONS.get(user_id, []) if row.get("status") == "ACTIVE"]
+    from subscription_detector import detect_recurring_debits
+
+    registered = [dict(row, source="REGISTERED") for row in SUBSCRIPTIONS.get(user_id, []) if row.get("status") == "ACTIVE"]
+    registered_merchants = {str(row["merchant"]).casefold() for row in registered}
+    detected = [row for row in detect_recurring_debits(TRANSACTIONS, user_id=user_id) if row["merchant"].casefold() not in registered_merchants]
+    candidates = registered + detected
     audit_event("SUBSCRIPTION_DETECT", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(candidates)})
-    return {"code": 200, "data": candidates, "renewal_reminders": [{"subscription_id": row["subscription_id"], "next_charge": row["next_charge"], "message": f"{row['merchant']} 将于 {row['next_charge']} 扣款 ¥{row['amount']:.2f}"} for row in candidates]}
+    return {"code": 200, "data": candidates, "renewal_reminders": [{"subscription_id": row["subscription_id"], "next_charge": row["next_charge"], "message": f"{row['merchant']} 将于 {row['next_charge']} 扣款 ¥{row['amount']:.2f}"} for row in registered]}
 
 
 @app.post("/api/v1/subscriptions/{user_id}/reminders")
@@ -3638,6 +3648,11 @@ def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_aut
                     record_behavior_signal(req.from_user, "LARGE_TRANSFER", metadata={"amount_cents": int(round(amount * 100)), "target_id": target_id}, request_id=request_id)
                 txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
                 TRANSACTIONS.append({"tx_id": txn_id, "account_id": req.from_user, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": remark, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                split_id = _split_id_from_remark(remark)
+                if split_id:
+                    _record_split_payment(split_id=split_id, payer_id=req.from_user, recipient_id=target_id, amount=amount, transaction_id=txn_id)
+                    TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": target_id, "merchant": f"AA 收款 - {sender['name']}", "category": "AA 收款", "amount": amount, "remark": remark, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                    enqueue_notification(f"AA_PAID:{split_id}:{req.from_user}", owner_id=target_id, recipient_id=req.from_user, split_id=split_id, amount=amount, outcome="COLLECTED", message=f"AA 份额已支付 {amount:.2f} 元")
                 risk_level = payload.get("risk_level")
         record_security_success(actor)
     except SecurityError as exc:
@@ -3689,16 +3704,14 @@ def lock_fund(req: LockFundRequest, request: Request = None, x_auth_token: Optio
                 reminder_task = None
                 order_task_ids: list[str] = []
                 if event_at and reminder_at:
-                    reminder_task = TASK_STORE.create(actor, "REMINDER", {"lock_id": lock_id, "message": "生日前 2 天提醒订购鲜花与蛋糕", "event_at": event_at, "reminder_at": reminder_at}, run_at=reminder_at, depends_on=[task.task_id], idempotency_key=f"reminder:{lock_id}")                    # Keep the two requested purchases as explicit, auditable
-                    # order drafts.  They are deliberately *not* sent to an
-                    # external merchant in the mock; when due they move to
-                    # WAITING_USER so a real provider and a fresh approval can
-                    # be connected without silently spending money.
+                    reminder_task = TASK_STORE.create(actor, "REMINDER", {"lock_id": lock_id, "message": "生日前 2 天提醒订购鲜花与蛋糕", "event_at": event_at, "reminder_at": reminder_at}, run_at=reminder_at, depends_on=[task.task_id], idempotency_key=f"reminder:{lock_id}")
+                    # Orders wait for a fresh approval at the due time. Only
+                    # an allow-listed local merchant can receive mock funds.
                     for item in ("鲜花", "蛋糕"):
                         order_task = TASK_STORE.create(
                             actor,
                             "ORDER_DRAFT",
-                            {"lock_id": lock_id, "item": item, "event_at": event_at, "reminder_at": reminder_at},
+                            {"lock_id": lock_id, "item": item, "amount": quote_cents(item) / 100, "event_at": event_at, "reminder_at": reminder_at},
                             run_at=reminder_at,
                             depends_on=[task.task_id],
                             compensation="CANCEL_ORDER_DRAFT",
@@ -4069,11 +4082,9 @@ def execute_operation(
                     result.update(schedule, task_id=task.task_id)
                 elif operation == "SPLIT_BILL":
                     participants = list(operation_context.get("participants") or [])
-                    # AA is a real collection in the mock ledger: participants'
-                    # shares are debited and the initiator is credited, with the
-                    # remainder assigned to the initiator so the cents always
-                    # reconcile (100.00 / 3 -> 33.33 + 33.33 + 33.34).
-                    collection = _collect_split_shares(actor, req.user_id, amount, participants, req.target)
+                    # The initiator creates requests only. Each participant
+                    # must authorize an ordinary transfer from their account.
+                    collection = _prepare_split_shares(req.user_id, amount, participants, req.target)
                     split = {
                         "split_id": f"SPL{uuid.uuid4().hex[:10].upper()}",
                         "user_id": req.user_id,
@@ -4087,7 +4098,7 @@ def execute_operation(
                         "collected_amount": collection["collected_amount"],
                         "outstanding_amount": collection["outstanding_amount"],
                         "collection": collection["collection"],
-                        "collected_at": collection["collected_at"],
+                        "created_at": collection["created_at"],
                     }
                     SPLIT_REQUESTS.append(split)
                     # Scope the task to this signed approval.  In particular,
@@ -4096,7 +4107,7 @@ def execute_operation(
                     task = TASK_STORE.create(actor, "SPLIT_BILL", split, depends_on=[], idempotency_key=f"split:{req.user_id}:{authorization_payload.get('jti')}")
                     for item in collection["collection"]:
                         outcome = str(item.get("status") or "UNKNOWN")
-                        enqueue_notification(f"AA:{split['split_id']}:{item['account_id']}", owner_id=actor, recipient_id=item["account_id"], split_id=split["split_id"], amount=item["share"], outcome=outcome, message=f"AA 分摊{('已收取' if outcome == 'COLLECTED' else '未收取')} {item['share']:.2f} 元")
+                        enqueue_notification(f"AA:{split['split_id']}:{item['account_id']}", owner_id=actor, recipient_id=item["account_id"], split_id=split["split_id"], amount=item["share"], outcome=outcome, message=f"AA 待付款 {item['share']:.2f} 元；请用本人账户确认转账，备注 AA:{split['split_id']}")
                     result.update(split, task_id=task.task_id)
                 else:  # guarded by _validate_operation_name; defensive fallback
                     raise SecurityError("操作未实现", 501, "OPERATION_NOT_IMPLEMENTED")
@@ -4123,6 +4134,41 @@ def execute_operation(
 # ---------------------------------------------------------------------------
 # Task centre: scheduling, cancellation and human takeover
 # ---------------------------------------------------------------------------
+@app.get("/api/v1/splits/inbox")
+def split_inbox(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    actor = _get_actor(x_user_id, x_user_id, action="SPLIT_INBOX", request_id=_request_id(x_request_id))
+    with STATE_LOCK:
+        rows = [
+            {"split_id": split["split_id"], "from_user": split["user_id"],
+             "from_name": ACCOUNTS[split["user_id"]]["name"], "share": item["share"],
+             "status": item["status"], "target": split.get("target"),
+             "payment_remark": f"AA:{split['split_id']}"}
+            for split in SPLIT_REQUESTS for item in split.get("collection", [])
+            if item.get("account_id") == actor
+        ]
+    audit_event("SPLIT_INBOX", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=_request_id(x_request_id), metadata={"count": len(rows)})
+    return {"code": 200, "data": rows}
+
+
+@app.post("/api/v1/splits/{split_id}/decline")
+def decline_split(split_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    actor = _get_actor(x_user_id, x_user_id, action="SPLIT_DECLINE", request_id=_request_id(x_request_id))
+    safe_id = sanitize_text(split_id, field="AA 编号", max_length=100)
+    with _ledger_transaction():
+        split = next((row for row in SPLIT_REQUESTS if row.get("split_id") == safe_id), None)
+        item = next((row for row in split.get("collection", []) if row.get("account_id") == actor), None) if split else None
+        if not item:
+            raise HTTPException(status_code=404, detail={"code": "SPLIT_NOT_FOUND", "message": "AA 请求不存在"})
+        if item.get("status") != "PENDING":
+            raise HTTPException(status_code=409, detail={"code": "SPLIT_SHARE_NOT_PENDING", "message": "该份额已处理"})
+        item["status"] = "DECLINED"
+        _refresh_split_status(split)
+        enqueue_notification(f"AA_DECLINED:{safe_id}:{actor}", owner_id=split["user_id"], recipient_id=actor, split_id=safe_id, amount=item["share"], outcome="DECLINED", message="AA 付款请求已拒绝")
+    audit_event("SPLIT_DECLINE", user_id=actor, risk_level="YELLOW", decision="ALLOW", outcome="SUCCESS", request_id=_request_id(x_request_id), metadata={"split_id": safe_id})
+    persist_ledger()
+    return {"code": 200, "status": "DECLINED", "split_id": safe_id}
+
+
 @app.get("/api/v1/notifications/outbox")
 def notification_outbox_list(split_id: Optional[str] = None, x_session_token: Optional[str] = Header(None, alias="X-Session-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     if not x_session_token:
@@ -4197,6 +4243,19 @@ def get_task(task_id: str, x_user_id: Optional[str] = Header(None, alias="X-User
     return {"code": 200, "data": task.to_dict()}
 
 
+@app.get("/api/v1/mock-merchants/orders/{order_id}")
+def get_mock_merchant_order(order_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    actor = _get_actor(x_user_id, x_user_id, action="MOCK_ORDER_QUERY", request_id=_request_id(x_request_id))
+    safe_id = sanitize_text(order_id, field="模拟订单编号", max_length=100)
+    with STATE_LOCK:
+        order = next((row for row in MOCK_ORDERS if row.get("mock_order_id") == safe_id and row.get("user_id") == actor), None)
+        if not order:
+            raise HTTPException(status_code=404, detail={"code": "MOCK_ORDER_NOT_FOUND", "message": "订单不存在"})
+        result = dict(order)
+    audit_event("MOCK_ORDER_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=_request_id(x_request_id), metadata={"order_id": safe_id})
+    return {"code": 200, "data": result}
+
+
 def _task_settlement_context(task: Any, *, target_id: str, amount: float, card_id: Optional[str] = None) -> dict[str, Any]:
     payload = task.payload
     return {
@@ -4208,6 +4267,8 @@ def _task_settlement_context(task: Any, *, target_id: str, amount: float, card_i
         "amount_cents": amount_to_cents(amount),
         "card_id": payload.get("card_id") if card_id is None else card_id,
         "scheduled_at": payload.get("scheduled_at"),
+        "lock_id": payload.get("lock_id"),
+        "item": payload.get("item"),
     }
 
 
@@ -4222,7 +4283,7 @@ def task_precheck(task_id: str, req: TaskPrecheckRequest, request: Request = Non
     if task.status != TaskState.WAITING_USER or task.task_type not in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"}:
         raise HTTPException(status_code=409, detail={"code": "TASK_NOT_READY", "message": "任务当前不等待授权"})
     payload = task.payload
-    amount = float(payload.get("amount", 0)) if task.task_type == "SCHEDULED_TRANSFER" else 0.01
+    amount = float(payload.get("amount", 0))
     if task.task_type == "SCHEDULED_TRANSFER":
         target_id, receiver = _resolve_target(payload.get("target"), from_user=actor)
         target_display = receiver.get("name", target_id)
@@ -4240,6 +4301,11 @@ def task_precheck(task_id: str, req: TaskPrecheckRequest, request: Request = Non
         risk = "YELLOW" if round(_daily_spent(actor) + _pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2) <= 1000 else "RED"
     else:
         target_id, target_display, operation, risk = f"__ORDER_DRAFT__:{task.task_id}", str(payload.get("item") or "provider-mock"), "ORDER_DRAFT_SETTLE", "YELLOW"
+        if target_display not in MOCK_MERCHANT_CATALOG or amount_to_cents(amount) != quote_cents(target_display):
+            raise SecurityError("模拟商户报价已变化", 409, "ORDER_QUOTE_CHANGED")
+        lock = LOCKS.get(str(payload.get("lock_id") or ""))
+        if not lock or lock.get("user_id") != actor or lock.get("status") != "LOCKED" or float(lock.get("amount", 0)) < amount:
+            raise SecurityError("预留预算不足以订购商品", 409, "ORDER_BUDGET_UNAVAILABLE")
     context = _task_settlement_context(task, target_id=target_id, amount=amount, card_id=bound_card_id if task.task_type == "SCHEDULED_TRANSFER" else None)
     context_hash = _context_hash(context)
     required = ["USER_CLICK_CONFIRM"] if risk == "YELLOW" else ["USER_CLICK_CONFIRM", "SMS_OTP", "FACE_RECOGNITION"]
@@ -4248,7 +4314,7 @@ def task_precheck(task_id: str, req: TaskPrecheckRequest, request: Request = Non
     if cached is not None:
         return cached
     token, token_payload = issue_auth_token(from_user=actor, target_id=target_id, target_display=target_display, amount=amount, remark=f"任务结算:{safe_id}", risk_level=risk, required_actions=required, operation=operation, context_hash=context_hash, session_token=_presented_session(request))
-    response = {"code": 200, "risk_level": risk, "operation": operation, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": token_payload["exp"], "required_actions": required, "mfa_required": risk == "RED", "task_id": safe_id, "context_hash": context_hash}
+    response = {"code": 200, "risk_level": risk, "operation": operation, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": token_payload["exp"], "required_actions": required, "mfa_required": risk == "RED", "task_id": safe_id, "context_hash": context_hash, "amount": amount, "item": payload.get("item")}
     _idempotency_complete(actor, "task_precheck", idempotency_key, idem_payload, response)
     audit_event("TASK_PRECHECK", user_id=actor, risk_level=risk, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"task_id": safe_id, "jti": token_payload["jti"]})
     return response
@@ -4286,7 +4352,9 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
             operation = "SCHEDULED_TRANSFER_SETTLE"
             current_risk = "YELLOW" if round(_daily_spent(actor) + _pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2) <= 1000 else "RED"
         else:
-            target_id, amount, operation, current_risk = f"__ORDER_DRAFT__:{task.task_id}", 0.01, "ORDER_DRAFT_SETTLE", "YELLOW"
+            target_id, amount, operation, current_risk = f"__ORDER_DRAFT__:{task.task_id}", float(payload.get("amount", 0)), "ORDER_DRAFT_SETTLE", "YELLOW"
+            if str(payload.get("item") or "") not in MOCK_MERCHANT_CATALOG or amount_to_cents(amount) != quote_cents(str(payload.get("item") or "")):
+                raise SecurityError("模拟商户报价已变化", 409, "ORDER_QUOTE_CHANGED")
         context_hash = _context_hash(_task_settlement_context(task, target_id=target_id, amount=amount, card_id=bound_card_id if task.task_type == "SCHEDULED_TRANSFER" else None))
         token_payload, _ = inspect_auth_token(token)
         if token_payload.get("risk_level") == "YELLOW" and current_risk == "RED":
@@ -4297,9 +4365,24 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
                 if running is None:
                     raise SecurityError("任务已被取消或正在执行", 409, "TASK_STATE_CHANGED")
                 if task.task_type == "ORDER_DRAFT":
-                    order_id = f"MOCK{uuid.uuid4().hex[:12].upper()}"
-                    result = {"execution_mode": "MOCK", "funds_debited": False, "mock_order_id": order_id, "item": payload.get("item")}
-                    payload["mock_order_id"] = order_id
+                    lock = LOCKS.get(str(payload.get("lock_id") or ""))
+                    account = ACCOUNTS[actor]
+                    if not lock or lock.get("user_id") != actor or lock.get("status") != "LOCKED" or float(lock.get("amount", 0)) < amount or float(account.get("locked_amount", 0)) < amount:
+                        raise SecurityError("预留预算不足以订购商品", 409, "ORDER_BUDGET_UNAVAILABLE")
+                    if float(account["balance"]) < amount:
+                        raise SecurityError("账户余额不足", 400, "INSUFFICIENT_FUNDS")
+                    paying_card = _charge_card_and_balance(actor, amount)
+                    order = place_order(user_id=actor, task_id=safe_id, item=str(payload["item"]), amount_cents=amount_to_cents(amount))
+                    account["balance"] = round(float(account["balance"]) - amount, 2)
+                    account["locked_amount"] = round(float(account["locked_amount"]) - amount, 2)
+                    lock["amount"] = round(float(lock["amount"]) - amount, 2)
+                    if lock["amount"] == 0:
+                        lock["status"] = "SPENT"
+                    _record_card_spend(actor, amount, card=paying_card)
+                    MOCK_ORDERS.append(order)
+                    TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": actor, "merchant": "本地模拟商户", "category": "跨场景订购", "amount": amount, "remark": f"{payload['item']} {order['mock_order_id']}", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                    payload["mock_order_id"] = order["mock_order_id"]
+                    result = {"execution_mode": "MOCK_MERCHANT", "funds_debited": True, "mock_order_id": order["mock_order_id"], "order_status": "PLACED", "item": payload["item"], "amount": amount}
                 else:
                     schedule = next((row for row in SCHEDULED_TRANSFERS if row.get("schedule_id") == payload.get("schedule_id")), None)
                     if not schedule or schedule.get("status") not in {"WAITING_USER", "SCHEDULED"}:
@@ -4491,6 +4574,7 @@ _INITIAL_CARDS = deepcopy(globals().get("CARDS", {}))
 _INITIAL_SUBSCRIPTIONS = deepcopy(globals().get("SUBSCRIPTIONS", {}))
 _INITIAL_SCHEDULED_TRANSFERS = deepcopy(globals().get("SCHEDULED_TRANSFERS", []))
 _INITIAL_SPLIT_REQUESTS = deepcopy(globals().get("SPLIT_REQUESTS", []))
+_INITIAL_MOCK_ORDERS = deepcopy(globals().get("MOCK_ORDERS", []))
 _INITIAL_DISPUTE_CASES = deepcopy(globals().get("DISPUTE_CASES", []))
 
 
@@ -4544,6 +4628,7 @@ def reset_state() -> None:
             SCHEDULED_TRANSFERS[:] = deepcopy(_INITIAL_SCHEDULED_TRANSFERS)
         if "SPLIT_REQUESTS" in globals():
             SPLIT_REQUESTS[:] = deepcopy(_INITIAL_SPLIT_REQUESTS)
+        MOCK_ORDERS[:] = deepcopy(_INITIAL_MOCK_ORDERS)
         if "DISPUTE_CASES" in globals():
             DISPUTE_CASES[:] = deepcopy(_INITIAL_DISPUTE_CASES)
         try:

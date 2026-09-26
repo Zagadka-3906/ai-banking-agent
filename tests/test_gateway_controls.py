@@ -23,7 +23,7 @@ from support import login_session
 @pytest.fixture()
 def client(monkeypatch):
     monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
-    monkeypatch.delenv("BANK_REQUIRE_SESSION", raising=False)
+    monkeypatch.setenv("BANK_REQUIRE_SESSION", "0")
     monkeypatch.delenv("BANK_RATE_LIMIT_PER_MINUTE", raising=False)
     main.reset_state()
     security.reset_security_state()
@@ -102,17 +102,16 @@ def test_forged_and_expired_sessions_are_rejected(client: TestClient):
     assert expired.json()["detail"]["code"] in {"SESSION_EXPIRED", "INVALID_SESSION"}
 
 
-def test_strict_session_mode_requires_session_for_writes(client: TestClient, monkeypatch):
+def test_strict_session_mode_requires_session_for_private_reads_and_writes(client: TestClient, monkeypatch):
     monkeypatch.setenv("BANK_REQUIRE_SESSION", "1")
     payload = {"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10}
     denied = client.post("/api/v1/risk/precheck", json=payload, headers={"X-User-Id": "user_zhang"})
     assert denied.status_code == 401
     assert denied.json()["detail"]["code"] == "SESSION_REQUIRED"
 
-    # Reads stay available with a bare identity header, and logging in must not
-    # require an existing session.
-    assert client.get("/api/v1/accounts/user_zhang/balance", headers={"X-User-Id": "user_zhang"}).status_code == 200
+    assert client.get("/api/v1/accounts/user_zhang/balance", headers={"X-User-Id": "user_zhang"}).status_code == 401
     token = _session(client)
+    assert client.get("/api/v1/accounts/user_zhang/balance", headers={"X-Session-Token": token}).status_code == 200
     allowed = client.post("/api/v1/risk/precheck", json=payload, headers={"X-Session-Token": token})
     assert allowed.status_code == 200, allowed.text
 

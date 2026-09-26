@@ -758,6 +758,8 @@ def _local_parse(text: str) -> dict[str, Any]:
             days = int(raw_days) if raw_days.isdigit() else _chinese_number(raw_days)
             if days is not None:
                 slots["days_before"] = days
+    if any(marker in text for marker in ("识别订阅", "发现订阅", "乱扣费", "周期扣款", "自动识别")):
+        slots["detect_subscriptions"] = True
     scope = "TODAY" if any(x in text for x in ("今天", "今日")) else "ALL"
     if "上月" in text or "上个月" in text:
         scope = "LAST_MONTH"
@@ -797,7 +799,7 @@ def _local_parse(text: str) -> dict[str, Any]:
         or re.search(r"20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}", text)
     )):
         intent = Intent.SCHEDULED_TRANSFER.value
-    elif any(x in text for x in ("aa", "AA", "平摊", "分摊")):
+    elif any(x in text for x in ("aa", "AA", "平摊", "分摊")) and not re.search(r"(?:备注|附言)\s*[:：为是]?\s*AA:SPL[A-Za-z0-9]+", text, re.IGNORECASE):
         intent = Intent.SPLIT_BILL.value
     elif any(x in text for x in ("申购", "买理财", "购买理财")) or (
         target in {"CJ01002", "AY90204", "ZY18031", "QK36509"}
@@ -2082,7 +2084,8 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             if response.status_code >= 400:
                 raise RuntimeError(_error_message(response))
             return {"type": "SUBSCRIPTION_REMINDER", "data": _response_json(response)}
-        response = _http("GET", f"subscriptions/{user_id}", state=state, headers={"X-User-Id": user_id})
+        suffix = "/detect" if slots.get("detect_subscriptions") is True else ""
+        response = _http("GET", f"subscriptions/{user_id}{suffix}", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
             raise RuntimeError(_error_message(response))
         return {"type": intent, "data": _response_json(response)}
@@ -2297,7 +2300,7 @@ def _valid_subscription_collection(data: Any) -> bool:
             return False
         if not _finite_number(item.get("amount"), nonnegative=True) or not _valid_text_field(item.get("next_charge"), max_length=80):
             return False
-        if str(item.get("status")) not in {"ACTIVE", "CANCELLED"}:
+        if str(item.get("status")) not in {"ACTIVE", "CANCELLED", "CANDIDATE"}:
             return False
     return True
 
@@ -2437,8 +2440,8 @@ def _render_subscriptions(data: Mapping[str, Any]) -> str:
     lines = [f"🔁 订阅/代扣共 {len(rows)} 项："]
     for item in rows:
         status = str(item.get("status") or "")
-        status_label = {"ACTIVE": "生效中", "CANCELLED": "已取消"}.get(status, status)
-        charge_label = "下次扣款" if status == "ACTIVE" else "原计划扣款"
+        status_label = {"ACTIVE": "生效中", "CANCELLED": "已取消", "CANDIDATE": "疑似周期扣费，待核实"}.get(status, status)
+        charge_label = "预计下次扣款" if status == "CANDIDATE" else ("下次扣款" if status == "ACTIVE" else "原计划扣款")
         lines.append(
             f"- {item.get('merchant')} ｜ 每期 ¥{float(item.get('amount') or 0):,.2f} ｜ "
             f"{charge_label} {item.get('next_charge')} ｜ 状态 {status_label}"
@@ -2735,9 +2738,8 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         Intent.CARD_UNREPORT_LOST.value: "ACTIVE",
         Intent.SUBSCRIPTION_CANCEL.value: "CANCELLED",
         Intent.SCHEDULED_TRANSFER.value: "SCHEDULED",
-        # AA collection settles fully (SETTLED) or partially (PARTIAL) when a
-        # participant lacks funds; both are genuine core outcomes.
-        Intent.SPLIT_BILL.value: ("SETTLED", "PARTIAL", "OPEN"),
+        # Creating an AA request does not move money. Participants pay later.
+        Intent.SPLIT_BILL.value: ("PENDING", "PARTIAL", "SETTLED"),
         Intent.PASSWORD_CHANGE.value: "PASSWORD_CHANGED",
         Intent.FRAUD_DISPUTE.value: "CARD_PROTECTED",
     }.get(rtype)
@@ -2873,21 +2875,11 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
         return f"✅ 卡片日限额已调整为 ¥{float(limit):,.2f}。" if _finite_number(limit, nonnegative=True) else "✅ 卡片日限额已调整。"
     if rtype == Intent.SPLIT_BILL.value:
         split = inner or payload
-        collected = split.get("collected_amount")
-        outstanding = split.get("outstanding_amount")
-        status = str(split.get("status") or "")
-        if _finite_number(collected, nonnegative=True):
-            detail = f"已收 **¥{float(collected):,.2f}**"
-            share = split.get("per_person")
-            own_share = split.get("initiator_share")
-            if _finite_number(share, nonnegative=True):
-                detail += f"，其他参与人人均 ¥{float(share):,.2f}"
-            if _finite_number(own_share, nonnegative=True):
-                detail += f"，您承担 ¥{float(own_share):,.2f}"
-            if _finite_number(outstanding, nonnegative=True) and float(outstanding) > 0:
-                detail += f"，仍有 ¥{float(outstanding):,.2f} 未收（{status}）"
-            return f"✅ AA 分摊已登记：{detail}，明细已记入流水。"
-        return "✅ AA 分摊已登记。"
+        share = split.get("per_person")
+        own_share = split.get("initiator_share")
+        if _finite_number(share, nonnegative=True) and _finite_number(own_share, nonnegative=True):
+            return f"✅ AA 收款请求已发送：参与人人均 ¥{float(share):,.2f}，您承担 ¥{float(own_share):,.2f}。当前尚未收款，须由各参与人登录并分别确认付款。"
+        return "✅ AA 收款请求已发送；当前尚未收款。"
     return labels.get(rtype, "已完成本次操作。")
 
 

@@ -299,7 +299,7 @@ def test_aa_keeps_both_named_participants_and_counts_initiator(gateway):
     assert data["participants_total"] == 2
     assert data["per_person"] == 100
     assert data["initiator_share"] == 100
-    assert "已收 **¥200.00**" in result["reply"]
+    assert "当前尚未收款" in result["reply"]
     assert "人均 ¥100.00" in result["reply"]
 
 

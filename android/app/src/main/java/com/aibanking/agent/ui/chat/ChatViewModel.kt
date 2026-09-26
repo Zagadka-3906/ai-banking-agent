@@ -21,6 +21,7 @@ import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.data.RiskProfileView
 import com.aibanking.agent.data.TaskRepository
 import com.aibanking.agent.data.TaskView
+import com.aibanking.agent.data.SplitRequestView
 import com.aibanking.agent.data.TurnEnvelope
 import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.security.DeviceKeyManager
@@ -113,6 +114,7 @@ data class ChatUiState(
     /** Task-centre panel visibility and its server-backed rows. */
     val showTasks: Boolean = false,
     val tasks: List<TaskView> = emptyList(),
+    val splitRequests: List<SplitRequestView> = emptyList(),
     /** 逐题风险测评组件（输入框上方）：非空即展示。 */
     val quiz: RiskQuizUi? = null,
     /** 测评完成后的档案结果（渲染彩色结果卡）。 */
@@ -496,7 +498,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
-                _state.update { it.copy(tasks = rows, panelBusy = false) }
+                val splits = withContext(Dispatchers.IO) { tasks.splitInbox(principal, sessionToken ?: "") }
+                _state.update { it.copy(tasks = rows, splitRequests = splits, panelBusy = false) }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
@@ -513,6 +516,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) { tasks.cancel(taskId, principal, sessionToken ?: "") }
                 val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
                 _state.update { it.copy(tasks = rows, panelBusy = false, notice = "任务已取消") }
+            } catch (failure: GatewayException) {
+                applyPanelFailure(failure)
+            }
+        }
+    }
+
+    fun prepareSplitPayment(request: SplitRequestView) {
+        if (request.status != "PENDING" || request.share <= 0 || request.fromName.isBlank()) return
+        val amount = BigDecimal.valueOf(request.share).stripTrailingZeros().toPlainString()
+        _state.update { it.copy(showTasks = false, input = "给${request.fromName}转${amount}元，备注${request.paymentRemark}", notice = "请核对 AA 金额和收款人后发送，付款仍需您确认") }
+    }
+
+    fun declineSplit(splitId: String) {
+        val principal = _state.value.principal
+        _state.update { it.copy(panelBusy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { tasks.declineSplit(splitId, principal, sessionToken ?: "") }
+                val splits = withContext(Dispatchers.IO) { tasks.splitInbox(principal, sessionToken ?: "") }
+                _state.update { it.copy(splitRequests = splits, panelBusy = false, notice = "已拒绝 AA 付款请求") }
             } catch (failure: GatewayException) {
                 applyPanelFailure(failure)
             }

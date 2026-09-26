@@ -99,7 +99,7 @@ def test_gateway_validation_failure_does_not_leave_a_false_result_card(gateway, 
     assert "total_balance" not in json.dumps(event)
 
 
-def test_gateway_real_partial_aa_reports_only_the_amount_actually_collected(gateway, monkeypatch):
+def test_gateway_aa_does_not_claim_collection_before_each_payer_confirms(gateway, monkeypatch):
     import agent_api
 
     client, _ = gateway
@@ -115,11 +115,10 @@ def test_gateway_real_partial_aa_reports_only_the_amount_actually_collected(gate
     assert response.status_code == 200, response.text
     result = response.json()
     data = result["result"]["execution_result"]["data"]["data"]
-    assert data["status"] == "PARTIAL"
-    assert data["collected_amount"] == data["outstanding_amount"] == 100
-    assert "已收 **¥100.00**" in result["reply"] and "仍有 ¥100.00 未收" in result["reply"]
-    assert "已收 **¥200.00**" not in result["reply"]
-    assert main.ACCOUNTS["user_zhang"]["balance"] == 15100
+    assert data["status"] == "PENDING"
+    assert data["collected_amount"] == 0 and data["outstanding_amount"] == 200
+    assert "当前尚未收款" in result["reply"]
+    assert main.ACCOUNTS["user_zhang"]["balance"] == 15000
 
 
 @pytest.mark.parametrize("payee", ["李四", "13900139000", "老李"])

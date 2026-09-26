@@ -24,7 +24,7 @@ from support import sign_face_attestation
 @pytest.fixture()
 def client(monkeypatch):
     monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
-    monkeypatch.delenv("BANK_REQUIRE_SESSION", raising=False)
+    monkeypatch.setenv("BANK_REQUIRE_SESSION", "0")
     main.reset_state()
     security.reset_security_state()
     with TestClient(main.app) as value:

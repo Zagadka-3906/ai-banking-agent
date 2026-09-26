@@ -93,7 +93,7 @@ def test_process_timeout_stops_the_actual_running_child(monkeypatch):
             process.join(timeout=2)
 
 
-def test_real_thread_fallback_keeps_intermediate_limits(monkeypatch):
+def test_process_failure_never_runs_expression_in_thread_by_default(monkeypatch):
     class CannotSpawn:
         def __init__(self, **kwargs):
             pass
@@ -105,9 +105,10 @@ def test_real_thread_fallback_keeps_intermediate_limits(monkeypatch):
     monkeypatch.setattr(sandbox, "ProcessPoolExecutor", CannotSpawn)
     with pytest.raises(sandbox.SandboxError):
         sandbox.evaluate_expression("len('x' * 10000000)", [])
-    assert sandbox.sandbox_health()["last_executor"] == "thread_fallback"
+    assert sandbox.sandbox_health()["last_executor"] == "process"
     assert sandbox.sandbox_health()["os_isolation"] == "none"
-    assert sandbox.evaluate_expression("sum(data)", [1, 2, 3]) == 6
+    with pytest.raises(sandbox.SandboxError, match="沙箱隔离进程不可用"):
+        sandbox.evaluate_expression("sum(data)", [1, 2, 3])
 
 
 def test_read_only_bill_aggregation_still_uses_a_real_process():

@@ -21,7 +21,7 @@ object BiometricGate {
 
     /** Whether biometrics is enrolled on this device. */
     private fun hasBiometrics(activity: FragmentActivity): Boolean =
-        manager(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
+        manager(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
             BiometricManager.BIOMETRIC_SUCCESS
 
     /**
@@ -50,9 +50,9 @@ object BiometricGate {
      */
     private fun allowedAuthenticators(activity: FragmentActivity): Int = when {
         hasBiometrics(activity) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
-            BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
 
-        hasBiometrics(activity) -> BiometricManager.Authenticators.BIOMETRIC_WEAK
+        hasBiometrics(activity) -> BiometricManager.Authenticators.BIOMETRIC_STRONG
 
         // Credential-only is API 30+; canAuthenticate() already ruled it out below.
         else -> BiometricManager.Authenticators.DEVICE_CREDENTIAL
@@ -88,7 +88,7 @@ object BiometricGate {
             .setTitle(title)
             .setSubtitle(subtitle)
             .setAllowedAuthenticators(authenticators)
-        if (authenticators == BiometricManager.Authenticators.BIOMETRIC_WEAK) {
+        if (authenticators == BiometricManager.Authenticators.BIOMETRIC_STRONG) {
             // Biometric-only prompts on API < 30 require a negative button;
             // setting one on a credential prompt throws.
             builder.setNegativeButtonText("取消")

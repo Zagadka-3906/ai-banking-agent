@@ -266,21 +266,21 @@ def test_a_typed_phone_number_does_not_leak_the_account_holders_name(client):
     # The account really is linked (paying *to* it is the caller's own money)...
     assert row["account_id"] == "user_li"
     assert row["linked_existing"] is True
-    # ...but the holder's name and debit authority are not handed over.
+    # ...but the holder's name and a verified link are not handed over.
     assert row["account_name"] is None
     assert row["link_verification"] == main.LINK_UNVERIFIED
-    assert row["debit_authorized"] is False
+    assert row["link_verified"] is False
     assert "李四" not in json.dumps(row, ensure_ascii=False)
 
     listed = client.get("/api/v1/contacts/user_zhang/book", headers={"X-User-Id": "user_zhang"}).json()["data"]
     assert listed[0]["account_name"] is None
 
 
-def test_aa_split_cannot_debit_an_account_linked_by_a_typed_phone_number(client):
-    """Regression: this used to move money out of a stranger's account.
+def test_aa_split_cannot_request_an_account_linked_by_a_typed_phone_number(client):
+    """Regression: a typed number must not target an unrelated account.
 
     Adding someone else's phone number to your own contact book was enough to
-    name them as an AA participant, and AA really debits the participant.
+    name them as an AA participant without consent.
     """
 
     # 李四 (the attacker) types 张三's phone number into his own book.
@@ -297,8 +297,8 @@ def test_aa_split_cannot_debit_an_account_linked_by_a_typed_phone_number(client)
     assert not [row for row in main.SPLIT_REQUESTS if row.get("user_id") == "user_li"]
 
 
-def test_aa_split_still_debits_the_builtin_allow_list(client):
-    """The consent gate must not break the intended AA flow."""
+def test_aa_split_only_requests_payment_from_builtin_contact(client):
+    """Even a built-in contact is never debited by the requester."""
 
     precheck = _aa(client, ["李四"])
     assert precheck.status_code == 200, precheck.text
@@ -312,12 +312,12 @@ def test_aa_split_still_debits_the_builtin_allow_list(client):
     )
 
     assert settled.status_code == 200, settled.text
-    assert settled.json()["data"]["status"] == "SETTLED"
-    assert main.ACCOUNTS["user_li"]["balance"] == round(li_before - 150.0, 2)
+    assert settled.json()["data"]["status"] == "PENDING"
+    assert main.ACCOUNTS["user_li"]["balance"] == li_before
 
 
-def test_owner_consent_promotes_a_link_to_debit_authorized(client):
-    """李四 registering 张三's number is what authorizes the debit."""
+def test_owner_consent_promotes_a_link_to_verified(client):
+    """Reciprocal contact consent permits a payment request, never a debit."""
 
     assert _add(client, {"name": "同事甲", "phone": "13800138000", "relationship": "同事"}, user_id="user_li").status_code == 200
 
@@ -326,7 +326,7 @@ def test_owner_consent_promotes_a_link_to_debit_authorized(client):
     assert own.status_code == 200, own.text
 
     listed = client.get("/api/v1/contacts/user_li/book", headers={"X-User-Id": "user_li"}).json()["data"][0]
-    assert listed["debit_authorized"] is True
+    assert listed["link_verified"] is True
     assert listed["account_name"] == "张三"
 
     assert _aa(client, ["同事甲"], user_id="user_li").status_code == 200

@@ -80,7 +80,7 @@ def test_task_owner_and_confirmation_gate(client):
     assert missing.status_code == 428
 
 
-def test_order_draft_mock_does_not_move_funds(client):
+def test_order_draft_places_local_mock_order_after_fresh_approval(client):
     future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
     lock_pre = client.post("/api/v1/risk/precheck/lock", json={"user_id": "user_zhang", "amount": 100, "event_at": future}, headers=h())
     token = lock_pre.json()["auth_token"]
@@ -94,9 +94,12 @@ def test_order_draft_mock_does_not_move_funds(client):
     token = approve_task(client, task_id)
     result = client.post("/api/v1/tasks/%s/execute" % task_id, json={"user_id": "user_zhang", "auth_token": token}, headers={**h(), "Idempotency-Key": "mock-order"})
     assert result.status_code == 200, result.text
-    assert result.json()["execution_mode"] == "MOCK"
-    assert result.json()["funds_debited"] is False
-    assert (main.ACCOUNTS["user_zhang"]["balance"], dict(main.DAILY_TRANSFERS), len(main.TRANSACTIONS)) == before
+    assert result.json()["execution_mode"] == "MOCK_MERCHANT"
+    assert result.json()["funds_debited"] is True
+    assert result.json()["order_status"] == "PLACED"
+    assert main.ACCOUNTS["user_zhang"]["balance"] == before[0] - 49.0
+    assert main.DAILY_TRANSFERS == before[1]
+    assert len(main.TRANSACTIONS) == before[2] + 1
 
 
 def test_due_risk_excludes_self_but_counts_distinct_pending(client):

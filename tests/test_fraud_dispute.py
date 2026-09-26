@@ -77,7 +77,7 @@ def test_wrong_owner_is_rejected(client):
 
 def test_transaction_amount_tamper_invalidates_existing_authorization(client):
     token, proof = authorize(client)
-    main.TRANSACTIONS[-1]["amount"] = 1.0
+    next(row for row in main.TRANSACTIONS if row["tx_id"] == "TX1004")["amount"] = 1.0
     changed = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "FRAUD_PROTECT", "transaction_id": "TX1004", "auth_token": token, "mfa_proof": proof, "user_confirmed": True}, headers={**h(token), "Idempotency-Key": "fraud-tampered-amount"})
     assert changed.status_code >= 400
     assert main.CARDS["user_zhang"][0]["status"] == "ACTIVE"
@@ -86,7 +86,7 @@ def test_transaction_amount_tamper_invalidates_existing_authorization(client):
 
 def test_card_binding_tamper_invalidates_existing_authorization(client):
     token, proof = authorize(client)
-    main.TRANSACTIONS[-1]["card_id"] = "CARD-TAMPERED"
+    next(row for row in main.TRANSACTIONS if row["tx_id"] == "TX1004")["card_id"] = "CARD-TAMPERED"
     changed = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "FRAUD_PROTECT", "transaction_id": "TX1004", "auth_token": token, "mfa_proof": proof, "user_confirmed": True}, headers={**h(token), "Idempotency-Key": "fraud-tampered-card"})
     assert changed.status_code >= 400
     assert main.CARDS["user_zhang"][0]["status"] == "ACTIVE"

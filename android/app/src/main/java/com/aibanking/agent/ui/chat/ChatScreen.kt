@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +36,7 @@ import androidx.fragment.app.FragmentActivity
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.TaskView
+import com.aibanking.agent.data.SplitRequestView
 import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
@@ -145,8 +147,11 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     if (state.showTasks) {
         TaskPanel(
             tasks = state.tasks,
+            splitRequests = state.splitRequests,
             busy = state.panelBusy,
             onCancel = viewModel::cancelTask,
+            onPaySplit = viewModel::prepareSplitPayment,
+            onDeclineSplit = viewModel::declineSplit,
             onDismiss = viewModel::dismissPanels,
         )
     }
@@ -437,6 +442,8 @@ private fun ApprovalCard(
     onBiometricApprove: () -> Unit,
 ) {
     val isRed = approval.mfaRequired
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     fun secondsLeft(): Int = ((deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999L).div(1_000L).toInt()
     var remainingSeconds by remember(approval.approvalId, deadlineMillis) { mutableIntStateOf(secondsLeft()) }
     LaunchedEffect(approval.approvalId, deadlineMillis) {
@@ -504,6 +511,8 @@ private fun ApprovalCard(
                     onClick = {
                         remainingSeconds = secondsLeft()
                         if (remainingSeconds > 0) {
+                            keyboardController?.hide()
+                            focusManager.clearFocus()
                             if (isRed) onBiometricApprove() else onApprove()
                         }
                     },
@@ -671,8 +680,11 @@ private fun DevicePanel(
 @Composable
 private fun TaskPanel(
     tasks: List<TaskView>,
+    splitRequests: List<SplitRequestView>,
     busy: Boolean,
     onCancel: (String) -> Unit,
+    onPaySplit: (SplitRequestView) -> Unit,
+    onDeclineSplit: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -681,7 +693,21 @@ private fun TaskPanel(
             verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
             item { BankScreenHeading("待办任务", subtitle = "计划有序，生活从容", eyebrow = "YOUR PLANS") }
             if (busy) item { BankLoadingState(message = "正在更新任务…") }
-            if (!busy && tasks.isEmpty()) item { BankEmptyState("当前没有任务。") }
+            if (!busy && tasks.isEmpty() && splitRequests.isEmpty()) item { BankEmptyState("当前没有任务。") }
+            if (splitRequests.isNotEmpty()) item { Text("AA 收款请求", style = MaterialTheme.typography.titleMedium) }
+            items(splitRequests, key = { "split:${it.splitId}" }) { request ->
+                BankSectionCard(modifier = Modifier.animateItem()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("${request.fromName} 向您收取 ¥${"%.2f".format(request.share)}", style = MaterialTheme.typography.titleMedium)
+                        request.target?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                        Text(if (request.status == "PENDING") "等待您决定；不会自动扣款" else "状态：${request.status}", style = MaterialTheme.typography.bodySmall)
+                        if (request.status == "PENDING") {
+                            BankSecondaryButton("查看并付款", { onPaySplit(request) }, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                            BankSecondaryButton("拒绝付款", { onDeclineSplit(request.splitId) }, enabled = !busy, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            }
             items(tasks, key = { it.taskId }) { task ->
                 BankSectionCard(modifier = Modifier.animateItem()) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

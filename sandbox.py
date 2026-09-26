@@ -376,15 +376,19 @@ def _thread_fallback_executor(previous: Any) -> ThreadPoolExecutor:
     return ThreadPoolExecutor(max_workers=1)
 
 
+def _allow_thread_fallback() -> bool:
+    # A thread is not an isolation boundary. It is opt-in only for local
+    # diagnosis of environments that cannot spawn a process.
+    return os.getenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", "0").lower() in {"1", "true", "yes"}
+
+
 def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
     """Run the validated expression behind a short-lived isolation boundary.
 
-    Prefers a worker process.  When process spawning is denied by the
-    environment, or the worker dies before evaluating (for example a plain
-    script whose ``__main__`` is not spawn-safe on Windows), it retries once
-    with a monitored thread boundary: process isolation is lost, but the
-    AST whitelist, empty builtins and timeout still apply.  Production
-    deployments should retain the process or container isolation instead.
+    Uses a worker process. If process spawning fails or the worker dies,
+    expression execution fails closed. A thread fallback is available only
+    through the explicit BANK_SANDBOX_ALLOW_THREAD_FALLBACK diagnostic switch;
+    a thread has no isolation boundary and must not be used for normal runs.
     """
 
     executor: Any = None
@@ -393,6 +397,11 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
         executor = ProcessPoolExecutor(max_workers=1)
         future = executor.submit(_evaluate_worker, expression, safe_data)
     except (PermissionError, OSError, RuntimeError) as exc:
+        if not _allow_thread_fallback():
+            _record_telemetry(executor="process", isolation="none", fallback_reason="submit_failure", failure=True)
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+            raise SandboxError("沙箱隔离进程不可用") from exc
         # Managed environments may deny child-process spawning, and Windows
         # spawn re-imports ``__main__``: a plain script without the
         # ``if __name__ == "__main__"`` guard fails at submit time.  Retain the
@@ -425,6 +434,9 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
         )
         raise SandboxError("沙箱执行超时") from exc
     except BrokenProcessPool:
+        if not _allow_thread_fallback():
+            _record_telemetry(executor="process", isolation="none", fallback_reason="broken_process_pool", failure=True)
+            raise SandboxError("沙箱隔离进程不可用")
         _record_telemetry(
             executor="thread_fallback", isolation="none", fallback_reason="broken_process_pool", fallback=True
         )
@@ -542,7 +554,8 @@ def sandbox_health() -> dict[str, Any]:
         "max_value_depth": MAX_VALUE_DEPTH,
         "max_value_nodes": MAX_VALUE_NODES,
         "memory_limit": "bounded_values_not_os_rss",
-        "thread_timeout": "caller_deadline_not_thread_termination",
+        "thread_timeout": "caller_deadline_not_thread_termination" if _allow_thread_fallback() else "disabled_fail_closed",
+        "thread_fallback_enabled": _allow_thread_fallback(),
         "safe_functions": sorted(_SAFE_FUNCTIONS),
         "preferred_executor": "process",
         **_sandbox_telemetry(),

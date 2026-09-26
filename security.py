@@ -1153,9 +1153,9 @@ def _purge_sessions() -> None:
 def issue_session_token(user_id: str, *, ttl_seconds: Optional[int] = None, request_id: Optional[str] = None) -> dict[str, Any]:
     """Issue a reusable, short-lived session credential for a principal.
 
-    The demo has no password check (identity is self-asserted everywhere); a
-    production deployment must authenticate the subject (OIDC/password) before
-    calling this, then require the session on every write.
+    The caller is the authenticated login endpoint. Production deployments
+    must replace the demo password with a managed identity provider and keep
+    the resulting session scoped to the verified principal.
     """
 
     principal = sanitize_text(user_id, field="用户标识", max_length=128)

@@ -606,6 +606,7 @@ def test_subscription_match_and_card_state_are_fail_closed(client: TestClient):
     assert ambiguous.status_code == 409
     assert ambiguous.json()["detail"]["code"] == "SUBSCRIPTION_AMBIGUOUS"
 
+    main.CARDS["user_li"] = []
     missing_card = client.post(
         "/api/v1/risk/precheck/operation",
         json={"user_id": "user_li", "operation": "CARD_FREEZE"},

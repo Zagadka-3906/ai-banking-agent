@@ -38,6 +38,26 @@ def approve(client: TestClient, operation: str, **kwargs):
     return token
 
 
+def pay_split(client: TestClient, split_id: str, payer: str, amount: float):
+    payer_headers = {"X-User-Id": payer}
+    body = {"from_user": payer, "target_name_or_id": "user_zhang", "amount": amount, "remark": f"AA:{split_id}"}
+    pre = client.post("/api/v1/risk/precheck", json=body, headers=payer_headers)
+    assert pre.status_code == 200, pre.text
+    token = pre.json()["auth_token"]
+    assert client.post("/api/v1/auth/confirm", json={}, headers={**payer_headers, "X-Auth-Token": token}).status_code == 200
+    return client.post("/api/v1/transfers/execute", json=body, headers={**payer_headers, "X-Auth-Token": token})
+
+
+def test_aa_payment_note_is_parsed_as_transfer_not_new_request():
+    from agent import _local_parse
+
+    parsed = _local_parse("给张三转 33.33 元，备注 AA:SPLABC123")
+    assert parsed["intent"] == "TRANSFER"
+    assert parsed["target"] == "张三"
+    assert parsed["amount"] == 33.33
+    assert "AA:SPLABC123" in parsed["extra_info"]
+
+
 def face_attest(client: TestClient, token: str) -> str:
     """Run the challenge → simulated-device-sign flow for red-zone MFA."""
 
@@ -601,7 +621,9 @@ def test_renewal_reminders_are_idempotent_and_cascade_on_cancel(client: TestClie
     assert set(created) == {"SUB-APPLE", "SUB-VIDEO"}
     # Two days before the charge date, at 09:00 local.
     assert created["SUB-APPLE"]["run_at"].startswith("2026-10-01T09:00")
-    assert created["SUB-VIDEO"]["run_at"].startswith("2026-09-13T09:00")
+    video_charge = next(row["next_charge"] for row in main.SUBSCRIPTIONS["user_zhang"] if row["subscription_id"] == "SUB-VIDEO")
+    video_reminder = (datetime.fromisoformat(video_charge) - timedelta(days=2)).strftime("%Y-%m-%dT09:00")
+    assert created["SUB-VIDEO"]["run_at"].startswith(video_reminder)
 
     repeat = client.post("/api/v1/subscriptions/user_zhang/reminders", headers=headers())
     assert repeat.status_code == 200
@@ -629,8 +651,8 @@ def test_renewal_reminders_are_idempotent_and_cascade_on_cancel(client: TestClie
     assert refreshed[created["SUB-VIDEO"]["task_id"]]["status"] == "SUCCEEDED"
 
 
-def test_aa_split_collects_shares_and_reconciles_cents(client: TestClient):
-    """AA debits participants, credits the initiator and never loses a cent."""
+def test_aa_split_requires_each_payer_and_reconciles_cents(client: TestClient):
+    """The initiator cannot debit anyone; each payer authorizes their share."""
 
     initiator_before = main.ACCOUNTS["user_zhang"]["balance"]
     li_before = main.ACCOUNTS["user_li"]["balance"]
@@ -644,23 +666,29 @@ def test_aa_split_collects_shares_and_reconciles_cents(client: TestClient):
     )
     assert settled.status_code == 200, settled.text
     data = settled.json()["data"]
-    assert data["status"] == "SETTLED"
+    assert data["status"] == "PENDING"
     assert data["per_person"] == 33.33
     assert data["initiator_share"] == 33.34
     # 33.33 * 2 + 33.34 == 100.00 exactly.
     assert round(data["per_person"] * 2 + data["initiator_share"], 2) == 100.0
-    assert data["collected_amount"] == 66.66
-    assert data["outstanding_amount"] == 0.0
+    assert data["collected_amount"] == 0.0
+    assert data["outstanding_amount"] == 66.66
+    assert main.ACCOUNTS["user_li"]["balance"] == li_before
+    assert main.ACCOUNTS["user_wife"]["balance"] == wife_before
+    assert main.ACCOUNTS["user_zhang"]["balance"] == initiator_before
 
+    assert pay_split(client, data["split_id"], "user_li", 33.33).status_code == 200
+    assert pay_split(client, data["split_id"], "user_wife", 33.33).status_code == 200
+    assert main.SPLIT_REQUESTS[0]["status"] == "SETTLED"
     assert main.ACCOUNTS["user_li"]["balance"] == round(li_before - 33.33, 2)
     assert main.ACCOUNTS["user_wife"]["balance"] == round(wife_before - 33.33, 2)
     assert main.ACCOUNTS["user_zhang"]["balance"] == round(initiator_before + 66.66, 2)
     aa_rows = [row for row in main.TRANSACTIONS if str(row.get("category", "")).startswith("AA")]
-    assert len(aa_rows) == 4  # two participants × (debit + credit)
+    assert len(aa_rows) == 2
     assert sum(1 for row in aa_rows if row["account_id"] == "user_zhang") == 2
 
 
-def test_aa_split_reports_partial_collection_when_participant_lacks_funds(client: TestClient):
+def test_aa_split_reports_partial_collection_when_one_payer_lacks_funds(client: TestClient):
     main.ACCOUNTS["user_li"]["balance"] = 10.0
     li_before = main.ACCOUNTS["user_li"]["balance"]
     initiator_before = main.ACCOUNTS["user_zhang"]["balance"]
@@ -673,15 +701,35 @@ def test_aa_split_reports_partial_collection_when_participant_lacks_funds(client
     )
     assert settled.status_code == 200, settled.text
     data = settled.json()["data"]
-    assert data["status"] == "PARTIAL"
-    assert data["collected_amount"] == 33.33
+    assert data["status"] == "PENDING"
+    assert pay_split(client, data["split_id"], "user_wife", 33.33).status_code == 200
+    refused = pay_split(client, data["split_id"], "user_li", 33.33)
+    assert refused.status_code == 400
+    assert main.SPLIT_REQUESTS[0]["status"] == "PARTIAL"
+    assert main.SPLIT_REQUESTS[0]["collected_amount"] == 33.33
     # Only the failing participant's share is outstanding; the initiator's own
     # share is never reported as arrears.
-    assert data["outstanding_amount"] == 33.33
-    failed = [row for row in data["collection"] if row["status"] == "FAILED"]
-    assert failed and failed[0]["account_id"] == "user_li" and failed[0]["reason"] == "INSUFFICIENT_FUNDS"
+    assert main.SPLIT_REQUESTS[0]["outstanding_amount"] == 33.33
+    assert next(row for row in main.SPLIT_REQUESTS[0]["collection"] if row["account_id"] == "user_li")["status"] == "PENDING"
     assert main.ACCOUNTS["user_li"]["balance"] == li_before
     assert main.ACCOUNTS["user_zhang"]["balance"] == round(initiator_before + 33.33, 2)
+
+
+def test_aa_decline_keeps_other_pending_share_open(client: TestClient):
+    token = approve(client, "SPLIT_BILL", amount=90.0, participants=["李四", "王美"])
+    created = client.post(
+        "/api/v1/operations/execute",
+        json={"user_id": "user_zhang", "operation": "SPLIT_BILL", "amount": 90.0,
+              "participants": ["李四", "王美"], "auth_token": token},
+        headers=headers(token),
+    )
+    assert created.status_code == 200, created.text
+    split_id = created.json()["data"]["split_id"]
+    declined = client.post(f"/api/v1/splits/{split_id}/decline", headers={"X-User-Id": "user_li"})
+    assert declined.status_code == 200, declined.text
+    assert main.SPLIT_REQUESTS[0]["status"] == "PENDING"
+    assert pay_split(client, split_id, "user_wife", 30.0).status_code == 200
+    assert main.SPLIT_REQUESTS[0]["status"] == "PARTIAL"
 
 
 def test_a_zero_card_limit_is_refused_with_a_precise_error(client: TestClient):

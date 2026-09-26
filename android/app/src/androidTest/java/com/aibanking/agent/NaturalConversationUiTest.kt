@@ -12,6 +12,7 @@ import com.aibanking.agent.ui.chat.ChatViewModel
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
@@ -28,7 +29,7 @@ class NaturalConversationUiTest {
     private val folder get() = File(instrumentation.targetContext.getExternalFilesDir(null), "natural-conversations").apply { mkdirs() }
 
     @Test fun human_style_multi_turn_matrix() {
-        check(BuildConfig.APPLICATION_ID.endsWith(".scenariotest")) { "Use the isolated scenario build; never clear the normal app." }
+        assumeTrue("Scenario matrix runs only against the isolated build", BuildConfig.APPLICATION_ID.endsWith(".scenariotest"))
         ui.activityRule.scenario.onActivity { observedModel = ViewModelProvider(it)[ChatViewModel::class.java] }
         folder.listFiles()?.filter { it.isFile && it.name.matches(Regex("observations\\.json|[A-Z][0-9]+-[0-9]+(?:-error)?\\.png")) }
             ?.forEach { check(it.delete()) { "Cannot replace previous scenario artifact ${it.name}" } }

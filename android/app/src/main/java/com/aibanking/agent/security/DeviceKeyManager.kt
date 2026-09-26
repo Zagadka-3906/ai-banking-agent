@@ -89,10 +89,18 @@ class DeviceKeyManager(private val alias: String = DEFAULT_ALIAS) {
         val builder = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
             .setAlgorithmParameterSpec(ECGenParameterSpec(CURVE))
             .setDigests(KeyProperties.DIGEST_SHA256)
-            // The biometric gate is a separate UX step (BiometricPrompt); binding
-            // the key itself to per-signature user authentication would make the
-            // approval flow prompt twice.
-            .setUserAuthenticationRequired(false)
+            // A signature is usable only shortly after Android has authenticated
+            // the device owner. The UI prompt alone is not an authorization proof.
+            .setUserAuthenticationRequired(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            builder.setUserAuthenticationParameters(
+                AUTH_WINDOW_SECONDS,
+                KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            builder.setUserAuthenticationValidityDurationSeconds(AUTH_WINDOW_SECONDS)
+        }
         if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             builder.setIsStrongBoxBacked(true)
         }
@@ -110,11 +118,14 @@ class DeviceKeyManager(private val alias: String = DEFAULT_ALIAS) {
         KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     companion object {
-        const val DEFAULT_ALIAS = "bank_agent_device_key_v1"
+        const val DEFAULT_ALIAS = "bank_agent_device_key_v2_auth_bound"
         const val PAYLOAD_PREFIX = "bank-agent-face-v1"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val CURVE = "secp256r1"
         private const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
+        // The challenge request occurs after the system prompt and may take a
+        // network round trip; keep the window aligned with the Core's 60s TTL.
+        private const val AUTH_WINDOW_SECONDS = 60
 
         /**
          * The exact bytes the device signs.  Kept here as the single source of

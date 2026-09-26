@@ -57,7 +57,7 @@ def test_real_split_emits_one_stable_event_per_participant_with_outcome_metadata
     rows = [row for row in OUTBOX if row["split_id"] == split["split_id"]]
     assert len(rows) == 2
     assert {row["recipient_id"] for row in rows} == {"user_li", "user_wife"}
-    assert {row["outcome"] for row in rows} == {"FAILED", "COLLECTED"}
+    assert {row["outcome"] for row in rows} == {"PENDING"}
     assert all(row["event_id"] == f"AA:{split['split_id']}:{row['recipient_id']}" for row in rows)
     assert enqueue(rows[0]["event_id"], owner_id="user_zhang", recipient_id=rows[0]["recipient_id"], split_id=split["split_id"], amount=rows[0]["amount"], message="duplicate") is rows[0]
 

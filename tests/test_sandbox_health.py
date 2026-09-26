@@ -118,6 +118,7 @@ class _FailureThreadExecutor:
 
 def test_submit_failure_is_reported_without_exception_details(monkeypatch):
     _reset_telemetry()
+    monkeypatch.setenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", "1")
     monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _SubmitFailureExecutor)
     monkeypatch.setattr(sandbox, "_thread_fallback_executor", lambda previous: _ThreadExecutor())
     assert sandbox.evaluate_expression("len(data)", [1, 2]) == 2
@@ -132,6 +133,7 @@ def test_submit_failure_is_reported_without_exception_details(monkeypatch):
 
 def test_broken_process_falls_back_to_thread(monkeypatch):
     _reset_telemetry()
+    monkeypatch.setenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", "1")
     monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _BrokenProcessExecutor)
     monkeypatch.setattr(sandbox, "_thread_fallback_executor", lambda previous: _ThreadExecutor())
     assert sandbox.evaluate_expression("len(data)", [1, 2]) == 2
@@ -148,6 +150,7 @@ def test_broken_process_falls_back_to_thread(monkeypatch):
 
 def test_thread_fallback_timeout_is_counted(monkeypatch):
     _reset_telemetry()
+    monkeypatch.setenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", "1")
     monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _SubmitFailureExecutor)
     monkeypatch.setattr(sandbox, "_thread_fallback_executor", lambda previous: _TimeoutThreadExecutor())
     try:
@@ -168,6 +171,7 @@ def test_thread_fallback_timeout_is_counted(monkeypatch):
 
 def test_thread_fallback_failure_is_counted_and_sanitized(monkeypatch):
     _reset_telemetry()
+    monkeypatch.setenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", "1")
     monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _SubmitFailureExecutor)
     monkeypatch.setattr(sandbox, "_thread_fallback_executor", lambda previous: _FailureThreadExecutor())
     try:
@@ -184,4 +188,20 @@ def test_thread_fallback_failure_is_counted_and_sanitized(monkeypatch):
     assert health["fallbacks"] == 1
     assert health["thread_successes"] == 0
     assert health["timeouts"] == 0
+    assert health["failures"] == 1
+
+
+def test_process_spawn_failure_is_closed_by_default(monkeypatch):
+    _reset_telemetry()
+    monkeypatch.delenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", raising=False)
+    monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _SubmitFailureExecutor)
+    try:
+        sandbox.evaluate_expression("len(data)", [1, 2])
+    except sandbox.SandboxError as exc:
+        assert str(exc) == "沙箱隔离进程不可用"
+    else:
+        raise AssertionError("expected process isolation failure")
+    health = sandbox.sandbox_health()
+    assert health["fallbacks"] == 0
+    assert health["thread_fallback_enabled"] is False
     assert health["failures"] == 1

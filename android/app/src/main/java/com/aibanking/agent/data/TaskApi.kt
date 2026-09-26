@@ -44,7 +44,31 @@ data class TaskActionRequest(val reason: String = "用户请求")
 
 data class TaskActionResponse(val code: Int = 0, val data: TaskView? = null)
 
+data class SplitRequestView(
+    @SerializedName("split_id") val splitId: String = "",
+    @SerializedName("from_name") val fromName: String = "",
+    val share: Double = 0.0,
+    val status: String = "",
+    val target: String? = null,
+    @SerializedName("payment_remark") val paymentRemark: String = "",
+)
+
+data class SplitListResponse(val code: Int = 0, val data: List<SplitRequestView> = emptyList())
+
 interface TaskApi {
+
+    @GET("api/v1/splits/inbox")
+    suspend fun splitInbox(
+        @Header("X-User-Id") userId: String,
+        @Header("X-Session-Token") sessionToken: String,
+    ): SplitListResponse
+
+    @POST("api/v1/splits/{splitId}/decline")
+    suspend fun declineSplit(
+        @Path("splitId") splitId: String,
+        @Header("X-User-Id") userId: String,
+        @Header("X-Session-Token") sessionToken: String,
+    ): retrofit2.Response<okhttp3.ResponseBody>
 
     @GET("api/v1/tasks")
     suspend fun list(
@@ -62,6 +86,25 @@ interface TaskApi {
 }
 
 class TaskRepository(private val api: TaskApi) {
+
+    suspend fun splitInbox(principal: String, sessionToken: String): List<SplitRequestView> = try {
+        api.splitInbox(userId = principal, sessionToken = sessionToken).data
+    } catch (failure: HttpException) {
+        throw failure.asGatewayException()
+    } catch (failure: IOException) {
+        throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
+    }
+
+    suspend fun declineSplit(splitId: String, principal: String, sessionToken: String) {
+        try {
+            val response = api.declineSplit(splitId, principal, sessionToken)
+            if (!response.isSuccessful) throw HttpException(response)
+        } catch (failure: HttpException) {
+            throw failure.asGatewayException()
+        } catch (failure: IOException) {
+            throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
+        }
+    }
 
     suspend fun list(principal: String, sessionToken: String): List<TaskView> = try {
         api.list(userId = principal, sessionToken = sessionToken).data

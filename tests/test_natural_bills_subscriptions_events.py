@@ -266,7 +266,9 @@ def test_annual_report_can_switch_back_to_current_month(bills):
 def test_vague_recurring_charge_question_lists_real_subscriptions(dialogue):
     response = dialogue.say("帮我看看有没有乱扣费")
     execution = dialogue.execution("SUBSCRIPTION_QUERY")
-    assert {row["subscription_id"] for row in execution["data"]["data"]} == {"SUB-APPLE", "SUB-VIDEO"}
+    rows = execution["data"]["data"]
+    assert {row["subscription_id"] for row in rows if row["status"] == "ACTIVE"} == {"SUB-APPLE", "SUB-VIDEO"}
+    assert any(row["merchant"] == "云端存储" and row["status"] == "CANDIDATE" for row in rows)
     assert "Apple" in response["reply"] and "视频会员" in response["reply"]
     assert "15.00" in response["reply"] and "25.00" in response["reply"]
     assert "下次扣款" in response["reply"]

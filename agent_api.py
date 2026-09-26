@@ -43,6 +43,10 @@ app = FastAPI(
     version="1.0.0",
 )
 
+from feige_relay import router as feige_relay_router
+
+app.include_router(feige_relay_router)
+
 try:
     _MAX_REQUEST_BYTES = max(4_096, min(int(os.getenv("BANK_MAX_REQUEST_BYTES", "1048576")), 10_000_000))
 except (TypeError, ValueError):
