@@ -1,12 +1,10 @@
 package com.aibanking.agent
 
-import android.Manifest
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.rule.GrantPermissionRule
 import androidx.lifecycle.ViewModelProvider
 import com.aibanking.agent.data.SessionStore
 import com.aibanking.agent.ui.UiTags
@@ -16,17 +14,13 @@ import org.json.JSONObject
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.RuleChain
-import org.junit.rules.TestRule
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
 /** Types through the real editor; the server recorder observes, never sends, turns. */
 class NaturalConversationUiTest {
-    private val ui = createAndroidComposeRule<MainActivity>()
-    @get:Rule val rules: TestRule = RuleChain
-        .outerRule(GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)).around(ui)
+    @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val arguments get() = InstrumentationRegistry.getArguments()
     private val token get() = checkNotNull(arguments.getString("controlToken"))

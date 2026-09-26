@@ -19,9 +19,7 @@ Settings are forced so the suite is hermetic with respect to a developer's local
 * ``BANK_DEVICE_STORE_PATH`` / ``BANK_AUDIT_LOG_PATH`` emptied - both point at
   *durable stores of real state*, and the suite enrolls devices and writes audit
   events.  Inheriting a live path from a developer's ``.env`` let a test run
-  overwrite the real device registry: the file ended up holding a fixture device
-  (``label="push-test"``, token ``fcm-token-1``) while the enrolled phone had
-  silently vanished from it.  Emptying them here removes that class of accident;
+  overwrite the real device registry. Emptying them here removes that class of accident;
   ``tests/test_device_store.py`` opts back in per test with ``monkeypatch.setenv``
   and a ``tmp_path``.
 * ``BANK_LEDGER_STORE_PATH`` emptied and ``BANK_APPROVAL_STORE_PATH=memory`` for

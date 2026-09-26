@@ -144,7 +144,7 @@ def main() -> int:
     check("第二个用户也能登录", login("user_li") is not None, "")
 
     # Start the core with BANK_REQUIRE_SESSION=1 for this assertion to be
-    # meaningful; it is the deployment posture docker-compose ships with.
+    # meaningful for the local Core and Gateway deployment.
     bare = requests.post(
         f"{CORE}/api/v1/risk/precheck",
         json={"from_user": PRINCIPAL, "target_name_or_id": "李四", "amount": 10},

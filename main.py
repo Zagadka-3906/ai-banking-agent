@@ -35,7 +35,6 @@ from security import (
     MFA_PROOFS,
     SecurityError,
     amount_to_cents,
-    attach_push_token,
     audit_event,
     authorize_execution,
     behavior_large_amount_cents,
@@ -71,11 +70,10 @@ from security import (
     verify_audit_chain,
 )
 from security import STATE_LOCK
-from notifications import notify_waiting_user
 from scheduler import TASK_STORE, TaskState
 from planner import analyze_transactions, filter_transactions
 from sandbox import sandbox_health
-from notification_outbox import OUTBOX, enqueue as enqueue_notification, dispatch as dispatch_notifications, visible as visible_notifications
+from notification_outbox import OUTBOX, enqueue as enqueue_notification, visible as visible_notifications
 
 
 logger = logging.getLogger("mock_banking.core")
@@ -1087,11 +1085,10 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
     outbox = state.get("OUTBOX", [])
     if not isinstance(outbox, list):
         return False
-    valid_outbox_statuses = {"PENDING", "SENDING", "SENT", "RETRY", "FAILED"}
     for row in outbox:
-        if not isinstance(row, dict) or not all(isinstance(row.get(k), str) and row.get(k) for k in ("event_id", "owner_id", "recipient_id", "split_id", "status")):
+        if not isinstance(row, dict) or not all(isinstance(row.get(k), str) and row.get(k) for k in ("event_id", "owner_id", "recipient_id", "split_id")):
             return False
-        if row.get("status") not in valid_outbox_statuses or not _finite_nonnegative(row.get("amount", 0.0)):
+        if not _finite_nonnegative(row.get("amount", 0.0)):
             return False
     # Contact book rows feed the payee allow-list, so a half-written row must
     # not come back from a restart: name/phone/contact_id are the resolution
@@ -1393,13 +1390,6 @@ class DeviceRegisterRequest(StrictModel):
     label: Optional[str] = None
     platform: Optional[str] = None
     app_version: Optional[str] = None
-
-
-class PushTokenRequest(StrictModel):
-    """Delivery token for notifications (an FCM registration token)."""
-
-    token: str
-    platform: Optional[str] = None
 
 
 class LockPrecheckRequest(StrictModel):
@@ -2076,10 +2066,10 @@ def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> di
 def _validate_split_participants(user_id: str, participants: Optional[list[str]]) -> list[str]:
     """Resolve AA participants against the Core contact allow-list.
 
-    Participant names are used only for the split-request notification flow,
+    Participant names are used for the local split-event record,
     but they are still security-sensitive routing data.  Accepting arbitrary
-    model-generated strings would allow notifications to be sent to an
-    unregistered account (or make the audit trail impossible to reconcile).
+    model-generated strings would allow an event to target an unregistered
+    account (or make the audit trail impossible to reconcile).
     Return the original display values so the UI remains human-readable while
     proving that each value resolves to an active, non-self account.
     """
@@ -3480,38 +3470,11 @@ def register_device(
     return {"code": 200, **summary}
 
 
-@app.post("/api/v1/devices/{device_id}/push-token")
-def register_push_token(
-    device_id: str,
-    req: PushTokenRequest,
-    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
-):
-    """Attach a notification delivery token to one of the caller's devices.
-
-    Like enrollment this demands a session credential: a token attached to
-    somebody else's device would let one account push notifications onto another
-    account's phone.
-    """
-
-    request_id = _request_id(x_request_id)
-    if not x_session_token:
-        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "推送令牌注册必须出示会话凭证"})
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    try:
-        summary = attach_push_token(device_id, req.token, user_id=x_user_id, request_id=request_id)
-    except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=x_user_id, action="PUSH_TOKEN_REGISTER", request_id=request_id)
-    return {"code": 200, **summary}
-
-
 @app.get("/api/v1/devices")
 def get_devices(x_session_token: Optional[str] = Header(None, alias="X-Session-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     """List the devices enrolled to the caller.  No key material is returned.
 
-    Demands a session credential like its siblings (enroll, push-token): the
+    Demands a session credential like enrollment: the
     device registry is the red tier's trust root, so it must not be readable -
     or revocable, below - from a self-asserted identity header alone.
     """
@@ -4161,23 +4124,13 @@ def execute_operation(
 # Task centre: scheduling, cancellation and human takeover
 # ---------------------------------------------------------------------------
 @app.get("/api/v1/notifications/outbox")
-def notification_outbox_list(split_id: Optional[str] = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+def notification_outbox_list(split_id: Optional[str] = None, x_session_token: Optional[str] = Header(None, alias="X-Session-Token"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "查询 AA 事件需要会话凭证"})
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
     actor = _get_actor(x_user_id, x_user_id, action="NOTIFICATION_QUERY", request_id=_request_id(x_request_id))
     return {"code": 200, "data": visible_notifications(actor, split_id=split_id)}
-
-
-@app.post("/api/v1/notifications/outbox/dispatch")
-def notification_outbox_dispatch(split_id: Optional[str] = None, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    actor = _get_actor(x_user_id, x_user_id, action="NOTIFICATION_DISPATCH", request_id=_request_id(x_request_id))
-    rows = visible_notifications(actor, split_id=split_id)
-    results = []
-    for row in rows:
-        results.extend(dispatch_notifications(event_id=row["event_id"]))
-    return {"code": 200, "data": results}
 
 
 @app.get("/api/v1/tasks")
@@ -4226,11 +4179,6 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
             final_status = TaskState.WAITING_USER if task.task_type in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"} else TaskState.SUCCEEDED
             updated = TASK_STORE.transition(task.task_id, final_status, owner_id=owner)
             changed.append(updated.to_dict())
-            if final_status == TaskState.WAITING_USER:
-                # This is the moment nothing more happens without the user, so it
-                # is the moment to tell them.  The dispatch is audited, including
-                # when no delivery provider is configured.
-                notify_waiting_user(updated, request_id=request_id)
         except (KeyError, ValueError):
             continue
     audit_event("TASK_RUN", user_id=owner, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"changed": len(changed)})

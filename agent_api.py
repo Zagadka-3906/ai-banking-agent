@@ -1,6 +1,6 @@
 """Channel gateway: the HTTP surface a native client drives the agent through.
 
-This is the service the Android app and signed IM adapter talk to.  It is
+This is the service the Android emulator app talks to.  It is
 deliberately *thin*: it authenticates the caller, derives the principal, and
 forwards the turn to :mod:`conversation`; all policy, risk classification,
 authorization and ledger work stays in the core banking API.
@@ -36,15 +36,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from bank_tools import BankAPIError, BankClient
 from conversation import SERVICE, ConversationError
 from security import SecurityError, audit_event, sanitize_text
-from im_webhook import router as im_router
 
 app = FastAPI(
     title="Banking Agent Channel Gateway",
     description="渠道网关：自然语言会话与人工审批（不持有账本、不做风控判定）",
     version="1.0.0",
 )
-
-app.include_router(im_router)
 
 try:
     _MAX_REQUEST_BYTES = max(4_096, min(int(os.getenv("BANK_MAX_REQUEST_BYTES", "1048576")), 10_000_000))

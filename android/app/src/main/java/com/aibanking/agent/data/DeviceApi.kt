@@ -41,14 +41,6 @@ data class DeviceView(
     val label: String? = null,
     @SerializedName("created_at") val createdAt: Long = 0,
     @SerializedName("last_seen_at") val lastSeenAt: Long = 0,
-    /** Whether the server holds a delivery token for this device. */
-    @SerializedName("push_enabled") val pushEnabled: Boolean = false,
-)
-
-/** The FCM registration token this device wants notifications delivered to. */
-data class PushTokenRequest(
-    val token: String,
-    val platform: String? = null,
 )
 
 interface DeviceApi {
@@ -56,14 +48,6 @@ interface DeviceApi {
     @POST("api/v1/devices/register")
     suspend fun register(
         @Body body: DeviceRegisterRequest,
-        @Header("X-User-Id") userId: String,
-        @Header("X-Session-Token") sessionToken: String,
-    ): DeviceView
-
-    @POST("api/v1/devices/{deviceId}/push-token")
-    suspend fun registerPushToken(
-        @Path("deviceId") deviceId: String,
-        @Body body: PushTokenRequest,
         @Header("X-User-Id") userId: String,
         @Header("X-Session-Token") sessionToken: String,
     ): DeviceView
@@ -135,36 +119,8 @@ class DeviceRepository(private val api: DeviceApi) {
         throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
     }
 
-    /**
-     * Tell the server where to deliver this device's notifications.
-     *
-     * Only called once a Firebase token exists, which means only when a Firebase
-     * project is configured - an unconfigured build registers nothing and the
-     * server says `NOT_SENT` with a reason instead of pretending.
-     */
-    suspend fun registerPushToken(
-        deviceId: String,
-        token: String,
-        principal: String,
-        sessionToken: String,
-    ): DeviceView = try {
-        api.registerPushToken(
-            deviceId = deviceId,
-            body = PushTokenRequest(token = token, platform = "android"),
-            userId = principal,
-            sessionToken = sessionToken,
-        )
-    } catch (failure: HttpException) {
-        throw failure.asGatewayException()
-    } catch (failure: IOException) {
-        throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
-    }
-
     companion object {
         fun create(baseUrl: String = BuildConfig.CORE_BASE_URL): DeviceRepository {
-            if (BuildConfig.STANDALONE_MODE) {
-                return DeviceRepository(com.aibanking.agent.data.standalone.StandaloneBank.deviceApi)
-            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)

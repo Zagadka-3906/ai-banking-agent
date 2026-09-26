@@ -1,21 +1,17 @@
 <#
 .SYNOPSIS
-    Build this checkout, update the emulator app, then launch it.
+    Start local Core/Gateway, build the connected app, then launch the emulator.
 .EXAMPLE
     .\start-emulator.bat
 .EXAMPLE
     .\start-emulator.bat -Offline
     Use cached Gradle dependencies; the app is still rebuilt from current sources.
-.EXAMPLE
-    .\start-emulator.bat -NetworkMode
-    Build the backend-connected variant and start Core/Gateway for integration testing.
 #>
 [CmdletBinding()]
 param(
     [string]$AvdName = 'bankagent',
     [ValidateRange(30, 900)][int]$BootTimeoutSeconds = 180,
-    [switch]$Offline,
-    [switch]$NetworkMode
+    [switch]$Offline
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,7 +43,7 @@ function Start-Backend([string]$Module, [int]$Port, [string]$Service) {
     }
     $errorLog = Join-Path $logDir "$Module-$runId.err.log"
     Start-Process -FilePath $python -WorkingDirectory $repoRoot -WindowStyle Hidden `
-        -ArgumentList '-m', 'uvicorn', "${Module}:app", '--host', '0.0.0.0', '--port', "$Port" `
+        -ArgumentList '-m', 'uvicorn', "${Module}:app", '--host', '127.0.0.1', '--port', "$Port" `
         -RedirectStandardOutput (Join-Path $logDir "$Module-$runId.log") `
         -RedirectStandardError $errorLog | Out-Null
     $deadline = (Get-Date).AddSeconds(45)
@@ -127,8 +123,7 @@ try {
     Write-Host '[2/5] Building the latest app from current sources...'
     Push-Location $androidRoot
     try {
-        $standalone = if ($NetworkMode) { 'false' } else { 'true' }
-        $gradleArgs = @(':app:assembleDebug', '--console=plain', "-PbankStandalone=$standalone",
+        $gradleArgs = @(':app:assembleDebug', '--console=plain',
             '-PbankCoreUrl=http://10.0.2.2:8000/', '-PbankGatewayUrl=http://10.0.2.2:8100/')
         if ($Offline) { $gradleArgs += '--offline' }
         & '.\gradlew.bat' @gradleArgs
@@ -136,13 +131,9 @@ try {
     } finally { Pop-Location }
     if (-not (Test-Path -LiteralPath $apk)) { throw "Build output missing: $apk" }
 
-    if ($NetworkMode) {
-        Write-Host '[3/5] Checking backend services for network mode...'
-        Start-Backend 'main' 8000 'mock-banking-core'
-        Start-Backend 'agent_api' 8100 'banking-agent-gateway'
-    } else {
-        Write-Host '[3/5] Standalone mode: no computer backend is needed.'
-    }
+    Write-Host '[3/5] Checking local backend services...'
+    Start-Backend 'main' 8000 'mock-banking-core'
+    Start-Backend 'agent_api' 8100 'banking-agent-gateway'
 
     Write-Host "[4/5] Starting or reusing emulator $AvdName..."
     & $adb start-server
@@ -198,8 +189,7 @@ try {
     if ($launch -match '(?im)^Error' -or $launch -notmatch '(?m)^Status: ok\s*$') {
         throw 'The updated app could not be opened. Check the emulator screen.'
     }
-    $mode = if ($NetworkMode) { 'network integration' } else { 'standalone' }
-    Write-Host "`nLatest $mode app built, installed and launched successfully." -ForegroundColor Green
+    Write-Host "`nLatest connected app built, installed and launched successfully." -ForegroundColor Green
     Write-Host "APK: $apk"
     Write-Host "Logs: $logDir"
     exit 0

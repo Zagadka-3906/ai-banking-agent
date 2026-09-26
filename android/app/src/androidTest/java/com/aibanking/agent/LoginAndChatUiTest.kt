@@ -1,6 +1,5 @@
 package com.aibanking.agent
 
-import android.Manifest
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -16,7 +15,6 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.chat.ChatRole
 import com.aibanking.agent.ui.chat.ChatViewModel
@@ -36,11 +34,8 @@ import java.net.URL
  * exercises the parts that only compiling cannot prove - the Compose tree, the
  * streaming client, the Keystore enrolment and the approval flow.
  *
- * The normal debug build is self-contained and needs only an emulator. For the
- * optional network build (`-PbankStandalone=false`), the integration services
- * must be reachable on 10.0.2.2.
- *
- * Network-mode-only requirements:
+ * The debug app uses the local integration services via 10.0.2.2.
+ * Requirements:
  *
  *  * the banking stack running on the host, reachable as 10.0.2.2:8000 (core)
  *    and 10.0.2.2:8100 (gateway);
@@ -64,15 +59,6 @@ class LoginAndChatUiTest {
     @get:Rule
     val ui = createAndroidComposeRule<MainActivity>()
 
-    /**
-     * Pre-grant the notification permission.
-     *
-     * The app asks for it on launch (API 33+) and a test install is fresh, so
-     * without this the system dialog would sit on top of the login screen the
-     * test is trying to drive.
-     */
-    @get:Rule
-    val notifications: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
 
     /**
      * Log in unless a previous test already did.
@@ -160,15 +146,8 @@ class LoginAndChatUiTest {
         // there too.
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { moneyIsVisible() }
 
-        if (BuildConfig.STANDALONE_MODE) {
-            // A local_ id proves this result was produced inside the APK. The
-            // structured amount above proves the local ledger result rendered.
-            assertTrue("unexpected standalone trace id: $traceId", traceId.startsWith("local_"))
-        } else {
-            // In network mode the same id must resolve in the Core audit chain.
-            val trace = fetchCoreTrace(traceId)
-            assertTrue("core trace for $traceId was: $trace", trace.contains("BALANCE_QUERY"))
-        }
+        val trace = fetchCoreTrace(traceId)
+        assertTrue("core trace for $traceId was: $trace", trace.contains("BALANCE_QUERY"))
     }
 
     @Test
@@ -316,11 +295,6 @@ class RedTierUiTest {
 
     @get:Rule
     val ui = createAndroidComposeRule<MainActivity>()
-
-    /** See [LoginAndChatUiTest] for why the permission is pre-granted. */
-    @get:Rule
-    val notifications: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
-
     @Test
     fun a_red_transfer_needs_the_second_factor_and_settles_with_a_device_signature() {
         ui.ensureLoggedIn(DEMO_PASSWORD, LOGIN_TIMEOUT_MS)

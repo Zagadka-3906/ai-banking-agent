@@ -641,7 +641,6 @@ private fun DevicePanel(
                             BankIcon(BankIconKind.Shield, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(device.label ?: "未知设备", style = MaterialTheme.typography.titleMedium)
-                                Text(if (device.pushEnabled) "推送已开启" else "推送未开启", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             BankStatusChip(if (device.status == "ACTIVE") "已启用" else "已停用",
                                 if (device.status == "ACTIVE") BankSemanticStatus.RiskGreen else BankSemanticStatus.Neutral)
@@ -706,7 +705,7 @@ private fun TaskPanel(
                 }
             }
             item {
-                Text("到期需要资金的任务会先暂停并推送提醒，确认后才会执行。", style = MaterialTheme.typography.bodySmall,
+                Text("到期需要资金的任务会先暂停并显示在任务列表，确认后才会执行。", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
             }
         }

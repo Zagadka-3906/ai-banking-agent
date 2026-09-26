@@ -1,6 +1,5 @@
 package com.aibanking.agent
 
-import android.Manifest
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,7 +14,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.auth.LoginScreen
 import com.aibanking.agent.ui.theme.BankAgentTheme
@@ -23,8 +21,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.RuleChain
-import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import java.io.File
 
@@ -70,9 +66,7 @@ class LoginLayoutTest {
 /** Uses the local demo backend, as the existing navigation tests do. */
 @RunWith(AndroidJUnit4::class)
 class UiRefactorSmokeTest {
-    private val ui = createAndroidComposeRule<MainActivity>()
-    private val notifications = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
-    @get:Rule val rules: TestRule = RuleChain.outerRule(notifications).around(ui)
+    @get:Rule val ui = createAndroidComposeRule<MainActivity>()
 
     @Test fun contact_form_search_and_transfer_shortcut_work_together() {
         ui.ensureLoggedIn("Bank@2026")

@@ -29,9 +29,6 @@ jobs:
           else
             echo "pip-audit skipped: network unreachable (offline run)."
           fi
-      - name: Validate Compose file
-        run: docker compose config --quiet
-
   android:
     runs-on: ubuntu-latest
     steps:
@@ -57,7 +54,7 @@ jobs:
           # needs an emulator plus the live banking stack, so they are exercised
           # locally (see app/src/androidTest/.../LoginAndChatUiTest.kt); CI only
           # guarantees they still build.
-          ./gradlew --no-daemon --stacktrace assembleDebug assembleDebugAndroidTest
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug assembleDebugAndroidTest
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

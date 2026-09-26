@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterator, Mapping, Optional
 
 # Load a local ``.env`` before reading security configuration.  The Core API
-# is commonly started directly with ``python -m uvicorn`` (outside Compose),
+# is commonly started directly with ``python -m uvicorn``,
 # where Uvicorn does not load dotenv files for us.  Existing process
 # environment variables remain authoritative because ``override`` defaults to
 # ``False``; deployments can therefore inject secrets through the environment
@@ -1458,129 +1458,7 @@ def _device_summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "app_version": record.get("app_version"),
         "created_at": record.get("created_at"),
         "last_seen_at": record.get("last_seen_at"),
-        # Whether this device can be notified.  The delivery token itself stays
-        # server-side: a listing has no reason to hand out push credentials.
-        "push_enabled": bool(record.get("push_token")),
     }
-
-
-PUSH_TOKEN_MAX_LENGTH = _env_int("BANK_PUSH_TOKEN_MAX_LENGTH", 4096, 64, 16_384)
-
-
-def attach_push_token(device_id: str, token: str, *, user_id: str, request_id: Optional[str] = None) -> dict[str, Any]:
-    """Record the delivery token notifications for this device go to.
-
-    Bound to the authenticated principal and to one of *their own* devices, for
-    the same reason enrollment is: a token attachable to somebody else's device
-    would let one account push notifications onto another account's phone.
-    """
-
-    principal = sanitize_text(user_id, field="用户标识", max_length=128)
-    candidate = sanitize_text(device_id, field="设备编号", max_length=64)
-    safe_token = sanitize_text(token, field="推送令牌", max_length=PUSH_TOKEN_MAX_LENGTH)
-    if not safe_token:
-        raise SecurityError("缺少推送令牌", 400, "INVALID_PUSH_TOKEN")
-    with STATE_LOCK:
-        record = DEVICES.get(candidate)
-        if record is None or record.get("user_id") != principal:
-            # Same answer for "unknown" and "someone else's", as with revocation.
-            raise SecurityError("设备不存在", 404, "DEVICE_NOT_FOUND")
-        if record.get("status") != DEVICE_STATUS_ACTIVE:
-            raise SecurityError("该设备已被停用", 403, "DEVICE_REVOKED")
-        record["push_token"] = safe_token
-        record["push_token_updated_at"] = int(time.time())
-        # Durable immediately, not on the next restart: a token that only exists
-        # in memory is exactly the state that made a restart silently break push.
-        _persist_devices_locked()
-    audit_event(
-        "PUSH_TOKEN_REGISTERED",
-        user_id=principal,
-        decision="ALLOW",
-        outcome="SUCCESS",
-        request_id=request_id,
-        # A delivery token is a credential for reaching the device, so the trail
-        # records a fingerprint rather than the value.
-        metadata={"device_id": candidate, "token_fingerprint": credential_fingerprint(safe_token)},
-    )
-    return _device_summary(record)
-
-
-def push_tokens_for(user_id: str) -> list[dict[str, str]]:
-    """Active delivery tokens for one principal, newest device first."""
-
-    principal = sanitize_text(user_id, field="用户标识", max_length=128)
-    with STATE_LOCK:
-        rows = [
-            {"device_id": str(item.get("device_id")), "token": str(item.get("push_token"))}
-            for item in DEVICES.values()
-            if item.get("user_id") == principal
-            and item.get("status") == DEVICE_STATUS_ACTIVE
-            and item.get("push_token")
-        ]
-        rows.sort(key=lambda row: str(row.get("device_id")))
-    return rows
-
-
-def _bounded_reason(value: Any, *, limit: int = 120) -> str:
-    """Bound and sanitize provider-supplied text for the audit trail.
-
-    A push provider's error body is untrusted input of arbitrary length, and
-    ``sanitize_text`` *raises* on over-length or injection-shaped text.  Letting
-    that propagate would mean the text describing a failed delivery could abort
-    the registry maintenance it was meant to trigger, so a summary that cannot be
-    sanitized degrades to a fixed label instead.
-    """
-
-    collapsed = " ".join(str(value or "").split())
-    try:
-        return sanitize_text(collapsed[:limit], field="原因", max_length=limit)
-    except SecurityError:
-        return "服务端判定该推送令牌不可用"
-
-
-def detach_push_token(token: str, *, reason: str, request_id: Optional[str] = None) -> dict[str, Any]:
-    """Forget a delivery token the provider says will never work again.
-
-    Called by the dispatcher when FCM answers with a *permanent* refusal
-    (``UNREGISTERED`` after a reinstall, or a token minted for another project).
-    Without this the registry only grows: every reinstall leaves a dead token
-    behind, every notification fans out to all of them, and the failure count
-    turns into noise that hides a real delivery problem.  Google's own guidance
-    is to delete the token at that point.
-
-    No principal is required - this is server-side registry maintenance driven by
-    the provider's answer, not a user-initiated change.  The *device record* is
-    kept (an uninstalled app can come back with the same key); only the delivery
-    address is dropped.
-    """
-
-    candidate = sanitize_text(token, field="推送令牌", max_length=PUSH_TOKEN_MAX_LENGTH)
-    fingerprint = credential_fingerprint(candidate) if candidate else None
-    safe_reason = _bounded_reason(reason)
-    dropped: list[str] = []
-    if candidate:
-        with STATE_LOCK:
-            for record in DEVICES.values():
-                if record.get("push_token") != candidate:
-                    continue
-                record.pop("push_token", None)
-                record.pop("push_token_updated_at", None)
-                record["push_token_dropped_at"] = int(time.time())
-                record["push_token_dropped_reason"] = safe_reason
-                dropped.append(str(record.get("device_id")))
-            if dropped:
-                _persist_devices_locked()
-    audit_event(
-        "PUSH_TOKEN_UNREGISTERED",
-        user_id=None,
-        decision="ALLOW" if dropped else "SKIP",
-        outcome="DROPPED" if dropped else "NO_MATCH",
-        request_id=request_id,
-        # Same rule as registration: the trail records a fingerprint, never the
-        # delivery address itself.
-        metadata={"devices": dropped, "token_fingerprint": fingerprint, "reason": safe_reason},
-    )
-    return {"dropped": dropped, "token_fingerprint": fingerprint}
 
 
 def enroll_device(
@@ -1705,13 +1583,11 @@ def revoke_device(device_id: str, *, user_id: str, request_id: Optional[str] = N
 # Device-registry durability
 #
 # The registry is in memory by default, so a restart forgets every enrolled
-# device *and* every delivery token: the phone then cannot be notified until its
-# owner signs in again, and nothing says so.  Point ``BANK_DEVICE_STORE_PATH`` at
-# a file to keep it across restarts.
+# device. Point ``BANK_DEVICE_STORE_PATH`` at a file to keep the
+# trust registry across restarts.
 #
 # What is stored is security-sensitive.  Device public keys are what a liveness
-# signature is checked against, and a delivery token is an address the server
-# will push to, so the file carries an integrity digest.  With a configured
+# signature is checked against, so the file carries an integrity digest. With a configured
 # ``BANK_AUTH_SECRET`` the digest is keyed and a forged file cannot be produced
 # without the server secret; without one it only detects corruption, and
 # ``device_store_status`` reports that rather than implying protection that is
@@ -2221,47 +2097,6 @@ def authorize_execution(
             )
 
 
-def push_health() -> dict[str, Any]:
-    """Whether the *server* can deliver a push right now, and if not, why.
-
-    Kept separate from the device registry on purpose: a phone can hold a valid
-    FCM token while the server still has no credential to send with, and that is
-    exactly the gap a reader would otherwise have to infer from an audit event
-    that quietly says NOT_SENT.  Imported lazily because ``notifications``
-    imports this module.
-    """
-
-    try:
-        from notifications import resolve_transport
-    except Exception as exc:  # pragma: no cover - defensive; the import is local
-        return {
-            "configured": False,
-            "provider": "unavailable",
-            "reason": f"notifications module unusable: {type(exc).__name__}",
-            "devices_with_tokens": 0,
-        }
-    with STATE_LOCK:
-        devices_with_tokens = sum(
-            1
-            for item in DEVICES.values()
-            if item.get("push_token") and item.get("status") == DEVICE_STATUS_ACTIVE
-        )
-    transport = resolve_transport()
-    # A transport reports a reason only when it cannot actually deliver; the
-    # reason may quote the credential path, which must not leak out of an
-    # unauthenticated endpoint.
-    reason = getattr(transport, "reason", None)
-    credentials = os.getenv("BANK_FCM_CREDENTIALS", "").strip()
-    if reason and credentials:
-        reason = reason.replace(credentials, "<BANK_FCM_CREDENTIALS>")
-    return {
-        "configured": reason is None,
-        "provider": getattr(transport, "name", "unknown"),
-        "reason": reason or "ready to send",
-        "devices_with_tokens": devices_with_tokens,
-    }
-
-
 def security_health() -> dict[str, Any]:
     with STATE_LOCK:
         now = time.monotonic()
@@ -2297,7 +2132,6 @@ def security_health() -> dict[str, Any]:
                 "revoked": sum(1 for item in DEVICES.values() if item.get("status") == DEVICE_STATUS_REVOKED),
                 "persistence": device_store_status(),
             },
-            "push": push_health(),
             "login": {
                 "password_hashing": "argon2id" if PASSWORDS_AVAILABLE else "unavailable",
                 "min_password_length": MIN_PASSWORD_LENGTH,

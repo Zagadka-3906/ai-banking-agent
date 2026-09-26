@@ -185,9 +185,6 @@ class WealthRepository(private val api: WealthApi) {
 
     companion object {
         fun create(baseUrl: String = BuildConfig.CORE_BASE_URL): WealthRepository {
-            if (BuildConfig.STANDALONE_MODE) {
-                return WealthRepository(com.aibanking.agent.data.standalone.StandaloneBank.wealthApi)
-            }
             val client = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)

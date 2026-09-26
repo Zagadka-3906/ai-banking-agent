@@ -4,32 +4,13 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// Firebase is enabled by *dropping in the config file*, not by editing this
-// script: the google-services plugin refuses to configure the build at all when
-// `google-services.json` is missing, so applying it unconditionally would make
-// every checkout without a Firebase project fail.  Put the file in
-// `android/app/` and the plugin activates on the next build; the app then
-// registers a real push token (`push_enabled` flips to true server-side).
-// Without the file, the app builds and runs with push simply disabled - see
-// app/src/main/java/com/aibanking/agent/push/PushNotifications.kt.
-val googleServicesConfig = file("google-services.json")
 val scenarioTests = providers.gradleProperty("bankScenarioTests").orNull == "true"
-// A normal APK is self-contained: it uses the on-device mock ledger and agent
-// instead of assuming a developer machine is listening on 10.0.2.2.  Pass
-// -PbankStandalone=false only when explicitly testing the Android/IM backend.
-val standaloneMode = if (scenarioTests) false else providers.gradleProperty("bankStandalone").orNull != "false"
-if (googleServicesConfig.exists() && !scenarioTests) {
-    apply(plugin = libs.plugins.google.services.get().pluginId)
-    logger.lifecycle("google-services.json found: Firebase push is enabled for this build.")
-} else {
-    logger.lifecycle("google-services.json not found: building without Firebase push.")
-}
 
 // Endpoints are resolved at build time so a checkout can target something other
 // than the emulator loopback without editing sources: pass -PbankGatewayUrl=... /
 // -PbankCoreUrl=..., or set them in android/gradle.properties or
-// ~/.gradle/gradle.properties.  The defaults keep the docker-compose stack
-// (core :8000, gateway :8100) reachable from an emulator through 10.0.2.2.
+// ~/.gradle/gradle.properties. The defaults reach the local Core and Gateway
+// from the emulator through 10.0.2.2.
 // Anything other than loopback should be TLS: network_security_config.xml only
 // permits cleartext for 10.0.2.2/localhost/127.0.0.1.
 fun resolvedEndpoint(property: String, fallback: String): String {
@@ -53,13 +34,12 @@ android {
         versionName = "1.0.0"
 
         // The emulator reaches the developer machine through 10.0.2.2, so the
-        // two backends defined in docker-compose (core :8000, gateway :8100)
+        // local services (core :8000, gateway :8100)
         // are addressable without a reverse proxy during development.  A real
         // deployment overrides these with its TLS endpoints (see
         // resolvedEndpoint above).
         buildConfigField("String", "GATEWAY_BASE_URL", "\"$gatewayUrl\"")
         buildConfigField("String", "CORE_BASE_URL", "\"$coreUrl\"")
-        buildConfigField("boolean", "STANDALONE_MODE", standaloneMode.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -79,7 +59,6 @@ android {
             matchingFallbacks += listOf("debug")
             buildConfigField("String", "GATEWAY_BASE_URL", "\"http://127.0.0.1:18810/\"")
             buildConfigField("String", "CORE_BASE_URL", "\"http://127.0.0.1:18800/\"")
-            buildConfigField("boolean", "STANDALONE_MODE", "false")
         }
     }
     testBuildType = if (scenarioTests) "scenario" else "debug"
@@ -128,20 +107,11 @@ dependencies {
     implementation(libs.okhttp.logging)
     testImplementation(libs.junit4)
 
-    // Push notifications.  The google-services plugin is applied conditionally at
-    // the top of this file: it fails the build outright when google-services.json
-    // is missing, so it only activates once that file is present, and a checkout
-    // without a Firebase project still compiles and runs (push degrades quietly).
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.messaging)
-
-    // Instrumented UI tests.  They need the banking stack running on the host
-    // (10.0.2.2); see app/src/androidTest/.../LoginAndChatUiTest.kt.
+    // Instrumented UI tests need the local banking services running on the host.
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(libs.androidx.test.rules)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     add("scenarioImplementation", libs.androidx.compose.ui.test.manifest)
 }

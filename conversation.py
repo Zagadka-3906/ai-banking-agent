@@ -91,9 +91,8 @@ APPROVAL_MAX_ATTEMPTS = _env_int("BANK_APPROVAL_MAX_ATTEMPTS", 5, 1, 20)
 TURN_CACHE_TTL_SECONDS = _env_int("BANK_TURN_CACHE_TTL_SECONDS", 900, 60, 86_400)
 TURN_CACHE_MAX_RECORDS = _env_int("BANK_TURN_CACHE_MAX_RECORDS", 2_000, 16, 200_000)
 
-# Namespace for the thread id.  Keeps the same principal's conversations on
-# different channels (app vs IM) from colliding in the checkpointer.
-CHANNEL_NAMESPACE = os.getenv("BANK_CHANNEL_ID", "app").strip() or "app"
+# Namespace for Android conversation thread ids in the checkpointer.
+CHANNEL_NAMESPACE = "app"
 
 _CONVERSATION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 

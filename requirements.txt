@@ -1,5 +1,4 @@
-# Runtime pins verified with Python 3.12 on 2026-09-15 (security upgrade pass,
-# see docs/dependency-upgrade.md for the audit trail).
+# Runtime pins verified with Python 3.12 for the local demo.
 fastapi==0.141.1
 # starlette is pinned explicitly: it is a FastAPI transitive dependency with
 # its own CVE history, so pinning keeps it inside the pip-audit surface.

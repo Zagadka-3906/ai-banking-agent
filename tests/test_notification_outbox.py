@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import pytest
-import threading
 import copy
 import json
-from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 
 import main
-from notification_outbox import OUTBOX, enqueue, dispatch
-from notifications import PushResult
+from notification_outbox import OUTBOX, enqueue
 
 
 @pytest.fixture()
@@ -20,116 +17,23 @@ def client():
     main.reset_state()
 
 
-def test_outbox_stable_event_and_retry(monkeypatch):
+def session_headers(client, user_id="user_zhang"):
+    response = client.post("/api/v1/auth/login", json={"user_id": user_id, "password": "Bank@2026"})
+    assert response.status_code == 200, response.text
+    return {"X-Session-Token": response.json()["session_token"]}
+
+
+def test_outbox_deduplicates_event_ids():
     OUTBOX.clear()
     row = enqueue("AA:SPL1:user_b", owner_id="user_a", recipient_id="user_b", split_id="SPL1", amount=10, message="AA")
     assert enqueue("AA:SPL1:user_b", owner_id="user_a", recipient_id="user_b", split_id="SPL1", amount=10, message="AA") is row
-
-    class Failing:
-        name = "fake"
-        def send(self, tokens, **kwargs):
-            return PushResult(failed=1, detail="offline", provider="fake")
-
-    monkeypatch.setattr("notification_outbox.push_tokens_for", lambda _: ["token"])
-    assert dispatch(transport=Failing())[0]["status"] == "RETRY"
-
-
-def test_success_is_sent_once_and_concurrent_dispatch_claims_once(monkeypatch):
-    OUTBOX.clear()
-    enqueue("AA:S:U", owner_id="a", recipient_id="u", split_id="S", amount=1, message="AA")
-    monkeypatch.setattr("notification_outbox.push_tokens_for", lambda _: ["token"])
-    calls = 0
-    entered = threading.Event()
-    release = threading.Event()
-
-    class Slow:
-        name = "fake"
-        def send(self, tokens, **kwargs):
-            nonlocal calls
-            calls += 1
-            entered.set()
-            release.wait(timeout=2)
-            return PushResult(delivered=1, provider="fake")
-
-    result = []
-    threads = [threading.Thread(target=lambda: result.append(dispatch(transport=Slow()))) for _ in range(2)]
-    threads[0].start()
-    assert entered.wait(timeout=2)
-    threads[1].start()
-    threading.Event().wait(0.05)
-    release.set()
-    for thread in threads:
-        thread.join(timeout=3)
-    assert calls == 1
-    assert OUTBOX[0]["status"] == "SENT"
-    assert dispatch(transport=Slow()) == []
-
-
-def test_retry_waits_until_due_then_fails_with_controlled_error(monkeypatch):
-    OUTBOX.clear()
-    row = enqueue("AA:R:U", owner_id="a", recipient_id="u", split_id="R", amount=1, message="AA")
-    monkeypatch.setattr("notification_outbox.push_tokens_for", lambda _: ["token"])
-    class Failing:
-        name = "fake"
-        def send(self, tokens, **kwargs):
-            return PushResult(failed=1, detail="SECRET_PROVIDER_RESPONSE", provider="fake")
-    dispatch(transport=Failing())
-    row["next_attempt_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    assert dispatch(transport=Failing()) == []
-    row["next_attempt_at"] = datetime.now(timezone.utc).isoformat()
-    row["attempts"] = 2
-    result = dispatch(transport=Failing())
-    assert result[0]["status"] == "FAILED"
-    assert result[0]["last_error"] == "PROVIDER_FAILURE"
-    assert "SECRET" not in str(result[0])
-
-
-def test_retry_deadline_is_utc_iso_and_enforces_backoff(monkeypatch):
-    OUTBOX.clear()
-    row = enqueue("AA:BACKOFF:U", owner_id="a", recipient_id="u", split_id="BACKOFF", amount=1, message="AA")
-    monkeypatch.setattr("notification_outbox.push_tokens_for", lambda _: ["token"])
-    calls = 0
-
-    class Failing:
-        name = "fake"
-
-        def send(self, tokens, **kwargs):
-            nonlocal calls
-            calls += 1
-            return PushResult(failed=1, detail="offline", provider="fake")
-
-    assert dispatch(transport=Failing())[0]["status"] == "RETRY"
-    deadline = datetime.fromisoformat(row["next_attempt_at"])
-    assert deadline.tzinfo is not None and deadline.utcoffset() is not None
-    assert dispatch(transport=Failing()) == []
-    assert calls == 1
-    row["next_attempt_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-    assert dispatch(transport=Failing())[0]["status"] == "RETRY"
-    assert calls == 2
-
-
-def test_malformed_retry_deadline_is_not_immediately_claimed(monkeypatch):
-    OUTBOX.clear()
-    row = enqueue("AA:MALFORMED:U", owner_id="a", recipient_id="u", split_id="MALFORMED", amount=1, message="AA")
-    row["status"] = "RETRY"
-    row["next_attempt_at"] = "not-a-timestamp"
-    calls = []
-
-    class Recording:
-        name = "fake"
-
-        def send(self, tokens, **kwargs):
-            calls.append(1)
-            return PushResult(delivered=1, provider="fake")
-
-    assert dispatch(transport=Recording()) == []
-    assert calls == []
 
 
 def test_outbox_authenticated_visibility(client):
     enqueue("AA:SPL2:user_b", owner_id="user_zhang", recipient_id="user_b", split_id="SPL2", amount=5, message="AA")
     assert client.get("/api/v1/notifications/outbox").status_code == 401
-    visible = client.get("/api/v1/notifications/outbox", headers={"X-User-Id": "user_zhang"})
+    assert client.get("/api/v1/notifications/outbox", headers={"X-User-Id": "user_zhang"}).status_code == 401
+    visible = client.get("/api/v1/notifications/outbox", headers=session_headers(client))
     assert visible.status_code == 200
     assert visible.json()["data"][0]["event_id"] == "AA:SPL2:user_b"
 
@@ -224,23 +128,19 @@ def test_reset_state_clears_outbox():
     assert OUTBOX == []
 
 
-def test_outbox_visibility_and_dispatch_are_limited_to_owner_or_recipient(client, monkeypatch):
+def test_outbox_visibility_is_limited_to_owner_or_recipient(client):
     owner_row = enqueue("AA:VIS:recipient", owner_id="user_zhang", recipient_id="user_li", split_id="VIS", amount=1, message="safe")
-    outsider_row = enqueue("AA:OTHER:recipient", owner_id="user_other", recipient_id="user_wife", split_id="OTHER", amount=1, message="private")
-    assert client.get("/api/v1/notifications/outbox", headers={"X-User-Id": "user_li"}).json()["data"] == [owner_row]
-    assert client.get("/api/v1/notifications/outbox", headers={"X-User-Id": "user_other"}).json()["data"] == [outsider_row]
-    assert client.get("/api/v1/notifications/outbox", headers={"X-User-Id": "nobody"}).json()["data"] == []
-    monkeypatch.setattr("notification_outbox.push_tokens_for", lambda _: [])
-    assert client.post("/api/v1/notifications/outbox/dispatch", headers={"X-User-Id": "nobody"}).json()["data"] == []
-    assert owner_row["status"] == "PENDING"
+    outsider_row = enqueue("AA:OTHER:recipient", owner_id="user_wife", recipient_id="user_wife", split_id="OTHER", amount=1, message="private")
+    assert client.get("/api/v1/notifications/outbox", headers=session_headers(client, "user_li")).json()["data"] == [owner_row]
+    assert client.get("/api/v1/notifications/outbox", headers=session_headers(client, "user_wife")).json()["data"] == [outsider_row]
+    assert client.get("/api/v1/notifications/outbox", headers=session_headers(client), params={"split_id": "OTHER"}).json()["data"] == []
+    assert owner_row["created_at"]
 
 
-def test_outbox_api_rows_never_expose_delivery_secrets(client):
+def test_outbox_api_rows_never_expose_internal_fields(client):
     row = enqueue("AA:SECRET:user_li", owner_id="user_zhang", recipient_id="user_li", split_id="SECRET", amount=1, message="safe")
-    row["push_token"] = "PUSH_TOKEN_SECRET"
-    row["provider_secret"] = "PROVIDER_SECRET"
-    row["raw_provider_failure"] = "RAW_PROVIDER_FAILURE"
-    body = client.get("/api/v1/notifications/outbox", headers={"X-User-Id": "user_li"}).text
-    assert "PUSH_TOKEN_SECRET" not in body
-    assert "PROVIDER_SECRET" not in body
-    assert "RAW_PROVIDER_FAILURE" not in body
+    row["internal_token"] = "INTERNAL_TOKEN_SECRET"
+    row["internal_debug"] = "INTERNAL_DEBUG_SECRET"
+    body = client.get("/api/v1/notifications/outbox", headers=session_headers(client, "user_li")).text
+    assert "INTERNAL_TOKEN_SECRET" not in body
+    assert "INTERNAL_DEBUG_SECRET" not in body

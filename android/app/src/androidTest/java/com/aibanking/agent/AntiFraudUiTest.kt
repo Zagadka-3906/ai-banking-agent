@@ -1,6 +1,5 @@
 package com.aibanking.agent
 
-import android.Manifest
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -12,7 +11,6 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.ui.UiTags
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -24,9 +22,6 @@ import org.junit.runner.RunWith
 class AntiFraudUiTest {
     @get:Rule
     val ui = createAndroidComposeRule<MainActivity>()
-
-    @get:Rule
-    val notifications: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
 
     @Test
     fun suspicious_overseas_purchase_requires_red_mfa_and_creates_dispute() {

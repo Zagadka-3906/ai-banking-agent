@@ -431,8 +431,8 @@ def test_enrollment_and_revocation_are_audited(client):
 def test_device_registry_endpoints_require_a_session(client, monkeypatch):
     """The device trust root is not readable or revocable from a bare header.
 
-    Regression: enroll and push-token demanded a session credential while
-    list and revoke accepted a self-asserted ``X-User-Id``, so the red tier's
+    Regression: enroll demanded a session credential while list and revoke
+    accepted a self-asserted ``X-User-Id``, so the red tier's
     trust root was the one part of the surface with no credential behind it.
     """
 

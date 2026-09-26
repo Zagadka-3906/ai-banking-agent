@@ -2,7 +2,6 @@ package com.aibanking.agent.ui.chat
 
 import android.app.Application
 import android.os.Build
-import com.aibanking.agent.BuildConfig
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aibanking.agent.data.CardView
@@ -24,7 +23,6 @@ import com.aibanking.agent.data.TaskRepository
 import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.data.TurnEnvelope
 import com.aibanking.agent.data.WealthRepository
-import com.aibanking.agent.push.PushNotifications
 import com.aibanking.agent.security.DeviceKeyManager
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
@@ -374,7 +372,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Complete red-tier and push setup without blocking the successful login. */
+    /** Complete red-tier device setup without blocking the successful login. */
     private fun initializeDeviceAfterLogin(token: String, principal: String) {
         viewModelScope.launch {
             val enrolledDeviceId = enrollDevice(token, principal)
@@ -391,9 +389,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             deviceId = enrolledDeviceId
             sessionStore.saveDeviceId(enrolledDeviceId)
             _state.update { it.copy(notice = "本机设备已注册，高风险操作可用") }
-            // Notifications are best-effort and have their own bounded wait.
-            // Their availability must not affect navigation or red-tier setup.
-            registerPushToken(enrolledDeviceId, token, principal)
         }
     }
 
@@ -410,21 +405,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         device.deviceId.takeIf { it.isNotBlank() }
     } catch (failure: Exception) {
         null
-    }
-
-    /**
-     * Hand the server this device's notification token, if there is one.
-     *
-     * Reads the token off the main thread (the FCM lookup blocks) and stays
-     * silent when push is unconfigured: a build without a Firebase project has
-     * no token to register, and inventing one would make the server's delivery
-     * log claim something that cannot happen.
-     */
-    private suspend fun registerPushToken(device: String, sessionToken: String, principal: String) = withContext(Dispatchers.IO) {
-        if (BuildConfig.STANDALONE_MODE) return@withContext
-        val token = PushNotifications.currentToken(getApplication()) ?: return@withContext
-        runCatching { devices.registerPushToken(device, token, principal, sessionToken) }
-        Unit
     }
 
     /**

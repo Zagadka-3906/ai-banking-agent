@@ -1,14 +1,11 @@
 """Device-registry durability tests.
 
-The registry lives in memory unless ``BANK_DEVICE_STORE_PATH`` is configured, and
-that default has a consequence worth testing explicitly: a restart forgets every
-enrolled device *and* every delivery token, so push silently stops working until
-each user signs in again.  These tests cover the opt-in file that fixes it, and -
-because the file holds device public keys and push addresses - every way it can
-be abused:
+The registry lives in memory unless ``BANK_DEVICE_STORE_PATH`` is configured.
+A restart otherwise forgets enrolled signing devices. These tests cover the
+opt-in integrity-protected file:
 
 * an unconfigured deployment must stay side-effect free (no file, memory only);
-* enrollment, revocation and the delivery token must all survive a reload;
+* enrollment and revocation must survive a reload;
 * a forged or truncated file must be refused *and* frozen, so a later enrollment
   cannot overwrite the evidence;
 * a record whose id does not match the key it carries must be refused even when
@@ -126,18 +123,15 @@ def test_a_missing_file_starts_from_an_empty_registry(store):
 # ---------------------------------------------------------------------------
 
 
-def test_enrollment_and_the_delivery_token_survive_a_restart(store):
+def test_enrollment_survives_a_restart(store):
     device_id = enroll()
-    security.attach_push_token(device_id, "fcm-token-1", user_id="user_zhang")
 
     summary = simulate_restart(store)
 
     assert summary["loaded_devices"] == 1
     assert summary.get("rejected") is False
     assert device_id in security.DEVICES
-    # The point of the whole exercise: after a restart the server still knows who
-    # to notify, instead of auditing NOT_SENT until the user logs in again.
-    assert [row["token"] for row in security.push_tokens_for("user_zhang")] == ["fcm-token-1"]
+    assert security.DEVICES[device_id]["user_id"] == "user_zhang"
 
 
 def test_a_revocation_survives_a_restart(store):
@@ -147,7 +141,6 @@ def test_a_revocation_survives_a_restart(store):
     simulate_restart(store)
 
     assert security.DEVICES[device_id]["status"] == security.DEVICE_STATUS_REVOKED
-    assert security.push_tokens_for("user_zhang") == []
     device = security.list_devices("user_zhang")[0]
     assert device["status"] == security.DEVICE_STATUS_REVOKED
 
@@ -346,7 +339,6 @@ def test_the_written_file_is_valid_json_with_one_digest(store):
     """A reader must be able to verify the file without the running process."""
 
     enroll()
-    security.attach_push_token(next(iter(security.DEVICES)), "t", user_id="user_zhang")
 
     snapshot = read_store(store)
 

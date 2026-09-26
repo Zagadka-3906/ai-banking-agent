@@ -1,8 +1,5 @@
 package com.aibanking.agent
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,8 +10,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aibanking.agent.ui.anim.pageSlideSpec
@@ -36,7 +31,6 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        requestNotificationPermissionIfNeeded()
         setContent {
             BankAgentTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -77,34 +71,7 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        if (!granted) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                NOTIFICATION_PERMISSION_REQUEST,
-            )
-        }
-    }
 }
-
-/**
- * Ask for the notification permission once, on the Android versions that need it.
- *
- * A push notification that never arrives because the permission was never
- * requested looks exactly like push being broken, so the request belongs next to
- * the code that depends on it.
- *
- * The request code is a small literal on purpose.  This activity extends
- * `FragmentActivity` (BiometricPrompt needs it), and `FragmentActivity` rejects
- * request codes above 0xFFFF - which is what the activity-result registry can
- * hand out, and doing this through `rememberLauncherForActivityResult` crashed
- * the app on launch with "Can only use lower 16 bits for requestCode".
- */
-private const val NOTIFICATION_PERMISSION_REQUEST = 1001
 
 /** 根级三个 Screen；顺序即层级深度，登录成功为前进、登出为返回。 */
 private enum class RootPage { RESTORING, LOGIN, CHAT }

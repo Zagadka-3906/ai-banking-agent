@@ -1,6 +1,5 @@
 package com.aibanking.agent
 
-import android.Manifest
 import android.app.Application
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -18,7 +17,6 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.chat.CardsUi
@@ -48,11 +46,6 @@ class CardsUiTest {
 
     @get:Rule
     val ui = createAndroidComposeRule<MainActivity>()
-
-    /** See [LoginAndChatUiTest] for why the permission is pre-granted. */
-    @get:Rule
-    val notifications: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
-
     @Test
     fun an_added_card_appears_in_the_list() {
         openCardsAndWaitForRows()

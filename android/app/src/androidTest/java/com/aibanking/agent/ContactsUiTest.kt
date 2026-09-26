@@ -1,27 +1,19 @@
 package com.aibanking.agent
 
-import android.Manifest
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.GrantPermissionRule
 import com.aibanking.agent.ui.UiTags
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.rules.RuleChain
-import org.junit.rules.TestRule
 
 @RunWith(AndroidJUnit4::class)
 class ContactsUiTest {
-    private val notifications: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
-    private val ui = createAndroidComposeRule<MainActivity>()
-
-    @get:Rule
-    val rules: TestRule = RuleChain.outerRule(notifications).around(ui)
+    @get:Rule val ui = createAndroidComposeRule<MainActivity>()
 
     @Test
     fun wealth_and_cards_can_navigate_to_contacts() {

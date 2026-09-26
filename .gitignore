@@ -23,7 +23,7 @@ agent_conversations.sqlite3*
 *.sqlite3-wal
 .tmp-conversations.sqlite3*
 
-# 设备注册表落盘文件：内容是设备公钥与推送令牌，属敏感材料，不入库
+# 设备注册表落盘文件：内容是设备公钥，属敏感材料，不入库
 agent_devices.json*
 devices.json.tmp
 
@@ -42,18 +42,13 @@ android/captures/
 *.apk
 *.aab
 
-# Firebase 客户端配置与推送服务账号凭据。
-# google-services.json 严格来说不是密钥（其中的 API key 受包名+签名指纹限制），
-# 但它绑定某一个 Firebase 项目，且 CI 在没有它时应当仍能构建（推送自动降级）。
-# 本地放入 android/app/google-services.json 即自动启用推送，不要提交。
+# 本机凭据目录与服务账号私钥不得提交
 android/app/google-services.json
-# 服务账号私钥：这是真正的凭据，绝不能入库。
 *firebase-adminsdk*.json
 *service-account*.json
-# docker compose 的只读挂载源：放进去的服务账号私钥同样不入库。
 secrets/
 
 .tmp-screenshots/
 
-# 实测过程的临时录屏与中间帧（仅本地，证据截图已复制到 docs/testing-evidence/）
+# 实测过程的临时录屏与中间帧
 test-shots/
