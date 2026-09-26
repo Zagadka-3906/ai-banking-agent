@@ -19,7 +19,7 @@ from fastapi import APIRouter, Header, Request
 
 from agent import _local_parse
 from bank_tools import BankAPIError, BankClient
-from feishu_cards import FeishuReply, query_card
+from feishu_cards import FeishuReply, handoff_card, query_card
 from planner import Intent
 from security import SecurityError, audit_event, sanitize_text
 
@@ -68,7 +68,7 @@ def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[
     }
     path = paths.get(intent)
     if not path:
-        return "APP_HANDOFF", "飞书目前只支持余额、账单、卡片、订阅和理财产品查询。账户变更请在 Android 应用中重新发起并确认。"
+        return "APP_HANDOFF", handoff_card()
     try:
         response = BankClient(user_id=principal, session_token=session_token)._request("GET", path, read_only=True)
         result = response.json()

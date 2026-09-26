@@ -58,6 +58,14 @@ def _rows(result: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def handoff_card() -> FeishuReply:
+    """Informational card only: IM cannot initiate or authorize writes."""
+    return _card("请在 Android 应用办理", [
+        _div("**这项操作需要在 Android 重新发起**"),
+        _div("飞书私聊仅提供余额、账单、卡片、订阅和理财产品查询。请在 Android 登录后查看操作详情，并按风险等级完成确认或验证。"),
+    ], color="orange")
+
+
 def query_card(intent: str, scope: str, result: dict[str, Any]) -> FeishuReply:
     """Mirror Android's information hierarchy using Feishu's native card parts."""
     period = _SCOPE[scope]

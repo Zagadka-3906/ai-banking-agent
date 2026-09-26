@@ -47,7 +47,10 @@ def test_binding_read_only_replay_and_unbind(monkeypatch):
         assert "¥500.00" in json.dumps(result[1].content, ensure_ascii=False)
         assert read.call_args.args == ("GET", "accounts/user_zhang/balance")
         assert feishu_im.process_message(event("查余额", event_id="evt-3")) is None
-        assert "Android" in feishu_im.process_message(event("转账 300 元", event_id="evt-4"))[1]
+        handoff = feishu_im.process_message(event("转账 300 元", event_id="evt-4"))[1]
+        assert isinstance(handoff, FeishuReply)
+        assert handoff.content["header"]["title"]["content"] == "请在 Android 应用办理"
+        assert not any(item.get("tag") == "action" for item in handoff.content["elements"])
         assert read.call_count == 1
         assert all(call.args[0] == "GET" for call in read.call_args_list)
         assert client.delete("/api/v1/im/feishu/binding", headers={"X-Session-Token": "session"}).json()["removed"] == 1
