@@ -27,11 +27,13 @@ import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.security.DeviceKeyManager
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.math.BigDecimal
@@ -215,6 +217,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var sessionToken: String? = null
     private var deviceId: String? = null
 
+    /** 正在跑的滑动续期任务，以及核心给出的到期时刻（毫秒）。 */
+    private var sessionRenewal: Job? = null
+    private var sessionExpiresAtMillis = 0L
+
+    /** 最近一次真实用户手势的时刻：续期只发生在有人正在用这台设备的时候。 */
+    private var lastInteractionMillis = System.currentTimeMillis()
+
+    /**
+     * 会话过期时被保留下来的未完成问卷属于谁。
+     *
+     * 问卷内容是用户自己一题一题填的，过期不等于作废；但它只对同一个人有意义，
+     * 所以重新登录时要核对身份，另一个用户不能继承上一个人的答题进度。
+     */
+    private var expiredQuizOwner: String? = null
+
     /**
      * 进行中的创建提交（开卡 / 加联系人），保留到成功为止。
      *
@@ -249,6 +266,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         conversationId = sessionStore.conversationId(),
         messages = sessionStore.messages(),
         quiz = sessionStore.quiz(),
+        expiresAt = sessionStore.sessionExpiresAt(),
     )
 
     private fun restoreSession(stored: StoredSession) {
@@ -282,7 +300,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 quiz = parseStoredQuiz(stored.quiz),
             )
         }
-        verifyRestoredSession(storedToken)
+        verifyRestoredSession(storedToken, stored.expiresAt)
     }
 
     /**
@@ -296,14 +314,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * once at start-up costs one round-trip and turns that into an honest login
      * screen.  An unreachable core is deliberately *not* treated as expiry.
      */
-    private fun verifyRestoredSession(token: String) {
+    private fun verifyRestoredSession(token: String, expiresAtEpochSeconds: Long) {
         viewModelScope.launch {
             when (withContext(Dispatchers.IO) { login.check(token) }) {
                 is SessionCheck.Expired -> {
                     sessionToken = null
                     sessionStore.clear()
-                    _state.update {
-                        it.copy(
+                    stopSessionRenewal()
+                    _state.update { previous ->
+                        // 启动时发现凭证已死：问卷进度仍然留给同一个人重新登录后接着答。
+                        expiredQuizOwner = previous.principal.takeIf { previous.quiz != null }
+                        previous.copy(
                             authenticated = false,
                             principal = "",
                             busy = false,
@@ -313,14 +334,84 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 // Still valid, or the core could not be reached: keep it either way.
-                else -> Unit
+                else -> startSessionRenewal(expiresAtEpochSeconds)
             }
         }
     }
 
-    fun onInputChange(value: String) = _state.update { it.copy(input = value) }
+    /**
+     * Slide the session forward while the app holds one.
+     *
+     * The core's window is short on purpose, but an absolute expiry signs out a
+     * user who is mid-form: filling in the risk questionnaire costs several
+     * minutes and used to be wiped at the 15-minute mark.  Renewing at half the
+     * remaining life costs one request per window, and the credential still dies
+     * at the core's own expiry once this client stops asking.
+     */
+    private fun startSessionRenewal(expiresAtEpochSeconds: Long) {
+        stopSessionRenewal()
+        sessionExpiresAtMillis = expiresAtEpochSeconds * 1000L
+        if (sessionExpiresAtMillis <= System.currentTimeMillis()) {
+            // No window was recorded (a credential stored before the expiry was
+            // persisted): let it lapse as before rather than poll the core.
+            return
+        }
+        sessionRenewal = viewModelScope.launch {
+            while (isActive) {
+                val remaining = sessionExpiresAtMillis - System.currentTimeMillis()
+                if (remaining <= 0) return@launch
+                delay(maxOf(remaining / 2, MIN_RENEW_DELAY_MILLIS))
+                if (sessionToken == null || !_state.value.authenticated) return@launch
+                // 空闲续期：手机放在桌上没人碰，会话就该按原来的短 TTL 到期，
+                // 不能让一个后台循环把它无限延长——那等于取消了空闲超时。
+                if (System.currentTimeMillis() - lastInteractionMillis > IDLE_RENEW_LIMIT_MILLIS) return@launch
+                if (renewSession()) {
+                    _state.update { if (it.notice == SESSION_EXPIRING_NOTICE) it.copy(notice = null) else it }
+                    continue
+                }
+                val left = sessionExpiresAtMillis - System.currentTimeMillis()
+                if (left in 1..SESSION_WARNING_MILLIS) {
+                    _state.update { it.copy(notice = SESSION_EXPIRING_NOTICE) }
+                }
+                delay(RENEW_RETRY_MILLIS)
+            }
+        }
+    }
 
-    fun onOtpChange(value: String) = _state.update { it.copy(otp = value.filter(Char::isDigit).take(8)) }
+    /** Swap in a successor credential; false when the core did not hand one over. */
+    private suspend fun renewSession(): Boolean {
+        val current = sessionToken ?: return false
+        val renewed = withContext(Dispatchers.IO) { login.renew(current) } ?: return false
+        // A logout or a second login may have landed while the request was out.
+        if (sessionToken != current) return false
+        sessionToken = renewed.sessionToken
+        sessionExpiresAtMillis = renewed.expiresAt * 1000L
+        withContext(Dispatchers.IO) {
+            sessionStore.saveSession(renewed.sessionToken, renewed.userId, conversationId, renewed.expiresAt)
+        }
+        return true
+    }
+
+    private fun stopSessionRenewal() {
+        sessionRenewal?.cancel()
+        sessionRenewal = null
+        sessionExpiresAtMillis = 0L
+    }
+
+    fun onInputChange(value: String) {
+        markUserActivity()
+        _state.update { it.copy(input = value) }
+    }
+
+    fun onOtpChange(value: String) {
+        markUserActivity()
+        _state.update { it.copy(otp = value.filter(Char::isDigit).take(8)) }
+    }
+
+    /** 记录一次真实手势，作为“这台设备有人在用”的续期依据。 */
+    private fun markUserActivity() {
+        lastInteractionMillis = System.currentTimeMillis()
+    }
 
     fun dismissMessages() = _state.update { it.copy(error = null, notice = null) }
 
@@ -342,7 +433,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val session = login.login(principal, password, otp)
                 sessionToken = session.sessionToken
-                sessionStore.saveSession(session.sessionToken, session.userId, conversationId)
+                markUserActivity()
+                sessionStore.saveSession(session.sessionToken, session.userId, conversationId, session.expiresAt)
+                startSessionRenewal(session.expiresAt)
+                // 会话过期时保留下来的问卷只属于同一个人：换个用户登录必须丢弃。
+                val carriedQuiz = _state.value.quiz?.takeIf { expiredQuizOwner == session.userId }
+                expiredQuizOwner = null
                 // A valid banking session is enough to enter the app. Device-key
                 // enrollment and FCM are optional post-login work: on some real
                 // devices Play Services can take seconds (or never answer), and
@@ -359,7 +455,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         authenticated = true,
                         messages = listOf(welcome()),
                         otpRequiredAtLogin = false,
-                        notice = "会话有效期 ${session.ttlSeconds} 秒；正在初始化本机安全能力",
+                        quiz = carriedQuiz,
+                        notice = if (carriedQuiz != null) {
+                            "会话已重新建立，未完成的测评已恢复"
+                        } else {
+                            "会话有效期 ${session.ttlSeconds} 秒；正在初始化本机安全能力"
+                        },
                     )
                 }
                 persistMessages()
@@ -384,8 +485,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val enrolledDeviceId = enrollDevice(token, principal)
             // Logout or a second login may have replaced this session while the
             // network/Keystore work was running. Never repopulate cleared local
-            // state, nor publish a notice for another principal.
-            if (sessionToken != token || !_state.value.authenticated || _state.value.principal != principal) {
+            // state, nor publish a notice for another principal.  A renewal is
+            // not a replacement: it keeps the same signed-in principal, so the
+            // credential being different no longer means this work is stale.
+            if (sessionToken == null || !_state.value.authenticated || _state.value.principal != principal) {
                 return@launch
             }
             if (enrolledDeviceId == null) {
@@ -430,6 +533,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             sessionToken = null
             sessionStore.clear()
+            stopSessionRenewal()
+            expiredQuizOwner = null
             conversationId = UUID.randomUUID().toString().replace("-", "").take(20)
             _state.value = ChatUiState()
         }
@@ -888,6 +993,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 点选一个选项：记录并推进；答完第 8 题自动汇成一条消息提交。 */
     fun onQuizAnswer(question: QuizQuestionUi, key: String) {
+        markUserActivity()
         val quiz = _state.value.quiz ?: return
         if (question.number != quiz.currentQuestion?.number) return
         val answers = quiz.answers + (question.number to key)
@@ -983,6 +1089,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun sendInternal(text: String, echoUser: Boolean = true) {
+        markUserActivity()
         val current = _state.value
         val principal = current.principal
         // A placeholder assistant bubble carries the live stage label and is then
@@ -1153,6 +1260,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resolve(approval: ApprovalView, decision: String) {
+        markUserActivity()
         val principal = _state.value.principal
         _state.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
@@ -1186,12 +1294,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Drop the credential but keep the user's unfinished form.
+     *
+     * A TTL expiry is not the user abandoning the questionnaire: they were on
+     * question 8 and used to lose all of it.  The credential and the transcript
+     * go (they belong to the authenticated session); the in-progress quiz stays
+     * in state, tagged with its owner, so the same person gets it back after
+     * re-login and nobody else can.
+     */
+    private fun expiredSessionState(state: ChatUiState): ChatUiState {
+        sessionToken = null
+        sessionStore.clear()
+        stopSessionRenewal()
+        expiredQuizOwner = state.principal.takeIf { state.quiz != null }
+        return ChatUiState(error = "登录状态已失效，请重新登录", quiz = state.quiz)
+    }
+
     private fun applyFailure(failure: GatewayException) {
         _state.update { state ->
             if (failure.sessionExpired) {
-                sessionToken = null
-                sessionStore.clear()
-                ChatUiState(error = "登录状态已失效，请重新登录")
+                expiredSessionState(state)
             } else {
                 // 审批/验证失败时短信验证码已经被核心消费或拒绝，字段必须清空：
                 // 留着它，用户再次点“确认执行”只会把同一个失效的码再送一次。
@@ -1216,9 +1339,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun applyPanelFailure(failure: GatewayException) {
         _state.update { state ->
             if (failure.sessionExpired) {
-                sessionToken = null
-                sessionStore.clear()
-                ChatUiState(error = "登录状态已失效，请重新登录")
+                expiredSessionState(state)
             } else {
                 state.copy(panelBusy = false, panelError = failure.message, error = failure.message)
             }
@@ -1245,6 +1366,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         /** Transcript bound kept sealed in preferences - a chat log is not a ledger. */
         const val MAX_PERSISTED_MESSAGES = 100
+
+        /** 续期节奏：半程续期、失败后 30 秒重试、到期前 2 分钟开始提醒。 */
+        const val MIN_RENEW_DELAY_MILLIS = 5_000L
+        const val RENEW_RETRY_MILLIS = 30_000L
+        const val SESSION_WARNING_MILLIS = 120_000L
+        const val SESSION_EXPIRING_NOTICE = "会话即将过期，正在重试续期；请先确认或保存未完成的操作"
+
+        /** 超过这个时长没有任何手势就视为空闲，不再续期。 */
+        const val IDLE_RENEW_LIMIT_MILLIS = 15 * 60 * 1000L
     }
 }
 
@@ -1333,6 +1463,7 @@ private class StoredSession(
     val conversationId: String?,
     val messages: String?,
     val quiz: String?,
+    val expiresAt: Long = 0,
 )
 
 /**

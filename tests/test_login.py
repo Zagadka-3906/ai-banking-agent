@@ -13,6 +13,7 @@ turn it into a real boundary:
 """
 
 import os
+import time
 
 import pytest
 
@@ -199,6 +200,44 @@ def test_logout_revokes_the_presented_session_only(client):
 def test_logout_requires_a_session_credential(client):
     assert client.post("/api/v1/auth/logout").status_code == 401
     assert client.post("/api/v1/auth/logout", headers={"X-Session-Token": "not-a-real-token"}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# sliding renewal: an in-use session is extended, a lapsed one is not
+# ---------------------------------------------------------------------------
+
+
+def test_renew_slides_a_live_session_forward(client):
+    short = security.issue_session_token("user_zhang", ttl_seconds=60)
+    old_token = short["session_token"]
+    old_expiry = security.SESSION_TOKENS[old_token]["expires_at"]
+
+    response = client.post("/api/v1/auth/session/renew", headers={"X-Session-Token": old_token})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["user_id"] == "user_zhang"
+    renewed = body["session_token"]
+    assert renewed != old_token
+    assert security.SESSION_TOKENS[renewed]["expires_at"] > old_expiry
+
+    # The presented credential is deliberately not revoked: a lost renewal
+    # response must not sign the user out, and the old token still dies at its
+    # own (earlier) expiry.
+    balance = "/api/v1/accounts/user_zhang/balance"
+    assert client.get(balance, headers={"X-Session-Token": old_token}).status_code == 200
+    assert client.get(balance, headers={"X-Session-Token": renewed}).status_code == 200
+    assert any(row["action"] == "SESSION_RENEWED" for row in security.AUDIT_LOGS)
+
+
+def test_renew_cannot_revive_a_lapsed_session(client):
+    assert client.post("/api/v1/auth/session/renew").status_code == 401
+    assert client.post("/api/v1/auth/session/renew", headers={"X-Session-Token": "not-a-real-token"}).status_code == 401
+
+    lapsed = security.issue_session_token("user_zhang", ttl_seconds=60)
+    security.SESSION_TOKENS[lapsed["session_token"]]["expires_at"] = time.time() - 1
+    refused = client.post("/api/v1/auth/session/renew", headers={"X-Session-Token": lapsed["session_token"]})
+    assert refused.status_code == 401, refused.text
+    assert refused.json()["detail"]["code"] == "SESSION_EXPIRED"
 
 
 # ---------------------------------------------------------------------------

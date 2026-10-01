@@ -1178,6 +1178,22 @@ def issue_session_token(user_id: str, *, ttl_seconds: Optional[int] = None, requ
     return {"session_token": token, "expires_at": now + ttl, "user_id": principal, "ttl_seconds": ttl}
 
 
+def renew_session(token: Optional[str], *, request_id: Optional[str] = None) -> dict[str, Any]:
+    """Slide an in-use session's window forward without a fresh login.
+
+    A signed token carries its own ``exp`` and cannot be edited in place, so
+    renewal mints a successor for the same principal.  The presented token is
+    deliberately *not* revoked: a lost response must not sign the user out, and
+    the old token still dies at its original expiry.  Only a session that is
+    valid right now can be extended - an expired one must authenticate again.
+    """
+
+    principal = resolve_session(token)
+    issued = issue_session_token(principal, request_id=request_id)
+    audit_event("SESSION_RENEWED", user_id=principal, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"ttl": issued["ttl_seconds"]})
+    return issued
+
+
 def hash_password(password: Any) -> str:
     """Hash a plaintext password with argon2id.
 

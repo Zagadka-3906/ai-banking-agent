@@ -258,7 +258,14 @@ def _amount_from_text(text: str) -> Optional[float]:
         multiplier = {"万": 10000, "千": 1000}.get(match.group(2), 1)
     if not match:
         match = re.search(r"(?:¥|￥)\s*" + number + r"(?![\d.,])", money_text)
-    if not match and re.search(r"转账|转给|汇给|申购|赎回|锁定|预留|分摊|调额|额度|改成|改为|改到|设为|调整为|转\s*[+\-]?\d", money_text):
+    if not match and re.search(
+        # A bare number is money only next to a money verb.  The measure word
+        # 笔 and the limit verbs 调到/调至/限额 are part of that context: users
+        # say "再转一笔300" and "限额调到8000" without repeating 元.
+        r"转账|转给|汇给|申购|赎回|锁定|预留|分摊|调额|额度|限额|改成|改为|改到|调到|调至|设为|设置为|调整为"
+        r"|转\s*[+\-]?\d|(?:一|1)?笔\s*[+\-]?\d",
+        money_text,
+    ):
         match = re.search(r"(?<![A-Za-z0-9.,+\-])" + number + r"(?![A-Za-z0-9.,])", money_text)
     if match:
         # Do not reinterpret the positive suffix of a signed/approximate value.
@@ -334,9 +341,22 @@ def _scheduled_at_from_text(text: str) -> Optional[str]:
     now = datetime.now(timezone(timedelta(hours=8)))
     date_value = None
     explicit = re.search(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})(?:日|号)?", text)
+    month_day = re.search(r"(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)?", text)
     try:
         if explicit:
             date_value = now.replace(year=int(explicit.group(1)), month=int(explicit.group(2)), day=int(explicit.group(3)))
+        elif month_day:
+            # A bare month-day ("10月5号") carries no year. Take its next
+            # occurrence: an anniversary or birthday that has already passed
+            # this year means the one next year, never a date in the past.
+            for year in (now.year, now.year + 1):
+                try:
+                    candidate = now.replace(year=year, month=int(month_day.group(1)), day=int(month_day.group(2)))
+                except ValueError:
+                    continue
+                if candidate.date() >= now.date():
+                    date_value = candidate
+                    break
         else:
             weekday = re.search(r"(下下周|下周|下星期|本周|这周|周|星期)([一二三四五六日天])", text)
             if weekday:
@@ -812,6 +832,12 @@ def _local_parse(text: str) -> dict[str, Any]:
         intent = Intent.WEALTH_RISK_ASSESSMENT.value
     elif any(x in text for x in ("对比理财", "比较理财", "产品对比", "比较产品")) or (len(product_ids) >= 2 and any(x in text for x in ("对比", "比较"))):
         intent = Intent.WEALTH_COMPARE.value
+    elif "持仓" in text or re.search(r"我(?:都)?(?:买了|持有|投了)\s*(?:什么|哪些|多少)", text):
+        # What the customer already owns is a different question from what the
+        # bank is selling; answering it with the product catalogue hides the
+        # result of the purchase or redemption they just made.  The test is
+        # deliberately narrow: "推荐适合我的理财" is a shelf question.
+        intent = Intent.WEALTH_HOLDINGS.value
     elif re.fullmatch(r"(?:投资)?理财[。！？!?]?", text.strip()) or any(x in text for x in ("在售", "理财列表", "理财产品列表")) or (
         any(x in text for x in ("理财", "产品")) and any(x in text for x in ("查看", "查询", "有哪些", "列表", "在售", "多少钱起"))
     ):
@@ -860,6 +886,11 @@ def _local_parse(text: str) -> dict[str, Any]:
     if intent == Intent.SPLIT_BILL.value:
         target = None
         participants = _participants_from_text(text)
+    if intent == Intent.WEALTH_REDEEM.value and re.search(r"(?:全部|全额|所有|都)\s*(?:赎回|卖出|退掉|撤出)|清仓", text):
+        # "全部赎回" states the amount by reference to the holding, not by a
+        # number.  The principal is read from the core before the precheck, so
+        # the approval card shows a real figure rather than a guessed one.
+        slots["redeem_all"] = True
     # ``event_at`` is kept separately for the cross-scene API.  It may be an
     # explicit calendar date or a user-supplied relative date such as “下周”.
     event_at = scheduled_at if intent == Intent.CROSS_SCENE_LOCK.value else None
@@ -1029,7 +1060,12 @@ def _slot_answer(text: str, slot: str, parsed: Mapping[str, Any]) -> Any:
             return _amount_from_text(chinese.group(1) + "元")
         return None
     if slot in {"scheduled_at", "event_at"}:
-        return parsed.get("scheduled_at") or parsed.get("event_at")
+        stated = parsed.get("scheduled_at") or parsed.get("event_at")
+        if stated:
+            return stated
+        # A bare date answer ("10月5号", "下周六") carries no intent keyword, so
+        # the pending question is the only thing that makes it a date.
+        return _scheduled_at_from_text(text)
     if slot == "target":
         return parsed.get("target")
     if slot == "participants":
@@ -1443,7 +1479,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             labels = {"amount": "分摊总金额", "participants": "至少一位参与人（姓名或手机号）"}
             response = "请补充" + "和".join(labels[item] for item in missing_fields) + "。"
         elif intent == Intent.CROSS_SCENE_LOCK.value and missing_fields:
-            labels = {"target": "生日对象（姓名或关系称呼）", "amount": "需要锁定的金额", "scheduled_at": "生日日期"}
+            labels = {"target": "生日对象（姓名或关系称呼）", "amount": "需要锁定的金额", "scheduled_at": "生日日期（例如 10月5号 或 2026-10-05）"}
             response = "请补充" + "、".join(labels[item] for item in missing_fields) + "。我不会替您猜测。"
         elif intent == Intent.WEALTH_COMPARE.value and "product_ids" in missing_fields:
             if parsed.get("product_ids"):
@@ -1470,8 +1506,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             labels = {
                 "amount": "金额",
                 "target": "对象（收款人/产品/订阅）",
-                "scheduled_at": "日期",
-                "event_at": "日期",
+                "scheduled_at": "日期（例如 明天上午十点 或 10月5号）",
+                "event_at": "日期（例如 明天上午十点 或 10月5号）",
                 "participants": "参与人",
                 "product_ids": "产品编号",
                 "loss_tolerance": "风险承受程度",
@@ -1563,6 +1599,7 @@ _SETTLE_ORDER: dict[str, list[str]] = {
     Intent.BILL_QUERY.value: ["fetch_transactions", "compute_facts"],
     Intent.BILL_ANALYSIS.value: ["fetch_transactions", "compute_facts"],
     Intent.WEALTH_QUERY.value: ["fetch_products"],
+    Intent.WEALTH_HOLDINGS.value: ["fetch_holdings"],
     Intent.WEALTH_RECOMMEND.value: ["fetch_products"],
     Intent.WEALTH_RISK_ASSESSMENT.value: ["risk_assessment"],
     Intent.WEALTH_COMPARE.value: ["compare_products"],
@@ -1716,6 +1753,94 @@ def _settle_unknown_response(state: BankingAgentState) -> dict[str, Any]:
     return response
 
 
+_CARD_TAIL_RE = r"(?:尾号|末四位|后四位)\s*(?:为|是)?\s*([0-9]{4})(?![0-9])"
+# Money-moving intents that settle against one of the user's cards.  With a
+# single active card the core picks it; with several it refuses to guess and
+# the caller must name one.
+_PAYING_CARD_INTENTS = {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.WEALTH_PURCHASE.value}
+
+
+def _card_by_tail(state: BankingAgentState, text: str) -> tuple[Optional[str], Optional[str], bool]:
+    """Resolve a spoken card tail ("尾号3082") to exactly one of the user's cards.
+
+    Returns ``(card_id, message, ask_again)``.  ``ask_again`` separates a gap the
+    user can close by answering (no such tail, or two cards share it) from a
+    failure they cannot (the core did not answer), so only the first becomes a
+    clarification instead of a dead-end error.
+    """
+
+    tail = re.search(_CARD_TAIL_RE, text)
+    if not tail:
+        return None, None, False
+    response = _http("GET", f"cards/{state['user_id']}", state=state, headers={"X-User-Id": state["user_id"]})
+    if response.status_code >= 400:
+        return None, f"暂时无法核对卡片尾号：{_error_message(response)}", False
+    rows = _response_json(response).get("data")
+    if not isinstance(rows, list):
+        return None, "核心返回的卡片列表无效，请稍后再试。", False
+    matches = [card for card in rows if isinstance(card, dict) and str(card.get("last4") or str(card.get("number_masked") or "")[-4:]) == tail.group(1)]
+    if not matches:
+        return None, f"没有找到尾号{tail.group(1)}的卡片，请提供明确的卡片编号（例如 CARD-001），我不会替您选卡。", True
+    if len(matches) > 1 or not matches[0].get("card_id"):
+        return None, f"尾号{tail.group(1)}对应多张卡片，请提供明确的卡片编号（例如 CARD-001），我不会替您选卡。", True
+    return str(matches[0]["card_id"]), None, False
+
+
+def _pending_slot_clarification(
+    state: BankingAgentState,
+    intent: str,
+    message: str,
+    missing: list[str],
+    *,
+    drop_target: bool = False,
+) -> dict[str, Any]:
+    """Ask for one more slot while keeping everything the user already gave.
+
+    The pending payload is what lets the next turn's bare answer ("用尾号3082
+    的卡") fold back into this intent instead of starting over.
+    """
+
+    payload = {key: state.get(key) for key in (
+        "intent", "target", "amount", "date_scope", "extra_info", "participants",
+        "product_ids", "slots", "scheduled_at", "event_at",
+    )}
+    context = dict(state.get("context") or {})
+    if drop_target:
+        payload["target"] = None
+        context["target"] = None
+    context["pending_clarification"] = {"intent": intent, "missing": missing, "confidence": 0.86, "payload": payload}
+    return {
+        "risk_level": "UNKNOWN", "clarification_required": True,
+        "final_response": message, "auth_token": None,
+        "action_requirements": [], "context": context,
+        **({"target": None} if drop_target else {}),
+    }
+
+
+def _redeem_all_principal(state: BankingAgentState) -> tuple[Optional[float], Optional[str]]:
+    """Total principal the user actually holds in the product to redeem fully."""
+
+    product_id = str(state.get("target") or "").upper()
+    response = _http("GET", f"wealth/holdings/{state['user_id']}", state=state, headers={"X-User-Id": state["user_id"]})
+    if response.status_code >= 400:
+        return None, f"暂时无法读取您的持仓：{_error_message(response)}"
+    rows = _response_json(response).get("data")
+    if not isinstance(rows, list):
+        return None, "核心返回的持仓数据无效，请稍后再试。"
+    total = 0.0
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("product_id") or "").upper() != product_id:
+            continue
+        principal = row.get("principal")
+        if isinstance(principal, bool) or not isinstance(principal, (int, float)) or not math.isfinite(float(principal)):
+            continue
+        total += float(principal)
+    total = round(total, 2)
+    if total <= 0:
+        return None, f"您当前没有 {product_id or '该产品'} 的持仓，无法赎回。"
+    return total, None
+
+
 def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response") or state.get("clarification_required"):
         return {"risk_level": "UNKNOWN"}
@@ -1735,47 +1860,56 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         # operation to red (the core owns the policy table).
         try:
             def clarify_card(message: str) -> dict[str, Any]:
-                payload = {key: state.get(key) for key in (
-                    "intent", "target", "amount", "date_scope", "extra_info", "participants",
-                    "product_ids", "slots", "scheduled_at", "event_at",
-                )}
-                payload["target"] = None
-                context = {**(state.get("context") or {}), "target": None}
-                context["pending_clarification"] = {
-                    "intent": intent, "missing": ["target"], "confidence": 0.86, "payload": payload,
-                }
-                return {
-                    "risk_level": "UNKNOWN", "clarification_required": True,
-                    "final_response": message, "auth_token": None,
-                    "action_requirements": [], "target": None, "context": context,
-                }
+                return _pending_slot_clarification(state, intent, message, ["target"], drop_target=True)
 
+            slots = dict(state.get("slots") or {})
+            amount = state.get("amount")
+            spoken = str(state.get("user_input") or state.get("extra_info") or "")
             if intent.startswith("CARD_") and intent != Intent.CARD_APPLY.value:
-                tail = re.search(r"(?:尾号|末四位|后四位)\s*(?:为|是)?\s*([0-9]{4})(?![0-9])", str(state.get("user_input") or state.get("extra_info") or ""))
-                if tail:
-                    cards_response = _http("GET", f"cards/{state['user_id']}", state=state, headers={"X-User-Id": state["user_id"]})
-                    if cards_response.status_code >= 400:
-                        return {"risk_level": "ERROR", "final_response": f"暂时无法核对卡片尾号：{_error_message(cards_response)}"}
-                    rows = _response_json(cards_response).get("data")
-                    if not isinstance(rows, list):
-                        return {"risk_level": "ERROR", "final_response": "核心返回的卡片列表无效，请稍后再试。"}
-                    matches = [card for card in rows if isinstance(card, dict) and str(card.get("last4") or str(card.get("number_masked") or "")[-4:]) == tail.group(1)]
-                    if len(matches) != 1 or not matches[0].get("card_id"):
-                        detail = "没有找到该尾号的卡片" if not matches else "该尾号对应多张卡片"
-                        return clarify_card(f"{detail}，请提供明确的卡片编号（例如 CARD-001），我不会替您选卡。")
-                    card_id = matches[0]["card_id"]
+                card_id, failure, ask_again = _card_by_tail(state, spoken)
+                if failure:
+                    return clarify_card(failure) if ask_again else {"risk_level": "ERROR", "final_response": failure}
+                if card_id:
                     if state.get("target") and state["target"] != card_id:
                         return clarify_card("您提供的卡片编号与尾号不一致，请核对并明确要操作的卡片编号。")
                     state = {**state, "target": card_id, "context": {**(state.get("context") or {}), "target": card_id}}
-            response = _http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "amount": state.get("amount") or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": (state.get("slots") or {}).get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
+            # A transfer's payee and its paying card are different slots: the
+            # card must never overwrite the recipient the user named.
+            paying_card_id = slots.get("paying_card_id")
+            if intent in _PAYING_CARD_INTENTS and not paying_card_id:
+                paying_card_id, failure, ask_again = _card_by_tail(state, spoken)
+                if failure:
+                    if not ask_again:
+                        return {"risk_level": "ERROR", "final_response": failure}
+                    return _pending_slot_clarification(state, intent, failure, ["paying_card"])
+                if paying_card_id:
+                    slots = {**slots, "paying_card_id": paying_card_id}
+            if intent == Intent.WEALTH_REDEEM.value and slots.get("redeem_all") is True and amount in (None, 0):
+                amount, failure = _redeem_all_principal(state)
+                if failure:
+                    return {"risk_level": "UNKNOWN", "final_response": failure}
+            response = _http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "amount": amount or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else paying_card_id, "transaction_id": slots.get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": amount if intent == Intent.CARD_LIMIT.value else None, "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
                 detail = _response_json(response).get("detail")
-                if intent.startswith("CARD_") and intent != Intent.CARD_APPLY.value and isinstance(detail, dict) and detail.get("code") in {"CARD_ID_REQUIRED", "CARD_NOT_FOUND"}:
-                    return clarify_card(f"{_error_message(response)}。请回复要操作的卡片编号（例如 CARD-001）。")
+                code = detail.get("code") if isinstance(detail, dict) else None
+                if code in {"CARD_ID_REQUIRED", "CARD_NOT_FOUND"}:
+                    if intent.startswith("CARD_") and intent != Intent.CARD_APPLY.value:
+                        return clarify_card(f"{_error_message(response)}。请回复要操作的卡片编号（例如 CARD-001）。")
+                    if intent in _PAYING_CARD_INTENTS:
+                        return _pending_slot_clarification(
+                            state, intent,
+                            f"{_error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
+                            ["paying_card"],
+                        )
                 return {"risk_level": "ERROR", "final_response": f"操作风控预检未通过：{_error_message(response)}"}
             data = _response_json(response)
             target = data.get("target") or state.get("target")
-            return {"risk_level": data.get("risk_level", "ERROR"), "auth_token": data.get("auth_token"), "action_requirements": data.get("required_actions", []), "target": target, "context": {**(state.get("context") or {}), "target": target}, "transaction": data.get("transaction"), "risk_reasons": data.get("risk_reasons")}
+            resolved = {"risk_level": data.get("risk_level", "ERROR"), "auth_token": data.get("auth_token"), "action_requirements": data.get("required_actions", []), "target": target, "context": {**(state.get("context") or {}), "target": target}, "transaction": data.get("transaction"), "risk_reasons": data.get("risk_reasons")}
+            if paying_card_id:
+                resolved["slots"] = slots
+            if amount != state.get("amount"):
+                resolved["amount"] = amount
+            return resolved
         except (requests.RequestException, RuntimeError) as exc:
             return {"risk_level": "ERROR", "final_response": f"暂时无法连接核心风控服务：{exc}"}
     if intent == Intent.CROSS_SCENE_LOCK.value:
@@ -1803,15 +1937,33 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         amount = state.get("amount")
         if not target or amount is None:
             return {"risk_level": "UNKNOWN", "final_response": "请补充收款人和金额后再继续。"}
+        slots = dict(state.get("slots") or {})
+        paying_card_id = slots.get("paying_card_id")
         try:
-            response = _http("POST", "risk/precheck", state=state, json_body={"from_user": state["user_id"], "target_name_or_id": target, "amount": amount, "remark": state.get("extra_info") or "智能转账"}, headers={"X-User-Id": state["user_id"]})
+            if not paying_card_id:
+                paying_card_id, failure, ask_again = _card_by_tail(state, str(state.get("user_input") or state.get("extra_info") or ""))
+                if failure:
+                    if not ask_again:
+                        return {"risk_level": "ERROR", "final_response": failure}
+                    return _pending_slot_clarification(state, intent, failure, ["paying_card"])
+                if paying_card_id:
+                    slots = {**slots, "paying_card_id": paying_card_id}
+            response = _http("POST", "risk/precheck", state=state, json_body={"from_user": state["user_id"], "target_name_or_id": target, "amount": amount, "card_id": paying_card_id, "remark": state.get("extra_info") or "智能转账"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
+                detail = _response_json(response).get("detail")
+                if isinstance(detail, dict) and detail.get("code") in {"CARD_ID_REQUIRED", "CARD_NOT_FOUND"}:
+                    return _pending_slot_clarification(
+                        state, intent,
+                        f"{_error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
+                        ["paying_card"],
+                    )
                 return {"risk_level": "ERROR", "final_response": f"风控评估未通过：{_error_message(response)}"}
             data = _response_json(response)
             return {
                 "risk_level": data.get("risk_level", "ERROR"),
                 "auth_token": data.get("auth_token"),
                 "action_requirements": data.get("required_actions", []),
+                **({"slots": slots} if paying_card_id else {}),
                 "context": {
                     **(state.get("context") or {}),
                     # Names, phone numbers and saved aliases resolve at the
@@ -2016,6 +2168,11 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
         if specific_overseas:
             result["specific_query"] = "OVERSEAS_TRANSACTION"
         return result
+    if intent == Intent.WEALTH_HOLDINGS.value:
+        response = _http("GET", f"wealth/holdings/{user_id}", state=state, headers={"X-User-Id": user_id})
+        if response.status_code >= 400:
+            raise RuntimeError(_error_message(response))
+        return {"type": intent, "data": _response_json(response)}
     if intent in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value}:
         path = f"wealth/recommend?user_id={user_id}" if intent == Intent.WEALTH_RECOMMEND.value else f"wealth/products?user_id={user_id}"
         if intent == Intent.WEALTH_RECOMMEND.value:
@@ -2181,7 +2338,7 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                     state,
                     method="POST",
                     path="transfers/execute",
-                    json_body={"from_user": user_id, "target_name_or_id": state.get("target"), "amount": state.get("amount"), "remark": remark, "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed"))},
+                    json_body={"from_user": user_id, "target_name_or_id": state.get("target"), "amount": state.get("amount"), "card_id": (state.get("slots") or {}).get("paying_card_id"), "remark": remark, "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed"))},
                     headers=headers,
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )
@@ -2200,7 +2357,7 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                     state,
                     method="POST",
                     path="operations/execute",
-                    json_body={"user_id": user_id, "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else None, "transaction_id": (state.get("slots") or {}).get("transaction_id"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
+                    json_body={"user_id": user_id, "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else (state.get("slots") or {}).get("paying_card_id"), "transaction_id": (state.get("slots") or {}).get("transaction_id"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
                     headers={"X-User-Id": user_id, "X-Auth-Token": state.get("auth_token") or "", "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"},
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )
@@ -2288,6 +2445,21 @@ def _valid_wealth_collection(data: Any) -> bool:
     if not _valid_collection_envelope(data):
         return False
     return all(_valid_product_item(item) for item in data.get("data", []))
+
+
+def _valid_holding_collection(data: Any) -> bool:
+    if not _valid_collection_envelope(data):
+        return False
+    for item in data.get("data", []):
+        if not isinstance(item, dict):
+            return False
+        if not _valid_text_field(item.get("holding_id"), max_length=128) or not _valid_text_field(item.get("product_id"), max_length=64):
+            return False
+        if not _finite_number(item.get("principal"), nonnegative=True):
+            return False
+        if item.get("estimated_value") is not None and not _finite_number(item.get("estimated_value"), nonnegative=True):
+            return False
+    return True
 
 
 def _valid_subscription_collection(data: Any) -> bool:
@@ -2432,6 +2604,26 @@ def _render_wealth(data: Mapping[str, Any], intent: str) -> str:
         lines.append(f"> {disclaimer}")
     if intent != Intent.WEALTH_RECOMMEND.value:
         lines.append("> 年化为产品资料展示值，不代表实际收益；申购前需完成风险测评。")
+    return "\n".join(lines)
+
+
+def _render_holdings(data: Mapping[str, Any]) -> str:
+    """Render the customer's own positions; never the bank's product shelf."""
+
+    rows = data.get("data") or []
+    if not rows:
+        return "📊 您当前没有理财持仓。想看看在售产品可以说“有哪些理财产品”。"
+    total = sum(float(row.get("principal") or 0) for row in rows)
+    lines = [f"📊 您持有 {len(rows)} 笔理财，本金合计 ¥{total:,.2f}："]
+    for item in rows:
+        line = (
+            f"- `{item.get('holding_id')}` {item.get('product_name') or item.get('product_id')} ｜ "
+            f"本金 ¥{float(item.get('principal') or 0):,.2f}"
+        )
+        if _finite_number(item.get("estimated_value"), nonnegative=True):
+            line += f" ｜ 参考市值 ¥{float(item.get('estimated_value')):,.2f}"
+        lines.append(line)
+    lines.append("> 市值为演示估算值，实际收益以产品结算为准。")
     return "\n".join(lines)
 
 
@@ -2679,9 +2871,11 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
             lines.append(f"未建立提醒：{item.get('subscription_id') or '订阅'}，{reason}。")
         lines.append("这里只安排提醒，不会自动扣费或取消订阅。")
         return {"final_response": "\n".join(lines)}
-    if rtype in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_COMPARE.value, Intent.SUBSCRIPTION_QUERY.value, Intent.CARD_QUERY.value}:
+    if rtype in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_COMPARE.value, Intent.WEALTH_HOLDINGS.value, Intent.SUBSCRIPTION_QUERY.value, Intent.CARD_QUERY.value}:
         data = result.get("data") or {}
-        if rtype in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_COMPARE.value}:
+        if rtype == Intent.WEALTH_HOLDINGS.value:
+            valid = _valid_holding_collection(data)
+        elif rtype in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_COMPARE.value}:
             valid = _valid_wealth_collection(data)
         elif rtype == Intent.SUBSCRIPTION_QUERY.value:
             valid = _valid_subscription_collection(data)
@@ -2692,6 +2886,8 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         # Render a readable answer from the verified fields.  The raw payload is
         # deliberately not shown to a customer; every value below comes from the
         # validated core response (no invented numbers).
+        if rtype == Intent.WEALTH_HOLDINGS.value:
+            return {"final_response": _render_holdings(data)}
         if rtype in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_COMPARE.value}:
             return {"final_response": _render_wealth(data, rtype)}
         if rtype == Intent.SUBSCRIPTION_QUERY.value:

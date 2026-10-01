@@ -588,3 +588,37 @@ def test_gateway_birthday_approval_displays_beijing_time_without_changing_event(
     assert approved.json()["status"] == "COMPLETED"
     assert main.ACCOUNTS[PRINCIPAL]["locked_amount"] == 1000
     assert graph.get_state(config).values["event_at"] == "2099-10-03T01:00:00+00:00"
+
+
+def _future_month_day() -> tuple[str, datetime]:
+    """A spoken month-day ("11月10号") that is still ahead of today."""
+
+    upcoming = datetime.now(timezone(timedelta(hours=8))) + timedelta(days=40)
+    return f"{upcoming.month}月{upcoming.day}号", upcoming
+
+
+def test_birthday_stated_as_month_day_needs_no_year(dialogue):
+    phrase, upcoming = _future_month_day()
+    response = dialogue.say(f"{phrase}是我爱人生日，帮我锁定1000元，生日前两天提醒我订花和蛋糕")
+    assert response["status"] == "APPROVAL_REQUIRED", dialogue.diagnostic()
+    event_at = datetime.fromisoformat(str(dialogue.state["event_at"]))
+    assert (event_at.month, event_at.day) == (upcoming.month, upcoming.day)
+    assert dialogue.state["amount"] == 1000.0
+    assert main.ACCOUNTS[PRINCIPAL]["locked_amount"] == 0
+
+
+def test_bare_month_day_answer_fills_the_missing_birthday_date(dialogue):
+    phrase, upcoming = _future_month_day()
+    dialogue.say("我爱人生日快到了，帮我锁定1000元，生日前两天提醒我订花和蛋糕")
+    assert dialogue.state["clarification_required"] is True, dialogue.diagnostic()
+    # The question must say what an acceptable answer looks like.
+    assert "生日日期" in dialogue.state["final_response"]
+    assert "10月5号" in dialogue.state["final_response"]
+    assert main.ACCOUNTS[PRINCIPAL]["locked_amount"] == 0
+
+    response = dialogue.say(phrase)
+    assert response["status"] == "APPROVAL_REQUIRED", dialogue.diagnostic()
+    assert dialogue.state["amount"] == 1000.0
+    event_at = datetime.fromisoformat(str(dialogue.state["event_at"]))
+    assert (event_at.month, event_at.day) == (upcoming.month, upcoming.day)
+    assert main.ACCOUNTS[PRINCIPAL]["locked_amount"] == 0

@@ -394,3 +394,68 @@ def test_unknown_card_never_falls_back_to_the_first_card(dialogue):
     dialogue.say("查看卡片状态")
     dialogue.completed("CARD_QUERY")
     assert "CARD-001" in dialogue.last["reply"]
+
+
+def test_holdings_query_shows_positions_not_the_product_shelf(dialogue):
+    dialogue.say("查看我的持仓")
+    dialogue.completed("WEALTH_HOLDINGS")
+    assert "没有理财持仓" in dialogue.last["reply"], dialogue.last
+    assert "在售理财产品" not in dialogue.last["reply"]
+
+    dialogue.assessed()
+    dialogue.say("申购 CJ01002 2000元")
+    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=2000)
+    dialogue.decide()
+    holding = main.WEALTH_HOLDINGS[USER][0]
+
+    dialogue.say("再看看我的持仓")
+    dialogue.completed("WEALTH_HOLDINGS")
+    reply = dialogue.last["reply"]
+    assert holding["holding_id"] in reply, reply
+    assert holding["product_name"] in reply, reply
+    assert "2,000.00" in reply, reply
+    assert "在售理财产品" not in reply
+
+
+def test_redeem_all_uses_the_real_holding_principal(dialogue):
+    dialogue.assessed()
+    dialogue.say("申购 CJ01002 2000元")
+    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=2000)
+    dialogue.decide()
+    assert main.ACCOUNTS[USER]["balance"] == 13000
+
+    dialogue.say("把CJ01002全部赎回")
+    dialogue.pending("WEALTH_REDEEM", target="CJ01002", amount=2000)
+    dialogue.decide()
+    assert main.ACCOUNTS[USER]["balance"] == 15000
+    assert not main.WEALTH_HOLDINGS[USER]
+
+
+def test_redeem_all_without_a_holding_says_so(dialogue):
+    dialogue.assessed()
+    dialogue.say("把CJ01002全部赎回")
+    assert not dialogue.last.get("approval"), dialogue.last
+    assert "持仓" in dialogue.last["reply"], dialogue.last
+    assert main.ACCOUNTS[USER]["balance"] == 15000
+    assert not main.WEALTH_HOLDINGS[USER]
+
+
+def test_new_limit_without_a_unit_is_still_read(dialogue):
+    dialogue.say("把尾号3082的卡每日限额调到8000")
+    dialogue.pending("CARD_LIMIT", target="CARD-001", amount=8000)
+    dialogue.decide()
+    assert main.CARDS[USER][0]["daily_limit"] == 8000
+
+
+def test_purchase_with_two_cards_settles_on_the_named_card(dialogue):
+    dialogue.assessed()
+    main.CARDS[USER].append({
+        **main.CARDS[USER][0], "card_id": "CARD-002",
+        "last4": "1111", "number_masked": "**** **** **** 1111",
+    })
+    dialogue.say("用尾号1111的卡申购 CJ01002 100元")
+    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=100)
+    dialogue.decide()
+    assert main.ACCOUNTS[USER]["balance"] == 14900
+    assert main.CARD_DAILY_SPENT.get("CARD-002") == 100
+    assert not main.CARD_DAILY_SPENT.get("CARD-001")

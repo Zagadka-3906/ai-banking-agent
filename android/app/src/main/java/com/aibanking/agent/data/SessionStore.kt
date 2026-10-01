@@ -22,15 +22,25 @@ class SessionStore(context: Context) {
 
     private val preferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun saveSession(token: String, principal: String, conversationId: String) {
+    fun saveSession(token: String, principal: String, conversationId: String, expiresAtEpochSeconds: Long = 0) {
         preferences.edit()
             .putString(KEY_TOKEN, seal(token))
             .putString(KEY_PRINCIPAL, seal(principal))
             .putString(KEY_CONVERSATION, seal(conversationId))
+            .putLong(KEY_EXPIRES_AT, expiresAtEpochSeconds)
             .apply()
     }
 
     fun sessionToken(): String? = open(KEY_TOKEN)
+
+    /**
+     * When the core said the stored credential lapses, in epoch seconds.
+     *
+     * Not sealed: it is a deadline, not a credential, and reading it must not
+     * touch the Keystore.  0 means "never recorded" (a session stored by an
+     * older build), which the caller must treat as unknown rather than expired.
+     */
+    fun sessionExpiresAt(): Long = preferences.getLong(KEY_EXPIRES_AT, 0L)
 
     fun principal(): String? = open(KEY_PRINCIPAL)
 
@@ -92,6 +102,7 @@ class SessionStore(context: Context) {
             .remove(KEY_TOKEN)
             .remove(KEY_PRINCIPAL)
             .remove(KEY_CONVERSATION)
+            .remove(KEY_EXPIRES_AT)
             .remove(KEY_MESSAGES)
             .remove(KEY_QUIZ)
             .apply()
@@ -140,6 +151,7 @@ class SessionStore(context: Context) {
         const val KEY_TOKEN = "session_token"
         const val KEY_PRINCIPAL = "principal"
         const val KEY_CONVERSATION = "conversation_id"
+        const val KEY_EXPIRES_AT = "session_expires_at"
         const val KEY_DEVICE = "device_id"
         const val KEY_MESSAGES = "chat_messages"
         const val KEY_QUIZ = "risk_quiz"

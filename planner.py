@@ -49,6 +49,7 @@ class Intent(str, Enum):
     SPLIT_BILL = "SPLIT_BILL"
     CROSS_SCENE_LOCK = "CROSS_SCENE_LOCK"
     WEALTH_QUERY = "WEALTH_QUERY"
+    WEALTH_HOLDINGS = "WEALTH_HOLDINGS"
     WEALTH_RECOMMEND = "WEALTH_RECOMMEND"
     WEALTH_RISK_ASSESSMENT = "WEALTH_RISK_ASSESSMENT"
     WEALTH_COMPARE = "WEALTH_COMPARE"
@@ -73,6 +74,7 @@ GREEN_INTENTS = {
     Intent.BILL_QUERY.value,
     Intent.BILL_ANALYSIS.value,
     Intent.WEALTH_QUERY.value,
+    Intent.WEALTH_HOLDINGS.value,
     Intent.WEALTH_RECOMMEND.value,
     Intent.WEALTH_RISK_ASSESSMENT.value,
     Intent.WEALTH_COMPARE.value,
@@ -330,8 +332,12 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
         if intent not in {Intent.CROSS_SCENE_LOCK.value, Intent.CARD_LIMIT.value} and not parsed.get("target"):
             missing.append("target")
         if intent not in {Intent.SUBSCRIPTION_CANCEL.value} and parsed.get("amount") in (None, 0):
-            # Some operations (card/report-lost) do not have an amount.
-            missing.append("amount")
+            # Some operations (card/report-lost) do not have an amount.  A
+            # full redemption states its amount as "全部" and is resolved
+            # against the real holding before the precheck.
+            slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+            if not (intent == Intent.WEALTH_REDEEM.value and slots.get("redeem_all") is True):
+                missing.append("amount")
     return missing
 
 
@@ -532,6 +538,8 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
         ]
     elif intent in {Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_QUERY.value}:
         tasks = [Task("fetch_products", "FETCH_WEALTH_DATA", risk_level="GREEN", details=base)]
+    elif intent == Intent.WEALTH_HOLDINGS.value:
+        tasks = [Task("fetch_holdings", "FETCH_WEALTH_HOLDINGS", risk_level="GREEN", details=base)]
     elif intent == Intent.WEALTH_RISK_ASSESSMENT.value:
         tasks = [Task("risk_assessment", "WEALTH_RISK_ASSESSMENT", risk_level="GREEN", details=base)]
     elif intent == Intent.WEALTH_COMPARE.value:

@@ -73,6 +73,10 @@ interface SessionApi {
     /** Resolves a session to its subject; 401 once the core no longer honours it. */
     @GET("api/v1/auth/session")
     suspend fun identity(@Header("X-Session-Token") sessionToken: String): IdentityResponse
+
+    /** Slides the session window forward; 401 once the core has let it lapse. */
+    @POST("api/v1/auth/session/renew")
+    suspend fun renew(@Header("X-Session-Token") sessionToken: String): SessionResponse
 }
 
 class LoginRepository(private val api: SessionApi) {
@@ -126,6 +130,21 @@ class LoginRepository(private val api: SessionApi) {
         // Offline is not proof of expiry: keep the session and let the next real
         // call decide.
         SessionCheck.Unreachable
+    }
+
+    /**
+     * Ask the core for a successor credential before the current one lapses.
+     *
+     * `null` means "keep the token you have": the network may be down, or the
+     * core may already have dropped the session, and only the next real call can
+     * tell those apart - so a failed renewal never signs the user out by itself.
+     */
+    suspend fun renew(sessionToken: String): SessionResponse? = try {
+        api.renew(sessionToken).takeIf { it.sessionToken.isNotBlank() }
+    } catch (failure: HttpException) {
+        null
+    } catch (failure: IOException) {
+        null
     }
 
     companion object {

@@ -533,3 +533,61 @@ def test_same_session_correction_wins_lock_before_old_confirmation(gateway, monk
     assert revised["approval"]["approval_id"] != first["approval"]["approval_id"]
     service.resolve_approval(principal="user_zhang", approval_id=revised["approval"]["approval_id"], decision="approve", session_token=session)
     assert main.ACCOUNTS["user_zhang"]["balance"] == 14980
+
+
+def test_measure_word_amount_reaches_the_approval_card(gateway):
+    client, _ = gateway
+    cid = "human-measure-word-amount"
+    envelope = _ask(client, "再转一笔300给李四", cid)
+    assert envelope["status"] == "APPROVAL_REQUIRED", envelope
+    assert _state(cid)["amount"] == 300
+    assert _state(cid)["target"] == "李四"
+    _approve(client, envelope)
+    assert main.ACCOUNTS["user_zhang"]["balance"] == 14700
+
+
+def test_second_active_card_must_be_named_by_the_payer(gateway):
+    client, _ = gateway
+    cid = "human-multi-card-tail"
+    main.CARDS["user_zhang"].append({
+        **main.CARDS["user_zhang"][0], "card_id": "CARD-002",
+        "last4": "1111", "number_masked": "**** **** **** 1111",
+    })
+    _clarifies(_ask(client, "给李四转500元", cid), cid, "尾号")
+    envelope = _ask(client, "用尾号3082的卡", cid)
+    assert envelope["status"] == "APPROVAL_REQUIRED", envelope
+    assert _state(cid)["target"] == "李四"
+    assert _state(cid)["amount"] == 500
+    _approve(client, envelope)
+    assert main.ACCOUNTS["user_zhang"]["balance"] == 14500
+    assert main.CARD_DAILY_SPENT.get("CARD-001") == 500
+    assert not main.CARD_DAILY_SPENT.get("CARD-002")
+
+
+def test_card_tail_in_a_full_restatement_keeps_payee_and_note(gateway):
+    client, _ = gateway
+    cid = "human-multi-card-restate"
+    main.CARDS["user_zhang"].append({
+        **main.CARDS["user_zhang"][0], "card_id": "CARD-002",
+        "last4": "1111", "number_masked": "**** **** **** 1111",
+    })
+    _clarifies(_ask(client, "给李四转500元，备注学费", cid), cid, "尾号")
+    envelope = _ask(client, "用尾号3082的卡给李四转500元，备注学费", cid)
+    assert envelope["status"] == "APPROVAL_REQUIRED", envelope
+    assert _state(cid)["target"] == "李四"
+    assert "学费" in str(_state(cid)["extra_info"])
+    result = _approve(client, envelope)
+    assert result["result"]["execution_result"]["type"] == "TRANSFER_SUCCESS"
+    assert main.CARD_DAILY_SPENT.get("CARD-001") == 500
+
+
+def test_unknown_card_tail_never_picks_a_card_for_the_payer(gateway):
+    client, _ = gateway
+    cid = "human-unknown-tail"
+    main.CARDS["user_zhang"].append({
+        **main.CARDS["user_zhang"][0], "card_id": "CARD-002",
+        "last4": "1111", "number_masked": "**** **** **** 1111",
+    })
+    envelope = _ask(client, "用尾号9999的卡给李四转500元", cid)
+    _clarifies(envelope, cid, "9999")
+    assert main.ACCOUNTS["user_zhang"]["balance"] == 15000

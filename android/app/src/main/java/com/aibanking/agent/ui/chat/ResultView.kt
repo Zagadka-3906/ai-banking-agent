@@ -303,8 +303,11 @@ private fun KeyValues(data: Map<String, Any?>, title: String) {
         }
     }
     // Settlement fields may follow metadata in insertion order; never truncate a returned receipt.
+    // `code` is the transport envelope's HTTP status: when a payload's `data` is a
+    // list the whole envelope lands here, and it is not a fact about the customer.
     val scalars = receipt.entries.filter {
         (it.value is Number || it.value is String || it.value is Boolean) &&
+            it.key != "code" &&
             !(it.key == "operation" && receiptTitle != "处理结果")
     }
     if (scalars.isEmpty()) return
@@ -405,7 +408,7 @@ private val FIELD_LABELS = mapOf(
     "collected_amount" to "已收金额", "outstanding_amount" to "待收金额", "per_person" to "人均金额",
     "redeemed_amount" to "赎回金额", "initiator_share" to "发起人分摊金额", "released_amount" to "已释放金额",
     "count" to "数量", "risk_profile" to "风险等级", "disclaimer" to "说明", "message" to "结果说明",
-    "card_id" to "卡片编号", "code" to "结果代码", "user_id" to "账户标识", "currency" to "币种",
+    "card_id" to "卡片编号", "user_id" to "账户标识", "currency" to "币种",
     "operation" to "业务类型", "number_masked" to "卡号", "last4" to "卡片尾号", "label" to "卡片名称",
     "product_id" to "产品编号", "product_name" to "理财产品", "holding_id" to "持仓编号",
     "merchant" to "商户", "subscription_id" to "订阅编号", "target" to "收款对象",
@@ -420,6 +423,8 @@ private val MONEY_FIELDS = setOf(
 private val PRIMARY_AMOUNT_FIELDS = listOf(
     "transferred_amount", "redeemed_amount", "released_amount", "total_balance", "locked_amount", "amount",
 )
+/** The core stores UTC; a receipt must show the device zone or it contradicts the reply text. */
+private val TIMESTAMP_FIELDS = setOf("scheduled_at", "created_at", "collected_at")
 private fun formatValue(key: String, value: Any?): String = when {
     value is Number && key in MONEY_FIELDS && value.toDouble().isFinite() -> money(value.toDouble())
     value is Boolean -> if (value) "是" else "否"
@@ -427,6 +432,7 @@ private fun formatValue(key: String, value: Any?): String = when {
     key == "operation" && value is String -> executionTitle(value).takeUnless { it == "处理结果" } ?: value
     key == "risk_level" && value is String -> when (value) { "GREEN" -> "低风险"; "YELLOW" -> "需确认"; "RED" -> "需身份验证"; else -> value }
     key == "currency" && value == "CNY" -> "人民币"
+    key in TIMESTAMP_FIELDS && value is String -> formatLocalTimestamp(value) ?: value
     value is Number && value.toDouble().isFinite() && value.toDouble() % 1.0 == 0.0 -> String.format(Locale.CHINA, "%,.0f", value.toDouble())
     else -> value?.toString() ?: "—"
 }

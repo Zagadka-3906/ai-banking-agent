@@ -387,6 +387,9 @@ private fun AddCardSheet(
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
+    // 弹层窗口不接收焦点，系统返回会落到 Activity 上直接退出应用；这里接管返回，
+    // 并与 onDismissRequest 共用 busy 保护：提交进行中不允许返回把表单丢掉。
+    BackHandler(enabled = true) { if (!busy) onDismiss() }
     ModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),

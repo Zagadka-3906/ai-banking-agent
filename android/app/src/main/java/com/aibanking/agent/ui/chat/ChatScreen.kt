@@ -2,6 +2,7 @@ package com.aibanking.agent.ui.chat
 
 import android.os.SystemClock
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -380,7 +381,7 @@ private fun ChatHome(
 private fun ChatWelcome(onSuggestion: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         BankHeroCard {
-            Text("YOUR EVERYDAY BANK", style = MaterialTheme.typography.labelSmall)
+            Text("您的日常银行", style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.height(14.dp))
             Text("财务大小事，\n交给一句话。", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
@@ -645,12 +646,15 @@ private fun DevicePanel(
     onUnbindFeishu: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // The sheet window never takes focus, so system Back reaches the Activity
+    // dispatcher and would finish the app instead of closing the panel.
+    BackHandler(enabled = true) { onDismiss() }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.background) {
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
             item {
-                BankScreenHeading("已注册设备", subtitle = "管理可访问您账户的设备", eyebrow = "SECURITY")
+                BankScreenHeading("已注册设备", subtitle = "管理可访问您账户的设备", eyebrow = "设备安全")
             }
             item {
                 BankSectionCard {
@@ -715,11 +719,14 @@ private fun TaskPanel(
     onDeclineSplit: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // The sheet window never takes focus, so system Back reaches the Activity
+    // dispatcher and would finish the app instead of closing the panel.
+    BackHandler(enabled = true) { onDismiss() }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.background) {
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
-            item { BankScreenHeading("待办任务", subtitle = "计划有序，生活从容", eyebrow = "YOUR PLANS") }
+            item { BankScreenHeading("待办任务", subtitle = "计划有序，生活从容", eyebrow = "任务安排") }
             if (busy) item { BankLoadingState(message = "正在更新任务…") }
             if (!busy && tasks.isEmpty() && splitRequests.isEmpty()) item { BankEmptyState("当前没有任务。") }
             if (splitRequests.isNotEmpty()) item { Text("AA 收款请求", style = MaterialTheme.typography.titleMedium) }
@@ -750,7 +757,7 @@ private fun TaskPanel(
                             })
                         }
                         taskSummary(task)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                        task.runAt?.let { Text("计划时间 · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        formatLocalTimestamp(task.runAt)?.let { Text("计划时间 · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         if (task.status in CANCELLABLE_TASK_STATUSES) {
                             BankSecondaryButton("取消", { onCancel(task.taskId) }, enabled = !busy,
                                 modifier = Modifier.fillMaxWidth().testTag(UiTags.TASK_CANCEL))

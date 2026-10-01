@@ -55,6 +55,7 @@ from security import (
     record_security_failure,
     record_security_success,
     record_behavior_signal,
+    renew_session,
     resolve_session,
     resolve_store_digest_algorithm,
     revoke_device,
@@ -3416,6 +3417,28 @@ def resolve_session_endpoint(
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
     return {"code": 200, "user_id": x_user_id}
+
+
+@app.post("/api/v1/auth/session/renew")
+def renew_session_endpoint(
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    """Hand a still-signed-in client a successor credential.
+
+    The session window is short on purpose, but an absolute expiry signs out a
+    user who is mid-form.  The middleware has already proved the presented
+    token is live, so this can only ever slide an active session forward; an
+    expired one is refused before it reaches here and must log in again.
+    """
+
+    request_id = _request_id(x_request_id)
+    try:
+        result = renew_session(x_session_token, request_id=request_id)
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=x_user_id, action="SESSION_RENEW", request_id=request_id)
+    return {"code": 200, **result}
 
 
 @app.post("/api/v1/auth/logout")
