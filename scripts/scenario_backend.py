@@ -46,6 +46,7 @@ def run() -> None:
         "BANK_AGENT_RATE_LIMIT_PER_MINUTE": "0",
         "BANK_RATE_LIMIT_PER_MINUTE": "0",
         "BANK_SESSION_TTL_SECONDS": "86400",
+        "BANK_ADMIN_AUDIT_TOKEN": token,
     })
     if args.mode == "offline":
         os.environ["DEEPSEEK_API_KEY"] = ""
@@ -106,6 +107,23 @@ def run() -> None:
             observe(envelope, "[" + kwargs["decision"] + "]", "approval_action", started, kwargs["principal"])
             return envelope
         conversation.SERVICE.resolve_approval = recording_approval
+        original_approval_stream = conversation.SERVICE.resolve_approval_stream
+
+        def recording_approval_stream(**kwargs):
+            started = time.monotonic()
+            for event in original_approval_stream(**kwargs):
+                if event.get("event") == "error":
+                    records.append({
+                        "event": "stream_error", "transport_status": 200,
+                        "http_status": event["data"].get("http_status"),
+                        "response": {"detail": event["data"]},
+                        "input": f"[{kwargs['decision']}]", "observation_index": len(records) + 1,
+                        "elapsed_ms": round((time.monotonic() - started) * 1000),
+                    })
+                    with (folder / "turns.jsonl").open("a", encoding="utf-8") as output:
+                        output.write(json.dumps(records[-1], ensure_ascii=False) + "\n")
+                yield event
+        conversation.SERVICE.resolve_approval_stream = recording_approval_stream
         class ObserveHttpRejections:
             """Record actual failed HTTP responses without changing their body."""
             def __init__(self, app):
@@ -202,6 +220,17 @@ def run() -> None:
                  "category": category, "amount": amount, "time": date.strftime("%Y-%m-%d %H:%M:%S"), "card_id": card}
                 for key, merchant, category, amount, date, card in rows
             ]
+            if payload.get("recurring_transactions"):
+                # Unknown merchant: prove detection uses ledger evidence rather
+                # than merely returning the two already registered mandates.
+                for index in range(3):
+                    module.TRANSACTIONS.append({
+                        "tx_id": f"TX-RECURRING-{index}", "account_id": "user_zhang",
+                        "merchant": "音乐空间会员", "category": "娱乐", "amount": 18,
+                        "time": (now - timedelta(days=30 * index)).strftime("%Y-%m-%d %H:%M:%S"),
+                        "card_id": "CARD-001",
+                    })
+            next(row for row in module.TRANSACTIONS if row["tx_id"] == "TX-SCENARIO-FOREIGN")["country"] = "US"
             for index, row in enumerate(module.SUBSCRIPTIONS["user_zhang"]):
                 row["next_charge"] = (now + timedelta(days=7 * (index + 1))).strftime("%Y-%m-%d")
             module.USER_CONTACTS["user_zhang"] = [{
@@ -234,6 +263,20 @@ def run() -> None:
     def read_records(x_scenario_token: str = Header(default="")):
         authorize(x_scenario_token)
         return {"records": records, "model_calls": model_calls, "mode": args.mode}
+
+    @app.post("/__scenario/advance-due")
+    def advance_due(x_scenario_token: str = Header(default="")):
+        """Drive the real scheduler at a test time without changing bank clocks."""
+        authorize(x_scenario_token)
+        if args.service != "core":
+            raise HTTPException(404, "Core-only scenario control")
+        from datetime import timezone
+        original_ready = module.TASK_STORE.ready
+        module.TASK_STORE.ready = lambda: original_ready(now=datetime(2100, 1, 1, tzinfo=timezone.utc))
+        try:
+            return module.run_due_tasks(x_admin_token=token, x_request_id="scenario-advance-due")
+        finally:
+            module.TASK_STORE.ready = original_ready
 
     @app.get("/__scenario/audit")
     def audit(x_scenario_token: str = Header(default="")):

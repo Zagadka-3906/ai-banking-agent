@@ -339,14 +339,15 @@
             "人均",
             "分摊"
           ],
-          "balance_delta": 200,
+          "balance_delta": 0,
           "state": {
             "splits": [
               {
                 "amount": 300,
                 "per_person": 100,
-                "collected_amount": 200,
-                "status": "SETTLED"
+                "collected_amount": 0,
+                "outstanding_amount": 200,
+                "status": "PENDING"
               }
             ]
           }
@@ -1408,7 +1409,10 @@
             "锁定",
             "预留"
           ],
-          "locked_delta": 1000
+          "locked_delta": 1000,
+          "reply_all": [
+            "2099-10-01 09:00（北京时间）"
+          ]
         }
       },
       {

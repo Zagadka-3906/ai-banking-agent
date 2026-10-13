@@ -1815,7 +1815,7 @@ def _payment_card(user_id: str, card_id: Optional[str] = None) -> Optional[dict[
         return card
     active = [card for card in cards if str(card.get("status")) == "ACTIVE"]
     if not active:
-        return None
+        raise SecurityError("当前没有可用于交易的卡片，请先解冻或解除挂失", 423, "CARD_BLOCKED")
     if len(active) > 1:
         names = "、".join(str(card.get("card_id")) for card in active[:5])
         raise SecurityError(f"您有多张可用的卡片（{names}），请指定用于支付的卡片", 409, "CARD_ID_REQUIRED")
@@ -2099,6 +2099,8 @@ def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> di
         row = next((item for item in rows if item.get("tx_id") == transaction_id), None)
         if row is None:
             raise SecurityError("交易不存在或不属于当前用户", 404, "TRANSACTION_NOT_FOUND")
+    elif not rows:
+        raise SecurityError("未找到可疑交易，请指定交易编号以便核对", 404, "TRANSACTION_NOT_FOUND")
     elif len(rows) != 1:
         raise SecurityError("匹配到多笔可疑交易，请指定交易编号", 409, "TRANSACTION_ID_REQUIRED")
     else:
@@ -3267,6 +3269,10 @@ def operation_precheck(
             product = _ensure_product_suitable(req.user_id, req.product_id or req.target or "")
             if amount < float(product["min_amount"]):
                 raise SecurityError("申购金额低于产品起购金额", 400, "MIN_AMOUNT_NOT_MET")
+            with STATE_LOCK:
+                account = _ensure_account(req.user_id)
+                if account["balance"] - account["locked_amount"] < amount:
+                    raise SecurityError("可用余额不足以申购此金额", 400, "INSUFFICIENT_FUNDS")
         if operation == "WEALTH_COMPARE":
             product_ids = list(req.product_ids or [])
             if len(product_ids) < 2:

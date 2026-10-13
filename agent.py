@@ -391,7 +391,7 @@ def _scheduled_at_from_text(text: str) -> Optional[str]:
                     offset += 7
                 date_value = now + timedelta(days=offset)
             else:
-                for marker, offset in (("大后天", 3), ("后天", 2), ("明天", 1), ("今天", 0), ("今日", 0), ("下周", 7)):
+                for marker, offset in (("大后天", 3), ("后天", 2), ("明天", 1), ("前天", -2), ("昨天", -1), ("昨晚", -1), ("今天", 0), ("今日", 0), ("下周", 7)):
                     if marker in text:
                         date_value = now + timedelta(days=offset)
                         break
@@ -793,7 +793,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         if any(phrase in text for phrase in phrases):
             slots["category"] = category
             break
-    if "续费" in text and "提醒" in text:
+    if "提醒" in text and any(word in text for word in ("续费", "订阅", "Apple", "苹果", "视频会员")):
         slots["renewal_reminder"] = True
         before = re.search(r"(?:提前|前)\s*(\d+|[零〇一二两三四五六七八九十]+)\s*天", text)
         if before:
@@ -838,7 +838,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         intent = Intent.CROSS_SCENE_LOCK.value
     elif (any(x in text for x in ("转", "汇款", "汇给")) and (
         scheduled_at is not None
-        or any(x in text for x in ("预约", "定时", "明天", "后天", "下周", "下星期", "下个月"))
+        or any(x in text for x in ("预约", "定时", "明天", "后天", "昨天", "前天", "昨晚", "下周", "下星期", "下个月"))
         or re.search(r"20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}", text)
     )):
         intent = Intent.SCHEDULED_TRANSFER.value
@@ -870,8 +870,8 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         intent = Intent.WEALTH_QUERY.value
     elif any(x in text for x in ("理财推荐", "推荐理财", "理财产品", "收益率", "风险等级", "适合我")):
         intent = Intent.WEALTH_RECOMMEND.value
-    elif any(x in text for x in ("订阅", "自动扣费", "代扣", "续费", "乱扣费")):
-        intent = Intent.SUBSCRIPTION_CANCEL.value if any(x in text for x in ("取消", "关闭", "退订")) else Intent.SUBSCRIPTION_QUERY.value
+    elif slots.get("renewal_reminder") or any(x in text for x in ("订阅", "自动扣费", "代扣", "续费", "乱扣费")):
+        intent = Intent.SUBSCRIPTION_CANCEL.value if any(x in text for x in ("取消", "关闭", "退订", "不想续费", "不想再续", "不续费", "不要续费", "别续费")) else Intent.SUBSCRIPTION_QUERY.value
         if intent == Intent.SUBSCRIPTION_CANCEL.value and not target:
             merchant_match = re.search(r"(?:取消|关闭|退订)\s*([\w一-龥·-]{2,20})", text)
             if merchant_match:
@@ -954,6 +954,13 @@ def _local_parse(text: str) -> dict[str, Any]:
             reasons.append("TARGET_AMBIGUOUS")
         objects = re.findall(r"(?i)(?<![A-Za-z0-9])CARD-[0-9a-z]{2,}(?![A-Za-z0-9])", source) if intent.startswith("CARD_") else parsed.get("product_ids") or [] if intent in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value} else []
         if len(set(value.upper() for value in objects)) > 1:
+            parsed["target"] = None
+            slots["target_ambiguous"] = True
+            reasons.append("OBJECT_AMBIGUOUS")
+        if intent == Intent.SUBSCRIPTION_CANCEL.value and (
+            sum(any(alias in source for alias in aliases) for aliases in (("Apple", "苹果"), ("视频会员",))) > 1
+            or re.search(r"全部|所有|都不", source)
+        ):
             parsed["target"] = None
             slots["target_ambiguous"] = True
             reasons.append("OBJECT_AMBIGUOUS")
@@ -1160,7 +1167,7 @@ _ELLIPSIS_CANCEL_IT = ("取消它", "把它取消", "退掉它", "取消掉", "�
 _ELLIPSIS_SAME_PRODUCT = ("那个产品", "还是那只", "同一只", "换成那个")
 
 
-def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: str) -> dict[str, Any]:
+def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: str, last_result: Optional[dict] = None) -> dict[str, Any]:
     """Resolve explicit back-references from the previous turn's context.
 
     Only phrases that clearly point backwards ("再转一次", "还是上次那个",
@@ -1191,17 +1198,45 @@ def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: st
         return repeated
     updated = dict(parsed)
     bill_intents = {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}
-    scope_explicit = bool(re.search(r"今天|今日|本月|这个月|上月|上个月|今年|年度|全年|全部|所有历史", business_text(text)) or parsed.get("date_scope") == "CUSTOM")
+    scope_explicit = bool(re.search(r"今天|今日|本月|这个月|上月|上个月|今年|去年|年度|全年|全部|所有历史", business_text(text)) or parsed.get("date_scope") == "CUSTOM")
     if prior_intent in bill_intents:
         # A date-only follow-up still asks about the same ledger, never ALL by default.
         if updated.get("intent") == Intent.UNKNOWN.value and (
-            scope_explicit or any(word in text for word in ("按类别", "分类", "再看一遍", "整体呢", "那笔", "里面"))
+            scope_explicit or (updated.get("slots") or {}).get("category") or any(word in text for word in ("按类别", "分类", "再看一遍", "整体呢", "那笔", "里面"))
         ):
-            updated["intent"] = Intent.BILL_ANALYSIS.value if any(word in text for word in ("分析", "分类", "类别", "怎么回事")) else prior_intent
+            updated["intent"] = Intent.BILL_ANALYSIS.value if (updated.get("slots") or {}).get("category") or any(word in text for word in ("分析", "分类", "类别", "怎么回事")) else prior_intent
             updated["confidence"] = None
         if updated.get("intent") in bill_intents and not scope_explicit:
             updated["date_scope"] = prior.get("date_scope") or "ALL"
             updated["date_range"] = prior.get("date_range")
+    # Resolve a literal ordinal only against the user's comparison order, or
+    # a singular holding returned by Core. Never select a product from a
+    # multi-product list merely because the user said "这个".
+    candidates = list(prior.get("product_ids") or [])
+    reference = re.search(r"前一个|第一个|后一个|第二个|这个产品|这只产品", text)
+    if not candidates and prior_intent == Intent.WEALTH_HOLDINGS.value:
+        candidates = list(prior.get("verified_product_ids") or [])
+    if not candidates and prior_intent == Intent.WEALTH_HOLDINGS.value and last_result and last_result.get("type") == prior_intent:
+        holdings = (last_result.get("data") or {}).get("data") or []
+        if isinstance(holdings, list):
+            candidates = list(dict.fromkeys(row.get("product_id") for row in holdings
+                                           if isinstance(row, dict) and row.get("product_id")))
+    if reference and candidates and not updated.get("target"):
+        selected = None
+        if prior_intent == Intent.WEALTH_COMPARE.value and reference.group() in {"前一个", "第一个", "后一个", "第二个"} and len(candidates) == 2:
+            selected = candidates[0 if reference.group() in {"前一个", "第一个"} else 1]
+        elif len(candidates) == 1:
+            selected = candidates[0]
+        if selected:
+            if re.search(r"申购|买|投", text):
+                updated["intent"] = Intent.WEALTH_PURCHASE.value
+            elif "赎回" in text:
+                updated["intent"] = Intent.WEALTH_REDEEM.value
+            if updated.get("intent") in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
+                updated["target"] = selected
+                updated["product_ids"] = [selected]
+                updated["confidence"] = None
+                updated["parse_meta"] = {"source": "rules_context", "resolution": "explicit_reference", "reason_codes": [], "fast_path_eligible": False}
     subscription_intents = {Intent.SUBSCRIPTION_QUERY.value, Intent.SUBSCRIPTION_CANCEL.value}
     if prior_intent in subscription_intents and any(word in text for word in ("续费", "下次扣", "什么时候扣", "提醒")):
         if updated.get("intent") in {Intent.UNKNOWN.value, Intent.SUBSCRIPTION_QUERY.value}:
@@ -1401,6 +1436,12 @@ def _merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentStat
             merged[field] = None
         elif parsed.get(field) not in (None, "", {}):
             merged["slots"] = {**(merged.get("slots") or {}), key: False}
+    if (pending_intent in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}
+            and not (parsed.get("slots") or {}).get("date_range_ambiguous")
+            and re.search(r"今天|今日|本月|这个月|上月|上个月|今年|去年|全部|所有历史", text)):
+        merged["date_scope"] = parsed.get("date_scope") or "ALL"
+        merged["date_range"] = None
+        merged["slots"] = {**(merged.get("slots") or {}), "date_range_ambiguous": False}
     merged["intent"] = pending_intent
     # Fill whatever the question asked for.  A short answer carries no intent
     # keyword, so it is interpreted in the type of the missing slot instead of
@@ -1499,7 +1540,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             resumed.update({"profile_result": quiz_result["profile_result"], "risk_quiz": {"active": False}})
             return resumed
         return quiz_result
-    if prior_context.get("intent") == Intent.CROSS_SCENE_LOCK.value and re.search(r"(花|蛋糕).*(买好|买了吗|下单|订好|已经买)", text):
+    if prior_context.get("intent") == Intent.CROSS_SCENE_LOCK.value and re.search(r"(?:花|蛋糕).*(?:买好|买了吗|下单|订好|已经买)|^(?:已经|都|那)?(?:买好|买了吗|订好|下单)[了了吗呢？?]*$", text.strip()):
         return {**_empty_state(final_response="尚未购买鲜花或蛋糕。这里只会预留资金、建立提醒和待确认的订单草稿，不会替您向商家付款下单。"),
                 "context": prior_context, "request_id": state.get("request_id") or f"gw_{uuid.uuid4().hex}"}
     try:
@@ -1529,7 +1570,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     # Explicit back-references ("再转一次", "还是上次那个") reuse the previous
     # turn's request; the operation is re-authorized from scratch.
     prior = state.get("context") if isinstance(state.get("context"), dict) else {}
-    parsed = validate_intent_payload(_resolve_ellipsis(parsed, prior, text))
+    parsed = validate_intent_payload(_resolve_ellipsis(parsed, prior, text, state.get("execution_result")))
     if compound:
         step = compound["steps"][compound["index"]]
         if parsed.get("intent") != step["payload"].get("intent"):
@@ -1589,6 +1630,12 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     ambiguous_fields = [field for field in ("amount", "target", "date_range", "request") if (parsed.get("slots") or {}).get(f"{field}_ambiguous")]
     if ambiguous_fields:
         labels = {"amount": "最终金额（只提供一个明确数值）", "target": "最终收款人或业务对象（只选一位）", "date_range": "查询的起止日期（例如 2026-09-01 到 2026-09-15）", "request": "各项业务（例如“查询余额，同时查看本月账单”）"}
+        if parsed["intent"].startswith("CARD_"):
+            labels["target"] = "要操作的卡片（只选一张）"
+        elif parsed["intent"] == Intent.SUBSCRIPTION_CANCEL.value:
+            labels["target"] = "要取消的订阅商户（只选一家）"
+        elif parsed["intent"] in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
+            labels["target"] = "要操作的理财产品（只选一款）"
         response = "这条指令存在歧义，请确认" + "、".join(labels[field] for field in ambiguous_fields) + "。"
     elif mixed_write:
         response = "这条消息里既有查询也有需要确认的变更操作。为避免误操作，请分开逐条办理：我还没有执行任何变更。"
@@ -2978,7 +3025,15 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
             return _response_validation_failure(state, "LOCK_AMOUNT_MISMATCH")
         reply = f"跨场景任务已建立：当前锁定资金合计 **¥{float(data['locked_amount']):,.2f}**，剩余可用余额 **¥{float(data['remaining_available']):,.2f}**。"
         if _valid_text_field(data.get("reminder_task_id"), max_length=128):
-            reply += f"提醒任务已进入待办队列，计划时间为 {data.get('reminder_at') or '任务中心所示时间'}。"
+            from datetime import timezone
+            try:
+                reminder = datetime.fromisoformat(str(data.get("reminder_at") or "").replace("Z", "+00:00"))
+                local_zone = timezone(timedelta(hours=8))
+                reminder = reminder.replace(tzinfo=local_zone) if reminder.tzinfo is None else reminder.astimezone(local_zone)
+                reminder_label = reminder.strftime("%Y-%m-%d %H:%M") + "（北京时间）"
+            except ValueError:
+                return _response_validation_failure(state, "LOCK_REMINDER_TIME_INVALID")
+            reply += f"提醒任务已进入待办队列，计划时间为 {reminder_label}。"
         order_ids = data.get("order_task_ids")
         if isinstance(order_ids, list) and order_ids and all(_valid_text_field(item, max_length=128) for item in order_ids):
             reply += "鲜花和蛋糕仅建立了待确认订单草稿，尚未购买或向商户付款；到期仍需您确认。"
@@ -3067,7 +3122,11 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         # deliberately not shown to a customer; every value below comes from the
         # validated core response (no invented numbers).
         if rtype == Intent.WEALTH_HOLDINGS.value:
-            return {"final_response": _render_holdings(data)}
+            # New turns clear execution_result; carry only verified product
+            # identities into context so singular references survive that reset.
+            product_ids = list(dict.fromkeys(row["product_id"] for row in data["data"] if row["principal"] > 0))
+            return {"final_response": _render_holdings(data),
+                    "context": {**(state.get("context") or {}), "verified_product_ids": product_ids}}
         if rtype in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value, Intent.WEALTH_COMPARE.value}:
             return {"final_response": _render_wealth(data, rtype)}
         if rtype == Intent.SUBSCRIPTION_QUERY.value:

@@ -192,6 +192,8 @@ def test_stream_failure_is_correlated_audited_and_redacted(boundary, monkeypatch
     request_id = response.headers["X-Request-Id"]
     assert error["request_id"] == request_id and request_id.startswith("gw_")
     assert error["code"] == ("STREAM_ACCESS_DENIED" if error_kind == "security" else "CORE_ERROR")
+    if error_kind == "security":
+        assert error["http_status"] == 403
     events = security.get_audit_trace(request_id)["events"]
     assert len(events) == 1
     assert events[0]["action"] == "AGENT_STREAM_FAILED"

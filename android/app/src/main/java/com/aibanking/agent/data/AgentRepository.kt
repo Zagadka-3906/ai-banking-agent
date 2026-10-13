@@ -155,14 +155,15 @@ class AgentRepository(
                 // nested {"detail":{...}} envelope an HTTP error carries, so it is
                 // decoded with its own type rather than reusing that one.
                 val failure = gson.fromJson(data, ErrorFrame::class.java)
-                throw GatewayException(failure?.code, failure?.message ?: "处理失败，请稍后重试", 0)
+                throw GatewayException(failure?.code, failure?.message ?: "处理失败，请稍后重试", failure?.httpStatus ?: 0)
             }
             // An unrecognised frame is ignored rather than fatal: a newer server
             // may add event kinds this build does not know yet.
             else -> null
         }
 
-    private data class ErrorFrame(val code: String? = null, val message: String? = null)
+    private data class ErrorFrame(val code: String? = null, val message: String? = null,
+        @com.google.gson.annotations.SerializedName("http_status") val httpStatus: Int? = null)
 
     private suspend fun <T> normalizing(block: suspend () -> T): T = try {
         block()

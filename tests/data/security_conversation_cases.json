@@ -556,31 +556,31 @@
       {
         "action": "approve_red_wrong_otp",
         "expect": {
-          "http_error": {
+          "unchanged": true,
+          "stream_error": {
             "status": 403,
             "code": "MFA_FAILED"
-          },
-          "unchanged": true
+          }
         }
       },
       {
         "action": "approve_red_wrong_otp",
         "expect": {
-          "http_error": {
+          "unchanged": true,
+          "stream_error": {
             "status": 403,
             "code": "MFA_FAILED"
-          },
-          "unchanged": true
+          }
         }
       },
       {
         "action": "approve_red_wrong_otp",
         "expect": {
-          "http_error": {
+          "unchanged": true,
+          "stream_error": {
             "status": 403,
             "code": "MFA_FAILED"
-          },
-          "unchanged": true
+          }
         }
       },
       {

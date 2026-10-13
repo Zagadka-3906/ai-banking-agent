@@ -199,7 +199,9 @@ def test_contact_lists_product_pairs_and_thousand_separators_are_not_tasks():
 def test_multiple_business_objects_require_a_choice(gateway, text):
     client, _ = gateway
     result = _send(client, text, conversation_id="object-choice")
-    assert result["approval"] is None and "业务对象" in result["reply"]
+    assert result["approval"] is None
+    assert "只选一" in result["reply"]
+    assert ("卡片" if text.startswith("冻结") else "理财产品") in result["reply"]
 
 
 @pytest.mark.parametrize("text,intent,target", [

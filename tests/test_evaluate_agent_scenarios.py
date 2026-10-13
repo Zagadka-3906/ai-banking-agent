@@ -33,6 +33,48 @@ def matrix(specs, rows):
             [{"id": "T01", "direction": "测试", "before": snapshot(), "turns": rows}])
 
 
+def test_business_status_requires_the_actual_response_contract():
+    spec = {"input": "查余额", "expect": {"response": {"status": "SUCCEEDED"}}}
+    row = recorded(spec)
+    row["server"]["actual"]["response"] = {"version": 1, "status": "FAILED"}
+    assert not evaluate_cases(*matrix([spec], [row]))["passed"]
+    row["server"]["actual"]["response"]["status"] = "SUCCEEDED"
+    assert evaluate_cases(*matrix([spec], [row]))["passed"]
+
+
+@pytest.mark.parametrize("source", ["core", "gateway"])
+def test_requested_audit_requires_both_valid_nonempty_chains(source):
+    spec = {"input": "查余额", "expect": {"unchanged": True}}
+    row = recorded(spec)
+    cases, observations = matrix([spec], [row])
+    cases[0]["audit"] = True
+    row["audit"] = {name: {"chain": {"valid": True}, "events": [{"event_id": "AUD"}]} for name in ("core", "gateway")}
+    assert evaluate_cases(cases, observations)["passed"]
+    row["audit"][source]["chain"]["valid"] = False
+    assert not evaluate_cases(cases, observations)["passed"]
+    row["audit"][source]["chain"]["valid"] = True
+    row["audit"][source]["events"] = []
+    assert not evaluate_cases(cases, observations)["passed"]
+    del row["audit"][source]
+    assert not evaluate_cases(cases, observations)["passed"]
+
+
+@pytest.mark.parametrize("field", ["holdings", "tasks", "splits", "scheduled_transfers", "disputes"])
+def test_collection_delta_needs_authoritative_before_and_after(field):
+    spec = {"input": "办理", "expect": {"collection_delta": {field: 1}}}
+    row = recorded(spec)
+    cases, observations = matrix([spec], [row])
+    observations[0]["before"][field] = []
+    row["after"][field] = [{"id": "created-record"}]
+    assert evaluate_cases(cases, observations)["passed"]
+    row["after"][field] = []
+    assert not evaluate_cases(cases, observations)["passed"]
+    del row["after"][field]
+    assert not evaluate_cases(cases, observations)["passed"]
+    row.pop("after")
+    assert not evaluate_cases(cases, observations)["passed"]
+
+
 def failed_names(report, step=0):
     return {item["name"] for item in report["cases"][0]["turns"][step]["checks"] if not item["passed"]}
 
@@ -53,6 +95,16 @@ def test_visible_http_refusal_with_no_mutation_is_a_valid_security_result():
     report = evaluate_cases(*matrix([spec], [record]))
     assert report["passed"]
     assert "已阻止不安全输入" in render_markdown(report)
+
+
+def test_stream_refusal_distinguishes_transport_success_from_business_rejection():
+    spec, row = refusal_record()
+    spec["expect"]["stream_error"] = spec["expect"].pop("http_error")
+    row["expected"] = deepcopy(spec["expect"])
+    row["server"].update(event="stream_error", transport_status=200)
+    assert evaluate_cases(*matrix([spec], [row]))["passed"]
+    row["server"]["transport_status"] = 400
+    assert not evaluate_cases(*matrix([spec], [row]))["passed"]
 
 
 @pytest.mark.parametrize("corruption", ["invisible", "wrong_status", "changed_balance", "invented_success", "missing_state", "different_input", "different_error"])

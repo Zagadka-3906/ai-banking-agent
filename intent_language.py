@@ -28,6 +28,8 @@ def split_tasks(text: str) -> list[str]:
         if "生日" in before and re.match(r"\s*(?:请|帮我|麻烦)?(?:锁定|预留)", after):
             return match.group()
         return "；"
+    if "提醒" in business_text(source):
+        source = re.sub(r"[，,](?=\s*(?:Apple(?:订阅)?|苹果(?:订阅)?|视频会员).{0,16}提醒)", "；", source)
     source = re.sub(r"(?:[，,、。]|和|与|及)(?=\s*" + _TASK_START + r")", separator, source)
     parts = [part.strip("，,。；; ") for part in _EXPLICIT_SPLIT.split(source)]
     parts = [part for part in parts if part]

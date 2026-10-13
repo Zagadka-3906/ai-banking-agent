@@ -841,7 +841,8 @@ class ConversationService:
             except SecurityError as exc:
                 code = exc.code if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", str(exc.code)) else "REQUEST_REJECTED"
                 audit_event("AGENT_STREAM_FAILED", user_id=principal, request_id=request_id, decision="BLOCK", outcome="FAILURE", reason=code)
-                events.put({"event": "error", "data": {"code": code, "message": "请求未完成，请检查当前操作状态后重试", "request_id": request_id}})
+                message = {"MFA_FAILED": "短信验证码或设备验证未通过，请核对后重试", "CIRCUIT_OPEN": "连续验证失败，操作已暂停，请稍后再试"}.get(code, "请求未完成，请检查当前操作状态后重试")
+                events.put({"event": "error", "data": {"code": code, "message": message, "http_status": exc.status_code, "request_id": request_id}})
             except Exception:
                 audit_event("AGENT_STREAM_FAILED", user_id=principal, request_id=request_id, decision="BLOCK", outcome="FAILURE", reason="CORE_ERROR")
                 events.put({"event": "error", "data": {"code": "CORE_ERROR", "message": "处理失败，请稍后重试", "request_id": request_id}})

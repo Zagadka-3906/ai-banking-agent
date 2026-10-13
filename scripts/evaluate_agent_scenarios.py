@@ -18,7 +18,7 @@ from typing import Any
 import unicodedata
 
 STATE_FIELDS = ("balance", "locked_amount", "transactions", "subscriptions", "cards", "scheduled_transfers", "splits")
-EXPECT_KEYS = {"approval", "parsed", "state", "reply_any", "reply_all", "no_claim", "unchanged", "balance_delta", "locked_delta", "new_approval", "time_contains", "http_error"}
+EXPECT_KEYS = {"approval", "parsed", "state", "response", "collection_delta", "reply_any", "reply_all", "no_claim", "unchanged", "balance_delta", "locked_delta", "new_approval", "time_contains", "http_error", "stream_error"}
 LOCAL_TIMEZONE = timezone(timedelta(hours=8))
 LABELS = {"PASS": "通过", "FAIL": "不符合预期", "ERROR": "观测错误", "NOT_RUN": "未录制"}
 
@@ -159,7 +159,10 @@ def evaluate_http_refusal(spec: dict, observation: Any, step: int, baseline: Any
     detail = response.get("detail") if isinstance(response, dict) else None
     detail = detail if isinstance(detail, dict) else {}
     displayed = observation.get("displayed_error")
-    check("recording.event", server.get("event") == "http_error", "http_error", server.get("event"), "recording")
+    error_kind = "stream_error" if "stream_error" in expect else "http_error"
+    check("recording.event", server.get("event") == error_kind, error_kind, server.get("event"), "recording")
+    if error_kind == "stream_error":
+        check("recording.transport", server.get("transport_status") == 200, 200, server.get("transport_status"), "recording")
     actual_input = server.get("input")
     input_matches = actual_input in {"[approve]", "[challenge]"} if "action" in spec else (
         isinstance(actual_input, str) and unicodedata.normalize("NFKC", actual_input).strip() == unicodedata.normalize("NFKC", spec["input"]).strip())
@@ -179,7 +182,7 @@ def evaluate_http_refusal(spec: dict, observation: Any, step: int, baseline: Any
     incremental, cumulative = state_comparison(previous, observation.get("after")), state_comparison(baseline, observation.get("after"))
     check("refusal_has_not_executed", incremental["available"] and not incremental.get("changes"), "全部已观测账务不变", incremental)
     for key, wanted in expect.items():
-        if key == "http_error":
+        if key in {"http_error", "stream_error"}:
             actual = {"status": server.get("http_status"), "code": detail.get("code")}
             check(key, isinstance(wanted, dict) and not subset_mismatches(wanted, actual, "http_error"), wanted, actual)
         elif key == "unchanged":
@@ -203,7 +206,7 @@ def evaluate_http_refusal(spec: dict, observation: Any, step: int, baseline: Any
 def evaluate_turn(spec: dict, observation: Any, step: int, baseline: Any, previous: Any,
                   prior_approval: str | None, seen_messages: set, seen_records: set) -> dict:
     expect = spec.get("expect", {})
-    if "http_error" in expect:
+    if "http_error" in expect or "stream_error" in expect:
         return evaluate_http_refusal(spec, observation, step, baseline, previous, seen_records)
     checks: list[dict] = []
 
@@ -306,6 +309,18 @@ def evaluate_turn(spec: dict, observation: Any, step: int, baseline: Any, previo
         elif key == "state":
             mismatches = subset_mismatches(wanted, after, "after")
             check(key, isinstance(wanted, dict) and not mismatches, wanted, {"after": after, "mismatches": mismatches})
+        elif key == "response":
+            actual = envelope.get("response")
+            mismatches = subset_mismatches(wanted, actual, "response")
+            check(key, isinstance(wanted, dict) and not mismatches, wanted, {"response": actual, "mismatches": mismatches})
+        elif key == "collection_delta":
+            valid = isinstance(wanted, dict) and bool(wanted) and isinstance(previous, dict) and isinstance(after, dict) and all(
+                field in {"transactions", "holdings", "cards", "subscriptions", "scheduled_transfers", "splits", "tasks", "disputes"}
+                and isinstance(delta, int) and not isinstance(delta, bool)
+                and isinstance(previous.get(field), list) and isinstance(after.get(field), list)
+                for field, delta in wanted.items())
+            actual = {field: len(after[field]) - len(previous[field]) for field in wanted} if valid else None
+            check(key, valid and same(wanted, actual), wanted, actual)
         elif key in {"reply_any", "reply_all", "no_claim"}:
             valid = isinstance(wanted, list) and bool(wanted) and all(isinstance(text, str) and bool(text) for text in wanted)
             matches = [text for text in wanted if text in (all_claims if key == "no_claim" else ui_text)] if valid else []
@@ -398,6 +413,17 @@ def evaluate_cases(cases: Any, observations: Any) -> dict:
             if len(candidates) > 1:
                 errors.append(f"第 {step} 轮重复录制")
             result = evaluate_turn(spec, row, step, baseline, previous, prior_approval, seen_messages, seen_records)
+            if case.get("audit") and isinstance(row, dict):
+                audit = row.get("audit") or {}
+                for source in ("core", "gateway"):
+                    evidence = audit.get(source) if isinstance(audit, dict) else None
+                    valid = (isinstance(evidence, dict) and isinstance(evidence.get("chain"), dict)
+                             and evidence["chain"].get("valid") is True
+                             and isinstance(evidence.get("events"), list) and bool(evidence["events"]))
+                    result["checks"].append({"name": f"audit.{source}", "passed": bool(valid), "kind": "recording",
+                                             "expected": "非空审计事件且完整性验证通过", "actual": evidence.get("chain") if isinstance(evidence, dict) else None})
+                    if not valid:
+                        result["status"] = "ERROR"
             turns.append(result)
             previous = row.get("after") if isinstance(row, dict) else None
             actual = result.get("actual")

@@ -56,7 +56,7 @@ class NaturalConversationUiTest {
                     turns.put(observation)
                     try {
                         val before = messages()
-                        val expectHttpError = turn.optJSONObject("expect")?.has("http_error") == true
+                        val expectHttpError = turn.optJSONObject("expect")?.let { it.has("http_error") || it.has("stream_error") } == true
                         val priorRecordCount = if (expectHttpError) control(18810, "records").getJSONArray("records").length() else 0
                         val action = turn.optString("action")
                         if (action.isNotEmpty()) {
@@ -71,7 +71,18 @@ class NaturalConversationUiTest {
                                 ui.onNodeWithTag(UiTags.CHAT_INPUT).performTextInput(chunk)
                                 Thread.sleep(45)
                             }
-                            ui.onNodeWithTag(UiTags.CHAT_SEND).assertIsEnabled().performClick()
+                            var accepted = false
+                            repeat(3) {
+                                if (!accepted) {
+                                    ui.onNodeWithTag(UiTags.CHAT_SEND).assertIsEnabled().performClick()
+                                    accepted = runCatching {
+                                        ui.waitUntil(5_000) { observedModel.state.value.let {
+                                            it.busy || it.input.isBlank() || messages().toString() != before.toString()
+                                        } }
+                                    }.isSuccess
+                                }
+                            }
+                            check(accepted) { "The send button did not accept the click" }
                         }
                         if (expectHttpError) {
                             ui.waitUntil(35_000) {
@@ -142,7 +153,9 @@ class NaturalConversationUiTest {
         }
         ui.waitUntil(15_000) { ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty() }
         control(18810, "reset", JSONObject())
-        control(18800, "reset", JSONObject().put("risk_profile", case.optBoolean("risk_profile")).put("two_cards", case.optBoolean("two_cards")))
+        control(18800, "reset", JSONObject().put("risk_profile", case.optBoolean("risk_profile"))
+            .put("two_cards", case.optBoolean("two_cards"))
+            .put("recurring_transactions", case.optBoolean("recurring_transactions")))
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextClearance()
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performTextInput("Bank@2026")
         ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
@@ -163,10 +176,29 @@ class NaturalConversationUiTest {
             "approve_red", "approve_red_wrong_otp" -> {
                 ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextClearance()
                 ui.onNodeWithTag(UiTags.APPROVAL_OTP).performTextInput(if (action == "approve_red") "888888" else "000000")
-                ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
+                val priorError = observedModel.state.value.error
+                val priorPending = observedModel.state.value.pending
+                var accepted = false
+                repeat(3) {
+                    if (!accepted) {
+                        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
+                        // Keyboard/focus animations can swallow a synthetic
+                        // click. A previous error is not evidence of a new
+                        // rejection: first prove the new click was accepted.
+                        accepted = runCatching {
+                            ui.waitUntil(5_000) { observedModel.state.value.let {
+                                it.busy || it.error != priorError || it.pending != priorPending || credentialReady()
+                            } }
+                        }.isSuccess
+                    }
+                }
+                check(accepted) { "The approval button did not accept the click" }
                 var ready = false
                 repeat(30) {
                     if (!ready) {
+                        // A circuit/open or expired approval may reject the
+                        // challenge before any system credential UI appears.
+                        if (!observedModel.state.value.busy && observedModel.state.value.error != null && observedModel.state.value.error != priorError) return
                         val focus = shell("dumpsys window").lineSequence().firstOrNull { it.contains("mCurrentFocus") }.orEmpty()
                         if (focus.contains("ConfirmDeviceCredential") || focus.contains("ConfirmLock") || focus.contains("biometric", ignoreCase = true)) ready = true
                         else Thread.sleep(300)
@@ -184,6 +216,11 @@ class NaturalConversationUiTest {
     private fun messages(): JSONArray = runCatching {
         JSONArray(SessionStore(instrumentation.targetContext).messages() ?: "[]")
     }.getOrElse { JSONArray() }
+
+    private fun credentialReady(): Boolean = shell("dumpsys window").lineSequence()
+        .firstOrNull { it.contains("mCurrentFocus") }.orEmpty().let {
+            it.contains("ConfirmDeviceCredential") || it.contains("ConfirmLock") || it.contains("biometric", ignoreCase = true)
+        }
 
     private fun control(port: Int, path: String, body: JSONObject? = null): JSONObject {
         val connection = URL("http://127.0.0.1:$port/__scenario/$path").openConnection() as HttpURLConnection
