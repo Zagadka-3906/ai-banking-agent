@@ -17,6 +17,7 @@ from planner import missing_slots, validate_intent_payload
 @pytest.fixture
 def model(monkeypatch):
     """Exercise the real merge with an intentionally unreliable offline LLM."""
+    monkeypatch.setenv("BANK_MODEL_FAST_PATH", "0")
     def no_network(*args, **kwargs):
         raise AssertionError("Model-merge tests must never contact a service")
 

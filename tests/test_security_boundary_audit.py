@@ -182,9 +182,8 @@ def test_stream_failure_is_correlated_audited_and_redacted(boundary, monkeypatch
         if error_kind == "security":
             raise security.SecurityError(message, 403, "STREAM_ACCESS_DENIED")
         raise RuntimeError(message)
-        yield  # Keep the same iterator contract as the real streaming worker.
 
-    monkeypatch.setattr(agent_api.SERVICE, "_turn_events", fail)
+    monkeypatch.setattr(agent_api.SERVICE, "start_turn", fail)
     response = gateway.post("/api/v1/agent/messages/stream", headers=_headers(token), json={"text": "查询余额"})
     assert response.status_code == 200  # Headers were sent before the worker failed.
     frames = [json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")]

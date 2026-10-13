@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from urllib.parse import quote, urlencode
 from typing import Any, Mapping, Optional
 
 import requests
@@ -133,6 +134,11 @@ class BankClient:
         raise BankAPIError(f"无法连接核心银行服务: {last_error}") from last_error
 
     # Session / authorization --------------------------------------------
+    def operation_status(self, operation_id: str, endpoint: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
+        response = self._request("GET", f"operations/{quote(operation_id, safe='')}?{urlencode({'endpoint': endpoint})}",
+                                 headers=self._headers(request_id=request_id), read_only=True)
+        return response.json()
+
     def session_subject(self, session_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
         """Resolve a session credential to its subject, asking the core.
 

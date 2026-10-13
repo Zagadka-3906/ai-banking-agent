@@ -973,6 +973,7 @@ def _ledger_transaction():
 # ---------------------------------------------------------------------------
 
 LEDGER_STORE_VERSION = 1
+OPERATION_RECEIPTS: dict[str, dict[str, Any]] = {}
 _LEDGER_STORE_BLOCKED = False
 _LEDGER_STORE_LOAD_SUMMARY: dict[str, Any] = {}
 
@@ -1000,6 +1001,7 @@ LEDGER_STATE_NAMES = (
     "DISPUTE_CASES",
     "TRANSACTIONS",
     "OUTBOX",
+    "OPERATION_RECEIPTS",
 )
 
 
@@ -1092,6 +1094,21 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
         if not isinstance(row, dict) or not isinstance(row.get("account_id"), str) or not _finite_nonnegative(row.get("amount", 0.0)):
             return False
     outbox = state.get("OUTBOX", [])
+    receipts = state.get("OPERATION_RECEIPTS", {})
+    if not isinstance(receipts, dict):
+        return False
+    for key, receipt in receipts.items():
+        try:
+            scoped = json.loads(key)
+        except (TypeError, ValueError):
+            return False
+        if (not isinstance(scoped, list) or len(scoped) != 3 or not all(isinstance(item, str) for item in scoped)
+                or scoped[0] not in accounts or scoped[1] not in {"transfer_execute", "lock_fund", "operation_execute"}
+                or not isinstance(receipt, dict) or not _finite_nonnegative(receipt.get("completed_at"))
+                or not isinstance(receipt.get("response"), dict)):
+            return False
+        if receipt.get("fingerprint") is not None and not re.fullmatch(r"[0-9a-f]{64}", str(receipt["fingerprint"])):
+            return False
     if not isinstance(outbox, list):
         return False
     for row in outbox:
@@ -1301,6 +1318,12 @@ def _idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: A
         for old_key in expired:
             IDEMPOTENCY_RECORDS.pop(old_key, None)
         scoped = (actor, endpoint, safe_key)
+        committed = OPERATION_RECEIPTS.get(json.dumps([actor, endpoint, safe_key]))
+        if committed and committed.get("fingerprint") and now - committed["completed_at"] <= IDEMPOTENCY_TTL_SECONDS:
+            if committed["fingerprint"] != fingerprint:
+                raise SecurityError("幂等键已用于不同请求", 409, "IDEMPOTENCY_KEY_REUSE")
+            audit_event("IDEMPOTENCY_REPLAY", user_id=actor, decision="ALLOW", outcome="CACHED_RESPONSE", request_id=request_id, metadata={"endpoint": endpoint})
+            return deepcopy(committed["response"])
         existing = IDEMPOTENCY_RECORDS.get(scoped)
         if existing:
             if existing.get("fingerprint") != fingerprint:
@@ -1327,6 +1350,12 @@ def _idempotency_complete(actor: str, endpoint: str, key: Optional[str], payload
         entry = IDEMPOTENCY_RECORDS.get(scoped)
         if entry and entry.get("fingerprint") == _idempotency_fingerprint(payload):
             entry.update({"status": "COMPLETED", "response": dict(response), "completed_at": time.time()})
+            if endpoint in {"transfer_execute", "lock_fund", "operation_execute"}:
+                receipt_key = json.dumps([actor, endpoint, safe_key])
+                OPERATION_RECEIPTS[receipt_key] = {"completed_at": time.time(), "fingerprint": entry["fingerprint"], "response": deepcopy(response)}
+                if len(OPERATION_RECEIPTS) > IDEMPOTENCY_MAX_RECORDS:
+                    oldest = min(OPERATION_RECEIPTS, key=lambda item: OPERATION_RECEIPTS[item]["completed_at"])
+                    OPERATION_RECEIPTS.pop(oldest, None)
 
 
 def _idempotency_abort(actor: str, endpoint: str, key: Optional[str]) -> None:
@@ -4202,6 +4231,28 @@ def notification_outbox_list(split_id: Optional[str] = None, x_session_token: Op
     return {"code": 200, "data": visible_notifications(actor, split_id=split_id)}
 
 
+@app.get("/api/v1/operations/{operation_id}")
+def operation_status(operation_id: str, endpoint: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(x_user_id, x_user_id, action="OPERATION_QUERY", request_id=request_id)
+    if endpoint not in {"transfer_execute", "lock_fund", "operation_execute"}:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_OPERATION_KIND", "message": "操作类型无效"})
+    key = sanitize_text(operation_id, field="操作编号", max_length=128)
+    with STATE_LOCK:
+        stored = OPERATION_RECEIPTS.get(json.dumps([actor, endpoint, key]))
+        entry = IDEMPOTENCY_RECORDS.get((actor, endpoint, key))
+        if stored and time.time() - stored["completed_at"] <= IDEMPOTENCY_TTL_SECONDS:
+            result = {"status": "COMPLETED", "receipt": deepcopy(stored["response"])}
+        elif entry and time.time() - entry["created_at"] <= IDEMPOTENCY_TTL_SECONDS:
+            result = {"status": entry["status"], "receipt": deepcopy(entry.get("response"))}
+        else:
+            result = {"status": "UNKNOWN", "receipt": None}
+    audit_event("OPERATION_QUERY", user_id=actor, request_id=request_id, risk_level="GREEN", decision="ALLOW", outcome=result["status"])
+    return {"code": 200, "operation_id": key, **result}
+
+
 @app.get("/api/v1/tasks")
 def list_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     if not x_user_id:
@@ -4632,6 +4683,7 @@ def reset_state() -> None:
         TASK_STORE.reset()
         OUTBOX.clear()
         IDEMPOTENCY_RECORDS.clear()
+        OPERATION_RECEIPTS.clear()
         if "WEALTH_HOLDINGS" in globals():
             WEALTH_HOLDINGS.clear()
             WEALTH_HOLDINGS.update(deepcopy(_INITIAL_WEALTH_HOLDINGS))

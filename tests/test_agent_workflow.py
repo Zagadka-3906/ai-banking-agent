@@ -575,16 +575,18 @@ def test_compound_read_request_becomes_ordered_dag(wired):
     assert '"code"' not in response
 
 
-def test_compound_request_with_a_write_is_not_decomposed(wired):
-    """A mutating part must not be silently dropped or auto-split."""
+def test_compound_request_queries_then_waits_for_independent_write_approval(wired):
+    """The query runs; the write remains behind its own Core approval."""
 
     config = {"configurable": {"thread_id": "test-agent-multi-mixed"}}
     list(agent.app.stream({"user_id": "user_zhang", "user_input": "查一下余额，再给李四转 100 元"}, config=config, stream_mode="values"))
     snapshot = agent.app.get_state(config)
     assert not snapshot.values.get("sub_requests")
-    assert snapshot.values["clarification_required"] is True
-    assert "分开逐条办理" in snapshot.values["final_response"]
-    assert not snapshot.next, "nothing may be executed or left pending"
+    flow = snapshot.values["context"]["compound_workflow"]
+    assert flow["index"] == 1
+    assert flow["results"][0]["type"] == "BALANCE"
+    assert snapshot.next == ("human_review",)
+    assert snapshot.values["auth_token"]
     assert main.ACCOUNTS["user_zhang"]["balance"] == 15000.0
 
 

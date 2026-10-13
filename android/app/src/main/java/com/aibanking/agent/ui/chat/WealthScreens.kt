@@ -2,35 +2,35 @@ package com.aibanking.agent.ui.chat
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -38,32 +38,20 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,32 +60,43 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.ui.unit.sp
 import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.anim.cascadeItem
-import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import com.aibanking.agent.ui.anim.pageSlideSpec
+import com.aibanking.agent.ui.anim.rememberCascadeEntrance
+import com.aibanking.agent.ui.components.BankButton
+import com.aibanking.agent.ui.components.BankCard
+import com.aibanking.agent.ui.components.BankFilterChip
+import com.aibanking.agent.ui.components.BankOutlinedButton
 import com.aibanking.agent.ui.components.BankSectionCard
 import com.aibanking.agent.ui.components.BankSectionHeader
 import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.components.BankSticker
+import com.aibanking.agent.ui.components.BankTextButton
 import com.aibanking.agent.ui.theme.BankSpacing
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
-import java.util.Locale
 import java.time.LocalDate
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 // Wealth screens consume the shared semantic palette so the Chinese finance
@@ -187,12 +186,13 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
             // 扁平序号跨越横幅、标题与卡片，波浪按整页顺序推入。
             var flat = 0
             item {
-                Card(
+                BankCard(
                     modifier = Modifier.fillMaxWidth().cascadeItem(cascade, flat++),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 ) {
-                    Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        BankSticker("财富管理 · 持仓概览")
                         Text("稳步积累，从容规划", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text("持仓本金", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .72f))
                         Text("¥%,.2f".format(Locale.CHINA, state.wealthHoldings.sumOf { it.principal }), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -220,9 +220,9 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
                     key = { state.wealthHoldings[it].holdingId },
                 ) { index ->
                     val holding = state.wealthHoldings[index]
-                    Card(
+                    BankCard(
                         modifier = Modifier.fillMaxWidth().cascadeItem(cascade, flat++),
-                        shape = RoundedCornerShape(24.dp),
+                        shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     ) {
                         Column(
@@ -288,12 +288,12 @@ private fun WealthSkeleton(modifier: Modifier = Modifier) {
 
 @Composable
 private fun ProductCard(product: ProductView, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Card(
+    BankCard(
         modifier = modifier
             .fillMaxWidth()
             .testTag(UiTags.wealthProduct(product.productId))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
@@ -306,7 +306,7 @@ private fun ProductCard(product: ProductView, modifier: Modifier = Modifier, onC
             Text(
                 product.benchmark ?: "业绩比较基准以产品说明书为准",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.secondary,
                 fontWeight = FontWeight.Bold,
             )
             Text(
@@ -324,7 +324,7 @@ private fun ProductCard(product: ProductView, modifier: Modifier = Modifier, onC
 @Composable
 private fun RiskProfileBanner(state: ChatUiState, viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val profile = state.riskProfile
-    Card(
+    BankCard(
         colors = CardDefaults.cardColors(
             containerColor = if (profile == null) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer,
         ),
@@ -345,7 +345,7 @@ private fun RiskProfileBanner(state: ChatUiState, viewModel: ChatViewModel, modi
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            TextButton(
+            BankTextButton(
                 onClick = {
                     viewModel.onInputChange(if (profile == null) "我想做风险测评" else "我想重新做风险测评")
                     viewModel.closeWealth()
@@ -443,9 +443,9 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
         ) {
             WealthSummary(rendered) { notice(rendered.promoTitle ?: "财富日限时加息，申购费率1折") }
 
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -455,7 +455,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         listOf("单位净值", "累计净值", "同类排名").forEach { tab ->
-                            FilterChip(
+                            BankFilterChip(
                                 selected = tab == selectedTab,
                                 onClick = { selectedTab = tab },
                                 label = { Text(tab) },
@@ -485,7 +485,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         listOf("近1月", "近3月", "近6月", "近1年", "成立以来").forEach { range ->
-                            FilterChip(
+                            BankFilterChip(
                                 selected = range == selectedRange,
                                 onClick = { selectedRange = range },
                                 modifier = Modifier.heightIn(min = 48.dp).testTag(UiTags.wealthRange(range)),
@@ -504,9 +504,9 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
 
             // 3. 历史业绩 / 阶段涨幅表格
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_HISTORY).animateContentSize(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
@@ -572,19 +572,19 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                         }
                     }
 
-                    TextButton(
+                    BankTextButton(
                         onClick = { historyExpanded = !historyExpanded },
                         modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_HISTORY_TOGGLE),
                     ) {
-                        Text(if (historyExpanded) "收起 ⌃" else "展开更多 ⌄", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                        Text(if (historyExpanded) "收起 ⌃" else "展开更多 ⌄", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
 
             // 4. 风格特征 (2x2 四宫格卡片)
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_PROFILE),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
@@ -611,7 +611,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                         2 -> WealthNegative
                                         else -> WealthPositive
                                     }
-                                    Card(
+                                    BankCard(
                                         modifier = Modifier.weight(1f),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -634,16 +634,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
 
             // 5. 基金经理卡片
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_MANAGER),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("基金经理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("历任基金经理 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Text("历任基金经理 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                     }
 
                     Row(
@@ -663,7 +663,7 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
                                 rendered.manager?.name?.take(1) ?: "经",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 20.sp,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.secondary,
                             )
                         }
 
@@ -708,16 +708,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
 
             // 6. 资产配置与持仓分布卡片
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_ALLOCATION),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("持仓分布", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("重仓详情 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Text("重仓详情 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                     }
 
                     if (rendered.assetAllocation.isEmpty()) {
@@ -799,16 +799,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
 
             // 7. 基金概况卡片
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("基金概况", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("更多资料 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Text("更多资料 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                     }
                     DetailRow("成立日期", rendered.establishedAt ?: "暂无")
                     DetailRow("产品规模", rendered.scaleBillion?.let { "%.2f 亿元".format(Locale.CHINA, it) } ?: "暂无")
@@ -820,9 +820,9 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
 
             // 8. 基金公告与产品文件卡片
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
@@ -848,16 +848,16 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
 
             // 9. 交易规则卡片
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_RULES),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("交易规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("费率详情 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Text("费率详情 ›", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                     }
 
                     // 交易时间线步骤
@@ -888,9 +888,9 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
             }
 
             // 10. 合规与披露 (含测试所需展开项)
-            Card(
+            BankCard(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_DISCLOSURE),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
@@ -930,9 +930,9 @@ private fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sna
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WealthSummary(product: ProductView, onPromo: () -> Unit) {
-    Card(
+    BankCard(
         modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_SUMMARY),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -983,7 +983,7 @@ private fun TimelineStep(step: String, title: String, subtitle: String) {
             Modifier.background(MaterialTheme.colorScheme.primaryContainer, CircleShape).padding(horizontal = 8.dp, vertical = 2.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text(step, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            Text(step, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
         }
         Spacer(Modifier.height(4.dp))
         Text(title, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
@@ -1233,11 +1233,11 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                     color = MaterialTheme.colorScheme.tertiary,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = {
+                BankTextButton(onClick = {
                     viewModel.onInputChange("请根据我的风险档案提供${product.name}智能投顾建议")
                     viewModel.closeWealth()
                 }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("投顾", style = MaterialTheme.typography.labelMedium) }
-                TextButton(onClick = {
+                BankTextButton(onClick = {
                     viewModel.onInputChange("请帮我试算${product.name}收益")
                     viewModel.closeWealth()
                 }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("试算", style = MaterialTheme.typography.labelMedium) }
@@ -1266,20 +1266,20 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                 Modifier.fillMaxWidth().testTag(UiTags.WEALTH_BOTTOM_BAR),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                OutlinedButton(
+                BankOutlinedButton(
                     onClick = { viewModel.onInputChange("请设置${product.name}定投"); viewModel.closeWealth() },
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp),
                     shape = RoundedCornerShape(16.dp),
                 ) { Text("定投买入") }
                 if (eligible) {
-                    Button(
+                    BankButton(
                         onClick = { viewModel.startPurchase(product, state.buyAmount) },
                         enabled = state.canBuySelected && !state.panelBusy,
                         modifier = Modifier.weight(1.2f).heightIn(min = 52.dp).testTag(UiTags.WEALTH_BUY),
                         shape = RoundedCornerShape(16.dp),
                     ) { Text(if (state.panelBusy) "处理中…" else "立即购买") }
                 } else {
-                    Button(
+                    BankButton(
                         onClick = { viewModel.onInputChange("我想做风险测评"); viewModel.closeWealth() },
                         modifier = Modifier.weight(1.2f).heightIn(min = 52.dp).testTag(UiTags.WEALTH_TO_TEST),
                         shape = RoundedCornerShape(16.dp),

@@ -34,6 +34,9 @@ import com.aibanking.agent.ui.chat.AgentReplyCard
 import com.aibanking.agent.ui.chat.ChatMessage
 import com.aibanking.agent.ui.chat.ChatRole
 import com.aibanking.agent.ui.theme.BankAgentTheme
+import com.aibanking.agent.data.ReplyResponse
+import com.aibanking.agent.data.WorkflowPlan
+import com.aibanking.agent.data.WorkflowStep
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -75,6 +78,7 @@ class ReplyCardUiTest {
                 "execution_result" to mapOf(
                     "type" to "TRANSFER_SUCCESS",
                     "data" to mapOf(
+                        "status" to "SUCCESS",
                         "transferred_amount" to 12345.67,
                         "remaining_available" to 8754.33,
                     ),
@@ -93,6 +97,8 @@ class ReplyCardUiTest {
         ui.onNodeWithText(traceId, substring = true, useUnmergedTree = true).assertDoesNotExist()
         ui.onNodeWithText("¥12,345.67", substring = true, useUnmergedTree = true).assertExists()
         ui.onNodeWithText("¥8,754.33", substring = true, useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("已完成", useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("处理失败", useUnmergedTree = true).assertDoesNotExist()
         ui.onNodeWithText("处理步骤", useUnmergedTree = true).assertDoesNotExist()
         ui.onNodeWithText("步已完成", substring = true, useUnmergedTree = true).assertDoesNotExist()
         screenshot("reply-light")
@@ -104,6 +110,52 @@ class ReplyCardUiTest {
         ui.onNodeWithText(traceId, substring = true, useUnmergedTree = true).assertDoesNotExist()
         // Hiding the diagnostic identifier must not hide the actual receipt.
         ui.onNodeWithText("¥12,345.67", substring = true, useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun bill_reply_keeps_all_metrics_and_review_reasons() {
+        val message = ChatMessage(
+            id = "reply-review-bill", role = ChatRole.ASSISTANT, riskLevel = "GREEN",
+            text = "## 本月支出分析\n\n共核验 **6 笔交易**，请查看分类与需复核交易。",
+            result = mapOf("execution_result" to mapOf(
+                "type" to "BILL_ANALYZE",
+                "facts" to mapOf(
+                    "record_count" to 6,
+                    "total_spent" to 2436.0, "refund_total" to 170.0, "net_spent" to 2266.0,
+                    "category_breakdown" to listOf(
+                        mapOf("category" to "日常消费", "amount" to 1600.0, "share" to 1600.0 / 2436),
+                        mapOf("category" to "其他支出", "amount" to 836.0, "share" to 836.0 / 2436),
+                    ),
+                    "anomalies" to listOf(mapOf(
+                        "merchant" to "需复核商户", "amount" to 800.0, "tx_id" to "TX-REVIEW-001",
+                        "reasons" to listOf("交易金额偏高", "请核对商户"),
+                    )),
+                ),
+            )),
+        )
+        render { AgentReplyCard(message) }
+        ui.onNodeWithText("¥2,436.00", useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("¥170.00", useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("¥2,266.00", useUnmergedTree = true).assertExists()
+        screenshot("reply-bill")
+        ui.onNodeWithText("交易金额偏高、请核对商户", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun failure_status_is_not_overridden_by_a_green_risk_tier() {
+        val message = ChatMessage(
+            id = "reply-review-failure", role = ChatRole.ASSISTANT, riskLevel = "GREEN",
+            text = "## 暂时无法完成查询\n\n请稍后重试。",
+            result = mapOf("execution_result" to mapOf(
+                "type" to "QUERY_FAILURE",
+                "data" to mapOf("status" to "FAILED", "message" to "数据服务暂时不可用"),
+            )),
+        )
+        render { AgentReplyCard(message) }
+        ui.onNodeWithText("处理失败", useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("数据服务暂时不可用", useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("已完成", useUnmergedTree = true).assertDoesNotExist()
+        screenshot("reply-failure")
     }
 
     @Test
@@ -131,6 +183,23 @@ class ReplyCardUiTest {
         screenshot("reply-dark-large-font")
         ui.onNodeWithText(ending, substring = true, useUnmergedTree = true)
             .performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun pending_result_shows_reconciliation_action_and_remaining_steps() {
+        var calls = 0
+        val message = ChatMessage(id = "reply-workflow-pending", role = ChatRole.ASSISTANT,
+            text = "暂未取得可核验回执，请勿重复办理。", riskLevel = "YELLOW", businessStatus = "PENDING_RECONCILIATION",
+            response = ReplyResponse(version = 1, operationId = "plan-local:settle", workflowPlan = WorkflowPlan(
+                currentStep = 2, steps = listOf(WorkflowStep(1, "查询余额", "SUCCEEDED"),
+                    WorkflowStep(2, "给李四转10元", "PENDING_RECONCILIATION"), WorkflowStep(3, "给李四转20元", "PENDING")))))
+        render { AgentReplyCard(message, onReconcile = { calls++ }) }
+        ui.onNodeWithText("任务进度 · 2/3", useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("3. 给李四转20元", useUnmergedTree = true).assertExists()
+        ui.onNodeWithText("已完成", useUnmergedTree = true).assertDoesNotExist()
+        ui.onNodeWithTag("reconcile_${message.id}").performScrollTo().performClick()
+        assertEquals(1, calls)
+        screenshot("reply-workflow-pending")
     }
 
     private fun render(

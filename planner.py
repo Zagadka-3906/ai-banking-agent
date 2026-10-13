@@ -168,7 +168,7 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     scope = str(payload.get("date_scope") or "ALL").upper().strip()
     aliases = {"今天": "TODAY", "今日": "TODAY", "本月": "MONTH", "上月": "LAST_MONTH", "今年": "YEAR", "年度": "YEAR", "全年": "YEAR"}
     scope = aliases.get(scope, scope)
-    if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"}:
+    if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL", "CUSTOM"}:
         scope = "ALL"
     amount = parse_amount(payload.get("amount"), allow_zero=True)
     confidence = payload.get("confidence")
@@ -195,6 +195,25 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                 # allowed to influence a later prompt or tool call.
                 continue
         safe_slots[key] = value
+    date_range = payload.get("date_range")
+    normalized_range = None
+    if scope == "CUSTOM":
+        try:
+            if not isinstance(date_range, Mapping):
+                raise ValueError("missing date range")
+            start, end = date.fromisoformat(date_range["start"]), date.fromisoformat(date_range["end"])
+            if start > end or (end - start).days > 3660:
+                raise ValueError("invalid date range")
+            normalized_range = {"start": start.isoformat(), "end": end.isoformat()}
+        except (ValueError, TypeError, KeyError):
+            safe_slots["date_range_ambiguous"] = True
+    meta = payload.get("parse_meta")
+    parse_meta = None
+    if isinstance(meta, Mapping):
+        parse_meta = {"source": str(meta.get("source") or "unknown")[:32],
+                      "resolution": str(meta.get("resolution") or "unknown")[:32],
+                      "reason_codes": [str(value)[:64] for value in (meta.get("reason_codes") or [])[:8] if isinstance(value, str)],
+                      "fast_path_eligible": meta.get("fast_path_eligible") is True}
     # Renewal scheduling is opt-in and only meaningful for subscription reads.
     # Never let truthy strings or unrestricted day offsets create reminders.
     if intent == Intent.SUBSCRIPTION_QUERY.value and slots.get("renewal_reminder") is True:
@@ -256,6 +275,8 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         "target": target,
         "amount": amount,
         "date_scope": scope,
+        "date_range": normalized_range,
+        "parse_meta": parse_meta,
         "extra_info": extra,
         "confidence": confidence,
         "slots": safe_slots,
@@ -277,6 +298,12 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
 
     intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
     missing: list[str] = []
+    slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+    for slot_name in ("amount", "target", "date_range", "request"):
+        if slots.get(f"{slot_name}_ambiguous") is True:
+            missing.append(slot_name)
+    if missing:
+        return missing
     if intent == Intent.WEALTH_RISK_ASSESSMENT.value:
         slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
         tolerance = str(slots.get("loss_tolerance") or "").upper().strip()
@@ -497,7 +524,7 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
     intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
     amount = parsed.get("amount")
     target = parsed.get("target")
-    base = {"target": target, "amount": amount, "date_scope": parsed.get("date_scope", "ALL"), "product_ids": list(parsed.get("product_ids") or []), "scheduled_at": parsed.get("scheduled_at"), "event_at": parsed.get("event_at"), "reminder_at": parsed.get("reminder_at")}
+    base = {"target": target, "amount": amount, "date_scope": parsed.get("date_scope", "ALL"), "date_range": parsed.get("date_range"), "product_ids": list(parsed.get("product_ids") or []), "scheduled_at": parsed.get("scheduled_at"), "event_at": parsed.get("event_at"), "reminder_at": parsed.get("reminder_at")}
     tasks: list[Task]
 
     if intent == Intent.CROSS_SCENE_LOCK.value:
@@ -662,14 +689,23 @@ def date_bounds(scope: str, *, now: Optional[datetime] = None) -> tuple[Optional
     return None, None
 
 
-def filter_transactions(records: Iterable[Mapping[str, Any]], scope: str, *, now: Optional[datetime] = None) -> list[dict[str, Any]]:
+def filter_transactions(records: Iterable[Mapping[str, Any]], scope: str, *, now: Optional[datetime] = None, date_range: Optional[Mapping[str, str]] = None) -> list[dict[str, Any]]:
     """Filter transactions without trusting model-generated dates.
 
     Calendar-day comparisons happen in the business timezone so that a UTC
     timestamp near midnight falls into the correct local day.
     """
 
-    start, end = date_bounds(scope, now=now)
+    if scope == "CUSTOM":
+        if not isinstance(date_range, Mapping):
+            raise ValueError("自定义时间范围缺失")
+        start = date.fromisoformat(date_range["start"])
+        last = date.fromisoformat(date_range["end"])
+        if start > last or (last - start).days > 3660:
+            raise ValueError("自定义时间范围无效")
+        end = last + timedelta(days=1)
+    else:
+        start, end = date_bounds(scope, now=now)
     output: list[dict[str, Any]] = []
     for record in records:
         parsed = _parse_timestamp(record.get("time"))

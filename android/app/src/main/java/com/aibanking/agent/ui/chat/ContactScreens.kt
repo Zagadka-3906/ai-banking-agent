@@ -3,13 +3,13 @@ package com.aibanking.agent.ui.chat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -41,8 +41,9 @@ import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import com.aibanking.agent.ui.components.*
+import com.aibanking.agent.ui.components.bankHardShadow
+import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
-import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import kotlinx.coroutines.launch
 
 /** Contact destinations share the app-level message host. */
@@ -110,7 +111,8 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 text = { Text("添加联系人") },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.testTag(UiTags.CONTACT_OPEN_ADD),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.bankHardShadow(RoundedCornerShape(12.dp)).border(BankPalette.borderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)).testTag(UiTags.CONTACT_OPEN_ADD),
             )
         },
     ) { padding ->
@@ -140,7 +142,7 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
                         }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(12.dp),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp).testTag(UiTags.CONTACT_SEARCH),
@@ -221,17 +223,17 @@ private fun SectionHeader(letter: String, modifier: Modifier = Modifier) {
     Text(
         text = letter,
         style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.secondary,
         modifier = modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(vertical = 12.dp, horizontal = 4.dp),
     )
 }
 
 @Composable
 private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Card(
+    BankCard(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Row(
@@ -247,7 +249,7 @@ private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onCl
                     Text(
                         listOfNotNull(contact.relationshipLabel.takeIf { it.isNotBlank() }, contact.birthday?.let { "生日 $it" }).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.secondary,
                     )
                 }
             }
@@ -259,7 +261,7 @@ private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onCl
 /** Independent scrolling keeps every letter reachable on short screens. */
 @Composable
 private fun AlphabetRail(letters: List<String>, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             letters.forEach { letter ->
                 Box(Modifier.size(48.dp).clickable { onSelect(letter) }, contentAlignment = Alignment.Center) {
@@ -307,7 +309,9 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 modifier = Modifier.widthIn(max = BankSpacing.contentMaxWidth).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.bankHardShadow(RoundedCornerShape(16.dp)),
+                    border = androidx.compose.foundation.BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
                     Column(
                         Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -344,12 +348,12 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
             title = { Text("删除联系人") },
             text = { Text("确定删除「${rendered?.name ?: ""}」吗？删除后可重新添加。") },
             confirmButton = {
-                TextButton(
+                BankTextButton(
                     onClick = { confirmDelete = false; rendered?.contactId?.let(viewModel::removeContact) },
                     modifier = Modifier.testTag(UiTags.CONTACT_REMOVE),
                 ) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
+            dismissButton = { BankTextButton(onClick = { confirmDelete = false }) { Text("取消") } },
         )
     }
 }
@@ -417,7 +421,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             RELATIONSHIP_OPTIONS.forEach { option ->
                                 val selected = state.contactRelationship == option
-                                FilterChip(
+                                BankFilterChip(
                                     selected = selected,
                                     onClick = { viewModel.onContactFormChange(relationship = option) },
                                     enabled = !state.panelBusy,
@@ -460,11 +464,11 @@ private val RELATIONSHIP_OPTIONS = listOf("爱人", "兄弟", "儿子", "女儿"
 
 @Composable
 private fun ContactAvatar(name: String, size: Dp, textStyle: TextStyle = MaterialTheme.typography.titleMedium) {
-    val semantic = LocalBankSemanticColors.current
-    val colors = listOf(MaterialTheme.colorScheme.primary, semantic.chartBenchmark, semantic.cardActive, semantic.riskYellow)
+    val colors = listOf(BankPalette.Wisteria, BankPalette.GreenSoft, BankPalette.YellowSoft, BankPalette.RedSoft)
     val accent = colors[Math.floorMod(name.hashCode(), colors.size)]
-    Box(Modifier.size(size).clip(CircleShape).background(accent.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
-        Text(name.trim().firstOrNull()?.toString() ?: "?", color = accent, style = textStyle, fontWeight = FontWeight.SemiBold)
+    Box(Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(accent)
+        .border(BankPalette.borderWidth, BankPalette.Ink, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+        Text(name.trim().firstOrNull()?.toString() ?: "?", color = BankPalette.Ink, style = textStyle, fontWeight = FontWeight.Bold)
     }
 }
 

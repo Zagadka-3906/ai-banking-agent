@@ -1,0 +1,32 @@
+[
+  {"id":"P01","direction":"金额冲突澄清","turns":[
+    {"input":"给李四转100元或200元","expect":{"approval":false,"unchanged":true,"reply_any":["最终金额"]},"screenshot":true},
+    {"input":"200元","expect":{"approval":true,"unchanged":true,"parsed":{"intent":"TRANSFER","amount":200}},"screenshot":true}
+  ]},
+  {"id":"P02","direction":"收款人纠正澄清","turns":[
+    {"input":"不是给李四，是给王美转100元","expect":{"approval":false,"unchanged":true,"reply_any":["最终收款人"]}},
+    {"input":"王美","expect":{"approval":true,"unchanged":true,"parsed":{"intent":"TRANSFER","amount":100}},"screenshot":true}
+  ]},
+  {"id":"P03","direction":"备注隔离","turns":[
+    {"input":"给李四转100元，备注：查询余额","expect":{"approval":true,"unchanged":true,"parsed":{"intent":"TRANSFER","amount":100}},"screenshot":true}
+  ]},
+  {"id":"P04","direction":"自然连接的多项查询","turns":[
+    {"input":"余额和本月账单都查一下","expect":{"approval":false,"unchanged":true,"reply_all":["余额","6 笔交易"]},"screenshot":true}
+  ]},
+  {"id":"P05","direction":"自定义日期及分类追问","turns":[
+    {"input":"查询2026年10月1日到2026年10月5日的账单","expect":{"approval":false,"unchanged":true,"parsed":{"date_scope":"CUSTOM","date_range":{"start":"2026-10-01","end":"2026-10-05"}},"reply_all":["2026-10-01 至 2026-10-05","5 笔交易"]},"screenshot":true},
+    {"input":"餐饮花了多少","expect":{"approval":false,"unchanged":true,"parsed":{"date_scope":"CUSTOM"},"reply_any":["200"]},"screenshot":true}
+  ]},
+  {"id":"P06","direction":"无效日期范围追问恢复","turns":[
+    {"input":"查一下9月15日到9月1日的账单","expect":{"approval":false,"unchanged":true,"reply_any":["起止日期"]}},
+    {"input":"2026-10-01到2026-10-05","expect":{"approval":false,"unchanged":true,"parsed":{"date_scope":"CUSTOM"},"reply_any":["5 笔交易"]},"screenshot":true}
+  ]},
+  {"id":"P07","direction":"卡片问题分类","turns":[
+    {"input":"为什么我的卡被冻结了","expect":{"approval":false,"unchanged":true,"parsed":{"intent":"CARD_QUERY"}},"screenshot":true}
+  ]},
+  {"id":"P08","direction":"逗号连接的两笔独立转账","audit":true,"turns":[
+    {"input":"给李四转100元，给王美转200元","expect":{"approval":true,"unchanged":true,"parsed":{"amount":100}}},
+    {"action":"approve","expect":{"approval":true,"new_approval":true,"balance_delta":-100,"parsed":{"amount":200}},"screenshot":true},
+    {"action":"approve","expect":{"approval":false,"balance_delta":-200,"reply_any":["转账结算成功"]},"screenshot":true}
+  ]}
+]

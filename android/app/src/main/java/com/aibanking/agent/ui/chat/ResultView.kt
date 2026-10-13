@@ -3,9 +3,11 @@ package com.aibanking.agent.ui.chat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -16,6 +18,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
@@ -29,7 +33,7 @@ fun ResultExtras(result: Map<String, Any?>?) {
         result.child("execution_result")?.let { add(it) }
         addAll(result.children("execution_results"))
     }.distinct()
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         executions.forEach { execution ->
             val type = execution.text("type")
             if (type in WEALTH_PRODUCT_TYPES) {
@@ -53,16 +57,17 @@ private fun RiskProfileCard(profile: Map<String, Any?>) {
     val typeName = profile.text("type").orEmpty()
     val traits = profile.text("traits").orEmpty()
     val levels = profile.text("matching_levels").orEmpty()
-    val semantic = LocalBankSemanticColors.current
     val accent = when (grade) {
-        "C1", "C2" -> semantic.riskGreen
-        "C3" -> semantic.riskYellow
-        else -> semantic.riskRed
+        "C1", "C2" -> BankPalette.Green
+        "C3" -> BankPalette.Yellow
+        "C4", "C5" -> BankPalette.Red
+        else -> BankPalette.Neutral
     }
-    BankSectionCard {
+    ReplyPanel {
         ResultCardTitle("您的风险测评", BankIconKind.Shield)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Surface(shape = MaterialTheme.shapes.medium, color = accent.copy(alpha = 0.12f), contentColor = accent) {
+            Surface(shape = MaterialTheme.shapes.medium, color = accent, contentColor = BankPalette.Ink,
+                border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink)) {
                 Text(grade, Modifier.padding(16.dp), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -71,7 +76,7 @@ private fun RiskProfileCard(profile: Map<String, Any?>) {
             }
         }
         if (traits.isNotBlank()) Text("特点：$traits", style = MaterialTheme.typography.bodyMedium)
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        ReplyDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Text(
             "测评结果已记录；重做测评有次数限制（当日 2 次、近 1 月 4 次、近 1 年 8 次）。",
             style = MaterialTheme.typography.bodySmall,
@@ -91,7 +96,7 @@ private fun WealthProducts(data: Map<String, Any?>) {
         ResultCardTitle("理财产品", BankIconKind.Chart)
         products.forEach { product ->
             val name = product.text("name") ?: return@forEach
-            BankSectionCard {
+            ReplyPanel {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     product.text("category")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
                     RiskTag(product.text("risk_level") ?: "—")
@@ -100,7 +105,7 @@ private fun WealthProducts(data: Map<String, Any?>) {
                 Text(
                     product.text("benchmark") ?: "业绩比较基准以产品说明书为准",
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.SemiBold,
                 )
                 val minAmount = product.number("min_amount")
@@ -138,10 +143,8 @@ private fun ResultCardTitle(text: String, icon: BankIconKind) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-            BankIcon(icon, Modifier.padding(8.dp).size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-        }
-        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        ReplyIconTile(icon)
+        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -153,17 +156,22 @@ private fun BillFacts(facts: Map<String, Any?>) {
     val net = facts.money("net_spent")
     val count = facts.number("record_count")?.let { String.format(Locale.CHINA, "%,.0f", it) } ?: facts.text("record_count")
     if (spent == null && count == null) return
-    BankSectionCard {
+    ReplyPanel {
         ResultCardTitle("账单概览", BankIconKind.Chart)
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            count?.let { Metric("笔数", it) }
-            spent?.let { Metric("支出", it) }
-            refunds?.let { Metric("退款", it) }
-            net?.let { Metric("净支出", it) }
+        val metrics = listOfNotNull(
+            count?.let { "笔数" to it }, spent?.let { "支出" to it },
+            refunds?.let { "退款" to it }, net?.let { "净支出" to it },
+        )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val columns = if (maxWidth < 240.dp) 1 else 2
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                metrics.chunked(columns).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { (label, value) -> Metric(label, value, Modifier.weight(1f)) }
+                        if (row.size < columns) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
         }
         CategoryBars(facts)
         Anomalies(facts)
@@ -174,11 +182,13 @@ private fun BillFacts(facts: Map<String, Any?>) {
 }
 
 @Composable
-private fun Metric(label: String, value: String) {
-    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(Modifier.widthIn(min = 104.dp, max = 200.dp).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(modifier, shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer,
+        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text(value, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
         }
     }
 }
@@ -212,8 +222,10 @@ private fun CategoryBars(facts: Map<String, Any?>) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Box(Modifier.fillMaxWidth().height(6.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape)) {
-                    Box(Modifier.fillMaxWidth(fraction).height(6.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+                Box(Modifier.fillMaxWidth().height(10.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(4.dp))
+                    .border(BankPalette.borderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))) {
+                    Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().padding(1.5.dp)
+                        .background(BankPalette.Wisteria, RoundedCornerShape(2.dp)))
                 }
             }
         }
@@ -225,11 +237,12 @@ private fun Anomalies(facts: Map<String, Any?>) {
     val rows = facts.children("anomalies")
     if (rows.isEmpty()) return
     val accent = LocalBankSemanticColors.current.riskYellow
-    Surface(shape = MaterialTheme.shapes.medium, color = accent.copy(alpha = 0.08f)) {
+    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.tertiaryContainer,
+        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 BankIcon(BankIconKind.Shield, Modifier.size(18.dp), tint = accent)
-                SectionTitle("需复核交易")
+                BankStatusChip("需复核交易", BankSemanticStatus.RiskYellow)
             }
             rows.forEach { row ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -256,7 +269,7 @@ private fun FraudProtectionCard(payload: Map<String, Any?>) {
         KeyValues(data, "反诈处理结果")
         return
     }
-    BankSectionCard {
+    ReplyPanel {
         ResultCardTitle("反诈保护进展", BankIconKind.Shield)
         card?.text("status")?.let { status ->
             BankStatusChip(
@@ -315,24 +328,16 @@ private fun KeyValues(data: Map<String, Any?>, title: String) {
     val highlighted = PRIMARY_AMOUNT_FIELDS.firstNotNullOfOrNull { key ->
         scalars.firstOrNull { it.key == key && it.value is Number && (it.value as Number).toDouble().isFinite() }
     }
-    BankSectionCard {
+    ReplyPanel {
         ResultCardTitle(receiptTitle, BankIconKind.Bank)
         highlighted?.let { (key, value) ->
-            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(FIELD_LABELS[key] ?: key, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text(
-                        formatValue(key, value),
-                        style = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum"),
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
-            }
+            ReplyValueHero(FIELD_LABELS[key] ?: key, formatValue(key, value))
         }
-        val details = scalars.filter { it.key != highlighted?.key }
+        val status = scalars.firstOrNull { it.key == "status" && it.value is String }?.value as? String
+        if (status != null) ReplyStatusChip(status, displayStatus(status))
+        val details = scalars.filter { it.key != highlighted?.key && !(it.key == "status" && status != null) }
         details.forEachIndexed { index, (key, value) ->
-            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            if (index > 0) ReplyDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             FactRow(FIELD_LABELS[key] ?: key, formatValue(key, value), monetary = key in MONEY_FIELDS, identifier = key.endsWith("_id"))
         }
     }
@@ -345,9 +350,9 @@ private fun FactRow(label: String, value: String, monetary: Boolean = false, ide
         fontFamily = if (identifier) FontFamily.Monospace else null,
         fontFeatureSettings = if (monetary) "tnum" else null,
     )
-    val valueColor = if (monetary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    val valueColor = if (monetary) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
     BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        if (maxWidth >= 240.dp && value.length <= 24) {
+        if (maxWidth >= 240.dp && value.length <= 20 && !identifier) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
                 Text(label, Modifier.weight(0.4f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(value, Modifier.weight(0.6f), style = valueStyle, color = valueColor, textAlign = TextAlign.End)
@@ -363,14 +368,14 @@ private fun FactRow(label: String, value: String, monetary: Boolean = false, ide
 
 @Composable
 private fun TodoCard(card: Map<String, Any?>) {
-    BankSectionCard {
+    ReplyPanel {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            BankIcon(BankIconKind.Check, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+            BankIcon(BankIconKind.Check, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.secondary)
             Text(card.text("title") ?: "待办任务", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
         }
         card.text("locked_fund")?.let { FactRow("锁定资产", it) }
         card.text("schedule")?.let { FactRow("执行计划", it) }
-        card.text("status")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
+        card.text("status")?.let { ReplyStatusChip(it, displayStatus(it)) }
         card.text("task_id")?.let { Text("任务编号：$it", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         (card["order_task_ids"] as? List<*>)?.takeIf { it.isNotEmpty() }?.let {
             Text("订单草稿：${it.joinToString("、")}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -437,11 +442,13 @@ private fun formatValue(key: String, value: Any?): String = when {
     else -> value?.toString() ?: "—"
 }
 private fun displayStatus(status: String): String = when (status) {
-    "SUCCEEDED", "SUCCESS" -> "已完成"
+    "SUCCEEDED", "SUCCESS", "COMPLETED" -> "已完成"
     "RUNNING" -> "处理中"
     "PENDING" -> "待处理"
     "WAITING_USER" -> "等待您的确认"
-    "FAILED" -> "处理失败"
+    "FAILED", "FAILURE", "ERROR" -> "处理失败"
+    "BLOCKED", "DENIED", "REJECTED" -> "已拦截"
+    "EXPIRED" -> "已过期"
     "CANCELLED" -> "已取消"
     "PENDING_REVIEW" -> "等待人工审核"
     "CARD_PROTECTED" -> "卡片已保护"

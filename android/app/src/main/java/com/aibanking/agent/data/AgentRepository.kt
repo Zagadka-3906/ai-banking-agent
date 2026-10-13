@@ -5,6 +5,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.HttpException
 import retrofit2.Retrofit
@@ -55,13 +56,18 @@ class AgentRepository(
         decision: String,
         otp: String? = null,
         faceAttestation: String? = null,
-    ): TurnEnvelope = normalizing {
-        api.resolveApproval(
+        onProgress: suspend (StageProgress) -> Unit = {},
+    ): TurnEnvelope = withContext(Dispatchers.IO) { normalizing {
+        readStream(api.resolveApprovalStream(
             approvalId = approvalId,
             body = ApprovalRequest(decision = decision, otp = otp, faceAttestation = faceAttestation),
             userId = principal,
             sessionToken = sessionToken,
-        )
+        ), {}, onProgress)
+    } }
+
+    suspend fun reconcileOperation(principal: String, sessionToken: String?, conversationId: String, operationId: String): TurnEnvelope = normalizing {
+        api.reconcileOperation(conversationId, operationId, principal, sessionToken)
     }
 
     suspend fun requestFaceChallenge(
@@ -86,6 +92,7 @@ class AgentRepository(
         conversationId: String?,
         text: String,
         messageId: String = UUID.randomUUID().toString(),
+        onProgress: suspend (StageProgress) -> Unit = {},
         onStage: suspend (String) -> Unit = {},
     ): TurnEnvelope = withContext(Dispatchers.IO) {
         // Reading an event stream is blocking socket IO.  The caller is a
@@ -99,6 +106,11 @@ class AgentRepository(
                 userId = principal,
                 sessionToken = sessionToken,
             )
+            readStream(body, onStage, onProgress)
+        }
+    }
+
+    private suspend fun readStream(body: ResponseBody, onStage: suspend (String) -> Unit, onProgress: suspend (StageProgress) -> Unit): TurnEnvelope {
             var terminal: TurnEnvelope? = null
             try {
                 val reader = body.charStream().buffered()
@@ -111,7 +123,8 @@ class AgentRepository(
                         line.startsWith(DATA_PREFIX) -> data.append(line.removePrefix(DATA_PREFIX).trim())
                         line.isBlank() -> {
                             val name = event ?: continue
-                            terminal = handleFrame(name, data.toString(), onStage) ?: terminal
+                            terminal = handleFrame(name, data.toString(), onStage, onProgress) ?: terminal
+                            if (terminal != null) break
                             event = null
                             data.setLength(0)
                         }
@@ -123,16 +136,16 @@ class AgentRepository(
                 // throwing away a result we already decoded successfully.
                 runCatching { body.close() }
             }
-            terminal ?: throw GatewayException(null, "服务端未返回结果，请重试", 502)
-        }
+            return terminal ?: throw GatewayException(null, "服务端未返回结果，请重试", 502)
     }
 
     /** Decode one SSE frame; returns an envelope only for terminal frames. */
-    private suspend fun handleFrame(name: String, data: String, onStage: suspend (String) -> Unit): TurnEnvelope? =
+    private suspend fun handleFrame(name: String, data: String, onStage: suspend (String) -> Unit, onProgress: suspend (StageProgress) -> Unit): TurnEnvelope? =
         when (name) {
             "stage" -> {
-                val stage = gson.fromJson(data, StagePayload::class.java)
-                if (!stage.label.isNullOrBlank()) onStage(stage.label)
+                val stage = gson.fromJson(data, StageProgress::class.java)
+                onProgress(stage)
+                if (stage.phase == "started" && stage.label.isNotBlank()) onStage("正在${stage.label}…")
                 null
             }
             "result" -> gson.fromJson(data, TurnEnvelope::class.java)
@@ -148,8 +161,6 @@ class AgentRepository(
             // may add event kinds this build does not know yet.
             else -> null
         }
-
-    private data class StagePayload(val stage: String? = null, val label: String? = null)
 
     private data class ErrorFrame(val code: String? = null, val message: String? = null)
 

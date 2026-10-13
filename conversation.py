@@ -46,6 +46,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping, Optional
 
 from bank_tools import BankAPIError, BankClient
+from workflow_contract import business_status, public_data, reply_contract, workflow_plan
+from workflow_runtime import observe_stages
 from security import AUTH_SECRET_CONFIGURED, SecurityError, audit_event, get_audit_logs, resolve_store_digest_algorithm, sanitize_text, store_integrity_digest, verify_audit_chain
 
 try:  # The graph is optional so this module stays importable in minimal setups.
@@ -495,7 +497,7 @@ class ConversationService:
 
     @staticmethod
     def _config(thread_id: str) -> dict[str, Any]:
-        return {"configurable": {"thread_id": thread_id}}
+        return {"configurable": {"thread_id": thread_id}, "recursion_limit": 80}
 
     @staticmethod
     def _pending_interrupt(graph: Any, config: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -526,29 +528,41 @@ class ConversationService:
             value = state.get(key)
             if value not in (None, [], {}):
                 result[key] = value
+        status = business_status(state)
+        summary = state.get("final_response") or "本次请求没有产生可核验的结果。"
+        if workflow_plan(state):
+            result["workflow_plan"] = workflow_plan(state)
         return {
             "code": 200,
             "conversation_id": conversation_id,
             "status": "COMPLETED",
-            "reply": state.get("final_response") or "本次请求没有产生可核验的结果。",
+            "turn_status": "COMPLETED",
+            "business_status": status,
+            "response": reply_contract(state, summary, status),
+            "reply": summary,
             "request_id": request_id or state.get("request_id"),
             "intent": state.get("intent"),
             "risk_level": state.get("risk_level"),
             "approval": None,
-            "result": result or None,
+            "result": public_data(result) or None,
         }
 
     def _approval_envelope(self, approval: Approval, message: Optional[str] = None) -> dict[str, Any]:
+        state = dict(get_graph().get_state(self._config(approval.thread_id)).values or {})
+        response = reply_contract(state, message or approval.summary, "WAITING_APPROVAL")
         return {
             "code": 200,
             "conversation_id": approval.conversation_id,
             "status": "APPROVAL_REQUIRED",
+            "turn_status": "WAITING_APPROVAL",
+            "business_status": "WAITING_APPROVAL",
+            "response": response,
             "reply": message or approval.summary,
             "request_id": approval.request_id,
             "intent": None,
             "risk_level": approval.risk_level,
             "approval": approval.public_view(),
-            "result": None,
+            "result": {"execution_results": [item["data"] for item in response["sections"]], "workflow_plan": response["workflow_plan"]} if response["sections"] or response["workflow_plan"] else None,
         }
 
     def _register_approval(self, *, principal: str, thread_id: str, conversation_id: str, payload: dict[str, Any]) -> Approval:
@@ -602,6 +616,10 @@ class ConversationService:
             "todo_card": None,
             "final_response": None,
             "clarification_required": False,
+            "business_status": None,
+            "reconciliation": None,
+            "completed_workflow": None,
+            "continue_workflow": False,
         }
 
     @staticmethod
@@ -636,6 +654,11 @@ class ConversationService:
     ) -> tuple[Optional[dict[str, Any]], dict[str, Any]]:
         """Cancel or revise under the same conversation lock as settlement."""
 
+        graph = get_graph()
+        config = self._config(thread_id)
+        state = dict(graph.get_state(config).values or {})
+        if state.get("business_status") == "PENDING_RECONCILIATION":
+            return self._envelope_from_state(conversation_id=conversation_id, state=state, request_id=None), {}
         pending = self._pending_approval(thread_id)
         control = self._dialogue_control(text)
         if pending is not None and control is None:
@@ -662,6 +685,10 @@ class ConversationService:
                 return cancelled, {}
 
         if control == "cancel":
+            completed_workflow = (state.get("context") or {}).get("compound_workflow")
+            if completed_workflow:
+                completed_workflow = json.loads(json.dumps(completed_workflow))
+                completed_workflow["steps"][completed_workflow["index"]]["status"] = "CANCELLED"
             cleared = {
                 **self._turn_input(principal, text), "request_id": request_id,
                 "context": {}, "intent": "UNKNOWN", "target": None,
@@ -669,6 +696,7 @@ class ConversationService:
                 "slots": {}, "scheduled_at": None, "event_at": None,
                 "sub_requests": None, "plan": None, "risk_level": "UNKNOWN",
                 "final_response": "已取消当前待办操作，没有执行任何资金变更。",
+                "business_status": "CANCELLED", "completed_workflow": completed_workflow,
             }
             graph.update_state(config, cleared)
             envelope = self._envelope_from_state(
@@ -681,7 +709,7 @@ class ConversationService:
             # The parser's existing slot merger handles short corrections
             # against a normalized payload, never by replaying old raw prose.
             payload = {key: state.get(key) for key in (
-                "intent", "target", "amount", "date_scope", "extra_info",
+                "intent", "target", "amount", "date_scope", "date_range", "extra_info",
                 "participants", "product_ids", "slots", "scheduled_at", "event_at",
             )}
             context["pending_clarification"] = {
@@ -695,8 +723,8 @@ class ConversationService:
         """Record a redacted gateway response; never persist reply or inputs."""
         audit_event(
             "AGENT_RESPONSE", user_id=principal,
-            decision="ALLOW" if envelope.get("status") in {"COMPLETED", "APPROVAL_REQUIRED"} else "ERROR",
-            outcome=str(envelope.get("status") or "UNKNOWN"), request_id=envelope.get("request_id"),
+            decision="ERROR" if envelope.get("business_status") in {"FAILED", "BLOCKED"} else "ALLOW",
+            outcome=str(envelope.get("business_status") or envelope.get("status") or "UNKNOWN"), request_id=envelope.get("request_id"),
             metadata={
                 "status": envelope.get("status"), "intent": envelope.get("intent"),
                 "risk_level": envelope.get("risk_level"),
@@ -717,7 +745,7 @@ class ConversationService:
             self._turns[(principal, conversation_id, message_id)] = (time.time(), envelope)
             self._purge()
 
-    def _settle_turn(self, *, principal: str, conversation_id: str, thread_id: str, graph: Any, config: dict[str, Any], client_request_id: Optional[str] = None) -> dict[str, Any]:
+    def _settle_turn(self, *, principal: str, conversation_id: str, thread_id: str, graph: Any, config: dict[str, Any], client_request_id: Optional[str] = None, response_request_id: Optional[str] = None) -> dict[str, Any]:
         """Turn a finished (or paused) graph run into the client envelope."""
 
         interrupt = self._pending_interrupt(graph, config)
@@ -729,6 +757,8 @@ class ConversationService:
                 payload=interrupt,
             )
             envelope = self._approval_envelope(approval)
+            if response_request_id:
+                envelope["request_id"] = response_request_id
             self._audit_response(principal, envelope, client_request_id)
             return envelope
         snapshot = graph.get_state(config)
@@ -800,142 +830,76 @@ class ConversationService:
             self._remember_turn(principal, conversation_id, safe_message_id, envelope)
         return envelope
 
-    def _turn_events(
-        self,
-        *,
-        principal: str,
-        conversation_id: str,
-        message_id: str,
-        text: str,
-        session_token: Optional[str],
-        request_id: Optional[str] = None,
-        client_request_id: Optional[str] = None,
-    ) -> Iterator[dict[str, Any]]:
-        """The streamed variant of :meth:`start_turn`, as a generator of events.
+    def _stream_operation(self, operation: Callable, *, principal: str, request_id: Optional[str] = None) -> Iterator[dict[str, Any]]:
+        events: queue.Queue = queue.Queue()
 
-        What streams here is *stage* progress (解析 -> 风控预检 -> 执行 -> 结果),
-        not model tokens: the language model is only ever asked for one small
-        JSON intent object, so there is no token stream a user would want to
-        watch.  Reporting the real stages is honest progress rather than
-        decorative typing.
-        """
-
-        self._purge()
-        thread_id = conversation_thread_id(principal, conversation_id)
-        safe_message_id = sanitize_text(message_id, field="消息编号", max_length=128) or uuid.uuid4().hex
-
-        cached = self._cached_turn(principal, conversation_id, safe_message_id)
-        if cached is not None:
-            yield {"event": "result", "data": cached}
-            return
-
-        request_id = request_id or f"gw_{uuid.uuid4().hex}"
-        with self._thread_lock(thread_id):
-            cached = self._cached_turn(principal, conversation_id, safe_message_id)
-            if cached is not None:
-                yield {"event": "result", "data": cached}
-                return
-            handled, turn_overrides = self._prepare_dialogue_control(
-                principal=principal, conversation_id=conversation_id,
-                thread_id=thread_id, text=text, request_id=request_id,
-                session_token=session_token,
-            )
-            if handled is not None:
-                self._remember_turn(principal, conversation_id, safe_message_id, handled)
-                event = "approval" if handled.get("status") == "APPROVAL_REQUIRED" else "result"
-                yield {"event": event, "data": handled}
-                return
-
-            graph = get_graph()
-            config = self._config(thread_id)
-            with channel_session(session_token):
-                for chunk in graph.stream({**self._turn_input(principal, text), **turn_overrides, "request_id": request_id}, config, stream_mode="updates"):
-                    for node in chunk:
-                        label = _STAGE_LABELS.get(str(node))
-                        if label:
-                            yield {"event": "stage", "data": {"stage": str(node), "label": label}}
-            envelope = self._settle_turn(
-                principal=principal,
-                conversation_id=conversation_id,
-                thread_id=thread_id,
-                graph=graph,
-                config=config,
-                client_request_id=client_request_id,
-            )
-
-            self._remember_turn(principal, conversation_id, safe_message_id, envelope)
-        event = "approval" if envelope.get("status") == "APPROVAL_REQUIRED" else "result"
-        yield {"event": event, "data": envelope}
-
-    def start_turn_stream(
-        self,
-        *,
-        principal: str,
-        conversation_id: str,
-        message_id: str,
-        text: str,
-        session_token: Optional[str] = None,
-        request_id: Optional[str] = None,
-        client_request_id: Optional[str] = None,
-    ) -> Iterator[dict[str, Any]]:
-        """Stream one turn's progress, then exactly one terminal event.
-
-        The turn runs in its own worker thread and this generator only drains a
-        queue.  That matters for correctness, not tidiness: a channel worker
-        iterates a sync generator by calling ``next()`` repeatedly, and those
-        calls are not guaranteed to land on the same thread - while the caller's
-        session credential is carried in a ContextVar, which *is* thread/context
-        local.  Running the turn in one dedicated thread keeps the credential in
-        scope for every core call it makes.
-        """
-
-        events: "queue.Queue[Optional[dict[str, Any]]]" = queue.Queue()
-
-        def emit_failure(code: str, message: str) -> None:
-            # A stream has already sent HTTP headers, so its terminal error
-            # must carry its own correlation and audit. Never log the caught
-            # exception or its message: upstream details can contain secrets.
-            audit_event(
-                "AGENT_STREAM_FAILED", user_id=principal, decision="BLOCK",
-                outcome="FAILURE", reason=code, request_id=request_id,
-                metadata={"transport": "sse"},
-            )
-            events.put({"event": "error", "data": {
-                "code": code, "message": message, "request_id": request_id,
-            }})
-
-        def worker() -> None:
+        def worker():
             try:
-                for item in self._turn_events(
-                    principal=principal,
-                    conversation_id=conversation_id,
-                    message_id=message_id,
-                    text=text,
-                    session_token=session_token,
-                    request_id=request_id,
-                    client_request_id=client_request_id,
-                ):
-                    events.put(item)
+                with observe_stages(events.put):
+                    envelope = operation()
+                events.put({"event": "approval" if envelope.get("status") == "APPROVAL_REQUIRED" else "result", "data": envelope})
             except SecurityError as exc:
                 code = exc.code if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", str(exc.code)) else "REQUEST_REJECTED"
-                emit_failure(code, "请求未完成，请检查当前操作状态后重试")
-            except Exception:  # pragma: no cover - defensive
-                emit_failure("CORE_ERROR", "处理失败，请稍后重试")
+                audit_event("AGENT_STREAM_FAILED", user_id=principal, request_id=request_id, decision="BLOCK", outcome="FAILURE", reason=code)
+                events.put({"event": "error", "data": {"code": code, "message": "请求未完成，请检查当前操作状态后重试", "request_id": request_id}})
+            except Exception:
+                audit_event("AGENT_STREAM_FAILED", user_id=principal, request_id=request_id, decision="BLOCK", outcome="FAILURE", reason="CORE_ERROR")
+                events.put({"event": "error", "data": {"code": "CORE_ERROR", "message": "处理失败，请稍后重试", "request_id": request_id}})
             finally:
                 events.put(None)
 
-        thread = threading.Thread(target=worker, name="turn-stream", daemon=True)
-        thread.start()
-        try:
-            while True:
-                item = events.get()
-                if item is None:
-                    break
-                yield item
-        finally:
-            # Never leave the turn running after the client disconnects: it holds
-            # the conversation lock the next message needs.
-            thread.join(timeout=30)
+        threading.Thread(target=worker, name="workflow-stream", daemon=True).start()
+        # An already-authorized settlement may finish after a disconnected
+        # client. It must not be cancelled or reissued with a new key.
+        while True:
+            try:
+                item = events.get(timeout=5)
+            except queue.Empty:
+                yield {"event": "heartbeat", "data": {"request_id": request_id}}
+                continue
+            if item is None:
+                return
+            yield item
+
+    def start_turn_stream(self, *, principal: str, conversation_id: str, message_id: str, text: str,
+                          session_token: Optional[str] = None, request_id: Optional[str] = None,
+                          client_request_id: Optional[str] = None) -> Iterator[dict[str, Any]]:
+        return self._stream_operation(lambda: self.start_turn(principal=principal, conversation_id=conversation_id,
+            message_id=message_id, text=text, session_token=session_token, request_id=request_id,
+            client_request_id=client_request_id), principal=principal, request_id=request_id)
+
+    def resolve_approval_stream(self, **kwargs) -> Iterator[dict[str, Any]]:
+        self._require_approval(str(kwargs["principal"]), str(kwargs["approval_id"]))
+        return self._stream_operation(lambda: self.resolve_approval(**kwargs), principal=kwargs["principal"])
+
+    def reconcile_operation(self, *, principal: str, conversation_id: str, operation_id: str, session_token: Optional[str] = None) -> dict[str, Any]:
+        from agent import _advance_plan, responder_node
+        thread_id = conversation_thread_id(principal, conversation_id)
+        graph = get_graph()
+        config = self._config(thread_id)
+        with self._thread_lock(thread_id):
+            state = dict(graph.get_state(config).values or {})
+            record = state.get("reconciliation") or {}
+            if not record or record.get("operation_id") != operation_id:
+                raise ConversationError("未找到本会话待核对的操作", 404, "OPERATION_NOT_FOUND")
+            try:
+                status = self._client(principal, session_token).operation_status(operation_id, record["endpoint"], request_id=state.get("request_id"))
+            except BankAPIError:
+                return self._envelope_from_state(conversation_id=conversation_id, state=state, request_id=None)
+            if state.get("business_status") != "PENDING_RECONCILIATION":
+                return self._envelope_from_state(conversation_id=conversation_id, state=state, request_id=None)
+            if status.get("status") != "COMPLETED" or not isinstance(status.get("receipt"), dict):
+                return self._envelope_from_state(conversation_id=conversation_id, state=state, request_id=None)
+            result = {"type": record["result_type"], "data": status["receipt"]}
+            checked = responder_node({**state, "business_status": None, "execution_result": result, "execution_results": None, "final_response": None})
+            if checked.get("business_status") == "FAILED":
+                return self._envelope_from_state(conversation_id=conversation_id, state=state, request_id=None)
+            graph.update_state(config, {"execution_result": result, "execution_results": None, "final_response": None,
+                                       "business_status": None, "plan": _advance_plan(state, str(state.get("intent")), outcome="SUCCESS")}, as_node="executor")
+            with channel_session(session_token):
+                graph.invoke(None, config)
+            return self._settle_turn(principal=principal, conversation_id=conversation_id, thread_id=thread_id,
+                                     graph=graph, config=config, client_request_id=None, response_request_id=state.get("request_id"))
 
     def face_challenge(self, *, principal: str, approval_id: str, session_token: Optional[str] = None) -> dict[str, Any]:
         """Fetch a liveness challenge for the *device* to sign.
@@ -1114,15 +1078,25 @@ class ConversationService:
         state = dict(snapshot.values or {})
         # The interrupt must be gone: if the graph paused again, the approval
         # was not actually applied and the client has to know.
-        if self._pending_interrupt(graph, config) is not None:
-            raise ConversationError("审批未生效，操作仍在等待确认", 409, "APPROVAL_STILL_PENDING")
+        pending = self._pending_interrupt(graph, config)
+        if pending is not None:
+            if not payload.get("confirmed") or pending.get("auth_token") == approval.auth_token:
+                raise ConversationError("审批未生效，操作仍在等待确认", 409, "APPROVAL_STILL_PENDING")
+            return self._settle_turn(principal=approval.principal, conversation_id=approval.conversation_id,
+                                     thread_id=approval.thread_id, graph=graph, config=config, client_request_id=None, response_request_id=approval.request_id)
         if not payload.get("confirmed"):
             # Neither bare amounts nor pronouns after cancellation may revive
             # an operation the user just explicitly abandoned.
+            completed_workflow = (state.get("context") or {}).get("compound_workflow")
+            if completed_workflow:
+                completed_workflow = json.loads(json.dumps(completed_workflow))
+                completed_workflow["steps"][completed_workflow["index"]]["status"] = "CANCELLED"
             cleared = {
                 "context": {}, "auth_token": None, "mfa_proof": None,
                 "user_confirmed": False, "clarification_required": False,
                 "plan": None,
+                "business_status": "CANCELLED",
+                "completed_workflow": completed_workflow,
             }
             graph.update_state(config, cleared)
             state.update(cleared)

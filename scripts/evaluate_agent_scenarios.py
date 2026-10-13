@@ -70,6 +70,16 @@ def omit_null_members(value: Any) -> Any:
     return value
 
 
+def projected_result(envelope: dict) -> Any:
+    response = envelope.get("response") or {}
+    if response.get("version") == 1 and response.get("sections"):
+        result = dict(envelope.get("result") or {})
+        result.pop("execution_result", None)
+        result["execution_results"] = [section["data"] for section in response["sections"]]
+        return result
+    return envelope.get("result")
+
+
 def projected_reply(reply: str, result: Any) -> str:
     """The explicit displayText projection in ChatViewModel, not Markdown stripping."""
     result = result if isinstance(result, dict) else {}
@@ -255,11 +265,11 @@ def evaluate_turn(spec: dict, observation: Any, step: int, baseline: Any, previo
     if "action" not in spec or displayed.get("traceId") is not None:
         check("recording.trace", valid_identity and displayed.get("traceId") == request_id, request_id, displayed.get("traceId"), "recording")
     reply, ui_reply = envelope.get("reply"), displayed.get("text")
-    projected = projected_reply(reply, envelope.get("result")) if isinstance(reply, str) else None
+    projected = projected_reply(reply, projected_result(envelope)) if isinstance(reply, str) else None
     check("recording.ui_text", isinstance(reply, str) and bool(reply.strip()) and isinstance(ui_reply, str) and ui_reply == projected,
           projected, ui_reply, "recording")
-    check("recording.ui_result", same(omit_null_members(envelope.get("result")), omit_null_members(displayed.get("result"))),
-          omit_null_members(envelope.get("result")), displayed.get("result"), "recording")
+    check("recording.ui_result", same(omit_null_members(projected_result(envelope)), omit_null_members(displayed.get("result"))),
+          omit_null_members(projected_result(envelope)), displayed.get("result"), "recording")
     check("recording.baseline", valid_state(baseline), "包含所有账务观测字段的原始 before", list(baseline) if isinstance(baseline, dict) else None, "recording")
     after = observation.get("after")
     check("recording.after", valid_state(after), "包含所有账务观测字段的 after", list(after) if isinstance(after, dict) else None, "recording")
@@ -268,8 +278,20 @@ def evaluate_turn(spec: dict, observation: Any, step: int, baseline: Any, previo
     check("recording.previous_state", incremental["available"], "上一轮 after（首轮为 before）可比较", incremental["available"], "recording")
     # An approval card is never evidence that a monetary/card operation executed.
     if is_approval:
-        check("approval_has_not_executed", incremental["available"] and not incremental.get("changes"),
-              "等待确认时账务状态不变", incremental, "expectation")
+        response = envelope.get("response") or {}
+        flow = response.get("workflow_plan") or {}
+        current = flow.get("current_step", 0)
+        steps = flow.get("steps") or []
+        advancing = (spec.get("action") == "approve" and prior_approval and approval_id != prior_approval
+                     and current > 1 and len(steps) >= current and steps[current - 2].get("status") == "SUCCEEDED"
+                     and response.get("sections"))
+        if advancing:
+            check("approved_step_has_receipt", any(section.get("status") == "SUCCEEDED" for section in response["sections"])
+                  and any(key in expect for key in ("balance_delta", "locked_delta", "state", "unchanged")),
+                  "已完成步骤的核验回执与明确账务预期", response["sections"], "expectation")
+        else:
+            check("approval_has_not_executed", incremental["available"] and not incremental.get("changes"),
+                  "等待确认时账务状态不变", incremental, "expectation")
     ui_text = "\n".join(([ui_reply] if isinstance(ui_reply, str) else []) + card_values(displayed.get("result")))
     all_claims = "\n".join(([reply] if isinstance(reply, str) else []) + [ui_text])
     times = local_times(parsed)

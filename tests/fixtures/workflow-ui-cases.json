@@ -1,0 +1,16 @@
+[
+  {"id":"F01","direction":"并行只读查询","turns":[
+    {"input":"查一下余额，同时查看本月账单","expect":{"approval":false,"unchanged":true,"reply_all":["余额","6 笔交易"]},"screenshot":true}
+  ]},
+  {"id":"F02","direction":"查询后逐笔独立审批","audit":true,"turns":[
+    {"input":"查一下余额，然后给李四转10元，然后给李四转20元","expect":{"approval":true,"unchanged":true,"parsed":{"intent":"TRANSFER","amount":10}},"screenshot":true},
+    {"action":"approve","expect":{"approval":true,"new_approval":true,"balance_delta":-10,"parsed":{"intent":"TRANSFER","amount":20}},"screenshot":true},
+    {"action":"approve","expect":{"approval":false,"balance_delta":-20,"reply_any":["转账结算成功"]},"screenshot":true}
+  ]},
+  {"id":"F03","direction":"中途取消保留已完成步骤","turns":[
+    {"input":"查一下余额，然后给李四转10元，然后给李四转20元","expect":{"approval":true,"unchanged":true}},
+    {"action":"approve","expect":{"approval":true,"new_approval":true,"balance_delta":-10}},
+    {"action":"reject","expect":{"approval":false,"unchanged":true,"reply_any":["取消"]},"screenshot":true},
+    {"input":"查一下余额","expect":{"approval":false,"unchanged":true,"reply_any":["14,990"]},"screenshot":true}
+  ]}
+]

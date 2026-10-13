@@ -395,7 +395,7 @@ def get_audit_trace(request_id: str) -> dict[str, Any]:
         "risk_levels": [event.get("risk_level") for event in events],
         "first_at": events[0].get("timestamp"),
         "last_at": events[-1].get("timestamp"),
-        "terminal_outcome": events[-1].get("outcome"),
+        "terminal_outcome": next((event.get("outcome") for event in reversed(events) if event.get("action") != "WORKFLOW_STAGE"), None),
         "events": events,
     }
 

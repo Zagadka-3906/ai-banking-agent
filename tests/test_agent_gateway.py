@@ -84,6 +84,12 @@ class _CoreClient:
             self._raise(response)
         return response.json()
 
+    def operation_status(self, operation_id, endpoint, *, request_id=None):
+        response = self.core.get(f"/api/v1/operations/{operation_id}", params={"endpoint": endpoint}, headers=self._headers(request_id=request_id))
+        if response.status_code >= 400:
+            self._raise(response)
+        return response.json()
+
     def cancel(self, auth_token, *, request_id=None):
         response = self.core.post(
             "/api/v1/risk/cancel", json={},
@@ -560,10 +566,11 @@ def test_stream_reports_stages_then_one_result(gateway):
 
     frames = _parse_sse(response.text)
     events = [name for name, _ in frames]
-    stages = [payload["stage"] for name, payload in frames if name == "stage"]
+    stages = [payload["stage"] for name, payload in frames if name == "stage" and payload["phase"] == "started"]
 
     # Real node progress, in graph order - not a decorative animation.
     assert stages == ["intent_parser", "risk_checker", "executor", "responder"], stages
+    assert [payload["phase"] for name, payload in frames if name == "stage"] == ["started", "completed"] * 4
     # Exactly one terminal frame, and it comes last.
     assert events[-1] == "result", events
     assert events.count("result") + events.count("approval") + events.count("error") == 1, events

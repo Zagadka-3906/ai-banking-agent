@@ -373,6 +373,28 @@ def post_message_stream(
     )
 
 
+@app.get("/api/v1/agent/conversations/{conversation_id}/operations/{operation_id}")
+def get_operation_result(conversation_id: str, operation_id: str, request: Request,
+                         x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+                         x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_RECONCILE")
+    _guard_rate_limit(principal)
+    return SERVICE.reconcile_operation(principal=principal, conversation_id=conversation_id,
+        operation_id=sanitize_text(operation_id, field="操作编号", max_length=128), session_token=x_session_token)
+
+
+@app.post("/api/v1/agent/approvals/{approval_id}/stream")
+def post_approval_stream(approval_id: str, req: ApprovalRequest, request: Request,
+                         x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+                         x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_APPROVAL")
+    _guard_rate_limit(principal)
+    events = SERVICE.resolve_approval_stream(principal=principal, approval_id=approval_id, decision=req.decision,
+        otp=req.otp, face_attestation=req.face_attestation, session_token=x_session_token)
+    return StreamingResponse((_sse(item["event"], item["data"]) for item in events), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
 @app.get("/api/v1/agent/traces/{request_id}")
 def get_agent_trace(
     request_id: str,

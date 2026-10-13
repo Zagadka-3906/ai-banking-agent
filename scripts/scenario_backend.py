@@ -54,7 +54,7 @@ def run() -> None:
     source_root = Path(args.source_dir).resolve() if args.source_dir else ROOT
     fingerprints = {
         name: hashlib.sha256((source_root / name).read_bytes()).hexdigest()
-        for name in ("agent.py", "agent_api.py", "conversation.py", "main.py", "planner.py", "security.py", "bank_tools.py", "sandbox.py")
+        for name in ("agent.py", "agent_api.py", "conversation.py", "main.py", "planner.py", "security.py", "bank_tools.py", "sandbox.py", "intent_language.py", "workflow_contract.py", "workflow_runtime.py")
     }
     (folder / f"{args.service}-run.json").write_text(json.dumps({
         "service": args.service, "mode": args.mode, "source_root": str(source_root),
@@ -85,7 +85,7 @@ def run() -> None:
                 thread_id = conversation.conversation_thread_id(principal, envelope["conversation_id"])
                 state = conversation.get_graph().get_state({"configurable": {"thread_id": thread_id}}).values
                 record["parsed"] = {key: state.get(key) for key in (
-                    "intent", "target", "amount", "date_scope", "slots", "participants", "product_ids",
+                    "intent", "target", "amount", "date_scope", "date_range", "parse_meta", "slots", "participants", "product_ids",
                     "scheduled_at", "event_at", "clarification_required", "risk_level",
                 )}
             records.append(record)

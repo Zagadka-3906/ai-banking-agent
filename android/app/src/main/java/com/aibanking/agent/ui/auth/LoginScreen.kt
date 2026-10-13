@@ -3,9 +3,9 @@ package com.aibanking.agent.ui.auth
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -26,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.BankSpacing
+import com.aibanking.agent.ui.theme.BankPalette
 
 @Composable
 fun RestoringScreen() {
@@ -42,7 +44,7 @@ fun RestoringScreen() {
 @Composable
 private fun BrandMark() {
     Box(
-        Modifier.size(56.dp).clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.primary),
+        Modifier.size(56.dp).bankHardShadow(MaterialTheme.shapes.large).clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.primary).border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.large),
         contentAlignment = Alignment.Center,
     ) {
         BankIcon(BankIconKind.Bank, Modifier.size(30.dp), tint = MaterialTheme.colorScheme.onPrimary)
@@ -62,9 +64,11 @@ fun LoginScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var otp by remember { mutableStateOf("") }
     val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val canLogin = !busy && userId.isNotBlank() && password.isNotBlank() && (!otpRequired || otp.isNotBlank())
     val submit = {
         if (canLogin) {
+            keyboard?.hide()
             focus.clearFocus()
             onLogin(userId.trim(), password, otp.takeIf { it.isNotBlank() })
         }
@@ -83,9 +87,10 @@ fun LoginScreen(
                     Text("ANYAN · 您的智能金融伙伴", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("让每一笔，\n都心中有数。", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
-                Text("从一句话开始，轻松管理日常财务。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BankHeroCard {
+                BankSticker("您的 AI 银行智能管家")
+                Text("让每一笔，\n都心中有数。", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                Text("从一句话开始，轻松管理日常财务。", style = MaterialTheme.typography.bodyMedium)
             }
             BankSectionCard {
                 Column(Modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -105,7 +110,7 @@ fun LoginScreen(
                         label = { Text("登录口令") }, singleLine = true, shape = MaterialTheme.shapes.medium,
                         leadingIcon = { BankIcon(BankIconKind.Shield) },
                         trailingIcon = {
-                            TextButton(onClick = { passwordVisible = !passwordVisible }) {
+                            BankTextButton(onClick = { passwordVisible = !passwordVisible }) {
                                 Text(if (passwordVisible) "隐藏" else "显示", style = MaterialTheme.typography.labelMedium)
                             }
                         },
@@ -127,7 +132,7 @@ fun LoginScreen(
                         Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium) {
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                                 Text(error.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
-                                TextButton(onClick = onDismissError, modifier = Modifier.align(Alignment.End)) { Text("知道了") }
+                                BankTextButton(onClick = onDismissError, modifier = Modifier.align(Alignment.End)) { Text("知道了") }
                             }
                         }
                     }
@@ -142,7 +147,7 @@ fun LoginScreen(
                 Text("体验演示账户", style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("user_zhang" to "张三", "user_li" to "李四", "user_wife" to "爱人").forEach { (uid, name) ->
-                        FilterChip(
+                        BankFilterChip(
                             selected = userId == uid, onClick = { userId = uid; password = "Bank@2026" }, enabled = !busy,
                             label = { Text(name, fontWeight = FontWeight.Medium) },
                             leadingIcon = { BankIcon(BankIconKind.People, Modifier.size(18.dp)) },
@@ -153,7 +158,7 @@ fun LoginScreen(
                 Text("点击填入测试账户 · 默认口令 Bank@2026", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                BankIcon(BankIconKind.Shield, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                BankIcon(BankIconKind.Shield, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
                 Text("安全验证 · 每笔资金操作由您确认", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

@@ -2,6 +2,7 @@ package com.aibanking.agent.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,18 +17,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,9 +37,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.SkeletonBlock
-import com.aibanking.agent.ui.anim.bankPressScale
+import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
-import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 
 @Composable
 fun BankSurfaceContainer(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
@@ -63,7 +59,7 @@ fun BankScreenHeading(
 ) {
     Row(modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (eyebrow != null) Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.secondary)
+            if (eyebrow != null) BankSticker(eyebrow)
             Text(title, style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onBackground)
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -83,22 +79,23 @@ fun BankSectionHeader(title: String, modifier: Modifier = Modifier, subtitle: St
 }
 
 @Composable
-fun BankSectionCard(modifier: Modifier = Modifier, outlined: Boolean = false, content: @Composable () -> Unit) {
+fun BankSectionCard(modifier: Modifier = Modifier, outlined: Boolean = false, containerColor: Color = MaterialTheme.colorScheme.surface, content: @Composable () -> Unit) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().bankHardShadow(MaterialTheme.shapes.large),
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (outlined) 1f else 0.55f)),
-    ) { Column(Modifier.fillMaxWidth().padding(BankSpacing.lg), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() } }
+        color = containerColor,
+        border = BorderStroke(if (outlined) 2.dp else BankPalette.borderWidth, MaterialTheme.colorScheme.outline),
+    ) { Column(Modifier.fillMaxWidth().padding(BankSpacing.md), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() } }
 }
 
-/** Hero content intentionally uses a stable light foreground in both themes. */
+/** The reference home hero uses wisteria with ink text in both themes. */
 @Composable
 fun BankHeroCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    val gradient = LocalBankSemanticColors.current.primaryGradient
-    CompositionLocalProvider(LocalContentColor provides Color(0xFFF3FBF4)) {
+    CompositionLocalProvider(LocalContentColor provides BankPalette.Ink) {
         Column(
-            modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).background(gradient).padding(24.dp),
+            modifier.fillMaxWidth().bankHardShadow(MaterialTheme.shapes.large)
+                .clip(MaterialTheme.shapes.large).background(BankPalette.Wisteria)
+                .then(Modifier.border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.large)).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
@@ -118,29 +115,29 @@ enum class BankSemanticStatus { Positive, Negative, Neutral, RiskGreen, RiskYell
 
 @Composable
 fun BankStatusChip(label: String, status: BankSemanticStatus, modifier: Modifier = Modifier, containerColor: Color? = null) {
-    val colors = LocalBankSemanticColors.current
     val color = when (status) {
-        BankSemanticStatus.Positive -> colors.positive
-        BankSemanticStatus.Negative -> colors.negative
-        BankSemanticStatus.Neutral -> colors.neutral
-        BankSemanticStatus.RiskGreen -> colors.riskGreen
-        BankSemanticStatus.RiskYellow -> colors.riskYellow
-        BankSemanticStatus.RiskRed -> colors.riskRed
+        BankSemanticStatus.Positive -> BankPalette.RedSoft
+        BankSemanticStatus.Negative -> BankPalette.GreenSoft
+        BankSemanticStatus.Neutral -> BankPalette.Neutral
+        BankSemanticStatus.RiskGreen -> BankPalette.Green
+        BankSemanticStatus.RiskYellow -> BankPalette.Yellow
+        BankSemanticStatus.RiskRed -> BankPalette.Red
     }
-    Surface(modifier, shape = RoundedCornerShape(50), color = containerColor ?: color.copy(alpha = 0.10f), contentColor = color) {
-        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
+    Surface(modifier, shape = RoundedCornerShape(6.dp), color = containerColor ?: color,
+        contentColor = BankPalette.Ink, border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink)) {
+        Text(label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
 
 @Composable
 fun BankPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, loading: Boolean = false) {
     val interaction = remember { MutableInteractionSource() }
-    Button(
+    BankButton(
         onClick = onClick,
         enabled = enabled && !loading,
-        modifier = modifier.heightIn(min = 52.dp).bankPressScale(interaction, enabled && !loading),
+        modifier = modifier.heightIn(min = 48.dp),
         interactionSource = interaction,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 24.dp, vertical = 14.dp),
     ) {
         if (loading) {
@@ -153,15 +150,11 @@ fun BankPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Mo
 
 @Composable
 fun BankSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    val interaction = remember { MutableInteractionSource() }
-    OutlinedButton(
+    BankOutlinedButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 52.dp).bankPressScale(interaction, enabled),
-        interactionSource = interaction,
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = modifier.heightIn(min = 48.dp),
+        shape = RoundedCornerShape(12.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 14.dp),
     ) { Text(text, style = MaterialTheme.typography.labelLarge) }
 }

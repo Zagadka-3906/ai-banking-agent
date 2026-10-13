@@ -42,8 +42,10 @@ def store_path(tmp_path, monkeypatch):
     return path
 
 
-def _yellow_transfer(client):
+def _yellow_transfer(client, idempotency_key=None):
     headers = {"X-User-Id": "user_zhang"}
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     precheck = client.post(
         "/api/v1/risk/precheck",
         json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 300},
@@ -77,6 +79,25 @@ def test_a_committed_transfer_survives_a_restart(client, store_path):
     assert main.ACCOUNTS["user_li"]["balance"] == 2300.0
     assert any(tx.get("account_id") == "user_zhang" and tx.get("amount") == 300.0 for tx in main.TRANSACTIONS)
     assert main.ledger_store_status()["file_loaded"] is True
+
+
+def test_operation_receipt_survives_restart_and_remains_owner_scoped(client, store_path):
+    operation = "test-persistent-operation-123456"
+    settled = _yellow_transfer(client, operation)
+    main.reset_state()
+    assert main.load_ledger_store()["loaded_state"] is True
+    receipt = client.get(f"/api/v1/operations/{operation}?endpoint=transfer_execute", headers={"X-User-Id": "user_zhang"}).json()
+    assert receipt["status"] == "COMPLETED"
+    assert receipt["receipt"]["transaction_id"] == settled["transaction_id"]
+    receipt_entry = next(iter(main.OPERATION_RECEIPTS.values()))
+    assert "auth_token" not in json.dumps(main.OPERATION_RECEIPTS)
+    from security import SecurityError
+    with pytest.raises(SecurityError) as conflict:
+        main._idempotency_begin("user_zhang", "transfer_execute", operation, {"amount": 999}, request_id="replay-mismatch")
+    assert conflict.value.code == "IDEMPOTENCY_KEY_REUSE"
+    assert receipt_entry["fingerprint"]
+    foreign = client.get(f"/api/v1/operations/{operation}?endpoint=transfer_execute", headers={"X-User-Id": "user_li"}).json()
+    assert foreign["status"] == "UNKNOWN" and foreign["receipt"] is None
 
 
 def test_failed_mutations_do_not_snapshot(client, store_path):

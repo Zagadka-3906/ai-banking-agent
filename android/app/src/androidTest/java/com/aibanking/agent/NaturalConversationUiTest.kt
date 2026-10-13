@@ -88,7 +88,7 @@ class NaturalConversationUiTest {
                             observation.put("messages_before", before)
                             observation.put("messages_after", messages())
                         } else {
-                        ui.waitUntil(100_000) { messages().length() > before.length() }
+                        ui.waitUntil(100_000) { !observedModel.state.value.busy && messages().toString() != before.toString() }
                         ui.waitUntil(100_000) {
                             val current = messages()
                             val last = current.optJSONObject(current.length() - 1)

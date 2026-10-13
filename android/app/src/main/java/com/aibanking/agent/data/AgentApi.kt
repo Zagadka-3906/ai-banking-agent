@@ -7,6 +7,7 @@ import retrofit2.HttpException
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.Header
+import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Streaming
@@ -51,14 +52,29 @@ data class TurnEnvelope(
     @SerializedName("risk_level") val riskLevel: String? = null,
     val approval: ApprovalView? = null,
     val result: Map<String, Any>? = null,
+    @SerializedName("business_status") val businessStatus: String? = null,
+    val response: ReplyResponse? = null,
 ) {
     val approvalRequired: Boolean get() = status == STATUS_APPROVAL_REQUIRED
+    val displayResult: Map<String, Any>? get() = if (response?.version == 1 && response.sections.orEmpty().isNotEmpty()) {
+        (result.orEmpty() - "execution_result") + ("execution_results" to response.sections.orEmpty().map { it.data })
+    } else result
 
     companion object {
         const val STATUS_COMPLETED = "COMPLETED"
         const val STATUS_APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
     }
 }
+
+data class ReplySection(val type: String? = null, val status: String = "", val data: Map<String, Any> = emptyMap())
+data class WorkflowStep(val index: Int = 0, val label: String = "", val status: String = "PENDING")
+data class WorkflowPlan(val id: String = "", @SerializedName("current_step") val currentStep: Int = 1, val steps: List<WorkflowStep> = emptyList())
+data class ReplyResponse(val version: Int = 0, val status: String = "", val summary: String = "",
+    val sections: List<ReplySection> = emptyList(),
+    @SerializedName("workflow_plan") val workflowPlan: WorkflowPlan? = null,
+    @SerializedName("operation_id") val operationId: String? = null)
+data class StageProgress(val stage: String = "", val label: String = "", val phase: String = "started",
+    @SerializedName("elapsed_ms") val elapsedMs: Long = 0, val step: Int = 1)
 
 data class FaceChallengeView(
     val code: Int = 0,
@@ -122,6 +138,14 @@ sealed interface StreamEvent {
 }
 
 interface AgentApi {
+    @Streaming
+    @POST("api/v1/agent/approvals/{approvalId}/stream")
+    suspend fun resolveApprovalStream(@Path("approvalId") approvalId: String, @Body body: ApprovalRequest,
+        @Header("X-User-Id") userId: String, @Header("X-Session-Token") sessionToken: String?): ResponseBody
+
+    @GET("api/v1/agent/conversations/{conversationId}/operations/{operationId}")
+    suspend fun reconcileOperation(@Path("conversationId") conversationId: String, @Path("operationId") operationId: String,
+        @Header("X-User-Id") userId: String, @Header("X-Session-Token") sessionToken: String?): TurnEnvelope
 
     @POST("api/v1/im/feishu/binding-code")
     suspend fun issueFeishuBindingCode(

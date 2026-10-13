@@ -19,34 +19,70 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.components.BankIcon
 import com.aibanking.agent.ui.components.BankIconKind
+import com.aibanking.agent.ui.components.BankSticker
+import com.aibanking.agent.ui.components.BankTextButton
+import com.aibanking.agent.ui.components.BankSecondaryButton
+import com.aibanking.agent.ui.components.BankSemanticStatus
+import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.components.bankHardShadow
+import com.aibanking.agent.ui.theme.BankPalette
 
 /** A readable reply with financial facts kept separate from support metadata. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier) {
+internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}) {
     var showDetails by rememberSaveable(message.id) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     Surface(
-        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("reply_card_${message.id}"),
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).bankHardShadow(MaterialTheme.shapes.large).testTag("reply_card_${message.id}"),
         shape = MaterialTheme.shapes.large,
         color = colors.surface,
-        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
+        border = BorderStroke(BankPalette.borderWidth, colors.outline),
     ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Surface(shape = MaterialTheme.shapes.small, color = colors.primaryContainer, contentColor = colors.onPrimaryContainer) {
-                    Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-                        BankIcon(BankIconKind.Chat, Modifier.size(19.dp))
-                    }
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ReplyIconTile(BankIconKind.Chat)
+                    BankSticker("安言 · 智能管家")
                 }
-                Text("安言", style = MaterialTheme.typography.titleSmall, color = colors.onSurface)
-                Text("AI 助手", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                if (message.approvalPreview) {
+                    BankStatusChip("待您确认", BankSemanticStatus.RiskYellow)
+                } else when (message.riskLevel?.uppercase()) {
+                    "GREEN" -> BankStatusChip("绿 · 只读", BankSemanticStatus.RiskGreen)
+                    "YELLOW" -> BankStatusChip("黄 · 确认操作", BankSemanticStatus.RiskYellow)
+                    "RED" -> BankStatusChip("红 · 强验证", BankSemanticStatus.RiskRed)
+                }
+                message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
             }
-            SelectionContainer { AgentMarkdown(message.text) }
-            ResultExtras(message.result)
+            ReplyDivider()
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    AgentMarkdown(message.text)
+                    ResultExtras(message.result)
+                    message.response?.workflowPlan?.let { plan ->
+                        ReplyPanel {
+                            Text("任务进度 · ${plan.currentStep}/${plan.steps.size}", style = MaterialTheme.typography.titleSmall)
+                            plan.steps.forEach { step ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("${step.index}. ${step.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                    ReplyStatusChip(step.status, businessStatusLabel(step.status))
+                                }
+                            }
+                        }
+                    }
+                    if (message.businessStatus == "PENDING_RECONCILIATION") {
+                        if (!message.reconciling) Text("暂未取得回执，可再次核对。", style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant)
+                        BankSecondaryButton(if (message.reconciling) "正在核对结果…" else "核对结果", onReconcile,
+                            enabled = !message.reconciling, modifier = Modifier.fillMaxWidth().testTag("reconcile_${message.id}"))
+                    }
+                    if (message.businessStatus == null && !message.stages.isNullOrEmpty()) WorkflowProgress(message.stages)
+                }
+            }
             message.traceId?.takeIf { it.isNotBlank() }?.let { traceId ->
                 Column {
-                    HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.55f))
-                    TextButton(
+                    ReplyDivider()
+                    BankTextButton(
                         onClick = { showDetails = !showDetails },
                         modifier = Modifier.testTag("reply_details_${message.id}"),
                         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp),
@@ -61,7 +97,8 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier)
                         enter = fadeIn() + expandVertically(),
                         exit = fadeOut() + shrinkVertically(),
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        ReplyPanel {
+                            message.stages?.takeIf { it.isNotEmpty() }?.let { WorkflowProgress(it) }
                             Text("回复编号", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                             SelectionContainer {
                                 Text(traceId, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
@@ -73,4 +110,16 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier)
             }
         }
     }
+}
+
+internal fun businessStatusLabel(status: String): String = when (status) {
+    "SUCCEEDED" -> "已核验"
+    "FAILED" -> "未完成"
+    "BLOCKED" -> "未通过核验"
+    "NEEDS_INPUT" -> "待补充"
+    "WAITING_APPROVAL" -> "待确认"
+    "PENDING_RECONCILIATION" -> "待核对"
+    "PARTIAL_SUCCESS" -> "部分完成"
+    "CANCELLED" -> "已取消"
+    else -> "待办理"
 }

@@ -7,6 +7,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/** Palette from banking-agent-ui/boards/Palette.dc.html. */
+object BankPalette {
+    val Ink = Color(0xFF16131F)
+    val Wisteria = Color(0xFFB9A9F5)
+    val Lavender = Color(0xFFEAE5FC)
+    val Moon = Color(0xFFF7F6FA)
+    val Muted = Color(0xFF4E4A5C)
+    val Line = Color(0xFFC9C4D6)
+    val Green = Color(0xFF6EDC6A)
+    val GreenSoft = Color(0xFFE1F8DC)
+    val Yellow = Color(0xFFFFC933)
+    val YellowSoft = Color(0xFFFFF1C4)
+    val Red = Color(0xFFFF5C4D)
+    val RedSoft = Color(0xFFFFE4DF)
+    val Blue = Color(0xFF7AA8FF)
+    val Neutral = Color(0xFFE6E4EC)
+    val borderWidth = 1.5.dp
+    val shadowOffset = 3.dp
+}
+
 /** Shared geometry used by every banking surface. */
 object BankSpacing {
     val xxs: Dp = 4.dp
@@ -43,37 +63,37 @@ private val LightSemanticColors = BankSemanticColors(
     // Chinese finance convention: red means gain, green means loss.
     positive = Color(0xFFD92D20),
     negative = Color(0xFF159947),
-    neutral = Color(0xFF5D6E64),
-    riskGreen = Color(0xFF087F5B),
-    riskYellow = Color(0xFFB45309),
+    neutral = BankPalette.Muted,
+    riskGreen = Color(0xFF267A23),
+    riskYellow = Color(0xFF855B00),
     riskRed = Color(0xFFB42318),
     chartPrimary = Color(0xFFD92D20),
-    chartBenchmark = Color(0xFF176B52),
-    chartGrid = Color(0xFFDDE5DC),
-    cardActive = Color(0xFF176B52),
-    cardFrozen = Color(0xFFB45309),
-    cardLost = Color(0xFFB42318),
-    cardVirtual = Color(0xFF596B8E),
+    chartBenchmark = Color(0xFF7760B9),
+    chartGrid = BankPalette.Line,
+    cardActive = BankPalette.Ink,
+    cardFrozen = BankPalette.YellowSoft,
+    cardLost = BankPalette.RedSoft,
+    cardVirtual = BankPalette.Lavender,
     positiveGradient = Brush.horizontalGradient(listOf(Color(0xFFE5534B), Color(0xFFB42318))),
-    primaryGradient = Brush.linearGradient(listOf(Color(0xFF124C3C), Color(0xFF287456))),
+    primaryGradient = Brush.linearGradient(listOf(BankPalette.Lavender, BankPalette.Lavender)),
 )
 
 private val DarkSemanticColors = BankSemanticColors(
     positive = Color(0xFFFF8A80),
     negative = Color(0xFF63D391),
-    neutral = Color(0xFFB9C8BC),
-    riskGreen = Color(0xFF5ED6AE),
+    neutral = Color(0xFFCCC7DB),
+    riskGreen = BankPalette.Green,
     riskYellow = Color(0xFFFBBF24),
     riskRed = Color(0xFFFF897D),
     chartPrimary = Color(0xFFFF8A80),
-    chartBenchmark = Color(0xFFA6D9BB),
-    chartGrid = Color(0xFF394B3E),
-    cardActive = Color(0xFF5EEAD4),
-    cardFrozen = Color(0xFFFBBF24),
-    cardLost = Color(0xFFFF897D),
-    cardVirtual = Color(0xFFA5B4FC),
+    chartBenchmark = BankPalette.Wisteria,
+    chartGrid = Color(0xFF4E465E),
+    cardActive = BankPalette.Ink,
+    cardFrozen = BankPalette.YellowSoft,
+    cardLost = BankPalette.RedSoft,
+    cardVirtual = BankPalette.Lavender,
     positiveGradient = Brush.horizontalGradient(listOf(Color(0xFFFFA69E), Color(0xFFE57373))),
-    primaryGradient = Brush.linearGradient(listOf(Color(0xFF1D4B38), Color(0xFF2D6348))),
+    primaryGradient = Brush.linearGradient(listOf(BankPalette.Lavender, BankPalette.Lavender)),
 )
 
 val LocalBankSemanticColors = staticCompositionLocalOf { LightSemanticColors }

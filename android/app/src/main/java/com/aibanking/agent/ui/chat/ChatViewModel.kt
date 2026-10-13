@@ -23,6 +23,8 @@ import com.aibanking.agent.data.TaskRepository
 import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.data.SplitRequestView
 import com.aibanking.agent.data.TurnEnvelope
+import com.aibanking.agent.data.ReplyResponse
+import com.aibanking.agent.data.StageProgress
 import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.security.DeviceKeyManager
 import com.google.gson.Gson
@@ -74,6 +76,11 @@ data class ChatMessage(
      * through `/api/v1/security/audit/trace/{id}` instead of guessed at.
      */
     val traceId: String? = null,
+    val businessStatus: String? = null,
+    val response: ReplyResponse? = null,
+    val conversationId: String? = null,
+    val stages: List<StageProgress>? = null,
+    val reconciling: Boolean = false,
 )
 
 data class QuizOptionUi(val key: String, val label: String)
@@ -104,6 +111,7 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val input: String = "",
     val busy: Boolean = false,
+    val activeStages: List<StageProgress> = emptyList(),
     /** Non-null while the conversation is waiting for a human decision. */
     val pending: ApprovalView? = null,
     val otp: String = "",
@@ -301,6 +309,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         verifyRestoredSession(storedToken, stored.expiresAt)
+        restored.filter { it.businessStatus == "PENDING_RECONCILIATION" }.forEach { reconcileMessage(it.id) }
     }
 
     /**
@@ -429,7 +438,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null) }
+            _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
             try {
                 val session = login.login(principal, password, otp)
                 sessionToken = session.sessionToken
@@ -1088,6 +1097,71 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sendInternal(prompt)
     }
 
+    private val reconciliationJobs = mutableMapOf<String, Job>()
+
+    private fun recordStage(progress: StageProgress) {
+        _state.update { state ->
+            state.copy(activeStages = state.activeStages.filterNot { it.stage == progress.stage && it.step == progress.step } + progress)
+        }
+    }
+
+    private fun applyEnvelope(envelope: TurnEnvelope, messageId: String = UUID.randomUUID().toString()) {
+        conversationId = envelope.conversationId.ifBlank { conversationId }
+        _state.update { state ->
+            val previous = state.messages.firstOrNull { it.id == messageId }
+            val message = ChatMessage(id = messageId, role = ChatRole.ASSISTANT,
+                text = displayText(envelope.response?.summary ?: envelope.reply, envelope.displayResult),
+                riskLevel = envelope.riskLevel, approvalPreview = envelope.approval != null,
+                result = envelope.displayResult, traceId = envelope.requestId,
+                businessStatus = envelope.businessStatus, response = envelope.response,
+                conversationId = envelope.conversationId, stages = previous?.stages ?: state.activeStages)
+            fun stale(row: ChatMessage): Boolean = row.isApprovalPreviewMessage() ||
+                (row.id != messageId && row.businessStatus == "PENDING_RECONCILIATION" &&
+                    envelope.response?.operationId != null && row.response?.operationId == envelope.response.operationId)
+            val kept = state.messages.filterNot { it.id == messageId || stale(it) }
+            val messages = if (previous != null) state.messages.mapNotNull {
+                if (it.id == messageId) message else it.takeUnless { row -> stale(row) }
+            } else kept + message
+            state.copy(busy = false, pending = envelope.approval, otp = "", activeStages = emptyList(),
+                messages = messages, quiz = parseQuiz(envelope.displayResult),
+                profileResult = envelope.displayResult?.get("profile_result") as? Map<String, Any>,
+                suggestions = predictedSuggestions(envelope))
+        }
+        persistMessages()
+        if (envelope.businessStatus == "PENDING_RECONCILIATION") reconcileMessage(messageId)
+    }
+
+    /** Only reads a Core operation receipt. Never resubmits the operation. */
+    fun reconcileMessage(messageId: String) {
+        if (reconciliationJobs[messageId]?.isActive == true) return
+        val message = _state.value.messages.firstOrNull { it.id == messageId } ?: return
+        val operation = message.response?.operationId ?: return
+        val conversation = message.conversationId ?: return
+        val principal = _state.value.principal
+        val credential = sessionToken ?: return
+        reconciliationJobs[messageId] = viewModelScope.launch {
+            _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = true) else row }) }
+            try {
+                repeat(10) { attempt ->
+                    if (attempt > 0) delay(2000)
+                    if (!_state.value.authenticated || _state.value.principal != principal || sessionToken != credential ||
+                        _state.value.messages.none { it.id == messageId }) return@launch
+                    val result = agent.reconcileOperation(principal, credential, conversation, operation)
+                    if (!_state.value.authenticated || _state.value.principal != principal || sessionToken != credential) return@launch
+                    if (result.businessStatus != "PENDING_RECONCILIATION") {
+                        applyEnvelope(result, messageId)
+                        return@launch
+                    }
+                }
+            } catch (failure: GatewayException) {
+                if (failure.sessionExpired) applyFailure(failure)
+            } finally {
+                _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = false) else row }) }
+                persistMessages()
+            }
+        }
+    }
+
     private fun sendInternal(text: String, echoUser: Boolean = true) {
         markUserActivity()
         val current = _state.value
@@ -1110,6 +1184,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     sessionToken = sessionToken,
                     conversationId = conversationId,
                     text = text,
+                    messageId = placeholder.id,
+                    onProgress = { progress ->
+                        _state.update { state -> state.copy(messages = state.messages.map { row ->
+                            if (row.id == placeholder.id) row.copy(stages = row.stages.orEmpty().filterNot { it.stage == progress.stage && it.step == progress.step } + progress) else row
+                        }) }
+                    },
                 ) { label ->
                     _state.update { state ->
                         state.copy(
@@ -1119,38 +1199,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
-                conversationId = envelope.conversationId.ifBlank { conversationId }
-                _state.update { state ->
-                    val replaced = state.messages.map {
-                        if (it.id == placeholder.id) {
-                            ChatMessage(
-                                id = placeholder.id,
-                                role = ChatRole.ASSISTANT,
-                                text = displayText(envelope.reply, envelope.result),
-                                riskLevel = envelope.riskLevel,
-                                approvalPreview = envelope.approval != null,
-                                result = envelope.result,
-                                traceId = envelope.requestId,
-                            )
-                        } else {
-                            it
-                        }
-                    }
-                    state.copy(
-                        busy = false,
-                        // A corrected request can replace an earlier approval.
-                        // Keep at most the preview belonging to this response.
-                        messages = replaced.filterNot {
-                            it.id != placeholder.id && it.isApprovalPreviewMessage()
-                        },
-                        pending = envelope.approval,
-                        otp = "",
-                        quiz = parseQuiz(envelope.result),
-                        profileResult = envelope.result?.get("profile_result") as? Map<String, Any>,
-                        suggestions = predictedSuggestions(envelope),
-                    )
-                }
-                persistMessages()
+                applyEnvelope(envelope, placeholder.id)
             } catch (failure: GatewayException) {
                 // Drop the placeholder: leaving "正在处理…" behind after a
                 // failure is exactly the kind of lie this codebase avoids.
@@ -1207,7 +1256,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val principal = _state.value.principal
-        _state.update { it.copy(busy = true, error = null) }
+        _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
         viewModelScope.launch {
             try {
                 val challenge = agent.requestFaceChallenge(principal, sessionToken, approval.approvalId)
@@ -1233,22 +1282,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     decision = "approve",
                     otp = otp,
                     faceAttestation = envelope,
+                    onProgress = ::recordStage,
                 )
-                _state.update { state ->
-                    state.copy(
-                        busy = false,
-                        pending = null,
-                        otp = "",
-                        suggestions = predictedSuggestions(resolved),
-                        messages = state.messages.filterNot { it.isApprovalPreviewMessage() } + ChatMessage(
-                            role = ChatRole.ASSISTANT,
-                            text = displayText(resolved.reply, resolved.result),
-                            riskLevel = resolved.riskLevel,
-                            result = resolved.result,
-                        ),
-                    )
-                }
-                persistMessages()
+                applyEnvelope(resolved)
             } catch (failure: GatewayException) {
                 applyFailure(failure)
             } catch (failure: Exception) {
@@ -1262,7 +1298,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun resolve(approval: ApprovalView, decision: String) {
         markUserActivity()
         val principal = _state.value.principal
-        _state.update { it.copy(busy = true, error = null) }
+        _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
         viewModelScope.launch {
             try {
                 val envelope = agent.resolveApproval(
@@ -1270,24 +1306,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     sessionToken = sessionToken,
                     approvalId = approval.approvalId,
                     decision = decision,
+                    onProgress = ::recordStage,
                 )
-                _state.update { state ->
-                    state.copy(
-                        busy = false,
-                        pending = null,
-                        otp = "",
-                        quiz = parseQuiz(envelope.result),
-                        profileResult = envelope.result?.get("profile_result") as? Map<String, Any>,
-                        suggestions = predictedSuggestions(envelope),
-                        messages = state.messages.filterNot { it.isApprovalPreviewMessage() } + ChatMessage(
-                            role = ChatRole.ASSISTANT,
-                            text = displayText(envelope.reply, envelope.result),
-                            riskLevel = envelope.riskLevel,
-                            result = envelope.result,
-                        ),
-                    )
-                }
-                persistMessages()
+                applyEnvelope(envelope)
             } catch (failure: GatewayException) {
                 applyFailure(failure)
             }
@@ -1318,7 +1339,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 // 审批/验证失败时短信验证码已经被核心消费或拒绝，字段必须清空：
                 // 留着它，用户再次点“确认执行”只会把同一个失效的码再送一次。
-                state.copy(busy = false, error = failure.message, otp = "")
+                state.copy(busy = false, error = failure.message, otp = "", activeStages = emptyList())
             }
         }
     }

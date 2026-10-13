@@ -1,103 +1,104 @@
 package com.aibanking.agent.ui.chat
 
-import androidx.compose.foundation.background
-import androidx.compose.animation.animateContentSize
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.activity.compose.BackHandler
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
-import android.Manifest
-import android.content.pm.PackageManager
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.anim.cascadeItem
-import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import com.aibanking.agent.ui.anim.pageSlideSpec
-import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.anim.rememberCascadeEntrance
+import com.aibanking.agent.ui.components.BankBottomSheet
+import com.aibanking.agent.ui.components.BankButton
+import com.aibanking.agent.ui.components.BankCard
+import com.aibanking.agent.ui.components.BankFilterChip
 import com.aibanking.agent.ui.components.BankIcon
 import com.aibanking.agent.ui.components.BankIconKind
+import com.aibanking.agent.ui.components.BankOutlinedButton
+import com.aibanking.agent.ui.components.BankScreenHeading
 import com.aibanking.agent.ui.components.BankSemanticStatus
+import com.aibanking.agent.ui.components.BankStatusChip
+import com.aibanking.agent.ui.components.BankSticker
+import com.aibanking.agent.ui.components.BankTextButton
+import com.aibanking.agent.ui.components.bankHardShadow
+import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * 银行风格“我的银行卡”页：仿真卡面（渐变卡板 + 脱敏卡号 + 余额）+ 卡片
@@ -133,7 +134,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("我的银行卡", fontWeight = FontWeight.Bold)
+                        Text("卡片管家", fontWeight = FontWeight.Bold)
                         Surface(
                             shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.primaryContainer,
@@ -142,7 +143,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                                 "${state.cards.size} 张",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.secondary,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             )
                         }
@@ -160,8 +161,8 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                 onClick = { showAdd = true },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.testTag(UiTags.CARD_OPEN_ADD),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.bankHardShadow(RoundedCornerShape(12.dp)).border(BankPalette.borderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)).testTag(UiTags.CARD_OPEN_ADD),
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("添加银行卡") },
             )
@@ -178,6 +179,9 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 104.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
+                item {
+                    BankScreenHeading("每张卡，都心中有数", subtitle = "管理卡片、限额与安全状态", eyebrow = "卡片管理")
+                }
                 items(
                     count = state.cards.size,
                     key = { state.cards[it].cardId },
@@ -190,12 +194,12 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                         if (loadFailure != null) {
                             PanelLoadFailure(loadFailure, viewModel::refreshCards)
                         } else {
-                            Card(
+                            BankCard(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                shape = RoundedCornerShape(24.dp),
+                                shape = RoundedCornerShape(16.dp),
                             ) {
                                 Column(Modifier.fillMaxWidth().padding(28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    BankIcon(BankIconKind.Card, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+                                    BankIcon(BankIconKind.Card, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.secondary)
                                     Text("把常用的卡放在一起", style = MaterialTheme.typography.titleLarge)
                                     Text("还没有银行卡。点右下角即可自行添加。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
@@ -258,11 +262,11 @@ private fun CardsSkeleton() {
 
 @Composable
 private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: Modifier = Modifier, onOpen: () -> Unit = {}) {
-    Card(
+    BankCard(
         modifier = modifier.fillMaxWidth().testTag("${UiTags.CARD_DETAIL}:${card.cardId}").clickable(onClick = onOpen),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline),
     ) {
         CardFace(card)
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -278,7 +282,7 @@ private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: M
                     ActionChip(actionLabel(action), card, action) { viewModel.startCardAction(action, card) }
                 }
                 Spacer(Modifier.weight(1f))
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, "查看卡片详情", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, "查看卡片详情", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -290,34 +294,36 @@ private fun CardFace(card: CardView) {
     val base = when (card.status) {
         "LOST" -> semantic.cardLost
         "FROZEN" -> semantic.cardFrozen
-        else -> semantic.cardActive
+        else -> if (card.type.contains("虚拟") || card.type.contains("VIRTUAL", ignoreCase = true)) semantic.cardVirtual else semantic.cardActive
     }
+    val foreground = if (base == BankPalette.Ink) Color.White else BankPalette.Ink
     Box(
         Modifier.fillMaxWidth()
-            .background(Brush.linearGradient(listOf(base, base.copy(alpha = .90f))))
+            .background(base)
             .padding(24.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            BankSticker("ANYAN · BANKING")
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text("安言 AI 银行", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(card.type + (card.label?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""), color = Color.White.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium)
+                    Text("安言 AI 银行", color = foreground, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(card.type + (card.label?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""), color = foreground.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium)
                 }
                 StatusBadge(card.status)
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("可用余额", color = Color.White.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium)
-                Text("¥" + String.format(Locale.CHINA, "%,.2f", card.availableBalance), color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
+                Text("可用余额", color = foreground.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium)
+                Text("¥" + String.format(Locale.CHINA, "%,.2f", card.availableBalance), color = foreground, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}", color = Color.White.copy(alpha = .9f), style = MaterialTheme.typography.titleSmall, fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
+                Text("尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}", color = foreground.copy(alpha = .9f), style = MaterialTheme.typography.titleSmall, fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
                 Box(
                     Modifier.size(width = 34.dp, height = 26.dp)
                         .clip(RoundedCornerShape(7.dp))
-                        .background(Brush.linearGradient(listOf(semantic.riskYellow, semantic.riskYellow.copy(alpha = .60f)))),
+                        .background(BankPalette.Yellow).border(BankPalette.borderWidth, BankPalette.Ink, RoundedCornerShape(7.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    BankIcon(BankIconKind.Card, Modifier.size(22.dp), tint = Color.White.copy(alpha = .75f))
+                    BankIcon(BankIconKind.Card, Modifier.size(22.dp), tint = BankPalette.Ink)
                 }
             }
         }
@@ -364,13 +370,12 @@ private fun StatusBadge(status: String) {
     BankStatusChip(
         label = label,
         status = semantic,
-        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
     )
 }
 
 @Composable
 private fun ActionChip(text: String, card: CardView, action: String, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.cardAction(card.cardId, action))) {
+    BankOutlinedButton(onClick = onClick, modifier = Modifier.heightIn(min = BankSpacing.minTouchTarget).testTag(UiTags.cardAction(card.cardId, action))) {
         Text(text)
     }
 }
@@ -390,7 +395,7 @@ private fun AddCardSheet(
     // 弹层窗口不接收焦点，系统返回会落到 Activity 上直接退出应用；这里接管返回，
     // 并与 onDismissRequest 共用 busy 保护：提交进行中不允许返回把表单丢掉。
     BackHandler(enabled = true) { if (!busy) onDismiss() }
-    ModalBottomSheet(
+    BankBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surface,
@@ -436,7 +441,7 @@ private fun AddCardSheet(
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.CARD_NUMBER),
             )
-            OutlinedButton(
+            BankOutlinedButton(
                 onClick = { if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) camera.launch(null) else permission.launch(Manifest.permission.CAMERA) },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(UiTags.CARD_CAMERA),
@@ -452,7 +457,7 @@ private fun AddCardSheet(
             Text("卡片类型", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("借记卡", "虚拟卡").forEach { option ->
-                    FilterChip(
+                    BankFilterChip(
                         selected = cardType == option,
                         onClick = { onFieldChange(option, null) },
                         enabled = !busy,
@@ -469,7 +474,7 @@ private fun AddCardSheet(
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Button(
+            BankButton(
                 onClick = { onAdd(number, source) },
                 enabled = !busy && confirmed && extractCardNumber(number) != null,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag(UiTags.CARD_ADD),
@@ -524,20 +529,20 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
             Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) { CardFace(card) }
+            BankCard(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { CardFace(card) }
             Text(
                 "${card.type} · 尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}",
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.testTag(UiTags.CARD_DETAIL),
             )
-            Card(
-                shape = RoundedCornerShape(24.dp),
+            BankCard(
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth().animateContentSize(),
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
                         Text("安全查看卡号", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     }
                     Text("验证后展示完整信息，30 秒后自动隐藏。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -554,7 +559,7 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
                             modifier = Modifier.fillMaxWidth().testTag(UiTags.CARD_PIN),
                         )
                         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                        Button(
+                        BankButton(
                             onClick = {
                                 val submittedPin = pin
                                 pin = ""
@@ -585,17 +590,17 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
                             Text("卡号：${shown.cardNumber}", style = MaterialTheme.typography.titleMedium, fontFamily = FontFamily.Monospace)
                             Text("开户行：${shown.issuerName}", style = MaterialTheme.typography.bodyMedium)
                             Text("本次展示将在 30 秒后失效", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            TextButton(onClick = { reveal = null }) { Text("立即隐藏") }
+                            BankTextButton(onClick = { reveal = null }) { Text("立即隐藏") }
                         }
                     }
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(
+                BankOutlinedButton(
                     onClick = { reveal = null; viewModel.prefillCardTransfer(card) },
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(UiTags.CARD_TRANSFER),
                 ) { Text("转账") }
-                Button(
+                BankButton(
                     onClick = { reveal = null; onBack(); viewModel.openWealth() },
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(UiTags.CARD_WEALTH),
                 ) { Text("理财") }

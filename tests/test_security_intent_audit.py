@@ -118,9 +118,11 @@ def test_lost_settlement_receipt_does_not_falsely_claim_no_money_changed(gateway
     assert response.status_code == 200, response.text
     body = response.json()
     assert main.ACCOUNTS["user_zhang"][field] == expected, body
-    assert "未能确认" in body["reply"] and "先查询" in body["reply"], body
+    assert "未取得可核验回执" in body["reply"] and "核对结果" in body["reply"], body
+    assert body["business_status"] == "PENDING_RECONCILIATION"
+    assert body["response"]["actions"][0]["id"] == "reconcile"
     assert "未执行任何资金变更" not in body["reply"] and "转账成功" not in body["reply"]
     assert "PRIVATE_UPSTREAM_DETAIL" not in str(body)
-    assert body.get("result") is None
+    assert not (body.get("result") or {}).get("execution_result")
     assert any(event["action"] == "EXECUTION" and event["outcome"] == "UNKNOWN"
                and event["request_id"] == body["request_id"] for event in security.get_audit_logs())
