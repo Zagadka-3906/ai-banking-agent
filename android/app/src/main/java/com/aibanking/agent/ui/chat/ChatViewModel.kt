@@ -84,6 +84,8 @@ data class ChatMessage(
     val conversationId: String? = null,
     val stages: List<StageProgress>? = null,
     val reconciling: Boolean = false,
+    /** Failure to read a receipt does not mean the underlying operation failed. */
+    val reconciliationError: String? = null,
 )
 
 data class QuizOptionUi(val key: String, val label: String)
@@ -121,6 +123,9 @@ data class ChatUiState(
     /** Revealed only once the server has actually asked for a login SMS code. */
     val otpRequiredAtLogin: Boolean = false,
     val error: String? = null,
+    val outcomeMessageId: String? = null,
+    val lastProblem: OperationProblem? = null,
+    val showProblem: Boolean = false,
     val notice: String? = null,
     /** Device-management panel visibility and its server-backed rows. */
     val showDevices: Boolean = false,
@@ -451,9 +456,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissMessages() = _state.update { it.copy(error = null, notice = null) }
+    fun openOutcome(messageId: String) = _state.update { state ->
+        if (state.authenticated && state.messages.any { it.id == messageId && outcomeFor(it) != null })
+            state.copy(outcomeMessageId = messageId, showProblem = false) else state
+    }
+    fun openProblem() = _state.update { it.copy(showProblem = it.authenticated && it.lastProblem != null, outcomeMessageId = null) }
+    fun closeOutcome() = _state.update { it.copy(outcomeMessageId = null, showProblem = false) }
+    fun outcomeBalance() {
+        // A callback can outlive the enabled state of its button. Unlike a
+        // natural-language correction, this shortcut must not replace approval.
+        val current = _state.value
+        if (!current.authenticated || current.busy || current.pending != null || current.quiz != null) return
+        closeOutcome()
+        onSuggestionClick("查一下余额")
+    }
+    fun outcomeTasks() {
+        if (!_state.value.authenticated) return
+        closeOutcome()
+        openTasks()
+    }
 
     /** Surface a local failure (for example a rejected biometric prompt). */
-    fun reportError(message: String) = _state.update { it.copy(error = message) }
+    fun reportError(message: String) = _state.update {
+        it.copy(error = message, lastProblem = OperationProblem(message, "DEVICE_VERIFICATION_FAILED", 400))
+    }
 
     /** The prompt belongs to the login and approval visible when it opened. */
     internal fun deviceApprovalCallbacks(approvalId: String): DeviceApprovalCallbacks {
@@ -1197,6 +1223,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val reconciliationJobs = mutableMapOf<String, Job>()
+    private var interactionRevision = 0L
 
     private fun recordStage(progress: StageProgress) {
         _state.update { state ->
@@ -1204,8 +1231,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun applyEnvelope(envelope: TurnEnvelope, messageId: String = UUID.randomUUID().toString()) {
-        conversationId = envelope.conversationId.ifBlank { conversationId }
+    private fun applyEnvelope(
+        envelope: TurnEnvelope,
+        messageId: String = UUID.randomUUID().toString(),
+        updateConversation: Boolean = true,
+        clearProblem: Boolean = true,
+    ) {
+        if (updateConversation) conversationId = envelope.conversationId.ifBlank { conversationId }
         _state.update { state ->
             val previous = state.messages.firstOrNull { it.id == messageId }
             val message = ChatMessage(id = messageId, role = ChatRole.ASSISTANT,
@@ -1213,7 +1245,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 riskLevel = envelope.riskLevel, approvalPreview = envelope.approval != null,
                 result = envelope.displayResult, traceId = envelope.requestId,
                 businessStatus = envelope.businessStatus, response = envelope.response,
-                conversationId = envelope.conversationId, stages = previous?.stages ?: state.activeStages)
+                conversationId = envelope.conversationId,
+                stages = previous?.stages ?: state.activeStages.takeIf { updateConversation })
+            // A receipt read started before a newer interaction owns only its
+            // history row, never the current approval, editor or navigation.
+            if (!updateConversation) return@update state.copy(messages = state.messages.map {
+                if (it.id == messageId) message else it
+            })
             fun stale(row: ChatMessage): Boolean = row.isApprovalPreviewMessage() ||
                 (row.id != messageId && row.businessStatus == "PENDING_RECONCILIATION" &&
                     envelope.response?.operationId != null && row.response?.operationId == envelope.response.operationId)
@@ -1222,6 +1260,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (it.id == messageId) message else it.takeUnless { row -> stale(row) }
             } else kept + message
             state.copy(busy = false, pending = envelope.approval, otp = "", activeStages = emptyList(),
+                lastProblem = if (clearProblem) null else state.lastProblem,
+                showProblem = if (clearProblem) false else state.showProblem,
                 messages = messages, quiz = parseQuiz(envelope.displayResult),
                 profileResult = envelope.displayResult?.get("profile_result") as? Map<String, Any>,
                 suggestions = predictedSuggestions(envelope))
@@ -1234,26 +1274,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun reconcileMessage(messageId: String) {
         if (reconciliationJobs[messageId]?.isActive == true) return
         val message = _state.value.messages.firstOrNull { it.id == messageId } ?: return
+        if (!message.hasReconciliationTarget()) return
         val operation = message.response?.operationId ?: return
         val conversation = message.conversationId ?: return
         val principal = _state.value.principal
         if (sessionToken == null) return
+        // A newer interaction, including one between polling attempts, ends
+        // this reader's ownership of the conversation. Retrying an old history
+        // row also cannot acquire the latest turn merely because it is idle.
+        val revision = interactionRevision
         reconciliationJobs[messageId] = sessionWork.launch {
-            _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = true) else row }) }
+            _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = true, reconciliationError = null) else row }) }
             try {
                 repeat(10) { attempt ->
                     if (attempt > 0) delay(2000)
                     check()
-                    if (_state.value.messages.none { it.id == messageId }) return@launch
+                    if (_state.value.messages.none { it.id == messageId && it.hasReconciliationTarget() && it.response?.operationId == operation }) return@launch
                     val result = await { agent.reconcileOperation(principal, credential(), conversation, operation) }
+                    val current = _state.value
+                    if (current.messages.none { it.id == messageId && it.hasReconciliationTarget() && it.response?.operationId == operation }) return@launch
                     if (result.businessStatus != "PENDING_RECONCILIATION") {
-                        applyEnvelope(result, messageId)
+                        val ownsInteraction = revision == interactionRevision && current.messages.lastOrNull()?.id == messageId &&
+                            !current.busy && current.pending == null && current.quiz == null
+                        applyEnvelope(result, messageId, updateConversation = ownsInteraction, clearProblem = false)
                         return@launch
                     }
                 }
             } catch (failure: GatewayException) {
                 check()
-                if (failure.sessionExpired) applyFailure(failure)
+                if (failure.sessionExpired) applyFailure(failure) else recordReconciliationFailure(messageId, failure.message)
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
+                recordReconciliationFailure(messageId, failure.message ?: "暂时无法读取回执")
             } finally {
                 commit {
                     _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = false) else row }) }
@@ -1263,11 +1316,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun recordReconciliationFailure(messageId: String, reason: String) {
+        _state.update { state -> state.copy(messages = state.messages.map { row ->
+            if (row.id == messageId && row.hasReconciliationTarget()) row.copy(
+                reconciliationError = "核对暂未完成：$reason。原操作结果仍待核对，请勿重复办理。",
+            ) else row
+        }) }
+    }
+
     private fun sendInternal(text: String, echoUser: Boolean = true) {
         markUserActivity()
         val current = _state.value
         val principal = current.principal
         if (!current.authenticated) return
+        interactionRevision++
         // A placeholder assistant bubble carries the live stage label and is then
         // replaced by the real answer, so progress appears where the reply will.
         val placeholder = ChatMessage(role = ChatRole.ASSISTANT, text = "正在处理…")
@@ -1277,6 +1339,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 messages = if (echoUser) it.messages + ChatMessage(role = ChatRole.USER, text = text) + placeholder
                 else it.messages + placeholder,
                 busy = true,
+                error = null, lastProblem = null, showProblem = false,
             )
         }
         sessionWork.launch {
@@ -1320,11 +1383,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // same way a server-side refusal is reported.
                 _state.update { state ->
                     state.copy(
-                        busy = false,
                         messages = state.messages.filterNot { it.id == placeholder.id },
-                        error = "请求失败：${failure.message ?: failure::class.java.simpleName}",
                     )
                 }
+                persistMessages()
+                applyFailure(GatewayException("CLIENT_ERROR", "未能读取本次请求的结果，请先核对现有回执。", 0))
             }
         }
     }
@@ -1351,6 +1414,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * Called only after the local biometric prompt succeeded.
      */
     fun approveWithDeviceSignature() {
+        if (_state.value.busy) return
         val approval = _state.value.pending ?: return
         val otp = _state.value.otp
         if (otp.length < 6) {
@@ -1366,8 +1430,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val principal = _state.value.principal
-        _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
+        interactionRevision++
+        _state.update { it.copy(busy = true, error = null, lastProblem = null, showProblem = false, activeStages = emptyList()) }
         sessionWork.launch {
+            var approvalSubmitted = false
             try {
                 val challenge = await { agent.requestFaceChallenge(principal, credential(), approval.approvalId) }
                 // The private key stays in the Keystore; this returns only a
@@ -1385,6 +1451,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     challengeId = challenge.challengeId,
                     signatureBase64 = signature,
                 )
+                approvalSubmitted = true
                 val resolved = await { agent.resolveApproval(
                     principal = principal,
                     sessionToken = credential(),
@@ -1401,17 +1468,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure
                 check()
-                // A Keystore failure is a device problem, not a bank decision;
-                // say so instead of blaming the operation.
-                _state.update { it.copy(busy = false, error = "设备签名失败：${failure.message ?: failure::class.java.simpleName}") }
+                // Only local validation before submission can be called a
+                // device failure; an unreadable approval reply is uncertain.
+                applyFailure(if (approvalSubmitted) {
+                    GatewayException("CLIENT_ERROR", "未能读取本次办理结果，请先核对现有回执。", 0)
+                } else {
+                    GatewayException("DEVICE_VERIFICATION_FAILED", "本机验证未完成，请返回原审批卡检查设备验证设置。", 400)
+                })
             }
         }
     }
 
     private fun resolve(approval: ApprovalView, decision: String) {
+        if (_state.value.busy) return
         markUserActivity()
         val principal = _state.value.principal
-        _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
+        interactionRevision++
+        _state.update { it.copy(busy = true, error = null, lastProblem = null, showProblem = false, activeStages = emptyList()) }
         sessionWork.launch {
             try {
                 val envelope = await { agent.resolveApproval(
@@ -1425,6 +1498,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } catch (failure: GatewayException) {
                 check()
                 applyFailure(failure)
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
+                applyFailure(GatewayException("CLIENT_ERROR", "未能读取本次办理结果，请先核对现有回执。", 0))
             }
         }
     }
@@ -1452,7 +1529,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { state ->
             // 审批/验证失败时短信验证码已经被核心消费或拒绝，字段必须清空：
             // 留着它，用户再次点“确认执行”只会把同一个失效的码再送一次。
-            state.copy(busy = false, error = failure.message, otp = "", activeStages = emptyList())
+            state.copy(busy = false, error = failure.message, otp = "", activeStages = emptyList(),
+                lastProblem = OperationProblem(failure.message, failure.code, failure.httpStatus))
         }
     }
 

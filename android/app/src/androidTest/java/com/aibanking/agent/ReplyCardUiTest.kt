@@ -190,6 +190,7 @@ class ReplyCardUiTest {
         var calls = 0
         val message = ChatMessage(id = "reply-workflow-pending", role = ChatRole.ASSISTANT,
             text = "暂未取得可核验回执，请勿重复办理。", riskLevel = "YELLOW", businessStatus = "PENDING_RECONCILIATION",
+            conversationId = "conversation-local",
             response = ReplyResponse(version = 1, operationId = "plan-local:settle", workflowPlan = WorkflowPlan(
                 currentStep = 2, steps = listOf(WorkflowStep(1, "查询余额", "SUCCEEDED"),
                     WorkflowStep(2, "给李四转10元", "PENDING_RECONCILIATION"), WorkflowStep(3, "给李四转20元", "PENDING")))))

@@ -216,6 +216,57 @@ def install_response_controls(app, authorize) -> ScenarioResponseControls:
     return controls
 
 
+def install_receipt_controls(app, authorize) -> None:
+    """Retain lookup metadata for an already-settled transfer in emulator tests.
+
+    Successful turns do not normally retain the retry metadata. This fixture
+    lets Android exercise a lost local receipt against a real completed Core
+    operation. It never executes the graph, changes business status or writes
+    the ledger, and cannot associate an arbitrary operation with a conversation.
+    """
+    from fastapi import Header, HTTPException
+
+    @app.post("/__scenario/retain-receipt")
+    def retain_receipt(payload: dict, x_scenario_token: str = Header(default="")):
+        authorize(x_scenario_token)
+        import conversation
+        from security import SecurityError
+
+        principal, conversation_id, operation_id = (
+            payload.get(key) for key in ("principal", "conversation_id", "operation_id")
+        )
+        if any(not isinstance(value, str) or not value.strip() for value in (principal, conversation_id, operation_id)):
+            raise HTTPException(400, "Scenario receipt target must contain nonempty identifiers")
+        try:
+            thread_id = conversation.conversation_thread_id(principal, conversation_id)
+        except SecurityError as error:
+            raise HTTPException(400, "Invalid scenario receipt target") from error
+        service = conversation.SERVICE
+        config = service._config(thread_id)
+        with service._thread_lock(thread_id):
+            graph = conversation.get_graph()
+            state = dict(graph.get_state(config).values or {})
+            execution = state.get("execution_result") or {}
+            receipt = execution.get("data") or {}
+            plan = state.get("plan") or {}
+            transaction_id = receipt.get("transaction_id")
+            if (state.get("user_id") != principal or state.get("business_status") != "SUCCEEDED"
+                    or execution.get("type") != "TRANSFER_SUCCESS" or receipt.get("status") != "SUCCESS"
+                    or not isinstance(transaction_id, str) or not transaction_id):
+                raise HTTPException(409, "Conversation has no completed transfer receipt")
+            matching_tasks = [task for task in plan.get("tasks", [])
+                              if task.get("action") == "TRANSFER" and task.get("status") == "SUCCEEDED"
+                              and task.get("idempotency_key") == operation_id
+                              and (task.get("details", {}).get("result") or {}).get("transaction_id") == transaction_id]
+            if len(matching_tasks) != 1:
+                raise HTTPException(409, "Operation does not belong to the completed transfer")
+            record = {"operation_id": operation_id, "endpoint": "transfer_execute", "result_type": "TRANSFER_SUCCESS"}
+            if state.get("reconciliation") not in (None, record):
+                raise HTTPException(409, "Conversation already retains a different operation")
+            graph.update_state(config, {"reconciliation": record})
+        return {"operation_id": operation_id}
+
+
 def run() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("service", choices=["core", "gateway"])
@@ -280,6 +331,7 @@ def run() -> None:
     if args.service == "gateway":
         import agent
         import conversation
+        install_receipt_controls(app, authorize)
         original_stream = conversation.SERVICE.start_turn_stream
 
         def observe(envelope, text, event, started, principal):

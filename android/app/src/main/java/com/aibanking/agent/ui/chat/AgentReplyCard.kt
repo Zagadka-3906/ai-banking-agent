@@ -26,11 +26,12 @@ import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
 import com.aibanking.agent.ui.components.bankHardShadow
 import com.aibanking.agent.ui.theme.BankPalette
+import com.aibanking.agent.ui.UiTags
 
 /** A readable reply with financial facts kept separate from support metadata. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}) {
+internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}, onOutcome: () -> Unit = {}) {
     var showDetails by rememberSaveable(message.id) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     Surface(
@@ -71,13 +72,25 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier,
                         }
                     }
                     if (message.businessStatus == "PENDING_RECONCILIATION") {
+                        message.reconciliationError?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall) }
                         if (!message.reconciling) Text("暂未取得回执，可再次核对。", style = MaterialTheme.typography.bodySmall,
                             color = colors.onSurfaceVariant)
-                        BankSecondaryButton(if (message.reconciling) "正在核对结果…" else "核对结果", onReconcile,
-                            enabled = !message.reconciling, modifier = Modifier.fillMaxWidth().testTag("reconcile_${message.id}"))
+                        if (message.hasReconciliationTarget()) {
+                            BankSecondaryButton(if (message.reconciling) "正在核对结果…" else "核对结果", onReconcile,
+                                enabled = !message.reconciling, modifier = Modifier.fillMaxWidth().testTag("reconcile_${message.id}"))
+                        } else {
+                            Text("缺少核对编号，请查看现有回执和账户记录，勿重复办理。", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                     if (message.businessStatus == null && !message.stages.isNullOrEmpty()) WorkflowProgress(message.stages)
                 }
+            }
+            outcomeFor(message)?.let { outcome ->
+                BankSecondaryButton(when (outcome.tone) {
+                    OutcomeTone.SUCCESS -> "查看办理结果"
+                    OutcomeTone.FAILURE -> "查看原因与下一步"
+                    else -> "查看操作状态"
+                }, onOutcome, modifier = Modifier.fillMaxWidth().testTag(UiTags.outcomeEntry(message.id)))
             }
             message.traceId?.takeIf { it.isNotBlank() }?.let { traceId ->
                 Column {

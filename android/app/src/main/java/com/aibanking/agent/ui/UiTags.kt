@@ -92,6 +92,17 @@ object UiTags {
     const val APPROVAL_APPROVE = "approval_approve"
     const val APPROVAL_REJECT = "approval_reject"
     const val APPROVAL_OTP = "approval_otp"
+    const val OUTCOME_SCREEN = "outcome_screen"
+    const val OUTCOME_TITLE = "outcome_title"
+    const val OUTCOME_BACK = "outcome_back"
+    const val OUTCOME_RETURN = "outcome_return"
+    const val OUTCOME_RECEIPT = "outcome_receipt"
+    const val OUTCOME_BALANCE = "outcome_balance"
+    const val OUTCOME_TASKS = "outcome_tasks"
+    const val OUTCOME_RECONCILE = "outcome_reconcile"
+    const val OUTCOME_RECONCILIATION_ERROR = "outcome_reconciliation_error"
+    const val OPEN_FAILURE = "open_failure"
+    fun outcomeEntry(messageId: String) = "outcome_entry:$messageId"
 
     /** Retry affordance of a panel whose load failed. */
     const val PANEL_RETRY = "panel_retry"

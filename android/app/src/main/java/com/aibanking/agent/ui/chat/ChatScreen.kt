@@ -81,6 +81,17 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     val approvalDeadlineMillis = rememberSaveable(state.pending?.approvalId) {
         state.pending?.let { SystemClock.elapsedRealtime() + it.expiresIn.coerceAtLeast(0) * 1_000L } ?: 0L
     }
+    // Keep the deadline and notifications alive while viewing a receipt.
+    // Leaving their composition would restart the approval clock on return.
+    val resultMessage = state.messages.firstOrNull { it.id == state.outcomeMessageId }
+    val outcome = resultMessage?.let(::outcomeFor) ?: state.lastProblem?.takeIf { state.showProblem }?.let(::outcomeFor)
+    if (outcome != null) {
+        OperationOutcomeScreen(outcome, resultMessage, state.lastProblem.takeIf { state.showProblem },
+            canQuery = state.authenticated && !state.busy && state.pending == null && state.quiz == null,
+            onBack = viewModel::closeOutcome, onBalance = viewModel::outcomeBalance, onTasks = viewModel::outcomeTasks,
+            onReconcile = { resultMessage?.let { viewModel.reconcileMessage(it.id) } }, snackbarHostState = snackbar)
+        return
+    }
 
     // 页面状态映射
     val page = when {
@@ -290,7 +301,8 @@ private fun ChatHome(
                     item(key = "welcome") { ChatWelcome(onSuggestion = viewModel::onSuggestionClick) }
                 }
                 items(state.messages, key = { it.id }) { message ->
-                    MessageBubble(message, Modifier.animateItem().verificationFrost(redVerification), onReconcile = { viewModel.reconcileMessage(message.id) })
+                    MessageBubble(message, Modifier.animateItem().verificationFrost(redVerification),
+                        onReconcile = { viewModel.reconcileMessage(message.id) }, onOutcome = { viewModel.openOutcome(message.id) })
                 }
                 state.pending?.let { approval ->
                     item(key = "approval:${approval.approvalId}") {
@@ -335,6 +347,10 @@ private fun ChatHome(
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     Text("安言正在为您处理…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+            state.lastProblem?.let {
+                BankSecondaryButton("查看原因与下一步", viewModel::openProblem,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag(UiTags.OPEN_FAILURE))
             }
             // Predicted next requests stay directly above the editor. A tap sends
             if (state.busy && state.activeStages.isNotEmpty()) {
@@ -436,9 +452,9 @@ private fun ChatWelcome(onSuggestion: (String) -> Unit) {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}) {
+private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}, onOutcome: () -> Unit = {}) {
     if (message.role == ChatRole.ASSISTANT) {
-        AgentReplyCard(message, modifier, onReconcile)
+        AgentReplyCard(message, modifier, onReconcile, onOutcome)
         return
     }
     Column(modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = Alignment.End) {
@@ -533,7 +549,7 @@ private fun ApprovalCard(
             }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 BankPrimaryButton(
-                    text = if (isRed) "生物识别签名并执行" else "确认执行",
+                    text = if (isRed) "验证并确认办理" else "确认本次操作",
                     onClick = {
                         remainingSeconds = secondsLeft()
                         if (remainingSeconds > 0) {
@@ -550,7 +566,7 @@ private fun ApprovalCard(
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_REJECT))
             }
             Text(
-                "请核对收款人和金额。只有确认后，才会继续执行本次操作。",
+                "请核对办理对象、金额和具体内容。确认后，才会继续本次操作。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
