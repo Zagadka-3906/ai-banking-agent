@@ -2348,7 +2348,7 @@ def get_balance(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-U
 
 
 @app.get("/api/v1/accounts/{user_id}/transactions")
-def get_transactions(user_id: str, date_scope: str = "ALL", x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+def get_transactions(user_id: str, date_scope: str = "ALL", x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), category: Optional[str] = None):
     request_id = _request_id(x_request_id)
     if user_id not in ACCOUNTS:
         audit_event("TRANSACTION_QUERY", user_id=x_user_id, decision="BLOCK", outcome="NOT_FOUND", reason="ACCOUNT_NOT_FOUND", request_id=request_id)
@@ -2362,10 +2362,21 @@ def get_transactions(user_id: str, date_scope: str = "ALL", x_user_id: Optional[
     scope = {"今年": "YEAR", "年度": "YEAR", "全年": "YEAR"}.get(scope, scope)
     if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_DATE_SCOPE", "message": "不支持的时间范围"})
-    records = [tx.copy() for tx in TRANSACTIONS if tx.get("account_id") == user_id]
-    records = filter_transactions(records, scope)
-    audit_event("TRANSACTION_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"record_count": len(records), "date_scope": scope})
-    return {"code": 200, "total_records": len(records), "data": records}
+    records, category = _bill_records(user_id, scope, category)
+    audit_event("TRANSACTION_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"record_count": len(records), "date_scope": scope, "category": category})
+    return {"code": 200, "date_scope": scope, "category": category, "total_records": len(records), "data": records}
+
+
+def _bill_records(user_id: str, scope: str, category: Optional[str]) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """Apply the same date/category predicates before listing or aggregating."""
+    if category is not None:
+        category = sanitize_text(category, field="交易分类", max_length=120)
+        if not category or re.search(r"[\x00-\x1f\x7f]", category):
+            raise HTTPException(status_code=400, detail={"code": "INVALID_CATEGORY", "message": "交易分类不能为空或包含控制字符"})
+    rows = filter_transactions([tx.copy() for tx in TRANSACTIONS if tx.get("account_id") == user_id], scope)
+    if category is not None:
+        rows = [row for row in rows if str(row.get("category") or "其他").strip() == category]
+    return rows, category
 
 
 @app.get("/api/v1/contacts/{user_id}")
@@ -2668,7 +2679,7 @@ def remove_contact(user_id: str, contact_id: str, x_user_id: Optional[str] = Hea
 
 
 @app.get("/api/v1/accounts/{user_id}/bill-analysis")
-def get_bill_analysis(user_id: str, date_scope: str = "ALL", x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+def get_bill_analysis(user_id: str, date_scope: str = "ALL", x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), category: Optional[str] = None):
     """GREEN: return source-bound bill facts for a report or chart."""
 
     request_id = _request_id(x_request_id)
@@ -2678,10 +2689,10 @@ def get_bill_analysis(user_id: str, date_scope: str = "ALL", x_user_id: Optional
     scope = {"今年": "YEAR", "年度": "YEAR", "全年": "YEAR"}.get(scope, scope)
     if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_DATE_SCOPE", "message": "不支持的时间范围"})
-    rows = filter_transactions([tx.copy() for tx in TRANSACTIONS if tx.get("account_id") == user_id], scope)
+    rows, category = _bill_records(user_id, scope, category)
     facts = analyze_transactions(rows, user_id=actor, request_id=request_id)
-    audit_event("BILL_ANALYSIS", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"date_scope": scope, "record_count": facts["record_count"]})
-    return {"code": 200, "date_scope": scope, "facts": facts, "records": rows}
+    audit_event("BILL_ANALYSIS", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"date_scope": scope, "category": category, "record_count": facts["record_count"]})
+    return {"code": 200, "date_scope": scope, "category": category, "facts": facts, "records": rows}
 
 
 @app.get("/api/v1/wealth/products")

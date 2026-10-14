@@ -26,6 +26,12 @@ def event(text: str, *, event_id: str = "evt-1", open_id: str = "ou-person", cha
     )
 
 
+def card_body(reply: FeishuReply) -> str:
+    assert isinstance(reply, FeishuReply)
+    assert reply.msg_type == "interactive"
+    return "\n".join(item["text"]["content"] for item in reply.content["elements"] if item["tag"] == "div")
+
+
 def test_binding_read_only_replay_and_unbind(monkeypatch):
     feishu_im.reset_state()
     monkeypatch.setenv("BANK_FEISHU_ENABLED", "0")
@@ -38,9 +44,11 @@ def test_binding_read_only_replay_and_unbind(monkeypatch):
         assert client.post("/api/v1/im/feishu/binding-code", headers={"X-Session-Token": "session"}).status_code == 503
         monkeypatch.setenv("BANK_FEISHU_ENABLED", "1")
         monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
-        assert "绑定码" in feishu_im.process_message(event("查余额"))[1]
+        assert "绑定码" in card_body(feishu_im.process_message(event("查余额"))[1])
         code = client.post("/api/v1/im/feishu/binding-code", headers={"X-Session-Token": "session"}).json()["binding_code"]
-        assert "绑定成功" in feishu_im.process_message(event(f"/绑定 {code}", event_id="evt-2"))[1]
+        bound = feishu_im.process_message(event(f"/绑定 {code}", event_id="evt-2"))[1]
+        assert bound.content["header"]["title"]["content"] == "绑定成功"
+        assert "绑定已完成" in card_body(bound)
         result = feishu_im.process_message(event("查余额", event_id="evt-3"))
         assert result and isinstance(result[1], FeishuReply)
         assert result[1].msg_type == "interactive"
@@ -49,12 +57,13 @@ def test_binding_read_only_replay_and_unbind(monkeypatch):
         assert feishu_im.process_message(event("查余额", event_id="evt-3")) is None
         handoff = feishu_im.process_message(event("转账 300 元", event_id="evt-4"))[1]
         assert isinstance(handoff, FeishuReply)
-        assert handoff.content["header"]["title"]["content"] == "请在 Android 应用办理"
+        assert handoff.content["header"]["title"]["content"] == "请在安言 App 办理"
+        assert "尚未提交" in card_body(handoff)
         assert not any(item.get("tag") == "action" for item in handoff.content["elements"])
         assert read.call_count == 1
         assert all(call.args[0] == "GET" for call in read.call_args_list)
         assert client.delete("/api/v1/im/feishu/binding", headers={"X-Session-Token": "session"}).json()["removed"] == 1
-        assert "绑定码" in feishu_im.process_message(event("查余额", event_id="evt-5"))[1]
+        assert "绑定码" in card_body(feishu_im.process_message(event("查余额", event_id="evt-5"))[1])
     feishu_im.reset_state()
 
 
@@ -67,8 +76,8 @@ def test_rejects_group_wrong_app_stale_and_invalid_code(monkeypatch):
     wrong.header.app_id = "cli_other"
     assert feishu_im.process_message(wrong) is None
     assert feishu_im.process_message(event("查余额", created_ms=int((time.time() - 1200) * 1000))) is None
-    assert "无效" in feishu_im.process_message(event("/绑定 invalid", event_id="evt-2"))[1]
-    assert "已解除" in feishu_im.process_message(event("/解绑", event_id="evt-3"))[1]
+    assert "无效" in card_body(feishu_im.process_message(event("/绑定 invalid", event_id="evt-2"))[1])
+    assert "已解除" in card_body(feishu_im.process_message(event("/解绑", event_id="evt-3"))[1])
     feishu_im.reset_state()
 
 
@@ -144,7 +153,7 @@ def test_binding_code_cannot_be_used_after_bank_logout(monkeypatch):
             raise ConversationError("会话失效", 401, "INVALID_SESSION")
         monkeypatch.setattr(agent_api, "principal_for", revoked)
         result = feishu_im.process_message(event(f"/绑定 {code}", event_id="evt-revoked"))
-        assert result and "失效" in result[1]
+        assert result and "失效" in card_body(result[1])
         assert not feishu_im._BINDINGS
     feishu_im.reset_state()
 
@@ -169,5 +178,5 @@ def test_official_sdk_dispatches_receive_v1_into_connector(monkeypatch):
                               "content": json.dumps({"text": "查余额"}, ensure_ascii=False)}},
     }
     handler._do_without_validation(json.dumps(payload).encode())
-    assert seen and seen[0] and seen[0][0] == "oc-private" and "绑定码" in seen[0][1]
+    assert seen and seen[0] and seen[0][0] == "oc-private" and "绑定码" in card_body(seen[0][1])
     feishu_im.reset_state()

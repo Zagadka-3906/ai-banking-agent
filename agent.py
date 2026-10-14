@@ -741,6 +741,12 @@ def _parsed_payload(
     }
 
 
+BILL_CATEGORY_ALIASES = {
+    "餐饮": ("餐饮", "吃饭", "伙食"), "购物": ("购物",),
+    "交通": ("交通", "打车", "通勤"), "退款": ("退款",),
+}
+
+
 def _local_parse_rules(text: str) -> dict[str, Any]:
     """Conservative offline intent parser used when the LLM is unavailable."""
 
@@ -786,10 +792,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         except (TypeError, ValueError):
             slots.pop("horizon_years", None)
     participants = _participants_from_text(text)
-    for category, phrases in {
-        "餐饮": ("餐饮", "吃饭", "伙食"), "购物": ("购物",),
-        "交通": ("交通", "打车", "通勤"), "退款": ("退款",),
-    }.items():
+    for category, phrases in BILL_CATEGORY_ALIASES.items():
         if any(phrase in text for phrase in phrases):
             slots["category"] = category
             break

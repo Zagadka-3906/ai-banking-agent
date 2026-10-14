@@ -305,12 +305,13 @@ private fun ChatHome(
                             onBiometricApprove = {
                                 // Prove presence locally first; the server still
                                 // verifies the device signature it receives.
+                                val callbacks = viewModel.deviceApprovalCallbacks(approval.approvalId)
                                 BiometricGate.prompt(
                                     activity = activity,
                                     title = "确认高风险操作",
                                     subtitle = approval.summary,
-                                    onSuccess = viewModel::approveWithDeviceSignature,
-                                    onFailure = { reason -> viewModel.reportError("生物识别未通过：$reason") },
+                                    onSuccess = callbacks.onSuccess,
+                                    onFailure = callbacks.onFailure,
                                 )
                             },
                             canPromptBiometric = BiometricGate.canAuthenticate(activity),

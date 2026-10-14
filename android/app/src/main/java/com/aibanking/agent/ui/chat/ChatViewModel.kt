@@ -28,16 +28,14 @@ import com.aibanking.agent.data.StageProgress
 import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.security.DeviceKeyManager
 import com.google.gson.Gson
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.security.MessageDigest
 import java.util.UUID
@@ -49,6 +47,11 @@ enum class ContactsScreen { LIST, DETAIL, ADD }
 
 /** 理财页两个页面：产品超市 → 产品详情（申购预填回聊天）。 */
 enum class WealthScreen { LIST, DETAIL }
+
+internal data class DeviceApprovalCallbacks(
+    val onSuccess: () -> Unit,
+    val onFailure: (String) -> Unit,
+)
 
 private val DEFAULT_PREDICTED_SUGGESTIONS = listOf(
     "查一下余额",
@@ -221,6 +224,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(ChatUiState(restoring = true))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
+    private val sessionWork = SessionWork(viewModelScope)
+
     private var conversationId: String = UUID.randomUUID().toString().replace("-", "").take(20)
     private var sessionToken: String? = null
     private var deviceId: String? = null
@@ -249,15 +254,44 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var cardCreateAttempt: CreateAttempt? = null
     private var contactCreateAttempt: CreateAttempt? = null
 
+    /** Replaced even for the same user; token renewal keeps this generation. */
+    private fun replaceSession() {
+        sessionWork.replace {
+            sessionToken = null
+            deviceId = null
+            sessionStore.clear()
+            // Device enrollment is per principal, even when the key is shared.
+            sessionStore.clearDeviceId()
+        }
+        stopSessionRenewal()
+        reconciliationJobs.clear()
+        cardCreateAttempt = null
+        contactCreateAttempt = null
+        conversationId = UUID.randomUUID().toString().replace("-", "").take(20)
+    }
+
+    /** Resolve a renewed credential only while this request still owns the login. */
+    private fun SessionWork.Lease.credential(): String? {
+        var token: String? = null
+        if (!commit { token = sessionToken }) check()
+        return token
+    }
+
     init {
         // Restore a previous session so a restart does not force a re-login.
         //
         // 每一次读取都要用 Keystore 解封，放在主线程上会拖住首帧：整段恢复
         // 放到 IO，期间 restoring 为 true，界面显示载入态。
-        viewModelScope.launch {
+        sessionWork.launch {
             // 解封失败（Keystore 被重置、偏好文件损坏）必须落到登录页：异常逃出
             // 这个协程会让 restoring 永远是 true，界面卡在载入态再也进不去。
-            val stored = runCatching { withContext(Dispatchers.IO) { readStoredSession() } }.getOrNull()
+            val stored = try {
+                io { readStoredSession() }
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (_: Exception) {
+                null
+            }
             if (stored == null) {
                 _state.update { it.copy(restoring = false) }
                 return@launch
@@ -324,23 +358,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * screen.  An unreachable core is deliberately *not* treated as expiry.
      */
     private fun verifyRestoredSession(token: String, expiresAtEpochSeconds: Long) {
-        viewModelScope.launch {
-            when (withContext(Dispatchers.IO) { login.check(token) }) {
+        sessionWork.launch {
+            when (io { login.check(token) }) {
                 is SessionCheck.Expired -> {
-                    sessionToken = null
-                    sessionStore.clear()
-                    stopSessionRenewal()
-                    _state.update { previous ->
-                        // 启动时发现凭证已死：问卷进度仍然留给同一个人重新登录后接着答。
-                        expiredQuizOwner = previous.principal.takeIf { previous.quiz != null }
-                        previous.copy(
-                            authenticated = false,
-                            principal = "",
-                            busy = false,
-                            messages = listOf(welcome()),
-                            error = "登录状态已失效，请重新登录",
-                        )
-                    }
+                    _state.value = expiredSessionState(_state.value)
                 }
                 // Still valid, or the core could not be reached: keep it either way.
                 else -> startSessionRenewal(expiresAtEpochSeconds)
@@ -365,7 +386,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // persisted): let it lapse as before rather than poll the core.
             return
         }
-        sessionRenewal = viewModelScope.launch {
+        sessionRenewal = sessionWork.launch {
             while (isActive) {
                 val remaining = sessionExpiresAtMillis - System.currentTimeMillis()
                 if (remaining <= 0) return@launch
@@ -388,15 +409,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Swap in a successor credential; false when the core did not hand one over. */
-    private suspend fun renewSession(): Boolean {
-        val current = sessionToken ?: return false
-        val renewed = withContext(Dispatchers.IO) { login.renew(current) } ?: return false
+    private suspend fun SessionWork.Lease.renewSession(): Boolean {
+        val current = credential() ?: return false
+        val renewed = io { login.renew(current) } ?: return false
         // A logout or a second login may have landed while the request was out.
         if (sessionToken != current) return false
         sessionToken = renewed.sessionToken
         sessionExpiresAtMillis = renewed.expiresAt * 1000L
-        withContext(Dispatchers.IO) {
-            sessionStore.saveSession(renewed.sessionToken, renewed.userId, conversationId, renewed.expiresAt)
+        val conversation = conversationId
+        io {
+            commit { sessionStore.saveSession(renewed.sessionToken, renewed.userId, conversation, renewed.expiresAt) }
         }
         return true
     }
@@ -427,6 +449,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Surface a local failure (for example a rejected biometric prompt). */
     fun reportError(message: String) = _state.update { it.copy(error = message) }
 
+    /** The prompt belongs to the login and approval visible when it opened. */
+    internal fun deviceApprovalCallbacks(approvalId: String): DeviceApprovalCallbacks {
+        val owner = sessionWork.capture()
+        return DeviceApprovalCallbacks(
+            onSuccess = {
+                owner.commit {
+                    if (_state.value.pending?.approvalId == approvalId && !_state.value.busy) {
+                        approveWithDeviceSignature()
+                    }
+                }
+            },
+            onFailure = { reason ->
+                owner.commit {
+                    if (_state.value.pending?.approvalId == approvalId) reportError("生物识别未通过：$reason")
+                }
+            },
+        )
+    }
+
     fun login(userId: String, password: String, otp: String? = null) {
         val principal = userId.trim()
         if (principal.isEmpty()) {
@@ -437,14 +478,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(error = "请输入登录口令") }
             return
         }
-        viewModelScope.launch {
+        // Supersede restoration, old requests, and any earlier login attempt.
+        val previous = _state.value
+        val carriedQuiz = previous.quiz
+        val needsOtp = previous.otpRequiredAtLogin
+        replaceSession()
+        _state.value = ChatUiState(busy = true, quiz = carriedQuiz, otpRequiredAtLogin = needsOtp)
+        sessionWork.launch {
             _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
             try {
-                val session = login.login(principal, password, otp)
+                val session = await { login.login(principal, password, otp) }
                 sessionToken = session.sessionToken
                 markUserActivity()
                 sessionStore.saveSession(session.sessionToken, session.userId, conversationId, session.expiresAt)
-                startSessionRenewal(session.expiresAt)
                 // 会话过期时保留下来的问卷只属于同一个人：换个用户登录必须丢弃。
                 val carriedQuiz = _state.value.quiz?.takeIf { expiredQuizOwner == session.userId }
                 expiredQuizOwner = null
@@ -455,7 +501,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // session had already been persisted. A process restart then
                 // restored that session, which made the symptom look random.
                 _state.update {
-                    it.copy(
+                    ChatUiState(
                         busy = false,
                         // 上一次失败的原因必须随成功登录一起清掉：留在 state 里会跟着
                         // 进入聊天页，被 ChatHome 的 Snackbar 当成刚发生的事弹出来。
@@ -472,9 +518,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         },
                     )
                 }
+                startSessionRenewal(session.expiresAt)
                 persistMessages()
-                initializeDeviceAfterLogin(session.sessionToken, session.userId)
+                persistQuiz(carriedQuiz)
+                initializeDeviceAfterLogin(session.userId)
             } catch (failure: GatewayException) {
+                check()
                 _state.update {
                     it.copy(
                         busy = false,
@@ -484,22 +533,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         otpRequiredAtLogin = it.otpRequiredAtLogin || failure.code == "INVALID_LOGIN_OTP",
                     )
                 }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
+                _state.update { it.copy(busy = false, error = "登录失败：${failure.message ?: failure::class.java.simpleName}") }
             }
         }
     }
 
     /** Complete red-tier device setup without blocking the successful login. */
-    private fun initializeDeviceAfterLogin(token: String, principal: String) {
-        viewModelScope.launch {
-            val enrolledDeviceId = enrollDevice(token, principal)
-            // Logout or a second login may have replaced this session while the
-            // network/Keystore work was running. Never repopulate cleared local
-            // state, nor publish a notice for another principal.  A renewal is
-            // not a replacement: it keeps the same signed-in principal, so the
-            // credential being different no longer means this work is stale.
-            if (sessionToken == null || !_state.value.authenticated || _state.value.principal != principal) {
-                return@launch
-            }
+    private fun initializeDeviceAfterLogin(principal: String) {
+        sessionWork.launch {
+            val enrolledDeviceId = enrollDevice(principal)
+            check()
             if (enrolledDeviceId == null) {
                 _state.update { it.copy(notice = "会话已建立，但本机设备未注册：红色风险操作暂不可用") }
                 return@launch
@@ -510,49 +556,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun enrollDevice(token: String, principal: String): String? = try {
+    private suspend fun SessionWork.Lease.enrollDevice(principal: String): String? = try {
         val label = "${Build.MANUFACTURER} ${Build.MODEL}".trim().ifBlank { "Android 设备" }
         // Keystore 读取/首次生成密钥都会阻塞，放到 IO 上；主线程只负责状态。
-        val spki = withContext(Dispatchers.IO) { deviceKeys.publicKeySpkiBase64() }
-        val device = devices.register(
+        val spki = io { deviceKeys.publicKeySpkiBase64() }
+        val device = await { devices.register(
             publicKeySpkiBase64 = spki,
             principal = principal,
-            sessionToken = token,
+            sessionToken = credential().orEmpty(),
             label = label,
-        )
+        ) }
         device.deviceId.takeIf { it.isNotBlank() }
     } catch (failure: Exception) {
+        if (failure is CancellationException) throw failure
+        check()
         null
     }
 
     /**
-     * Sign out: revoke the session on the server first, then forget it locally.
-     *
-     * The order matters - wiping local storage before the server has revoked
-     * the credential would leave a copied token valid until expiry.  The
-     * revocation is best effort: when the network is gone (or the session
-     * already expired) the local wipe still happens, and the token dies at its
-     * short TTL regardless.
+     * Invalidate local work immediately; revoke the captured credential in the
+     * background. A slow logout response must never clear a subsequent login.
      */
     fun logout() {
         val token = sessionToken
+        replaceSession()
+        expiredQuizOwner = null
+        _state.value = ChatUiState()
         viewModelScope.launch {
             if (token != null) {
-                withContext(Dispatchers.IO) { runCatching { login.logout(token) } }
+                try {
+                    login.logout(token)
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (_: Exception) {
+                    // Best effort; the server's short TTL still bounds the token.
+                }
             }
-            sessionToken = null
-            sessionStore.clear()
-            stopSessionRenewal()
-            expiredQuizOwner = null
-            conversationId = UUID.randomUUID().toString().replace("-", "").take(20)
-            _state.value = ChatUiState()
         }
     }
 
     /** Seal the transcript (bounded) so a restart restores the same conversation. */
     private fun persistMessages() {
         val bounded = _state.value.messages.takeLast(MAX_PERSISTED_MESSAGES)
-        runCatching { gson.toJson(bounded) }.getOrNull()?.let { sessionStore.saveMessages(it) }
+        sessionWork.persist("messages") {
+            runCatching { gson.toJson(bounded) }.getOrNull()?.let { sessionStore.saveMessages(it) }
+        }
     }
 
     // -- device management panel -------------------------------------------
@@ -565,9 +613,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun issueFeishuBindingCode() {
         val token = sessionToken ?: return
         _state.update { it.copy(feishuBusy = true, feishuBindingCode = null, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val response = withContext(Dispatchers.IO) { agent.issueFeishuBindingCode(token) }
+                val response = io { agent.issueFeishuBindingCode(token) }
                 _state.update { it.copy(feishuBusy = false, feishuBindingCode = response.bindingCode,
                     feishuCodeExpiresAtMillis = System.currentTimeMillis() + response.expiresIn * 1000L) }
                 delay(response.expiresIn * 1000L)
@@ -575,8 +623,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     if (current.feishuBindingCode == response.bindingCode) current.copy(feishuBindingCode = null) else current
                 }
             } catch (failure: GatewayException) {
+                check()
                 _state.update { it.copy(feishuBusy = false, error = failure.message) }
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 _state.update { it.copy(feishuBusy = false, error = "无法获取飞书绑定码") }
             }
         }
@@ -585,13 +636,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun unbindFeishu() {
         val token = sessionToken ?: return
         _state.update { it.copy(feishuBusy = true, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                withContext(Dispatchers.IO) { agent.unbindFeishu(token) }
+                io { agent.unbindFeishu(token) }
                 _state.update { it.copy(feishuBusy = false, feishuBindingCode = null, notice = "飞书绑定已解除") }
             } catch (failure: GatewayException) {
+                check()
                 _state.update { it.copy(feishuBusy = false, error = failure.message) }
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 _state.update { it.copy(feishuBusy = false, error = "飞书解绑失败") }
             }
         }
@@ -599,13 +653,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshDevices() {
         val principal = _state.value.principal
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val rows = withContext(Dispatchers.IO) { devices.list(principal, sessionToken ?: "") }
+                val rows = io { devices.list(principal, credential().orEmpty()) }
                 _state.update { it.copy(devices = rows, panelBusy = false) }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 // 解析异常（JsonSyntaxException）等非网关失败同样要收尾：逃出协程会让
                 // panelBusy 永远为 true，面板停在骨架屏上，连重试按钮都不出现。
                 applyPanelFailure(failure)
@@ -616,10 +673,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun revokeDevice(targetId: String) {
         val principal = _state.value.principal
         _state.update { it.copy(panelBusy = true, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                withContext(Dispatchers.IO) { devices.revoke(targetId, principal, sessionToken ?: "") }
-                val rows = withContext(Dispatchers.IO) { devices.list(principal, sessionToken ?: "") }
+                io { devices.revoke(targetId, principal, credential().orEmpty()) }
+                val rows = io { devices.list(principal, credential().orEmpty()) }
                 _state.update {
                     it.copy(
                         devices = rows,
@@ -634,6 +691,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     sessionStore.clearDeviceId()
                 }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -648,14 +706,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshTasks() {
         val principal = _state.value.principal
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
-                val splits = withContext(Dispatchers.IO) { tasks.splitInbox(principal, sessionToken ?: "") }
+                val rows = io { tasks.list(principal, credential().orEmpty()) }
+                val splits = io { tasks.splitInbox(principal, credential().orEmpty()) }
                 _state.update { it.copy(tasks = rows, splitRequests = splits, panelBusy = false) }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -664,12 +725,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelTask(taskId: String) {
         val principal = _state.value.principal
         _state.update { it.copy(panelBusy = true, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                withContext(Dispatchers.IO) { tasks.cancel(taskId, principal, sessionToken ?: "") }
-                val rows = withContext(Dispatchers.IO) { tasks.list(principal, sessionToken ?: "") }
+                io { tasks.cancel(taskId, principal, credential().orEmpty()) }
+                val rows = io { tasks.list(principal, credential().orEmpty()) }
                 _state.update { it.copy(tasks = rows, panelBusy = false, notice = "任务已取消") }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -684,12 +746,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun declineSplit(splitId: String) {
         val principal = _state.value.principal
         _state.update { it.copy(panelBusy = true, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                withContext(Dispatchers.IO) { tasks.declineSplit(splitId, principal, sessionToken ?: "") }
-                val splits = withContext(Dispatchers.IO) { tasks.splitInbox(principal, sessionToken ?: "") }
+                io { tasks.declineSplit(splitId, principal, credential().orEmpty()) }
+                val splits = io { tasks.splitInbox(principal, credential().orEmpty()) }
                 _state.update { it.copy(splitRequests = splits, panelBusy = false, notice = "已拒绝 AA 付款请求") }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -741,13 +804,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshContacts() {
         val principal = _state.value.principal
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val rows = withContext(Dispatchers.IO) { contacts.list(principal, sessionToken ?: "") }
+                val rows = io { contacts.list(principal, credential().orEmpty()) }
                 _state.update { it.copy(contacts = rows, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -786,12 +852,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
         contactCreateAttempt = attempt
         _state.update { it.copy(panelBusy = true, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val created = withContext(Dispatchers.IO) {
+                val created = io {
                     contacts.add(
                         principal = principal,
-                        sessionToken = sessionToken ?: "",
+                        sessionToken = credential().orEmpty(),
                         name = form.contactName.trim(),
                         phone = form.contactPhone,
                         relationship = form.contactRelationship,
@@ -813,8 +879,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 refreshContacts()
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 // 与 refresh* 同样的收尾：异常逃出协程会把“保存中…”永远留在界面上，
                 // 连重试的机会都没有。
                 applyPanelFailure(failure)
@@ -825,9 +894,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun removeContact(contactId: String) {
         val principal = _state.value.principal
         _state.update { it.copy(panelBusy = true, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                withContext(Dispatchers.IO) { contacts.remove(contactId, principal, sessionToken ?: "") }
+                io { contacts.remove(contactId, principal, credential().orEmpty()) }
                 _state.update {
                     it.copy(
                         panelBusy = false,
@@ -838,6 +907,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 refreshContacts()
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -856,13 +926,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshCards() {
         val principal = _state.value.principal
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val rows = withContext(Dispatchers.IO) { cardsRepo.list(principal, sessionToken ?: "") }
+                val rows = io { cardsRepo.list(principal, credential().orEmpty()) }
                 _state.update { it.copy(cards = rows, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -883,10 +956,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val attempt = CreateAttempt.of(cardCreateAttempt, digest)
         cardCreateAttempt = attempt
         _state.update { it.copy(panelBusy = true, error = null) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val created = withContext(Dispatchers.IO) {
-                    cardsRepo.add(principal, sessionToken ?: "", form.cardType, form.cardLabel, attempt.value, cardNumber, source)
+                val created = io {
+                    cardsRepo.add(principal, credential().orEmpty(), form.cardType, form.cardLabel, attempt.value, cardNumber, source)
                 }
                 // 卡已经开出：这次提交到此为止，下一次添加是新的意图、新的键。
                 cardCreateAttempt = null
@@ -903,8 +976,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 refreshCards()
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 // 失败必须收尾：panelBusy 留在 true 会让添加表单永远停在“开卡中…”。
                 applyPanelFailure(failure)
             }
@@ -912,8 +988,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** PIN stays in the detail composable; this method never stores the reveal result. */
-    suspend fun revealCard(cardId: String, pin: String): com.aibanking.agent.data.CardRevealView =
-        withContext(Dispatchers.IO) { cardsRepo.reveal(_state.value.principal, sessionToken ?: "", cardId, pin) }
+    suspend fun revealCard(cardId: String, pin: String): com.aibanking.agent.data.CardRevealView {
+        val owner = sessionWork.capture()
+        val principal = _state.value.principal
+        return owner.io { cardsRepo.reveal(principal, owner.credential().orEmpty(), cardId, pin) }
+    }
 
     fun prefillCardTransfer(card: CardView) {
         onInputChange("使用卡片 ${card.cardId}（尾号${card.last4.ifBlank { card.numberMasked.takeLast(4) }}）转账")
@@ -969,15 +1048,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshWealth() {
         val principal = _state.value.principal
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val products = withContext(Dispatchers.IO) { wealth.products(principal, sessionToken ?: "") }
-                val holdings = withContext(Dispatchers.IO) { wealth.holdings(principal, sessionToken ?: "") }
-                val profile = withContext(Dispatchers.IO) { wealth.riskProfile(principal, sessionToken ?: "") }
+                val products = io { wealth.products(principal, credential().orEmpty()) }
+                val holdings = io { wealth.holdings(principal, credential().orEmpty()) }
+                val profile = io { wealth.riskProfile(principal, credential().orEmpty()) }
                 _state.update { it.copy(wealthProducts = products, wealthHoldings = holdings, riskProfile = profile, panelBusy = false, panelError = null) }
             } catch (failure: GatewayException) {
+                check()
                 applyPanelFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 applyPanelFailure(failure)
             }
         }
@@ -1032,11 +1114,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 不困在文字兜底里，也不会把答了 5/8 的用户退回第一题。
      */
     private fun persistQuiz(quiz: RiskQuizUi?) {
-        if (quiz == null) {
-            sessionStore.clearQuiz()
-            return
+        sessionWork.persist("quiz") {
+            if (quiz == null) {
+                sessionStore.clearQuiz()
+            } else {
+                runCatching { gson.toJson(quiz) }.getOrNull()?.let { sessionStore.saveQuiz(it) }
+            }
         }
-        runCatching { gson.toJson(quiz) }.getOrNull()?.let { sessionStore.saveQuiz(it) }
     }
 
     /**
@@ -1138,26 +1222,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val operation = message.response?.operationId ?: return
         val conversation = message.conversationId ?: return
         val principal = _state.value.principal
-        val credential = sessionToken ?: return
-        reconciliationJobs[messageId] = viewModelScope.launch {
+        if (sessionToken == null) return
+        reconciliationJobs[messageId] = sessionWork.launch {
             _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = true) else row }) }
             try {
                 repeat(10) { attempt ->
                     if (attempt > 0) delay(2000)
-                    if (!_state.value.authenticated || _state.value.principal != principal || sessionToken != credential ||
-                        _state.value.messages.none { it.id == messageId }) return@launch
-                    val result = agent.reconcileOperation(principal, credential, conversation, operation)
-                    if (!_state.value.authenticated || _state.value.principal != principal || sessionToken != credential) return@launch
+                    check()
+                    if (_state.value.messages.none { it.id == messageId }) return@launch
+                    val result = await { agent.reconcileOperation(principal, credential(), conversation, operation) }
                     if (result.businessStatus != "PENDING_RECONCILIATION") {
                         applyEnvelope(result, messageId)
                         return@launch
                     }
                 }
             } catch (failure: GatewayException) {
+                check()
                 if (failure.sessionExpired) applyFailure(failure)
             } finally {
-                _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = false) else row }) }
-                persistMessages()
+                commit {
+                    _state.update { it.copy(messages = it.messages.map { row -> if (row.id == messageId) row.copy(reconciling = false) else row }) }
+                    persistMessages()
+                }
             }
         }
     }
@@ -1166,6 +1252,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         markUserActivity()
         val current = _state.value
         val principal = current.principal
+        if (!current.authenticated) return
         // A placeholder assistant bubble carries the live stage label and is then
         // replaced by the real answer, so progress appears where the reply will.
         val placeholder = ChatMessage(role = ChatRole.ASSISTANT, text = "正在处理…")
@@ -1177,36 +1264,43 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 busy = true,
             )
         }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val envelope = agent.streamMessage(
+                val envelope = await { agent.streamMessage(
                     principal = principal,
-                    sessionToken = sessionToken,
+                    sessionToken = credential(),
                     conversationId = conversationId,
                     text = text,
                     messageId = placeholder.id,
                     onProgress = { progress ->
-                        _state.update { state -> state.copy(messages = state.messages.map { row ->
-                            if (row.id == placeholder.id) row.copy(stages = row.stages.orEmpty().filterNot { it.stage == progress.stage && it.step == progress.step } + progress) else row
-                        }) }
+                        commit {
+                            _state.update { state -> state.copy(messages = state.messages.map { row ->
+                                if (row.id == placeholder.id) row.copy(stages = row.stages.orEmpty().filterNot { it.stage == progress.stage && it.step == progress.step } + progress) else row
+                            }) }
+                        }
                     },
                 ) { label ->
-                    _state.update { state ->
-                        state.copy(
-                            messages = state.messages.map {
-                                if (it.id == placeholder.id) it.copy(text = label) else it
-                            },
-                        )
+                    commit {
+                        _state.update { state ->
+                            state.copy(
+                                messages = state.messages.map {
+                                    if (it.id == placeholder.id) it.copy(text = label) else it
+                                },
+                            )
+                        }
                     }
-                }
+                } }
                 applyEnvelope(envelope, placeholder.id)
             } catch (failure: GatewayException) {
+                check()
                 // Drop the placeholder: leaving "正在处理…" behind after a
                 // failure is exactly the kind of lie this codebase avoids.
                 _state.update { state -> state.copy(messages = state.messages.filterNot { it.id == placeholder.id }) }
                 persistMessages()
                 applyFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 // A client-side fault must not take the app down; report it the
                 // same way a server-side refusal is reported.
                 _state.update { state ->
@@ -1257,13 +1351,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         val principal = _state.value.principal
         _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val challenge = agent.requestFaceChallenge(principal, sessionToken, approval.approvalId)
+                val challenge = await { agent.requestFaceChallenge(principal, credential(), approval.approvalId) }
                 // The private key stays in the Keystore; this returns only a
                 // signature over the canonical challenge string.  Signing is
                 // Keystore work too, so it happens off the main thread.
-                val signature = withContext(Dispatchers.IO) {
+                val signature = io {
                     deviceKeys.signChallenge(
                         challengeId = challenge.challengeId,
                         userId = principal,
@@ -1275,19 +1369,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     challengeId = challenge.challengeId,
                     signatureBase64 = signature,
                 )
-                val resolved = agent.resolveApproval(
+                val resolved = await { agent.resolveApproval(
                     principal = principal,
-                    sessionToken = sessionToken,
+                    sessionToken = credential(),
                     approvalId = approval.approvalId,
                     decision = "approve",
                     otp = otp,
                     faceAttestation = envelope,
-                    onProgress = ::recordStage,
-                )
+                    onProgress = { progress -> commit { recordStage(progress) } },
+                ) }
                 applyEnvelope(resolved)
             } catch (failure: GatewayException) {
+                check()
                 applyFailure(failure)
             } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
                 // A Keystore failure is a device problem, not a bank decision;
                 // say so instead of blaming the operation.
                 _state.update { it.copy(busy = false, error = "设备签名失败：${failure.message ?: failure::class.java.simpleName}") }
@@ -1299,17 +1396,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         markUserActivity()
         val principal = _state.value.principal
         _state.update { it.copy(busy = true, error = null, activeStages = emptyList()) }
-        viewModelScope.launch {
+        sessionWork.launch {
             try {
-                val envelope = agent.resolveApproval(
+                val envelope = await { agent.resolveApproval(
                     principal = principal,
-                    sessionToken = sessionToken,
+                    sessionToken = credential(),
                     approvalId = approval.approvalId,
                     decision = decision,
-                    onProgress = ::recordStage,
-                )
+                    onProgress = { progress -> commit { recordStage(progress) } },
+                ) }
                 applyEnvelope(envelope)
             } catch (failure: GatewayException) {
+                check()
                 applyFailure(failure)
             }
         }
@@ -1325,22 +1423,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * re-login and nobody else can.
      */
     private fun expiredSessionState(state: ChatUiState): ChatUiState {
-        sessionToken = null
-        sessionStore.clear()
-        stopSessionRenewal()
+        replaceSession()
         expiredQuizOwner = state.principal.takeIf { state.quiz != null }
         return ChatUiState(error = "登录状态已失效，请重新登录", quiz = state.quiz)
     }
 
     private fun applyFailure(failure: GatewayException) {
+        if (failure.sessionExpired) {
+            _state.value = expiredSessionState(_state.value)
+            return
+        }
         _state.update { state ->
-            if (failure.sessionExpired) {
-                expiredSessionState(state)
-            } else {
-                // 审批/验证失败时短信验证码已经被核心消费或拒绝，字段必须清空：
-                // 留着它，用户再次点“确认执行”只会把同一个失效的码再送一次。
-                state.copy(busy = false, error = failure.message, otp = "", activeStages = emptyList())
-            }
+            // 审批/验证失败时短信验证码已经被核心消费或拒绝，字段必须清空：
+            // 留着它，用户再次点“确认执行”只会把同一个失效的码再送一次。
+            state.copy(busy = false, error = failure.message, otp = "", activeStages = emptyList())
         }
     }
 
@@ -1358,12 +1454,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * not ask", which must not render as "you own nothing".
      */
     private fun applyPanelFailure(failure: GatewayException) {
+        if (failure.sessionExpired) {
+            _state.value = expiredSessionState(_state.value)
+            return
+        }
         _state.update { state ->
-            if (failure.sessionExpired) {
-                expiredSessionState(state)
-            } else {
-                state.copy(panelBusy = false, panelError = failure.message, error = failure.message)
-            }
+            state.copy(panelBusy = false, panelError = failure.message, error = failure.message)
         }
     }
 

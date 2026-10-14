@@ -10,16 +10,18 @@ import hashlib
 import json
 import os
 import queue
+import re
 import secrets
 import threading
 import time
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Header, Request
 
-from agent import _local_parse
+from agent import BILL_CATEGORY_ALIASES, _local_parse
 from bank_tools import BankAPIError, BankClient
-from feishu_cards import FeishuReply, handoff_card, query_card
+from feishu_cards import FeishuReply, binding_card, failure_card, handoff_card, help_card, query_card
 from planner import Intent
 from security import SecurityError, audit_event, sanitize_text
 
@@ -50,18 +52,60 @@ def reset_state() -> None:
         _BOT_STATE = "disabled"
 
 
+def _bill_category_supported(message: str, category: Any) -> bool:
+    """Do not silently discard category qualifiers the fixed GET cannot express."""
+    matches = {
+        name for name, aliases in BILL_CATEGORY_ALIASES.items()
+        if any(alias in message for alias in aliases)
+    }
+    if len(matches) > 1 or (category is not None and (not isinstance(category, str) or category not in BILL_CATEGORY_ALIASES)):
+        return False
+    if matches and matches != {category}:
+        return False
+    if category and re.search(r"排除|不含|不包括|除了|以外|之外", message):
+        return False
+    # Ordinary questions such as “钱都花哪儿去了” remain supported. Only inspect
+    # category qualifiers beside bill nouns / explicit category labels here.
+    qualifiers = re.findall(r"([\w\s]+?)(?=账单|流水|消费记录|交易记录|支出|消费)", message)
+    qualifiers += re.findall(r"(?:类别|分类)\s*[:：为是]\s*([^，。！？\s]+)", message)
+    qualifiers += re.findall(r"(?:只看|仅看|只查|仅查)\s*([^，。！？\s]+)", message)
+    qualifiers += re.findall(r"按([^，。！？\s]+?)(?:类别|分类)", message)
+    for value in qualifiers:
+        if category:
+            for alias in BILL_CATEGORY_ALIASES[category]:
+                value = value.replace(alias, "")
+        value = re.sub(
+            r"所有历史|这个月|上个月|上月|本月|今天|今日|今年|年度|全年|全部|所有|"
+            r"分析一下|查询一下|查看一下|我想知道|我想|帮忙|帮我|给我|请问|麻烦|请|查询|查看|看看|分析|统计|查|看|我|的|一下|整体|按类别|按分类",
+            "", value,
+        )
+        if value.strip():
+            return False
+    return True
+
+
 def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[str, str | FeishuReply]:
     """Only fixed Core GET routes are reachable from the IM channel."""
     parsed = _local_parse(message)
     intent = str(parsed.get("intent") or "")
+    slots = parsed.get("slots") or {}
     scope = str(parsed.get("date_scope") or "ALL")
-    if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"}:
-        scope = "ALL"
-    detected = bool((parsed.get("slots") or {}).get("detect_subscriptions"))
+    if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"} or slots.get("date_range_ambiguous"):
+        return "APP_HANDOFF", handoff_card("这项日期范围需要在 App 核对后查询。")
+    if slots.get("request_ambiguous") or slots.get("category_ambiguous"):
+        return "APP_HANDOFF", handoff_card("这项请求的查询条件需要在 App 核对。")
+    category = slots.get("category") if intent in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} else None
+    if intent in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and not _bill_category_supported(message, category):
+        return "APP_HANDOFF", handoff_card("这项账单分类条件暂不支持在飞书查询，请在 App 核对后查询。")
+    bill_params = {"date_scope": scope}
+    if category is not None:
+        bill_params["category"] = category
+    bill_query = urlencode(bill_params)
+    detected = bool(slots.get("detect_subscriptions"))
     paths = {
         Intent.BALANCE_QUERY.value: f"accounts/{principal}/balance",
-        Intent.BILL_QUERY.value: f"accounts/{principal}/transactions?date_scope={scope}",
-        Intent.BILL_ANALYSIS.value: f"accounts/{principal}/bill-analysis?date_scope={scope}",
+        Intent.BILL_QUERY.value: f"accounts/{principal}/transactions?{bill_query}",
+        Intent.BILL_ANALYSIS.value: f"accounts/{principal}/bill-analysis?{bill_query}",
         Intent.SUBSCRIPTION_QUERY.value: f"subscriptions/{principal}{'/detect' if detected else ''}",
         Intent.CARD_QUERY.value: f"cards/{principal}",
         Intent.WEALTH_QUERY.value: "wealth/products",
@@ -76,7 +120,9 @@ def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[
         raise SecurityError("核心银行查询失败，请稍后重试", 503, "FEISHU_CORE_READ_FAILED") from exc
     if not isinstance(result, dict) or result.get("code") != 200:
         raise SecurityError("核心银行结果格式无效", 502, "FEISHU_CORE_PROTOCOL_ERROR")
-    return "COMPLETED", query_card(intent, scope, result)
+    if category is not None and (result.get("category") != category or result.get("date_scope") != scope):
+        raise SecurityError("核心银行未确认账单查询条件", 502, "FEISHU_CORE_PROTOCOL_ERROR")
+    return "COMPLETED", query_card(intent, scope, result, category=category)
 
 
 @router.post("/binding-code")
@@ -161,39 +207,39 @@ def process_message(event: Any) -> tuple[str, str | FeishuReply] | None:
     try:
         text = sanitize_text(raw_text, field="飞书消息", max_length=2000).strip()
     except SecurityError:
-        return chat_id, "消息包含不安全内容或超过长度限制，请换一种说法。"
+        return chat_id, failure_card("消息包含不安全内容或超过长度限制，请换一种说法。", title="消息未受理")
     if text.startswith("/绑定 "):
         code = text.removeprefix("/绑定 ").strip()
         digest = hashlib.sha256(code.encode()).hexdigest()
         with _LOCK:
             record = _CODES.pop(digest, None)
         if not record or record["expires"] <= time.time():
-            return chat_id, "绑定码无效或已过期，请在 Android 登录后重新获取。"
+            return chat_id, binding_card("invalid")
         from agent_api import principal_for
 
         try:
             current = principal_for(x_session_token=record["session_token"], x_user_id=None,
                                     action="FEISHU_BIND", request_id=request_id)
         except SecurityError:
-            return chat_id, "银行登录会话已失效，请在 Android 重新登录并获取绑定码。"
+            return chat_id, binding_card("expired")
         if current != record["principal"]:
-            return chat_id, "绑定码对应的账户已变化，请重新登录并获取绑定码。"
+            return chat_id, binding_card("changed")
         with _LOCK:
             if sender_id not in _BINDINGS and len(_BINDINGS) >= _MAX_BINDINGS:
-                return chat_id, "绑定人数已达上限，请稍后重试。"
+                return chat_id, binding_card("capacity")
             _BINDINGS[sender_id] = record
         audit_event("FEISHU_BOUND", user_id=record["principal"], outcome="SUCCESS", request_id=request_id)
-        return chat_id, "绑定成功。当前仅支持私聊查询；会话过期后需重新绑定。"
+        return chat_id, binding_card("bound")
     if text == "/解绑":
         with _LOCK:
             record = _BINDINGS.pop(sender_id, None)
         if record:
             audit_event("FEISHU_UNBOUND", user_id=record["principal"], outcome="SUCCESS", request_id=request_id)
-        return chat_id, "已解除绑定。"
+        return chat_id, binding_card("unbound")
     with _LOCK:
         binding = dict(_BINDINGS.get(sender_id) or {})
     if not binding:
-        return chat_id, "请先在 Android 登录，获取飞书绑定码，再私聊发送 /绑定 绑定码。"
+        return chat_id, binding_card("required")
     from agent_api import _guard_rate_limit, principal_for
 
     try:
@@ -202,17 +248,17 @@ def process_message(event: Any) -> tuple[str, str | FeishuReply] | None:
         if principal != binding["principal"]:
             raise SecurityError("绑定会话主体已变化", 403, "FEISHU_PRINCIPAL_CHANGED")
         _guard_rate_limit(principal)
-        status, reply = _read_only_reply(principal, binding["session_token"], text)
+        status, reply = ("COMPLETED", help_card()) if text in {"/帮助", "帮助", "查看入口", "开始"} else _read_only_reply(principal, binding["session_token"], text)
     except SecurityError as exc:
         if exc.status_code in {401, 403}:
             with _LOCK:
                 _BINDINGS.pop(sender_id, None)
-            return chat_id, "银行登录会话已失效，请在 Android 重新登录并绑定。"
+            return chat_id, binding_card("expired")
         audit_event("FEISHU_READ_QUERY", user_id=binding["principal"], outcome="FAILED", request_id=request_id)
-        return chat_id, "查询暂时不可用，请稍后重试。"
+        return chat_id, failure_card("查询暂时不可用，请稍后重试。")
     except (KeyError, TypeError, ValueError):
         audit_event("FEISHU_READ_QUERY", user_id=binding["principal"], outcome="FAILED", request_id=request_id)
-        return chat_id, "核心银行结果无效，请稍后重试。"
+        return chat_id, failure_card("暂未取得有效的银行查询结果，请稍后重试。")
     audit_event("FEISHU_READ_QUERY" if status == "COMPLETED" else "FEISHU_WRITE_DEFERRED",
                 user_id=principal, decision="ALLOW" if status == "COMPLETED" else "BLOCK",
                 outcome=status, request_id=request_id)
