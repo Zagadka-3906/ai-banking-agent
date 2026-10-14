@@ -211,7 +211,7 @@ data class ChatUiState(
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sessionStore = SessionStore(application)
-    private val deviceKeys = DeviceKeyManager()
+    private var deviceKeys: DeviceKeyManager? = null
     private val agent = AgentRepository.create()
     private val login = LoginRepository.create()
     private val devices = DeviceRepository.create()
@@ -259,8 +259,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sessionWork.replace {
             sessionToken = null
             deviceId = null
+            deviceKeys = null
             sessionStore.clear()
-            // Device enrollment is per principal, even when the key is shared.
+            // Forget this login's enrollment; retain every account's key.
             sessionStore.clearDeviceId()
         }
         stopSessionRenewal()
@@ -304,7 +305,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun readStoredSession() = StoredSession(
         principal = sessionStore.principal(),
         token = sessionStore.sessionToken(),
-        deviceId = sessionStore.deviceId(),
         conversationId = sessionStore.conversationId(),
         messages = sessionStore.messages(),
         quiz = sessionStore.quiz(),
@@ -312,7 +312,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private fun restoreSession(stored: StoredSession) {
-        deviceId = stored.deviceId
+        // Revalidate enrollment and select its matching key after restoration.
+        // Older installs persisted an id for a single app-wide key; pairing
+        // that id with a new account key would make every signature invalid.
+        deviceId = null
+        deviceKeys = null
+        sessionStore.clearDeviceId()
         val storedPrincipal = stored.principal
         val storedToken = stored.token
         if (storedPrincipal.isNullOrBlank() || storedToken.isNullOrBlank()) {
@@ -343,6 +348,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         verifyRestoredSession(storedToken, stored.expiresAt)
+        initializeDeviceAfterLogin(storedPrincipal)
         restored.filter { it.businessStatus == "PENDING_RECONCILIATION" }.forEach { reconcileMessage(it.id) }
     }
 
@@ -544,29 +550,37 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** Complete red-tier device setup without blocking the successful login. */
     private fun initializeDeviceAfterLogin(principal: String) {
         sessionWork.launch {
-            val enrolledDeviceId = enrollDevice(principal)
+            val enrolled = enrollDevice(principal)
             check()
-            if (enrolledDeviceId == null) {
+            if (enrolled == null) {
                 _state.update { it.copy(notice = "会话已建立，但本机设备未注册：红色风险操作暂不可用") }
                 return@launch
             }
-            deviceId = enrolledDeviceId
-            sessionStore.saveDeviceId(enrolledDeviceId)
+            deviceId = enrolled.first
+            deviceKeys = enrolled.second
+            sessionStore.saveDeviceId(enrolled.first)
             _state.update { it.copy(notice = "本机设备已注册，高风险操作可用") }
         }
     }
 
-    private suspend fun SessionWork.Lease.enrollDevice(principal: String): String? = try {
+    private suspend fun SessionWork.Lease.enrollDevice(principal: String): Pair<String, DeviceKeyManager>? = try {
         val label = "${Build.MANUFACTURER} ${Build.MODEL}".trim().ifBlank { "Android 设备" }
+        val legacyKeys = DeviceKeyManager()
+        val legacyId = io { legacyKeys.existingDeviceId() }
+        val registered = if (legacyId == null) emptyList() else await { devices.list(principal, credential().orEmpty()) }
+        // Keep the old key only for its server-verified owner, including revoked
+        // entries. A revoked legacy device must not become a fresh trusted key
+        // merely because this installation upgraded or switched accounts.
+        val selectedKeys = if (registered.any { it.deviceId == legacyId }) legacyKeys else DeviceKeyManager.forPrincipal(principal)
         // Keystore 读取/首次生成密钥都会阻塞，放到 IO 上；主线程只负责状态。
-        val spki = io { deviceKeys.publicKeySpkiBase64() }
+        val spki = io { selectedKeys.publicKeySpkiBase64() }
         val device = await { devices.register(
             publicKeySpkiBase64 = spki,
             principal = principal,
             sessionToken = credential().orEmpty(),
             label = label,
         ) }
-        device.deviceId.takeIf { it.isNotBlank() }
+        device.deviceId.takeIf { it.isNotBlank() }?.let { it to selectedKeys }
     } catch (failure: Exception) {
         if (failure is CancellationException) throw failure
         check()
@@ -688,6 +702,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // 本机被解除注册：内存与存储都要忘掉，否则重启后 init 会把它读回来，
                     // 应用继续以为本机已注册（红色操作白走一次短信 + 生物识别）。
                     deviceId = null
+                    deviceKeys = null
                     sessionStore.clearDeviceId()
                 }
             } catch (failure: GatewayException) {
@@ -1345,7 +1360,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // Without an enrolled key the signature would be unverifiable, so say so
         // instead of sending an attestation the core is guaranteed to refuse.
         val enrolledDevice = deviceId
-        if (enrolledDevice.isNullOrBlank()) {
+        val signingKeys = deviceKeys
+        if (enrolledDevice.isNullOrBlank() || signingKeys == null) {
             _state.update { it.copy(error = "本机尚未完成设备注册，无法完成红色风险验证") }
             return
         }
@@ -1358,7 +1374,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // signature over the canonical challenge string.  Signing is
                 // Keystore work too, so it happens off the main thread.
                 val signature = io {
-                    deviceKeys.signChallenge(
+                    signingKeys.signChallenge(
                         challengeId = challenge.challengeId,
                         userId = principal,
                         authTokenJti = challenge.authTokenJti,
@@ -1576,7 +1592,6 @@ private fun activeSubscriptionCancelSuggestion(execution: Map<*, *>?): String? {
 private class StoredSession(
     val principal: String?,
     val token: String?,
-    val deviceId: String?,
     val conversationId: String?,
     val messages: String?,
     val quiz: String?,

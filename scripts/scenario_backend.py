@@ -7,6 +7,7 @@ this process, listen on loopback, and require a per-run control token. The norma
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import importlib
 import json
@@ -17,6 +18,202 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class ScenarioResponseControls:
+    """One-shot response barriers, installed only by this loopback test runner.
+
+    The real endpoint authenticates and finishes first. For SSE, one real stage
+    is sent before the barrier, so Android is already reading the response body
+    when the test switches accounts. No request credentials or bodies are kept.
+    """
+
+    MODES = {"success", "http_401", "http_500", "sse_401", "sse_500"}
+
+    def __init__(self):
+        self.holds: dict[str, dict] = {}
+        self.requests: list[dict] = []
+
+    def arm(self, payload: dict) -> dict:
+        identifier = payload.get("id")
+        path = payload.get("path", "")
+        method = payload.get("method", "GET")
+        principal = payload.get("principal")
+        mode = payload.get("mode", "success")
+        if (not isinstance(identifier, str) or not identifier or identifier in self.holds
+                or not isinstance(path, str) or not path.startswith("/api/v1/")
+                or method not in {"GET", "POST"} or mode not in self.MODES
+                or not isinstance(principal, str) or not principal
+                or not isinstance(payload.get("late_stage", ""), str)):
+            raise ValueError("Invalid or duplicate scenario hold")
+        hold = {
+            "id": identifier, "path": path, "method": method, "principal": principal,
+            "mode": mode, "late_stage": payload.get("late_stage", ""),
+            "arrived": False, "released": False, "completed": False,
+            "claimed": False, "original_status": None, "frames_sent": 0,
+            "late_stage_sent": False, "timed_out": False, "failure": None, "event": asyncio.Event(),
+        }
+        self.holds[identifier] = hold
+        return self.public(hold)
+
+    @staticmethod
+    def public(hold: dict) -> dict:
+        return {key: value for key, value in hold.items() if key != "event"}
+
+    def release(self, identifier: str) -> dict:
+        hold = self.holds[identifier]
+        hold["released"] = True
+        hold["event"].set()
+        return self.public(hold)
+
+    def reset(self) -> None:
+        # An aborted case must not strand a request before the next test starts.
+        for identifier in self.holds:
+            self.release(identifier)
+        self.holds.clear()
+        self.requests.clear()
+
+    def match(self, scope: dict) -> dict | None:
+        # Gateway derives this state from a verified session. Core replaces the
+        # caller's X-User-Id with the verified subject before sending a response.
+        principal = scope.get("state", {}).get("principal")
+        if not principal:
+            principal = dict(scope.get("headers", [])).get(b"x-user-id", b"").decode()
+        for hold in self.holds.values():
+            if (not hold["claimed"] and hold["path"] == scope["path"]
+                    and hold["method"] == scope["method"] and hold["principal"] == principal):
+                hold["claimed"] = True
+                return hold
+        return None
+
+
+class ScenarioResponseMiddleware:
+    def __init__(self, app, controls: ScenarioResponseControls):
+        self.app, self.controls = app, controls
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or not scope.get("path", "").startswith("/api/v1/"):
+            return await self.app(scope, receive, send)
+        record = {
+            "path": scope["path"], "method": scope["method"],
+            "principal": dict(scope.get("headers", [])).get(b"x-user-id", b"").decode(),
+            "status": None,
+        }
+        self.controls.requests.append(record)
+        hold = None
+        captured = []
+
+        async def capture(message):
+            nonlocal hold
+            if message["type"] == "http.response.start":
+                record["status"] = message["status"]
+                record["principal"] = scope.get("state", {}).get("principal") or dict(
+                    scope.get("headers", [])).get(b"x-user-id", b"").decode()
+                hold = self.controls.match(scope)
+                if hold:
+                    hold["original_status"] = message["status"]
+            if hold:
+                captured.append(message)
+            else:
+                await send(message)
+
+        await self.app(scope, receive, capture)
+        if hold is None:
+            return
+        start = captured[0]
+        original_body = b"".join(message.get("body", b"") for message in captured[1:])
+        stream = b"text/event-stream" in dict(start["headers"]).get(b"content-type", b"")
+        mode = hold["mode"]
+        http_error = mode.startswith("http_")
+        status = int(mode.rsplit("_", 1)[1]) if mode != "success" else None
+        error = {"code": "SESSION_EXPIRED" if status == 401 else "SCENARIO_OLD_ERROR",
+                 "message": f"OLD_ACCOUNT_ERROR_{status}", "http_status": status}
+
+        def frame(event: str, data: dict) -> bytes:
+            return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
+
+        # HTTP errors wait before their headers; SSE barriers deliver a real
+        # first stage and then pause a socket read in the production repository.
+        if stream and not http_error:
+            await send(start)
+            frames = [part + b"\n\n" for part in original_body.split(b"\n\n") if part]
+            first_stage = next((index for index, part in enumerate(frames) if b"event: stage\n" in part), None)
+            if first_stage is not None:
+                prefix = frames[:first_stage + 1]
+                await send({"type": "http.response.body", "body": b"".join(prefix), "more_body": True})
+                hold["frames_sent"] += len(prefix)
+                original_body = b"".join(frames[first_stage + 1:])
+            else:
+                hold["failure"] = "expected_sse_stage_not_found"
+                await send({"type": "http.response.body", "body": original_body, "more_body": False})
+                hold["arrived"] = hold["completed"] = True
+                record["delivered_status"] = start["status"]
+                return
+        elif mode.startswith("sse_"):
+            hold["failure"] = "expected_event_stream_response"
+            await send(start)
+            await send({"type": "http.response.body", "body": original_body, "more_body": False})
+            hold["arrived"] = hold["completed"] = True
+            record["delivered_status"] = start["status"]
+            return
+        hold["arrived"] = True
+        try:
+            await asyncio.wait_for(hold["event"].wait(), timeout=120)
+        except asyncio.TimeoutError:
+            hold["timed_out"] = True
+        if stream and not http_error:
+            if hold["late_stage"]:
+                await send({"type": "http.response.body", "body": frame("stage", {
+                    "stage": "scenario_late", "label": hold["late_stage"], "phase": "started", "step": 99,
+                }), "more_body": True})
+                hold["late_stage_sent"] = True
+                hold["frames_sent"] += 1
+            body = frame("error", error) if mode.startswith("sse_") else original_body
+            await send({"type": "http.response.body", "body": body, "more_body": False})
+            hold["frames_sent"] += body.count(b"event: ")
+        else:
+            if http_error:
+                start = {**start, "status": status, "headers": [(b"content-type", b"application/json")]}
+                original_body = json.dumps({"detail": error}).encode()
+            await send(start)
+            await send({"type": "http.response.body", "body": original_body, "more_body": False})
+        hold["completed"] = True
+        record["delivered_status"] = status if http_error else start["status"]
+
+
+def install_response_controls(app, authorize) -> ScenarioResponseControls:
+    from fastapi import Header, HTTPException
+
+    controls = ScenarioResponseControls()
+
+    @app.post("/__scenario/hold")
+    async def hold_response(payload: dict, x_scenario_token: str = Header(default="")):
+        authorize(x_scenario_token)
+        try:
+            return controls.arm(payload)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.post("/__scenario/release")
+    async def release_response(payload: dict, x_scenario_token: str = Header(default="")):
+        authorize(x_scenario_token)
+        try:
+            return controls.release(payload.get("id", ""))
+        except KeyError as error:
+            raise HTTPException(404, "Unknown scenario hold") from error
+
+    @app.get("/__scenario/holds")
+    async def read_holds(x_scenario_token: str = Header(default="")):
+        authorize(x_scenario_token)
+        return {"holds": [controls.public(hold) for hold in controls.holds.values()]}
+
+    @app.get("/__scenario/requests")
+    async def read_requests(x_scenario_token: str = Header(default="")):
+        authorize(x_scenario_token)
+        return {"requests": controls.requests}
+
+    app.add_middleware(ScenarioResponseMiddleware, controls=controls)
+    return controls
 
 
 def run() -> None:
@@ -47,6 +244,10 @@ def run() -> None:
         "BANK_RATE_LIMIT_PER_MINUTE": "0",
         "BANK_SESSION_TTL_SECONDS": "86400",
         "BANK_ADMIN_AUDIT_TOKEN": token,
+        "BANK_FEISHU_ENABLED": "0",
+        "BANK_LOGIN_REQUIRE_OTP": "0",
+        "BANK_MFA_TEST_OTP": "888888",
+        "BANK_REQUIRE_CLIENT_AUTH": "0",
     })
     if args.mode == "offline":
         os.environ["DEEPSEEK_API_KEY"] = ""
@@ -73,6 +274,8 @@ def run() -> None:
         import hmac
         if not hmac.compare_digest(value, token):
             raise HTTPException(403, "Scenario control token required")
+
+    response_controls = install_response_controls(app, authorize)
 
     if args.service == "gateway":
         import agent
@@ -195,10 +398,11 @@ def run() -> None:
             agent.llm = ObservedModel()
 
     @app.post("/__scenario/reset")
-    def reset(payload: dict, x_scenario_token: str = Header(default="")):
+    async def reset(payload: dict, x_scenario_token: str = Header(default="")):
         authorize(x_scenario_token)
         records.clear()
         model_calls.clear()
+        response_controls.reset()
         if args.service == "core":
             module.reset_state()
             now = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)

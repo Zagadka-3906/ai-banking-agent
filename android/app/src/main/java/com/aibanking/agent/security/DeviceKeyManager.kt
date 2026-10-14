@@ -8,12 +8,13 @@ import org.json.JSONObject
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 /**
- * The per-device signing key behind the red authorization tier.
+ * The per-account device signing key behind the red authorization tier.
  *
  * The private key is generated inside the Android Keystore and never leaves it:
  * the app can only ask the Keystore for a signature over a server-issued
@@ -40,19 +41,26 @@ class DeviceKeyManager(private val alias: String = DEFAULT_ALIAS) {
      * it is unavailable, so the app does not simply refuse to run on cheaper
      * hardware.
      */
-    fun ensureKeyPair(): KeyPair {
+    fun ensureKeyPair(): KeyPair = synchronized(KEY_LOCK) {
         val keyStore = loadKeyStore()
         val existing = keyStore.getEntry(alias, null) as? KeyStore.PrivateKeyEntry
         if (existing != null) {
-            return KeyPair(existing.certificate.publicKey, existing.privateKey)
+            return@synchronized KeyPair(existing.certificate.publicKey, existing.privateKey)
         }
-        return generateKeyPair(keyStore, strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+        generateKeyPair(keyStore, strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
     }
 
     /** Base64(DER SubjectPublicKeyInfo) for device enrollment. */
     fun publicKeySpkiBase64(): String {
         val keyPair = ensureKeyPair()
         return Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP)
+    }
+
+    /** Identify an existing key without generating or replacing any key. */
+    fun existingDeviceId(): String? = synchronized(KEY_LOCK) {
+        loadKeyStore().getCertificate(alias)?.publicKey?.encoded?.let { bytes ->
+            "DEV" + sha256(bytes).take(24).uppercase(java.util.Locale.ROOT)
+        }
     }
 
     /** Base64(DER ECDSA-SHA256) over the canonical challenge string. */
@@ -65,11 +73,12 @@ class DeviceKeyManager(private val alias: String = DEFAULT_ALIAS) {
         return Base64.encodeToString(signature.sign(), Base64.NO_WRAP)
     }
 
-    /** Remove the device key, e.g. on logout or after a lost-device report. */
-    fun deleteKey() {
+    /** Explicit key deletion; logout/revocation retain its registered identity. */
+    fun deleteKey(): Unit = synchronized(KEY_LOCK) {
         loadKeyStore().apply {
             if (containsAlias(alias)) deleteEntry(alias)
         }
+        Unit
     }
 
     private fun generateKeyPair(keyStore: KeyStore, strongBox: Boolean): KeyPair {
@@ -118,6 +127,7 @@ class DeviceKeyManager(private val alias: String = DEFAULT_ALIAS) {
         KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
 
     companion object {
+        private val KEY_LOCK = Any()
         const val DEFAULT_ALIAS = "bank_agent_device_key_v2_auth_bound"
         const val PAYLOAD_PREFIX = "bank-agent-face-v1"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -126,6 +136,17 @@ class DeviceKeyManager(private val alias: String = DEFAULT_ALIAS) {
         // The challenge request occurs after the system prompt and may take a
         // network round trip; keep the window aligned with the Core's 60s TTL.
         private const val AUTH_WINDOW_SECONDS = 60
+
+        /** Stable across logins, with no raw account identifier in the alias. */
+        fun aliasForPrincipal(principal: String): String {
+            require(principal.isNotBlank()) { "A device key needs an authenticated principal" }
+            return "bank_agent_device_key_v3_" + sha256(principal.toByteArray(Charsets.UTF_8))
+        }
+
+        fun forPrincipal(principal: String) = DeviceKeyManager(aliasForPrincipal(principal))
+
+        private fun sha256(value: ByteArray): String = MessageDigest.getInstance("SHA-256")
+            .digest(value).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
         /**
          * The exact bytes the device signs.  Kept here as the single source of
