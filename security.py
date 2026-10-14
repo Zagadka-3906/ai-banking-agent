@@ -1003,9 +1003,9 @@ def issue_auth_token(
         # details were changed after approval without exposing those details
         # in the credential itself.
         "context_hash": context_hash,
-        # Fingerprint of the session that requested this approval (when the
-        # caller held one).  Settlement re-checks it, so a revoked session
-        # cannot still spend.  See ``assert_session_still_valid``.
+        # Stable login identity across token renewals (when the caller held a
+        # session). Settlement requires a live credential from that login, so
+        # renewal preserves approvals while logout invalidates them.
         "session_fp": session_binding(session_token),
         "iat": now,
         "exp": now + ttl,
@@ -1158,16 +1158,30 @@ def issue_session_token(user_id: str, *, ttl_seconds: Optional[int] = None, requ
     the resulting session scoped to the verified principal.
     """
 
+    return _issue_session_token(
+        user_id, session_id=secrets.token_urlsafe(18),
+        ttl_seconds=ttl_seconds, request_id=request_id,
+    )
+
+
+def _issue_session_token(
+    user_id: str, *, session_id: str,
+    ttl_seconds: Optional[int] = None, request_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Mint a credential for a new login or an already validated renewal."""
+
     principal = sanitize_text(user_id, field="用户标识", max_length=128)
     if not principal:
         raise SecurityError("缺少用户标识", 400, "INVALID_SESSION_SUBJECT")
     now = int(time.time())
     ttl = max(60, min(int(ttl_seconds or SESSION_TTL_SECONDS), 86_400))
-    payload = {"typ": "session", "ver": 1, "jti": secrets.token_urlsafe(18), "sub": principal, "iat": now, "exp": now + ttl}
+    payload = {"typ": "session", "ver": 1, "jti": secrets.token_urlsafe(18),
+               "sid": session_id, "sub": principal, "iat": now, "exp": now + ttl}
     token = _signed_payload(payload)
     with STATE_LOCK:
         SESSION_TOKENS[token] = {
             "jti": payload["jti"],
+            "sid": session_id,
             "sub": principal,
             "token_hash": credential_fingerprint(token),
             "created_at": now,
@@ -1182,14 +1196,19 @@ def renew_session(token: Optional[str], *, request_id: Optional[str] = None) -> 
     """Slide an in-use session's window forward without a fresh login.
 
     A signed token carries its own ``exp`` and cannot be edited in place, so
-    renewal mints a successor for the same principal.  The presented token is
+    renewal mints a successor for the same login. The presented token is
     deliberately *not* revoked: a lost response must not sign the user out, and
     the old token still dies at its original expiry.  Only a session that is
     valid right now can be extended - an expired one must authenticate again.
     """
 
-    principal = resolve_session(token)
-    issued = issue_session_token(principal, request_id=request_id)
+    # Validation and issuance share the revocation lock: logout cannot fall
+    # between them and leave a newly issued successor alive after sign-out.
+    with STATE_LOCK:
+        principal = resolve_session(token)
+        issued = _issue_session_token(
+            principal, session_id=SESSION_TOKENS[token]["sid"], request_id=request_id,
+        )
     audit_event("SESSION_RENEWED", user_id=principal, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"ttl": issued["ttl_seconds"]})
     return issued
 
@@ -1228,15 +1247,17 @@ def verify_password(password: Any, digest: Optional[str]) -> bool:
 
 
 def session_binding(session_token: Optional[str]) -> Optional[str]:
-    """Fingerprint a session credential so an authorization can be bound to it.
+    """Bind an authorization to one login, including its renewed credentials.
 
-    Only the fingerprint enters the token payload - never the credential itself,
-    which has no business travelling inside another bearer token.
+    Only the login identity's digest enters the approval, never a bearer token.
+    Separate logins for the same principal have different identities.
     """
 
     if not isinstance(session_token, str) or not session_token:
         return None
-    return credential_fingerprint(session_token)
+    with STATE_LOCK:
+        principal = resolve_session(session_token)
+        return credential_fingerprint(f"session:{principal}:{SESSION_TOKENS[session_token]['sid']}")
 
 
 def assert_session_still_valid(session_fingerprint: Optional[str], presented_session: Optional[str]) -> None:
@@ -1249,8 +1270,10 @@ def assert_session_still_valid(session_fingerprint: Optional[str], presented_ses
     password precisely because a device was stolen - and the in-flight approval
     would still move money.
 
-    A caller that holds no session at all (the demo's header-only mode) has
-    nothing to bind, and keeps working unchanged.
+    A still-live successor may complete an unexpired approval after its original
+    credential expires. This extends neither the approval's own lifetime nor an
+    expired credential; it preserves the authenticated login across renewal.
+    A caller without a session (the demo's header-only mode) has nothing to bind.
     """
 
     if not session_fingerprint:
@@ -1258,15 +1281,13 @@ def assert_session_still_valid(session_fingerprint: Optional[str], presented_ses
     if not isinstance(presented_session, str) or not presented_session:
         raise SecurityError("该授权绑定于一个会话，请携带有效的会话凭证", 401, "SESSION_REQUIRED")
     with STATE_LOCK:
-        record = SESSION_TOKENS.get(presented_session)
-        if (
-            not record
-            or record.get("token_hash") != credential_fingerprint(presented_session)
-            or credential_fingerprint(presented_session) != session_fingerprint
-        ):
+        try:
+            presented_binding = session_binding(presented_session)
+        except SecurityError as exc:
+            code = "SESSION_EXPIRED" if exc.code == "SESSION_EXPIRED" else "SESSION_REVOKED"
+            raise SecurityError("授权所属会话已失效，请重新登录后再试", 401, code) from exc
+        if presented_binding != session_fingerprint:
             raise SecurityError("授权所属会话已失效，请重新登录后再试", 401, "SESSION_REVOKED")
-        if float(record.get("expires_at", 0)) <= time.time():
-            raise SecurityError("授权所属会话已过期，请重新登录后再试", 401, "SESSION_EXPIRED")
 
 
 def revoke_sessions_for(user_id: str, *, reason: str = "credential_rotated", request_id: Optional[str] = None) -> int:
@@ -1296,18 +1317,21 @@ def revoke_sessions_for(user_id: str, *, reason: str = "credential_rotated", req
 
 
 def revoke_session(token: Optional[str], *, request_id: Optional[str] = None) -> dict[str, Any]:
-    """Drop exactly the presented session credential (logout).
+    """Revoke one login and all credentials issued by its renewals (logout).
 
     ``revoke_sessions_for`` answers credential rotation, where every session
-    must go.  A logout button answers something narrower: *this* device signed
-    out, so only the session it presented may die - killing the user's other
-    active sessions would silently log their phone out of the bank.
+    must go. Logging out revokes both current and earlier credentials from the
+    same login, while independent logins on other devices remain valid.
     """
 
-    principal = resolve_session(token)
     with STATE_LOCK:
-        record = SESSION_TOKENS.pop(token, None)
-    if record is not None:
+        principal = resolve_session(token)
+        session_id = SESSION_TOKENS[token]["sid"]
+        doomed = [key for key, record in SESSION_TOKENS.items()
+                  if record.get("sub") == principal and record.get("sid") == session_id]
+        for key in doomed:
+            SESSION_TOKENS.pop(key, None)
+    if doomed:
         audit_event(
             "SESSION_REVOKED",
             user_id=principal,
@@ -1315,9 +1339,9 @@ def revoke_session(token: Optional[str], *, request_id: Optional[str] = None) ->
             outcome="REVOKED",
             reason="logout",
             request_id=request_id,
-            metadata={"count": 1},
+            metadata={"count": len(doomed)},
         )
-    return {"user_id": principal, "revoked": record is not None}
+    return {"user_id": principal, "revoked": bool(doomed)}
 
 
 def resolve_session(token: Optional[str]) -> str:
@@ -1331,7 +1355,10 @@ def resolve_session(token: Optional[str]) -> str:
         except SecurityError as exc:
             raise SecurityError("会话凭证无效或已过期", 401, "INVALID_SESSION") from exc
         record = SESSION_TOKENS.get(token)
-        if not record or record.get("token_hash") != credential_fingerprint(token) or record.get("jti") != payload.get("jti"):
+        if (not record or record.get("token_hash") != credential_fingerprint(token)
+                or record.get("jti") != payload.get("jti")
+                or not record.get("sid") or record["sid"] != payload.get("sid")
+                or record.get("sub") != payload.get("sub")):
             raise SecurityError("会话凭证无效", 401, "INVALID_SESSION")
         if float(record.get("expires_at", 0)) <= time.time():
             raise SecurityError("会话已过期，请重新登录", 401, "SESSION_EXPIRED")

@@ -27,6 +27,7 @@ Agent 回执使用 `response.version=1` 协议，分别提供 `turn_status` 与 
 | 权限分级与已知风险 | [安全自评报告](docs/安全自评报告.md) |
 | 可复现测试步骤 | [测试用例](docs/测试用例.md) |
 | 已执行验证结果与限制 | [验证记录](docs/验证记录.md) |
+| 项目检查、修复与后续项 | [项目检查与完善（2026-10-14）](docs/项目检查与完善-2026-10-14.md) |
 | 飞书机器人创建、配置与接入状态 | [接入说明](docs/飞书IM接入.md) |
 
 仓库保留本机 Core/Gateway、Android 模拟器客户端、可选飞书机器人及测试和运行脚本。旧独立 APK、Docker/Compose、FCM 推送和过时的成片与截图已移除。AA 请求由发起人创建，各参与人须登录自己的账户并确认付款；待付款项在应用任务页展示。飞书自建应用已经发布，私聊文本查询已由用户实测收到回复；余额、账单、理财、卡片与订阅查询现在使用飞书原生只读消息卡片，详见[接入说明](docs/飞书IM接入.md)。
@@ -57,6 +58,8 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
 `.env` 是本机配置，已被 Git 忽略。默认 `BANK_DEMO_MODE=1`、`BANK_REQUIRE_SESSION=1`。可选填入 `DEEPSEEK_API_KEY` 调用在线模型；留空时使用规则解析。建议把 `BANK_AUTH_SECRET` 换成本机随机长密钥。账本、设备和审计路径可分别通过 `BANK_LEDGER_STORE_PATH`、`BANK_DEVICE_STORE_PATH`、`BANK_AUDIT_LOG_PATH` 设置为仓库外的绝对路径。完整变量见 [`.env.example`](.env.example)。
+
+配置账本持久化后，任务队列及其依赖、取消／接管状态、任务结算回执也随账本恢复。旧快照仍可加载，但此前未保存的任务无法自动找回；需要人工核对原有预约与锁资记录。
 
 启用飞书时另安装 `requirements-feishu.txt`，创建企业自建应用并在 `.env` 设置 `BANK_FEISHU_ENABLED=1`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`；完整配置见[飞书接入说明](docs/飞书IM接入.md)。Android 登录后在设备管理面板获取一次性绑定码，于机器人私聊发送 `/绑定 <绑定码>`。飞书仅支持查询，不能用于转账、确认或强验证。
 
@@ -112,6 +115,8 @@ cd android
 ```
 
 Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂等、自然语言场景；Android JVM 测试覆盖解析与建议，插桩测试覆盖登录、对话、卡片等 UI。步骤与预期结果见[测试用例](docs/测试用例.md)。端到端授权探针：`python scripts/agent_gateway_e2e.py`；健康探针：`python scripts/smoke_test.py`。
+
+健康探针会先登录、查询本人余额，再退出本次探针会话，支持默认严格会话模式。可通过环境变量 `BANK_DEMO_USER_ID`、`BANK_DEMO_PASSWORD` 指定演示账户；启用登录短信验证时，另设置 `BANK_LOGIN_OTP`。这些变量由探针进程环境读取，请勿把真实凭据写进命令参数或提交到仓库。
 
 ## 源码索引
 

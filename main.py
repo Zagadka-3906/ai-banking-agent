@@ -26,6 +26,7 @@ from typing import Any, Mapping, Optional
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from http_controls import cache_bounded_body
 
 from security import (
     AUTH_SECRET_CONFIGURED,
@@ -217,19 +218,13 @@ async def request_safety_middleware(request: Request, call_next):
             )
             response.headers["Retry-After"] = str(retry_after)
             return response
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            if int(content_length) > _MAX_REQUEST_BYTES:
-                return _apply_security_headers(
-                    JSONResponse(status_code=413, content={"detail": {"code": "REQUEST_TOO_LARGE", "message": "请求体超过安全限制"}}),
-                    path,
-                )
-        except ValueError:
-            return _apply_security_headers(
-                JSONResponse(status_code=400, content={"detail": {"code": "INVALID_CONTENT_LENGTH", "message": "请求长度字段无效"}}),
-                path,
-            )
+    try:
+        await cache_bounded_body(request, _MAX_REQUEST_BYTES)
+    except SecurityError as exc:
+        return _apply_security_headers(
+            JSONResponse(status_code=exc.status_code, content={"detail": {"code": exc.code, "message": exc.detail}}),
+            path,
+        )
     response = await call_next(request)
     return _apply_security_headers(response, request.url.path)
 
@@ -1103,11 +1098,13 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
         except (TypeError, ValueError):
             return False
         if (not isinstance(scoped, list) or len(scoped) != 3 or not all(isinstance(item, str) for item in scoped)
-                or scoped[0] not in accounts or scoped[1] not in {"transfer_execute", "lock_fund", "operation_execute"}
+                or scoped[0] not in accounts or scoped[1] not in {"transfer_execute", "lock_fund", "operation_execute", "task_execute"}
                 or not isinstance(receipt, dict) or not _finite_nonnegative(receipt.get("completed_at"))
                 or not isinstance(receipt.get("response"), dict)):
             return False
         if receipt.get("fingerprint") is not None and not re.fullmatch(r"[0-9a-f]{64}", str(receipt["fingerprint"])):
+            return False
+        if receipt.get("request_fingerprint") is not None and not re.fullmatch(r"[0-9a-f]{64}", str(receipt["request_fingerprint"])):
             return False
     if not isinstance(outbox, list):
         return False
@@ -1138,6 +1135,12 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
             for key in ("owner_id", "link_verification"):
                 if key in row and not isinstance(row.get(key), str):
                     return False
+    try:
+        tasks, _ = TASK_STORE.decode_records(state.get("TASK_STORE", []))
+    except (TypeError, ValueError):
+        return False
+    if any(task.owner_id not in accounts for task in tasks.values()):
+        return False
     return True
 
 
@@ -1149,6 +1152,7 @@ def _persist_ledger_locked() -> None:
     if not target or _LEDGER_STORE_BLOCKED:
         return
     state = {name: deepcopy(globals()[name]) for name in LEDGER_STATE_NAMES}
+    state["TASK_STORE"] = TASK_STORE.export_records()
     canonical = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     snapshot = {
         "version": LEDGER_STORE_VERSION,
@@ -1255,6 +1259,10 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
                     container.update(restored)
             elif isinstance(container, list):
                 container[:] = restored if isinstance(restored, list) else []
+        # Older snapshots did not contain a queue. Keep them readable, but do
+        # not invent approvals or replay merchant/reminder actions whose prior
+        # task state was never saved.
+        TASK_STORE.restore(TASK_STORE.decode_records(state.get("TASK_STORE", [])))
     _LEDGER_STORE_LOAD_SUMMARY = {
         "loaded_state": True,
         "path": target,
@@ -1330,7 +1338,7 @@ def _idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: A
                 raise SecurityError("幂等键已用于不同请求", 409, "IDEMPOTENCY_KEY_REUSE")
             if existing.get("status") == "COMPLETED":
                 audit_event("IDEMPOTENCY_REPLAY", user_id=actor, decision="ALLOW", outcome="CACHED_RESPONSE", request_id=request_id, metadata={"endpoint": endpoint})
-                return dict(existing.get("response") or {})
+                return deepcopy(existing.get("response") or {})
             raise SecurityError("相同请求正在处理中，请勿重复提交", 409, "IDEMPOTENCY_IN_PROGRESS")
         if len(IDEMPOTENCY_RECORDS) >= IDEMPOTENCY_MAX_RECORDS:
             # Remove the oldest item; this is bounded housekeeping, not a
@@ -1341,7 +1349,35 @@ def _idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: A
     return None
 
 
-def _idempotency_complete(actor: str, endpoint: str, key: Optional[str], payload: Any, response: dict[str, Any]) -> None:
+def _idempotency_completed_request(actor: str, endpoint: str, key: Optional[str], request_fingerprint: str, *, request_id: str) -> Optional[dict[str, Any]]:
+    """Replay a settled request before mutable business prerequisites change.
+
+    The ordinary fingerprint still binds the validated execution context. A
+    second fingerprint records the submitted intent so a completed cancellation
+    or card transition can be retried after its own success changed that state.
+    Legacy receipts without this field retain their original validation path.
+    """
+
+    if not key:
+        return None
+    safe_key = sanitize_text(key, field="幂等键", max_length=128)
+    with STATE_LOCK:
+        entry = OPERATION_RECEIPTS.get(json.dumps([actor, endpoint, safe_key]))
+        if entry is None:
+            candidate = IDEMPOTENCY_RECORDS.get((actor, endpoint, safe_key))
+            entry = candidate if candidate and candidate.get("status") == "COMPLETED" else None
+        if not entry or time.time() - float(entry.get("completed_at", 0)) > IDEMPOTENCY_TTL_SECONDS:
+            return None
+        previous = entry.get("request_fingerprint")
+        if previous is None:
+            return None
+        if previous != request_fingerprint:
+            raise SecurityError("幂等键已用于不同请求", 409, "IDEMPOTENCY_KEY_REUSE")
+        audit_event("IDEMPOTENCY_REPLAY", user_id=actor, decision="ALLOW", outcome="CACHED_RESPONSE", request_id=request_id, metadata={"endpoint": endpoint})
+        return deepcopy(entry["response"])
+
+
+def _idempotency_complete(actor: str, endpoint: str, key: Optional[str], payload: Any, response: dict[str, Any], *, request_fingerprint: Optional[str] = None) -> None:
     if not key:
         return
     safe_key = sanitize_text(key, field="幂等键", max_length=128)
@@ -1349,10 +1385,14 @@ def _idempotency_complete(actor: str, endpoint: str, key: Optional[str], payload
     with STATE_LOCK:
         entry = IDEMPOTENCY_RECORDS.get(scoped)
         if entry and entry.get("fingerprint") == _idempotency_fingerprint(payload):
-            entry.update({"status": "COMPLETED", "response": dict(response), "completed_at": time.time()})
-            if endpoint in {"transfer_execute", "lock_fund", "operation_execute"}:
+            entry.update({"status": "COMPLETED", "response": deepcopy(response), "completed_at": time.time()})
+            if request_fingerprint is not None:
+                entry["request_fingerprint"] = request_fingerprint
+            if endpoint in {"transfer_execute", "lock_fund", "operation_execute", "task_execute"}:
                 receipt_key = json.dumps([actor, endpoint, safe_key])
                 OPERATION_RECEIPTS[receipt_key] = {"completed_at": time.time(), "fingerprint": entry["fingerprint"], "response": deepcopy(response)}
+                if request_fingerprint is not None:
+                    OPERATION_RECEIPTS[receipt_key]["request_fingerprint"] = request_fingerprint
                 if len(OPERATION_RECEIPTS) > IDEMPOTENCY_MAX_RECORDS:
                     oldest = min(OPERATION_RECEIPTS, key=lambda item: OPERATION_RECEIPTS[item]["completed_at"])
                     OPERATION_RECEIPTS.pop(oldest, None)
@@ -2957,6 +2997,7 @@ def create_renewal_reminders(user_id: str, merchant: Optional[str] = None, days_
                     idempotency_key=f"renewal:{row['subscription_id']}:{row.get('next_charge')}" + (f":days-{days_before}" if days_before != 2 else ""),
                 )
                 created.append(task.to_dict())
+        persist_ledger()
     audit_event(
         "SUBSCRIPTION_REMINDER_CREATE",
         user_id=actor,
@@ -3482,13 +3523,12 @@ def logout(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
 ):
-    """Revoke exactly the presented session credential.
+    """Revoke this login's credentials, including its renewed tokens.
 
     A client signing out must be able to kill the credential it holds on the
     server as well; wiping local storage only would leave a copied token valid
-    until it expires.  The scope is deliberately this one session - not every
-    session of the principal, which is what credential rotation means - so
-    logging out on one device never signs the user's other devices out.
+    until it expires. The scope is this login and its renewals; independent
+    logins remain active. Credential rotation revokes every login instead.
     """
 
     request_id = _request_id(x_request_id)
@@ -3683,12 +3723,15 @@ def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_aut
     if cached is not None:
         return cached
     try:
-        _ensure_account(req.from_user)
-        target_id, receiver = _resolve_target(req.target_name_or_id, from_user=req.from_user)
         remark = sanitize_text(req.remark or "智能转账", field="转账备注", max_length=200)
         if not token:
             raise SecurityError("缺少安全授权凭证，严禁直接执行", 403, "TOKEN_REQUIRED")
         with _ledger_transaction():
+            # Rollback restores ledger records with fresh objects. Resolve
+            # both accounts under the transaction lock so no failed parallel
+            # request can leave this settlement holding a detached payee.
+            _ensure_account(req.from_user)
+            target_id, receiver = _resolve_target(req.target_name_or_id, from_user=req.from_user)
             with authorize_execution(token, from_user=req.from_user, target_id=target_id, amount=req.amount, remark=remark, confirmation=confirmation, mfa_proof=proof, operation="TRANSFER", presented_session=_presented_session(request), request_id=request_id) as (payload, _record):
                 sender = ACCOUNTS[req.from_user]
                 amount = amount_to_cents(req.amount) / 100.0
@@ -3742,12 +3785,12 @@ def lock_fund(req: LockFundRequest, request: Request = None, x_auth_token: Optio
     if cached is not None:
         return cached
     try:
-        account = _ensure_account(req.user_id)
         reason = sanitize_text(req.reason, field="锁定原因", max_length=300)
         event_at, reminder_at = _birthday_times(req.event_at, req.reminder_at)
         if not token:
             raise SecurityError("资金锁定需要先完成风险预检并确认", 403, "TOKEN_REQUIRED")
         with _ledger_transaction():
+            account = _ensure_account(req.user_id)
             context_hash = _context_hash({"event_at": event_at, "reminder_at": reminder_at})
             with authorize_execution(token, from_user=req.user_id, target_id="__LOCK_FUND__", amount=req.amount, remark=reason, confirmation=confirmation, mfa_proof=proof, operation="LOCK_FUND", context_hash=context_hash, presented_session=_presented_session(request), request_id=request_id) as (_payload, _record):
                 amount = amount_to_cents(req.amount) / 100.0
@@ -3811,13 +3854,13 @@ def unlock_fund(req: UnlockFundRequest, request: Request = None, x_auth_token: O
     if cached is not None:
         return cached
     try:
-        account = _ensure_account(req.user_id)
         reason = sanitize_text(req.reason or "解除资金隔离", field="解除原因", max_length=300)
         if not token:
             raise SecurityError("解除资金隔离需要先完成风险预检并确认", 403, "TOKEN_REQUIRED")
         lock_id = sanitize_text(req.lock_id, field="锁定编号", max_length=100) if req.lock_id else None
         target = lock_id or "__UNLOCK_FUND__"
         with _ledger_transaction():
+            account = _ensure_account(req.user_id)
             candidates = sorted(
                 [v for v in LOCKS.values() if v.get("user_id") == req.user_id and v.get("status") == "LOCKED" and (not lock_id or v.get("lock_id") == lock_id)],
                 key=lambda row: row.get("created_at", ""),
@@ -3926,6 +3969,17 @@ def execute_operation(
                 )
             req.operation = matched_operation
     actor = _get_actor(req.user_id, x_user_id, action="OPERATION_EXECUTE", request_id=request_id)
+    # Credential fields authorize the first execution, not a read of its
+    # completed receipt. Never store credential material in replay metadata.
+    submitted_intent = req.model_dump(exclude={"auth_token", "mfa_proof", "user_confirmed", "new_password"})
+    submitted_intent["operation"] = str(req.operation or "").strip().upper()
+    # Password rotation retains its existing authorization/context path; the
+    # new submitted-intent replay shortcut must not equate different secrets.
+    request_fingerprint = None if submitted_intent["operation"] == "PASSWORD_CHANGE" else _idempotency_fingerprint(submitted_intent)
+    if request_fingerprint is not None:
+        cached = _idempotency_completed_request(actor, "operation_execute", idempotency_key, request_fingerprint, request_id=request_id)
+        if cached is not None:
+            return cached
     token = x_auth_token or req.auth_token
     proof = x_mfa_proof or req.mfa_proof
     operation_risk = GENERIC_OPERATION_RISK.get(str(req.operation or "").upper(), "UNKNOWN")
@@ -4184,7 +4238,7 @@ def execute_operation(
         raise HTTPException(status_code=500, detail={"code": "CORE_ERROR", "message": "操作执行失败，请稍后重试"}) from exc
     response = {"code": 200, "status": "SUCCESS", "operation": operation, "data": result}
     audit_event("OPERATION_EXECUTE", user_id=actor, risk_level=operation_risk, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"operation": operation, "target": target})
-    _idempotency_complete(actor, "operation_execute", idempotency_key, idem_payload, response)
+    _idempotency_complete(actor, "operation_execute", idempotency_key, idem_payload, response, request_fingerprint=request_fingerprint)
     persist_ledger()
     return response
 
@@ -4243,7 +4297,7 @@ def operation_status(operation_id: str, endpoint: str, x_user_id: Optional[str] 
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
     request_id = _request_id(x_request_id)
     actor = _get_actor(x_user_id, x_user_id, action="OPERATION_QUERY", request_id=request_id)
-    if endpoint not in {"transfer_execute", "lock_fund", "operation_execute"}:
+    if endpoint not in {"transfer_execute", "lock_fund", "operation_execute", "task_execute"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_OPERATION_KIND", "message": "操作类型无效"})
     key = sanitize_text(operation_id, field="操作编号", max_length=128)
     with STATE_LOCK:
@@ -4294,19 +4348,22 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
         owner = x_user_id
         _get_actor(owner, owner, action="TASK_RUN", request_id=request_id)
     changed = []
-    for task in TASK_STORE.ready():
-        if owner and task.owner_id != owner:
-            continue
-        try:
-            TASK_STORE.transition(task.task_id, TaskState.RUNNING, owner_id=owner)
-            # Money movement and merchant order drafts must never be executed
-            # silently by the scheduler.  At due time they pause for a fresh
-            # confirmation/MFA; pure reminders can be marked delivered.
-            final_status = TaskState.WAITING_USER if task.task_type in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"} else TaskState.SUCCEEDED
-            updated = TASK_STORE.transition(task.task_id, final_status, owner_id=owner)
-            changed.append(updated.to_dict())
-        except (KeyError, ValueError):
-            continue
+    with STATE_LOCK:
+        for task in TASK_STORE.ready():
+            if owner and task.owner_id != owner:
+                continue
+            try:
+                running = TASK_STORE.transition_if_status(task.task_id, TaskState.PENDING, TaskState.RUNNING, owner_id=owner)
+                if running is None:
+                    continue
+                # Due money movement pauses for a fresh confirmation/MFA.
+                final_status = TaskState.WAITING_USER if task.task_type in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"} else TaskState.SUCCEEDED
+                updated = TASK_STORE.transition(task.task_id, final_status, owner_id=owner)
+                changed.append(updated.to_dict())
+            except (KeyError, ValueError):
+                continue
+        if changed:
+            persist_ledger()
     audit_event("TASK_RUN", user_id=owner, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"changed": len(changed)})
     return {"code": 200, "data": changed}
 
@@ -4416,30 +4473,33 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
     try:
         if not token:
             raise SecurityError("缺少安全授权凭证", 403, "TOKEN_REQUIRED")
-        task = TASK_STORE.get(safe_id, owner_id=actor)
-        if not task:
-            raise SecurityError("任务不存在", 404, "TASK_NOT_FOUND")
-        if task.status != TaskState.WAITING_USER or task.task_type not in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"}:
-            raise SecurityError("任务当前不等待授权", 409, "TASK_NOT_READY")
-        payload = task.payload
-        if task.task_type == "SCHEDULED_TRANSFER":
-            target_id, receiver = _resolve_target(payload.get("target"), from_user=actor)
-            amount = float(payload.get("amount", 0))
-            bound_card_id = payload.get("card_id")
-            schedule = next((row for row in SCHEDULED_TRANSFERS if row.get("schedule_id") == payload.get("schedule_id")), None)
-            if not schedule or any(schedule.get(key) != payload.get(key) for key in ("schedule_id", "target", "amount", "card_id", "scheduled_at")):
-                raise SecurityError("预约任务详情已变化，请重新预检", 409, "SCHEDULE_CONTEXT_CHANGED")
-            operation = "SCHEDULED_TRANSFER_SETTLE"
-            current_risk = "YELLOW" if round(_daily_spent(actor) + _pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2) <= 1000 else "RED"
-        else:
-            target_id, amount, operation, current_risk = f"__ORDER_DRAFT__:{task.task_id}", float(payload.get("amount", 0)), "ORDER_DRAFT_SETTLE", "YELLOW"
-            if str(payload.get("item") or "") not in MOCK_MERCHANT_CATALOG or amount_to_cents(amount) != quote_cents(str(payload.get("item") or "")):
-                raise SecurityError("模拟商户报价已变化", 409, "ORDER_QUOTE_CHANGED")
-        context_hash = _context_hash(_task_settlement_context(task, target_id=target_id, amount=amount, card_id=bound_card_id if task.task_type == "SCHEDULED_TRANSFER" else None))
-        token_payload, _ = inspect_auth_token(token)
-        if token_payload.get("risk_level") == "YELLOW" and current_risk == "RED":
-            raise SecurityError("风险等级已升高，请重新授权", 409, "RISK_CHANGED_REAUTHORIZE")
         with _ledger_transaction():
+            # Task payloads and account records must stay attached to the live
+            # ledger from validation through debit/credit. Another rollback
+            # can replace all of these objects while this lock is not held.
+            task = TASK_STORE.get(safe_id, owner_id=actor)
+            if not task:
+                raise SecurityError("任务不存在", 404, "TASK_NOT_FOUND")
+            if task.status != TaskState.WAITING_USER or task.task_type not in {"SCHEDULED_TRANSFER", "ORDER_DRAFT"}:
+                raise SecurityError("任务当前不等待授权", 409, "TASK_NOT_READY")
+            payload = task.payload
+            if task.task_type == "SCHEDULED_TRANSFER":
+                target_id, receiver = _resolve_target(payload.get("target"), from_user=actor)
+                amount = float(payload.get("amount", 0))
+                bound_card_id = payload.get("card_id")
+                schedule = next((row for row in SCHEDULED_TRANSFERS if row.get("schedule_id") == payload.get("schedule_id")), None)
+                if not schedule or any(schedule.get(key) != payload.get(key) for key in ("schedule_id", "target", "amount", "card_id", "scheduled_at")):
+                    raise SecurityError("预约任务详情已变化，请重新预检", 409, "SCHEDULE_CONTEXT_CHANGED")
+                operation = "SCHEDULED_TRANSFER_SETTLE"
+                current_risk = "YELLOW" if round(_daily_spent(actor) + _pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2) <= 1000 else "RED"
+            else:
+                target_id, amount, operation, current_risk = f"__ORDER_DRAFT__:{task.task_id}", float(payload.get("amount", 0)), "ORDER_DRAFT_SETTLE", "YELLOW"
+                if str(payload.get("item") or "") not in MOCK_MERCHANT_CATALOG or amount_to_cents(amount) != quote_cents(str(payload.get("item") or "")):
+                    raise SecurityError("模拟商户报价已变化", 409, "ORDER_QUOTE_CHANGED")
+            context_hash = _context_hash(_task_settlement_context(task, target_id=target_id, amount=amount, card_id=bound_card_id if task.task_type == "SCHEDULED_TRANSFER" else None))
+            token_payload, _ = inspect_auth_token(token)
+            if token_payload.get("risk_level") == "YELLOW" and current_risk == "RED":
+                raise SecurityError("风险等级已升高，请重新授权", 409, "RISK_CHANGED_REAUTHORIZE")
             with authorize_execution(token, from_user=actor, target_id=target_id, amount=amount, remark=f"任务结算:{safe_id}", operation=operation, context_hash=context_hash, mfa_proof=proof, presented_session=_presented_session(request), request_id=request_id):
                 running = TASK_STORE.transition_if_status(safe_id, TaskState.WAITING_USER, TaskState.RUNNING, owner_id=actor)
                 if running is None:
@@ -4481,10 +4541,10 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
                     schedule["settled_at"] = datetime.now().isoformat()
                     result = {"execution_mode": "LEDGER", "transaction_id": txn_id, "transferred_amount": amount, "sender_balance": account["balance"]}
                 TASK_STORE.transition(safe_id, TaskState.SUCCEEDED, owner_id=actor)
-        response = {"code": 200, "status": "SUCCESS", "task_id": safe_id, **result}
-        _idempotency_complete(actor, "task_execute", idempotency_key, idem_payload, response)
+            response = {"code": 200, "status": "SUCCESS", "task_id": safe_id, **result}
+            _idempotency_complete(actor, "task_execute", idempotency_key, idem_payload, response)
+            persist_ledger()
         audit_event("TASK_EXECUTE", user_id=actor, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"task_id": safe_id})
-        persist_ledger()
         return response
     except SecurityError as exc:
         _idempotency_abort(actor, "task_execute", idempotency_key)
@@ -4495,6 +4555,16 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
 
 
 def _task_action(task_id: str, action: str, req: TaskActionRequest, x_user_id: Optional[str], x_request_id: Optional[str]):
+    # Task state and its schedule/split reservation form one ledger mutation.
+    # Hold the same lock used by settlement so cancellation cannot win only
+    # half of that operation or be snapshotted between those changes.
+    with STATE_LOCK:
+        response = _task_action_locked(task_id, action, req, x_user_id, x_request_id)
+        persist_ledger()
+        return response
+
+
+def _task_action_locked(task_id: str, action: str, req: TaskActionRequest, x_user_id: Optional[str], x_request_id: Optional[str]):
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
     request_id = _request_id(x_request_id)
@@ -4534,10 +4604,6 @@ def _task_action(task_id: str, action: str, req: TaskActionRequest, x_user_id: O
                             TASK_STORE.transition(dependent.task_id, TaskState.CANCELLED, owner_id=actor)
                         except (KeyError, ValueError):
                             pass
-                # The cancellation rewrote the domain fixtures (a cancelled
-                # schedule/split no longer counts towards the daily risk
-                # accumulator), so the durable snapshot has to agree.
-                persist_ledger()
         else:
             task = TASK_STORE.takeover(safe_id, owner_id=actor, reason=reason)
     except (SecurityError, KeyError, ValueError) as exc:

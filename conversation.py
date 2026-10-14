@@ -738,7 +738,37 @@ class ConversationService:
     def _cached_turn(self, principal: str, conversation_id: str, message_id: str) -> Optional[dict[str, Any]]:
         with self._lock:
             cached = self._turns.get((principal, conversation_id, message_id))
-        return cached[1] if cached is not None else None
+            if cached is None:
+                return None
+            envelope = cached[1]
+            pending = envelope.get("approval") or {}
+            if pending.get("approval_id"):
+                approval = self._approvals.get(pending["approval_id"])
+                if approval is None or approval.expired:
+                    raise ConversationError("审批已超时，请重新发起操作", 410, "APPROVAL_EXPIRED")
+                if approval.resolved:
+                    raise ConversationError("该审批已处理，请核对当前操作状态", 409, "APPROVAL_ALREADY_RESOLVED")
+                return {**envelope, "approval": approval.public_view()}
+            return envelope
+
+    def _update_cached_progress(
+        self, *, principal: str, conversation_id: str, envelope: dict[str, Any],
+        approval_id: Optional[str] = None, operation_id: Optional[str] = None,
+    ) -> None:
+        """Let redelivery recover the latest outcome without executing again.
+
+        Multiple messages can point at the same pending approval or settlement.
+        Advance all of them, preserving their original cache expiry; matching
+        the handle keeps later, unrelated conversation turns out of the cache.
+        """
+        with self._lock:
+            for key, (created_at, cached) in self._turns.items():
+                if key[:2] != (principal, conversation_id):
+                    continue
+                same_approval = approval_id and (cached.get("approval") or {}).get("approval_id") == approval_id
+                same_operation = operation_id and (cached.get("response") or {}).get("operation_id") == operation_id
+                if same_approval or same_operation:
+                    self._turns[key] = (created_at, envelope)
 
     def _remember_turn(self, principal: str, conversation_id: str, message_id: str, envelope: dict[str, Any]) -> None:
         with self._lock:
@@ -792,16 +822,10 @@ class ConversationService:
         thread_id = conversation_thread_id(principal, conversation_id)
         safe_message_id = sanitize_text(message_id, field="消息编号", max_length=128) or uuid.uuid4().hex
 
-        cached = self._cached_turn(principal, conversation_id, safe_message_id)
-        if cached is not None:
-            # A retried delivery of the same message must never produce a second
-            # precheck (and therefore a second approval nonce).
-            return cached
-
         request_id = request_id or f"gw_{uuid.uuid4().hex}"
         with self._thread_lock(thread_id):
-            # Two identical deliveries can both miss the optimistic lookup
-            # before either obtains the conversation lock.
+            # Redelivery must also wait for an in-flight approval resolution;
+            # otherwise it can return a consumed card before the cache advances.
             cached = self._cached_turn(principal, conversation_id, safe_message_id)
             if cached is not None:
                 return cached
@@ -899,8 +923,11 @@ class ConversationService:
                                        "business_status": None, "plan": _advance_plan(state, str(state.get("intent")), outcome="SUCCESS")}, as_node="executor")
             with channel_session(session_token):
                 graph.invoke(None, config)
-            return self._settle_turn(principal=principal, conversation_id=conversation_id, thread_id=thread_id,
-                                     graph=graph, config=config, client_request_id=None, response_request_id=state.get("request_id"))
+            envelope = self._settle_turn(principal=principal, conversation_id=conversation_id, thread_id=thread_id,
+                                        graph=graph, config=config, client_request_id=None, response_request_id=state.get("request_id"))
+            self._update_cached_progress(principal=principal, conversation_id=conversation_id,
+                                         operation_id=operation_id, envelope=envelope)
+            return envelope
 
     def face_challenge(self, *, principal: str, approval_id: str, session_token: Optional[str] = None) -> dict[str, Any]:
         """Fetch a liveness challenge for the *device* to sign.
@@ -1083,8 +1110,11 @@ class ConversationService:
         if pending is not None:
             if not payload.get("confirmed") or pending.get("auth_token") == approval.auth_token:
                 raise ConversationError("审批未生效，操作仍在等待确认", 409, "APPROVAL_STILL_PENDING")
-            return self._settle_turn(principal=approval.principal, conversation_id=approval.conversation_id,
-                                     thread_id=approval.thread_id, graph=graph, config=config, client_request_id=None, response_request_id=approval.request_id)
+            envelope = self._settle_turn(principal=approval.principal, conversation_id=approval.conversation_id,
+                                        thread_id=approval.thread_id, graph=graph, config=config, client_request_id=None, response_request_id=approval.request_id)
+            self._update_cached_progress(principal=approval.principal, conversation_id=approval.conversation_id,
+                                         approval_id=approval.approval_id, envelope=envelope)
+            return envelope
         if not payload.get("confirmed"):
             # Neither bare amounts nor pronouns after cancellation may revive
             # an operation the user just explicitly abandoned.
@@ -1107,6 +1137,8 @@ class ConversationService:
             request_id=approval.request_id,
         )
         self._audit_response(approval.principal, envelope)
+        self._update_cached_progress(principal=approval.principal, conversation_id=approval.conversation_id,
+                                     approval_id=approval.approval_id, envelope=envelope)
         return envelope
 
     @staticmethod

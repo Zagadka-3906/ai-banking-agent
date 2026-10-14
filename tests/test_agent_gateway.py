@@ -130,6 +130,9 @@ def gateway(monkeypatch):
     import agent_api
 
     main.reset_state()
+    # Each scenario gets its own request window. Keeping the module-level
+    # bucket across tests made full-suite results depend on wall-clock speed.
+    agent_api.RATE_LIMIT_STATE.clear()
     # Keep the test off the filesystem: an explicit in-memory checkpointer, and
     # a rebuilt graph so no checkpoint leaks between tests.
     monkeypatch.setenv("BANK_CONVERSATION_DB", "memory")
@@ -177,6 +180,7 @@ def gateway(monkeypatch):
 
     conversation.SERVICE.reset()
     GATEWAY_SESSIONS.clear()
+    agent_api.RATE_LIMIT_STATE.clear()
     main.reset_state()
 
 
@@ -342,6 +346,44 @@ def test_retried_message_id_is_deduped(gateway):
     # precheck (which would leave two live nonces and two approval cards).
     assert second["approval"]["approval_id"] == first["approval"]["approval_id"]
     assert second["request_id"] == first["request_id"]
+
+
+@pytest.mark.parametrize("decision", ["approve", "reject"])
+@pytest.mark.parametrize("stream", [False, True])
+def test_redelivery_after_approval_returns_latest_outcome(gateway, decision, stream):
+    client, core = gateway
+    first = _send(client, "给李四转300元", conversation_id="c-dedupe-final", message_id="original")
+    # A message sent while waiting also points at that approval.
+    _send(client, "查余额", conversation_id="c-dedupe-final", message_id="while-waiting")
+    approval_id = first["approval"]["approval_id"]
+    resolved = client.post(f"/api/v1/agent/approvals/{approval_id}", json={"decision": decision}, headers=_headers())
+    assert resolved.status_code == 200, resolved.text
+    expected = resolved.json()
+    for message_id in ("original", "while-waiting"):
+        if stream:
+            frames = _parse_sse(_stream(client, "给李四转300元", conversation_id="c-dedupe-final", message_id=message_id).text)
+            assert [event for event, _ in frames] == ["result"]
+            replay = frames[0][1]
+        else:
+            replay = _send(client, "给李四转300元", conversation_id="c-dedupe-final", message_id=message_id)
+        assert replay == expected
+        assert replay["approval"] is None
+    balance = core.get("/api/v1/accounts/user_zhang/balance", headers=_headers()).json()
+    assert float(balance["available_balance"]) == (14700.0 if decision == "approve" else 15000.0)
+
+
+def test_redelivery_does_not_resurrect_an_expired_approval(gateway):
+    client, core = gateway
+    first = _send(client, "给李四转300元", conversation_id="c-dedupe-expired", message_id="original")
+    approval = conversation.SERVICE._approvals[first["approval"]["approval_id"]]
+    approval.expires_at = 0
+    replay = client.post("/api/v1/agent/messages", json={
+        "text": "给李四转300元", "conversation_id": "c-dedupe-expired", "message_id": "original",
+    }, headers=_headers())
+    assert replay.status_code == 410
+    assert replay.json()["detail"]["code"] == "APPROVAL_EXPIRED"
+    balance = core.get("/api/v1/accounts/user_zhang/balance", headers=_headers()).json()
+    assert float(balance["available_balance"]) == 15000.0
 
 
 def test_resolved_approval_cannot_be_replayed(gateway):

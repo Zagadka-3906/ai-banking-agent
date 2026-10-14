@@ -448,24 +448,17 @@ def test_shared_money_parser_preserves_explicit_card_and_product_actions(text, i
     assert parsed["amount"] == amount
 
 
-def test_simultaneous_duplicate_correction_creates_only_one_new_approval(gateway, monkeypatch):
+def test_simultaneous_duplicate_correction_creates_only_one_new_approval(gateway):
     client, _ = gateway
     cid = "human-concurrent-correction"
     first = _ask(client, "给李四转50元", cid)
-    real_cached_turn = conversation.SERVICE._cached_turn
     rendezvous = threading.Barrier(2)
-    local = threading.local()
-
-    def simultaneous_miss(principal, conversation_id, message_id):
-        value = real_cached_turn(principal, conversation_id, message_id)
-        if message_id == "same-edit" and not getattr(local, "checked", False):
-            local.checked = True
-            rendezvous.wait(timeout=5)
-        return value
-
-    monkeypatch.setattr(conversation.SERVICE, "_cached_turn", simultaneous_miss)
 
     def revise():
+        # Synchronize callers before entering the service. Cache reads now
+        # share the conversation lock with approval resolution, so waiting
+        # for both callers inside a cache lookup would deadlock the test.
+        rendezvous.wait(timeout=5)
         return conversation.SERVICE.start_turn(
             principal="user_zhang", conversation_id=cid,
             message_id="same-edit", text="改成20元",

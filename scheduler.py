@@ -1,8 +1,8 @@
-"""Minimal durable-shaped task queue for the competition sandbox.
+"""Minimal task queue for the competition sandbox.
 
-The demo keeps tasks in memory, but models the fields a production scheduler
-would persist: owner, dependencies, idempotency key, status, retry budget and a
-compensation action.  It never executes arbitrary model-generated code.
+Tasks live in memory and join the Core's optional ledger snapshot so owners,
+dependencies, idempotency keys, status and retry budgets survive a restart.
+The queue never executes arbitrary model-generated code.
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ class TaskStore:
                 raise KeyError(task_id)
             if task.status == TaskState.RUNNING:
                 raise ValueError("task is currently running")
-        return self.transition(task_id, TaskState.CANCELLED, owner_id=owner_id)
+            return self.transition(task_id, TaskState.CANCELLED, owner_id=owner_id)
 
     def takeover(self, task_id: str, *, owner_id: Optional[str] = None, reason: str = "人工接管") -> ScheduledTask:
         return self.transition(task_id, TaskState.HUMAN_TAKEOVER, error=reason, owner_id=owner_id)
@@ -178,6 +178,57 @@ class TaskStore:
 
         with self._lock:
             return deepcopy(self._tasks), deepcopy(self._by_key)
+
+    def export_records(self) -> list[dict[str, Any]]:
+        """Serialize tasks together with the ledger that owns their effects."""
+
+        with self._lock:
+            return [task.to_dict() for task in self._tasks.values()]
+
+    @staticmethod
+    def decode_records(records: Any) -> tuple[dict[str, ScheduledTask], dict[tuple[str, str], str]]:
+        """Validate a complete durable queue before replacing live state."""
+
+        if not isinstance(records, list):
+            raise ValueError("task records must be a list")
+        tasks: dict[str, ScheduledTask] = {}
+        by_key: dict[tuple[str, str], str] = {}
+        allowed = {TaskState.PENDING, TaskState.WAITING_USER, TaskState.RUNNING, TaskState.SUCCEEDED,
+                   TaskState.FAILED, TaskState.CANCELLED, TaskState.HUMAN_TAKEOVER}
+        for row in records:
+            if not isinstance(row, dict):
+                raise ValueError("invalid task record")
+            try:
+                task = ScheduledTask(**deepcopy(row))
+            except TypeError as exc:
+                raise ValueError("invalid task fields") from exc
+            if any(not isinstance(value, str) or not value for value in
+                   (task.task_id, task.owner_id, task.task_type, task.idempotency_key)):
+                raise ValueError("invalid task identity")
+            if not isinstance(task.status, str) or task.status not in allowed or not isinstance(task.payload, dict):
+                raise ValueError("invalid task state")
+            if (type(task.attempts) is not int or type(task.max_attempts) is not int
+                    or not 0 <= task.attempts <= task.max_attempts <= 10 or task.max_attempts < 1):
+                raise ValueError("invalid task retry budget")
+            if (not isinstance(task.depends_on, list)
+                    or any(not isinstance(dep, str) or not dep for dep in task.depends_on)):
+                raise ValueError("invalid task dependencies")
+            timestamps = (task.created_at, task.updated_at) + (() if task.run_at is None else (task.run_at,))
+            for value in timestamps:
+                if not isinstance(value, str):
+                    raise ValueError("invalid task timestamp")
+                datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if any(value is not None and not isinstance(value, str) for value in (task.compensation, task.error)):
+                raise ValueError("invalid task metadata")
+            scoped = (task.owner_id, task.idempotency_key)
+            if task.task_id in tasks or scoped in by_key:
+                raise ValueError("duplicate task identity")
+            tasks[task.task_id] = task
+            by_key[scoped] = task.task_id
+        for task in tasks.values():
+            if any(dep not in tasks or tasks[dep].owner_id != task.owner_id or dep == task.task_id for dep in task.depends_on):
+                raise ValueError("invalid task dependency target")
+        return tasks, by_key
 
     def restore(self, snapshot: tuple[dict[str, ScheduledTask], dict[tuple[str, str], str]]) -> None:
         with self._lock:

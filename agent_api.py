@@ -33,6 +33,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from http_controls import cache_bounded_body
 
 from bank_tools import BankAPIError, BankClient
 from conversation import SERVICE, ConversationError
@@ -114,13 +115,10 @@ async def gateway_middleware(request: Request, call_next):
     request.state.request_id = f"gw_{uuid.uuid4().hex}"
     path = request.url.path
     if path != "/healthz":
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                if int(content_length) > _MAX_REQUEST_BYTES:
-                    return _rejection_response(request, SecurityError("请求体超过安全限制", 413, "REQUEST_TOO_LARGE"))
-            except ValueError:
-                return _rejection_response(request, SecurityError("请求长度字段无效", 400, "INVALID_CONTENT_LENGTH"))
+        try:
+            await cache_bounded_body(request, _MAX_REQUEST_BYTES)
+        except SecurityError as exc:
+            return _rejection_response(request, exc)
     response = await call_next(request)
     response.headers["X-Request-Id"] = request.state.request_id
     return _security_headers(response)

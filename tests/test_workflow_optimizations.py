@@ -93,7 +93,8 @@ def test_partial_reads_preserve_only_verified_sections(gateway, monkeypatch, mal
 
 def test_compound_two_writes_get_separate_single_use_approvals(gateway):
     client, _ = gateway
-    first = _send(client, "查一下余额，然后给李四转10元，然后给李四转20元", conversation_id="three-steps")
+    text = "查一下余额，然后给李四转10元，然后给李四转20元"
+    first = _send(client, text, conversation_id="three-steps", message_id="original")
     assert first["business_status"] == "WAITING_APPROVAL"
     assert len(first["response"]["sections"]) == 1
     assert first["response"]["workflow_plan"]["current_step"] == 2
@@ -104,10 +105,14 @@ def test_compound_two_writes_get_separate_single_use_approvals(gateway):
     assert second["approval"]["approval_id"] != first["approval"]["approval_id"]
     assert second["response"]["workflow_plan"]["current_step"] == 3
     assert main.ACCOUNTS["user_zhang"]["balance"] == 14990
+    replay = _send(client, text, conversation_id="three-steps", message_id="original")
+    assert replay["approval"]["approval_id"] == second["approval"]["approval_id"]
+    assert replay["response"]["workflow_plan"]["current_step"] == 3
     done = approve(client, second)
     assert done["business_status"] == "SUCCEEDED"
     assert len(done["response"]["sections"]) == 3
     assert main.ACCOUNTS["user_zhang"]["balance"] == 14970
+    assert _send(client, text, conversation_id="three-steps", message_id="original") == done
     repeat = client.post(f"/api/v1/agent/approvals/{first['approval']['approval_id']}", json={"decision": "approve"}, headers=_headers())
     assert repeat.status_code == 409
     assert main.ACCOUNTS["user_zhang"]["balance"] == 14970
@@ -157,7 +162,7 @@ def test_approval_stream_emits_real_execution_and_validation_progress(gateway):
 def test_lost_receipt_reconciles_without_resubmitting_and_is_owner_scoped(gateway, monkeypatch, compound):
     client, core = gateway
     text = "查一下余额，然后给李四转10元，然后给李四转20元" if compound else "给李四转10元"
-    pending = _send(client, text, conversation_id="lost-receipt")
+    pending = _send(client, text, conversation_id="lost-receipt", message_id="original")
     original = agent._http
     settlements = []
     def lost(method, path, **kwargs):
@@ -169,6 +174,7 @@ def test_lost_receipt_reconciles_without_resubmitting_and_is_owner_scoped(gatewa
     monkeypatch.setattr(agent, "_http", lost)
     unknown = approve(client, pending)
     assert unknown["business_status"] == "PENDING_RECONCILIATION"
+    assert _send(client, text, conversation_id="lost-receipt", message_id="original") == unknown
     assert len(settlements) == 2 and settlements[0] == settlements[1]
     assert main.ACCOUNTS["user_zhang"]["balance"] == 14990
     operation = unknown["response"]["operation_id"]
@@ -182,6 +188,12 @@ def test_lost_receipt_reconciles_without_resubmitting_and_is_owner_scoped(gatewa
     assert resolved.status_code == 200, resolved.text
     result = resolved.json()
     assert result["business_status"] == ("WAITING_APPROVAL" if compound else "SUCCEEDED")
+    replay = _send(client, text, conversation_id="lost-receipt", message_id="original")
+    assert replay["business_status"] == result["business_status"]
+    if compound:
+        assert replay["approval"]["approval_id"] == result["approval"]["approval_id"]
+    else:
+        assert replay == result
     assert len(settlements) == 2
     assert main.ACCOUNTS["user_zhang"]["balance"] == 14990
 
