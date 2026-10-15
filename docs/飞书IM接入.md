@@ -107,7 +107,7 @@ FEISHU_APP_SECRET=仅在本机填写真实AppSecret
 .\.venv\Scripts\python.exe -m uvicorn agent_api:app --host 127.0.0.1 --port 8100
 ```
 
-不要用 `--workers` 或 `--reload` 启动 Gateway：绑定码与飞书用户映射存放在单进程内存，多进程会让事件和登录请求落到不同实例。`GET http://127.0.0.1:8100/api/v1/im/feishu/status` 返回 `enabled` 和本机监听线程状态；`listener_started` 仅表示线程已启动，**不能证明飞书已建立连接**。长连接需要电脑能够访问飞书开放平台。Core 和 Gateway 仍只监听 `127.0.0.1`。
+不要用 `--workers` 或 `--reload` 启动 Gateway：绑定码与飞书用户映射存放在单进程内存，多进程会让事件和登录请求落到不同实例。`GET http://127.0.0.1:8100/api/v1/im/feishu/status` 返回 `enabled`、本机长连接状态 `state`、该状态已持续的秒数 `state_seconds` 和最近一次失败 `last_failure`（只含阶段、数字错误码和类别，不含 SDK 原文）。`state` 依次可能为：`checking_access` / `access_failed`（检查租户令牌，失败时每 30 秒重试）、`connecting`、`connected`（SDK 实际建立 WebSocket 后才出现）、`reconnecting`（连接断开，SDK 正在自动重连）、`listener_failed`（平台拒绝连接或 SDK 放弃重连）和 `disabled`。`listener_failed` 后 Gateway 会等 30 秒，重新检查令牌并新建长连接客户端，无需重启；同一失败只记一次审计。重试只针对连接，不会重放银行查询或已尝试发送的回复。`connected` 只证明长连接已建立，平台是否投递事件、卡片能否发送仍以实际私聊验收为准。长连接需要电脑能够访问飞书开放平台。Core 和 Gateway 仍只监听 `127.0.0.1`。
 
 ## 用户绑定与演示
 

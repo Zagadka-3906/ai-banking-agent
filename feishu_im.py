@@ -6,6 +6,7 @@ are only ever held in Gateway memory; Feishu messages can select fixed Core GETs
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -36,7 +37,15 @@ _MAX_CODES = 1000
 _MAX_BINDINGS = 10000
 _MAX_EVENTS = 10000
 _BOT_STATE = "disabled"
+_BOT_STATE_SINCE = time.time()
 _BOT_LAST_FAILURE: dict[str, Any] | None = None
+_RETRY_SECONDS = 30
+
+
+def _set_state(state: str) -> None:
+    global _BOT_STATE, _BOT_STATE_SINCE
+    if state != _BOT_STATE:
+        _BOT_STATE, _BOT_STATE_SINCE = state, time.time()
 
 
 def _enabled() -> bool:
@@ -45,12 +54,12 @@ def _enabled() -> bool:
 
 def reset_state() -> None:
     """Clear ephemeral state for isolated tests."""
-    global _BOT_STATE, _BOT_LAST_FAILURE
+    global _BOT_LAST_FAILURE
     with _LOCK:
         _CODES.clear()
         _BINDINGS.clear()
         _EVENTS.clear()
-        _BOT_STATE = "disabled"
+        _set_state("disabled")
         _BOT_LAST_FAILURE = None
 
 
@@ -284,6 +293,8 @@ def _send_reply(client: Any, chat_id: str, reply: str | FeishuReply, event_id: s
             code = getattr(response, "code", None)
             _BOT_LAST_FAILURE = {"stage": "send_message", "code": code if isinstance(code, int) else None,
                                  "kind": "platform_policy_denied" if code == 21001 else "platform_request_failed"}
+        else:
+            _BOT_LAST_FAILURE = None
         return success
     except Exception as error:
         # SDK exceptions may carry credentials/URLs. Keep only a numeric code.
@@ -294,9 +305,98 @@ def _send_reply(client: Any, chat_id: str, reply: str | FeishuReply, event_id: s
         return False
 
 
+def _wait_for_access(probe) -> bool:
+    """Recover startup access failures without an operator restarting Gateway."""
+    global _BOT_LAST_FAILURE
+    _set_state("checking_access")
+    while _enabled():
+        access = probe()
+        if access["ok"]:
+            _BOT_LAST_FAILURE = None
+            return True
+        failure = {"stage": "tenant_token", "code": access["code"], "kind": access["kind"]}
+        _set_state("access_failed")
+        if failure != _BOT_LAST_FAILURE:
+            audit_event("FEISHU_CONNECTION", outcome="FAILED", metadata=failure)
+        _BOT_LAST_FAILURE = failure
+        # The probe has its own HTTP timeout. Retry only access checks here;
+        # never replay bank operations or already attempted outgoing messages.
+        time.sleep(_RETRY_SECONDS)
+    _set_state("disabled")
+    return False
+
+
+def _listener_failure(error: BaseException) -> dict[str, Any]:
+    """Classify an ended listener by numeric code only; SDK text may hold URLs."""
+    code = getattr(error, "code", None)
+    code = code if isinstance(code, int) and not isinstance(code, bool) else None
+    kind = "platform_policy_denied" if code == 21001 else "platform_rejected" if code is not None else "listener_stopped"
+    return {"stage": "ws_connect", "code": code, "kind": kind}
+
+
+def _run_listener(ws_client: Any, loop: Any) -> dict[str, Any]:
+    """Run one SDK client until it can no longer recover; return why it ended.
+
+    lark-oapi 1.7.3 retries dropped connections itself, but gives up for good
+    when the platform rejects the app (``ClientException``) or the server's
+    retry budget runs out. The first case raises from ``start()``; during a
+    background reconnect the SDK task just dies while ``start()`` keeps
+    blocking. Wrapping the instance's connect/reconnect coroutines (pinned SDK
+    internals) marks real connections and stops the shared loop when the
+    background reconnect gives up, so the caller can rebuild a client.
+    """
+    connect, reconnect = ws_client._connect, ws_client._reconnect
+    ended: list[BaseException] = []
+
+    async def tracked_connect() -> None:
+        await connect()
+        _set_state("connected")
+
+    async def supervised_reconnect() -> None:
+        try:
+            await reconnect()
+        except Exception as error:
+            ended.append(error)
+            loop.stop()
+            raise
+
+    ws_client._connect, ws_client._reconnect = tracked_connect, supervised_reconnect
+    ws_client.on_reconnecting = lambda: _set_state("reconnecting")
+    _set_state("connecting")
+    try:
+        ws_client.start()
+    except Exception as error:
+        ended.append(error)
+    finally:
+        # Drop the old client's ping/receive tasks before a new client shares the loop.
+        pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    return _listener_failure(ended[0]) if ended else _listener_failure(RuntimeError())
+
+
+def _supervise(probe, new_client, loop) -> None:
+    """Keep one listener alive: re-check access, then rebuild the SDK client."""
+    global _BOT_LAST_FAILURE
+    previous: dict[str, Any] | None = None
+    while _wait_for_access(probe):
+        failure = _run_listener(new_client(), loop)
+        _set_state("listener_failed")
+        if failure != previous:
+            audit_event("FEISHU_CONNECTION", outcome="FAILED", metadata=failure)
+        _BOT_LAST_FAILURE = previous = failure
+        if not _enabled():
+            break
+        # Back off before re-probing. Only the connection is retried; bank
+        # reads and outgoing replies are never replayed from here.
+        time.sleep(_RETRY_SECONDS)
+    _set_state("disabled")
+
+
 def start_bot() -> None:
     """Called on Gateway startup. One Gateway worker owns one WS connection."""
-    global _BOT_STATE
     if not _enabled():
         return
     app_id = os.getenv("FEISHU_APP_ID", "").strip()
@@ -309,17 +409,9 @@ def start_bot() -> None:
         raise RuntimeError("Feishu SDK missing: pip install -r requirements-feishu.txt")
 
     def worker() -> None:
-        global _BOT_STATE, _BOT_LAST_FAILURE
         import lark_oapi as lark
         from feishu_access import probe_access
-
-        _BOT_STATE = "checking_access"
-        access = probe_access()
-        if not access["ok"]:
-            _BOT_STATE = "access_failed"
-            _BOT_LAST_FAILURE = {"stage": "tenant_token", "code": access["code"], "kind": access["kind"]}
-            audit_event("FEISHU_CONNECTION", outcome="FAILED", metadata=_BOT_LAST_FAILURE)
-            return
+        from lark_oapi.ws import client as ws_module
 
         api_client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
         inbox: queue.Queue[Any] = queue.Queue(maxsize=1000)
@@ -348,18 +440,14 @@ def start_bot() -> None:
 
         handler = (lark.EventDispatcherHandler.builder("", "")
                    .register_p2_im_message_receive_v1(on_message).build())
-        _BOT_STATE = "connecting"
-        try:
-            ws_client = lark.ws.Client(app_id, app_secret, event_handler=handler, log_level=lark.LogLevel.WARNING)
-            _BOT_STATE = "listener_started"
-            ws_client.start()
-        except Exception:
-            _BOT_STATE = "failed"
-            audit_event("FEISHU_CONNECTION", outcome="FAILED")
+        _supervise(probe_access,
+                   lambda: lark.ws.Client(app_id, app_secret, event_handler=handler, log_level=lark.LogLevel.WARNING),
+                   ws_module.loop)
 
     threading.Thread(target=worker, name="feishu-ws", daemon=True).start()
 
 
 @router.get("/status")
 def bot_status():
-    return {"code": 200, "enabled": _enabled(), "state": _BOT_STATE, "last_failure": _BOT_LAST_FAILURE}
+    return {"code": 200, "enabled": _enabled(), "state": _BOT_STATE,
+            "state_seconds": int(time.time() - _BOT_STATE_SINCE), "last_failure": _BOT_LAST_FAILURE}

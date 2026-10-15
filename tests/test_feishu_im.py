@@ -42,6 +42,160 @@ def test_sdk_policy_failure_is_visible_without_exposing_exception_secrets():
     assert "private-marker" not in repr(status)
 
 
+def test_successful_send_clears_previous_failure():
+    feishu_im.reset_state()
+    client = Mock()
+    client.im.v1.message.create.side_effect = RuntimeError("code: 21001")
+    assert not feishu_im._send_reply(client, "chat", "test", "failed-event")
+    client.im.v1.message.create.side_effect = None
+    client.im.v1.message.create.return_value.success.return_value = True
+    assert feishu_im._send_reply(client, "chat", "test", "recovered-event")
+    assert feishu_im.bot_status()["last_failure"] is None
+
+
+def test_startup_network_failure_recovers_without_restart(monkeypatch):
+    feishu_im.reset_state()
+    monkeypatch.setenv("BANK_FEISHU_ENABLED", "1")
+    probe = Mock(side_effect=[
+        {"ok": False, "code": None, "kind": "transport_or_protocol_failure"},
+        {"ok": True, "code": 0, "kind": "available"},
+    ])
+    states = []
+    monkeypatch.setattr(feishu_im.time, "sleep", lambda delay: states.append((delay, feishu_im.bot_status())))
+    assert feishu_im._wait_for_access(probe)
+    assert probe.call_count == 2
+    assert states[0][0] == 30
+    assert states[0][1]["state"] == "access_failed"
+    assert states[0][1]["last_failure"]["kind"] == "transport_or_protocol_failure"
+    assert feishu_im.bot_status()["last_failure"] is None
+
+
+def test_persistent_denial_is_audited_once_and_disable_stops_retries(monkeypatch):
+    feishu_im.reset_state()
+    monkeypatch.setenv("BANK_FEISHU_ENABLED", "1")
+    probe = Mock(return_value={"ok": False, "code": 21001, "kind": "platform_policy_denied"})
+    audit = Mock()
+    monkeypatch.setattr(feishu_im, "audit_event", audit)
+    waits = []
+    def wait(delay):
+        waits.append(delay)
+        if len(waits) == 2:
+            monkeypatch.setenv("BANK_FEISHU_ENABLED", "0")
+    monkeypatch.setattr(feishu_im.time, "sleep", wait)
+    assert not feishu_im._wait_for_access(probe)
+    assert waits == [30, 30]
+    assert audit.call_count == 1
+    assert feishu_im.bot_status()["state"] == "disabled"
+
+
+class _FakeSocket:
+    """Accepts pings, then drops once ``drop`` is set, like a closed WS."""
+
+    def __init__(self):
+        import asyncio
+
+        self.drop = asyncio.Event()
+        self.closed = False
+
+    async def send(self, data):
+        pass
+
+    async def recv(self):
+        await self.drop.wait()
+        raise ConnectionError("connection reset")
+
+    async def close(self):
+        self.closed = True
+
+
+def _sdk_client(monkeypatch, endpoint_results):
+    """Real lark-oapi client; only the endpoint lookup and socket are faked."""
+    import lark_oapi as lark
+    from lark_oapi.ws import client as ws_module
+
+    sockets = []
+
+    async def connect(url, **kwargs):
+        sockets.append(_FakeSocket())
+        return sockets[-1]
+
+    monkeypatch.setattr(ws_module.websockets, "connect", connect)
+    ws_client = lark.ws.Client("cli_test", "secret-marker", event_handler=Mock(), log_level=lark.LogLevel.CRITICAL)
+    ws_client._reconnect_nonce = 0
+    ws_client._reconnect_interval = 0
+    results = iter(endpoint_results)
+
+    def endpoint():
+        result = next(results)
+        if isinstance(result, Exception):
+            raise result
+        return "wss://example.invalid/ws?device_id=d1&service_id=1"
+
+    ws_client._get_conn_url = endpoint
+    return ws_client, sockets, ws_module.loop
+
+
+def test_rejected_first_connect_ends_listener_with_numeric_code_only(monkeypatch):
+    from lark_oapi.ws.exception import ClientException
+
+    feishu_im.reset_state()
+    ws_client, sockets, loop = _sdk_client(monkeypatch, [ClientException(21001, "denied secret-marker")])
+    failure = feishu_im._run_listener(ws_client, loop)
+    assert failure == {"stage": "ws_connect", "code": 21001, "kind": "platform_policy_denied"}
+    assert sockets == [] and "secret-marker" not in repr(failure)
+
+
+def test_listener_reconnects_then_stops_when_platform_rejects_reconnect(monkeypatch):
+    import asyncio
+    from lark_oapi.ws.exception import ClientException
+
+    feishu_im.reset_state()
+    ws_client, sockets, loop = _sdk_client(monkeypatch, ["ok", "ok", ClientException(1000040343, "app revoked")])
+    states = []
+
+    async def drop_twice():
+        for index in range(2):
+            while len(sockets) <= index:
+                await asyncio.sleep(0)
+            states.append(feishu_im.bot_status()["state"])
+            sockets[index].drop.set()
+
+    loop.call_soon(lambda: loop.create_task(drop_twice()))
+    failure = feishu_im._run_listener(ws_client, loop)
+    # The first drop reconnects in place; the rejected second reconnect would
+    # leave start() blocked forever without the supervisor stopping the loop.
+    assert states == ["connected", "connected"]
+    assert len(sockets) == 2 and all(socket.closed for socket in sockets)
+    assert failure == {"stage": "ws_connect", "code": 1000040343, "kind": "platform_rejected"}
+    assert not [task for task in asyncio.all_tasks(loop) if not task.done()]
+
+
+def test_supervisor_rebuilds_client_after_listener_failure_and_audits_once(monkeypatch):
+    feishu_im.reset_state()
+    monkeypatch.setenv("BANK_FEISHU_ENABLED", "1")
+    probe = Mock(return_value={"ok": True, "code": 0, "kind": "available"})
+    failure = {"stage": "ws_connect", "code": 21001, "kind": "platform_policy_denied"}
+    runs = []
+
+    def run(client, loop):
+        runs.append(client)
+        if len(runs) == 3:
+            monkeypatch.setenv("BANK_FEISHU_ENABLED", "0")
+        return failure
+
+    monkeypatch.setattr(feishu_im, "_run_listener", run)
+    audit = Mock()
+    monkeypatch.setattr(feishu_im, "audit_event", audit)
+    waits = []
+    monkeypatch.setattr(feishu_im.time, "sleep", waits.append)
+    feishu_im._supervise(probe, object, loop=None)
+    assert len(runs) == 3 and len({id(client) for client in runs}) == 3
+    assert probe.call_count == 3 and waits == [30, 30]
+    assert audit.call_count == 1
+    status = feishu_im.bot_status()
+    assert status["state"] == "disabled" and status["last_failure"] == failure
+
+
 def test_binding_read_only_replay_and_unbind(monkeypatch):
     feishu_im.reset_state()
     monkeypatch.setenv("BANK_FEISHU_ENABLED", "0")
