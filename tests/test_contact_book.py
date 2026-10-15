@@ -16,6 +16,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402
+from bank_core.routes import contacts as contact_routes  # noqa: E402
 
 
 @pytest.fixture()
@@ -347,7 +348,7 @@ def test_the_contact_book_is_capped_per_user(client, monkeypatch):
     full on every mutation, and each unmatched phone also provisions an
     account record."""
 
-    monkeypatch.setattr(main, "CONTACT_MAX_PER_USER", 3)
+    monkeypatch.setattr(contact_routes, "CONTACT_MAX_PER_USER", 3)
     codes = [
         _add(client, {"name": f"联系人{index}", "phone": f"1390000{index:04d}", "relationship": "朋友"}).status_code
         for index in range(5)

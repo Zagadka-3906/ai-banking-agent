@@ -3,6 +3,7 @@
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta, timezone
+import sys
 import json
 import threading
 
@@ -180,7 +181,10 @@ def test_concurrent_failed_request_cannot_detach_settlement_accounts(durable, mo
             assert resume.wait(5), "settlement was not released"
         return result
 
-    monkeypatch.setattr(main, "_resolve_target", pause_after_reading_payee)
+    # Patch every module that resolves payees, as the single-module patch did.
+    for module in list(sys.modules.values()):
+        if getattr(module, "__name__", "").startswith("bank_core") and getattr(module, "_resolve_target", None) is resolve_target:
+            monkeypatch.setattr(module, "_resolve_target", pause_after_reading_payee)
     with ThreadPoolExecutor(max_workers=2) as pool:
         execution = pool.submit(client.post, execute_url, json={**body, "auth_token": token},
                                 headers={**HEADERS, "X-Auth-Token": token, "Idempotency-Key": "concurrent-settlement"})

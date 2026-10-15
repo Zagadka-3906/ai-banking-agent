@@ -10,6 +10,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 import main
+from bank_core import http_edge
 import security
 from support import sign_face_attestation
 
@@ -391,15 +392,15 @@ def test_http_edge_sets_no_store_and_rejects_oversized_body(client: TestClient):
     api_response = client.get("/api/v1/accounts/user_zhang/balance", headers=auth())
     assert api_response.headers["cache-control"] == "no-store"
 
-    old_limit = main._MAX_REQUEST_BYTES
-    main._MAX_REQUEST_BYTES = 32
+    old_limit = http_edge._MAX_REQUEST_BYTES
+    http_edge._MAX_REQUEST_BYTES = 32
     try:
         oversized = client.post("/api/v1/risk/precheck", json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10}, headers=auth())
         assert oversized.status_code == 413
         assert oversized.headers["x-content-type-options"] == "nosniff"
         assert oversized.headers["cache-control"] == "no-store"
     finally:
-        main._MAX_REQUEST_BYTES = old_limit
+        http_edge._MAX_REQUEST_BYTES = old_limit
 
 
 def test_lock_failure_rolls_back_ledger_and_tasks(client: TestClient, monkeypatch):

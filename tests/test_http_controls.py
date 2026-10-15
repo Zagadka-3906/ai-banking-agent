@@ -8,14 +8,15 @@ from starlette.requests import Request
 
 import agent_api
 import main
+from bank_core import http_edge
 from http_controls import cache_bounded_body
 from security import SecurityError
 
 
-@pytest.fixture(params=[(main, "/api/v1/auth/login"), (agent_api, "/api/v1/agent/messages")])
+@pytest.fixture(params=[(main, http_edge, "/api/v1/auth/login"), (agent_api, agent_api, "/api/v1/agent/messages")])
 def endpoint(request, monkeypatch):
-    module, path = request.param
-    monkeypatch.setattr(module, "_MAX_REQUEST_BYTES", 64)
+    module, limits, path = request.param
+    monkeypatch.setattr(limits, "_MAX_REQUEST_BYTES", 64)
     monkeypatch.setenv("BANK_RATE_LIMIT_PER_MINUTE", "0")
     main.reset_state()
     yield TestClient(module.app), path

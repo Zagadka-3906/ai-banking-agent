@@ -10,6 +10,8 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 import main
+from bank_core import cards
+from bank_core.routes import cards as card_routes
 import security
 
 
@@ -318,7 +320,8 @@ def test_self_service_card_issuance_is_capped_per_user(client: TestClient, monke
     un-capped add is unbounded growth with quadratic disk work - and every card
     carries its own daily spending limit."""
 
-    monkeypatch.setattr(main, "CARD_MAX_PER_USER", 3)
+    for module in (cards, card_routes):  # the add endpoint and the CARD_APPLY issuance path
+        monkeypatch.setattr(module, "CARD_MAX_PER_USER", 3)
     main.CARDS["user_zhang"] = []
     monkeypatch.setitem(main.MOCK_CARD_VAULT, "MOCK-PAN-TEST-004", {"card_number": "4000000000000002", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": main.MOCK_CARD_VAULT["MOCK-PAN-001"]["pin_hash"]})
     monkeypatch.setitem(main.MOCK_CARD_VAULT, "MOCK-PAN-TEST-005", {"card_number": "4242424242424242", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": main.MOCK_CARD_VAULT["MOCK-PAN-001"]["pin_hash"]})
@@ -344,7 +347,8 @@ def test_card_apply_cannot_bypass_the_per_user_card_ceiling(client: TestClient, 
     outcome was reachable two ways with only one of them bounded.
     """
 
-    monkeypatch.setattr(main, "CARD_MAX_PER_USER", 2)
+    for module in (cards, card_routes):  # the add endpoint and the CARD_APPLY issuance path
+        monkeypatch.setattr(module, "CARD_MAX_PER_USER", 2)
     main.CARDS["user_zhang"] = []
 
     def apply_card():

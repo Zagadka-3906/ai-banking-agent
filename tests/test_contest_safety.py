@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
+from bank_core.routes import tasks as task_routes
 import security
 from sandbox_limits import apply_worker_limits
 
@@ -92,7 +93,7 @@ def test_task_branch_is_restored_if_persistence_fails(core, monkeypatch):
     child = main.TASK_STORE.create("user_zhang", "REMINDER", {}, depends_on=[root.task_id])
     def fail():
         raise OSError("test disk failure")
-    monkeypatch.setattr(main, "persist_ledger", fail)
+    monkeypatch.setattr(task_routes, "persist_ledger", fail)
     with pytest.raises(OSError):
         main._task_action(root.task_id, "TASK_TAKEOVER", main.TaskActionRequest(), "user_zhang", "test-persist")
     assert main.TASK_STORE.get(root.task_id).status == main.TASK_STORE.get(child.task_id).status == "PENDING"

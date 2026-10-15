@@ -21,6 +21,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402
+from bank_core import persistence  # noqa: E402
 import security  # noqa: E402
 
 
@@ -133,7 +134,7 @@ def test_a_tampered_snapshot_is_refused_and_writes_frozen(client, store_path):
 def test_the_digest_is_keyed_when_the_secret_is_configured(client, store_path, monkeypatch):
     monkeypatch.setattr(security, "AUTH_SECRET", b"unit-test-key")
     monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", True)
-    monkeypatch.setattr(main, "AUTH_SECRET_CONFIGURED", True)
+    monkeypatch.setattr(persistence, "AUTH_SECRET_CONFIGURED", True)
 
     _yellow_transfer(client)
     payload = json.loads(store_path.read_text(encoding="utf-8"))
@@ -166,7 +167,7 @@ def test_a_downgraded_digest_algorithm_cannot_forge_a_balance(client, store_path
 
     monkeypatch.setattr(security, "AUTH_SECRET", b"unit-test-key")
     monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", True)
-    monkeypatch.setattr(main, "AUTH_SECRET_CONFIGURED", True)
+    monkeypatch.setattr(persistence, "AUTH_SECRET_CONFIGURED", True)
 
     _yellow_transfer(client)
     main.reset_state()
@@ -193,7 +194,7 @@ def test_an_unconfigured_deployment_refuses_a_keyed_file(client, store_path, mon
     """
 
     monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", False)
-    monkeypatch.setattr(main, "AUTH_SECRET_CONFIGURED", False)
+    monkeypatch.setattr(persistence, "AUTH_SECRET_CONFIGURED", False)
 
     _yellow_transfer(client)
     payload = json.loads(store_path.read_text(encoding="utf-8"))

@@ -6,6 +6,7 @@ import json
 from fastapi.testclient import TestClient
 
 import main
+from bank_core.routes import execution as execution_routes
 from notification_outbox import OUTBOX, enqueue
 
 
@@ -70,7 +71,7 @@ def test_split_enqueue_failure_rolls_back_entire_operation(client, monkeypatch):
         enqueue(*args, **kwargs)
         raise RuntimeError("simulated enqueue failure")
 
-    monkeypatch.setattr(main, "enqueue_notification", append_then_fail)
+    monkeypatch.setattr(execution_routes, "enqueue_notification", append_then_fail)
     response = client.post("/api/v1/operations/execute", json={**body, "auth_token": token}, headers={**headers, "X-Auth-Token": token})
     assert response.status_code == 500
     assert main.ACCOUNTS == before["accounts"]

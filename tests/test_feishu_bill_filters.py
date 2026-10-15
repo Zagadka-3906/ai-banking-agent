@@ -24,11 +24,11 @@ def bill_core(monkeypatch):
         ("OLD-FOOD", "user_zhang", "餐饮", "上月餐厅", 999, previous),
         ("OTHER-OWNER", "user_li", "餐饮", "他人商户", 9000, now),
     ]
-    monkeypatch.setattr(main, "TRANSACTIONS", [
+    main.TRANSACTIONS[:] = [  # in place: Core modules share this list; reset_state restores it
         {"tx_id": tx_id, "account_id": owner, "category": category,
          "merchant": merchant, "amount": amount, "time": date.strftime("%Y-%m-%d 12:00:00")}
         for tx_id, owner, category, merchant, amount, date in rows
-    ])
+    ]
     calls = []
     with TestClient(main.app) as core:
         def read(bank, method, path, *, read_only=False):
