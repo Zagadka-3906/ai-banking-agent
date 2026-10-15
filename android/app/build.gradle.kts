@@ -5,6 +5,19 @@ plugins {
 
 val scenarioTests = providers.gradleProperty("bankScenarioTests").orNull == "true"
 
+// Keep the host test engine, listener and result protos on the same patch.
+// AGP 9.4.1 brings 1.0.1, whose listener races while collecting test results
+// (b/565986136). Remove this override when AGP bundles the fixed engine family.
+val androidTestEngineVersion = libs.versions.androidTestEngine.get()
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "com.android.tools.androidtest" && requested.version == "1.0.1") {
+            useVersion(androidTestEngineVersion)
+            because("Fix concurrent Android test result collection (b/565986136)")
+        }
+    }
+}
+
 // Endpoints are resolved at build time so a checkout can target something other
 // than the emulator loopback without editing sources: pass -PbankGatewayUrl=... /
 // -PbankCoreUrl=..., or set them in android/gradle.properties or

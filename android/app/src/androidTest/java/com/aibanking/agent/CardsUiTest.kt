@@ -4,8 +4,8 @@ import android.app.Application
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -224,6 +224,7 @@ class CardsUiTest {
  * 真机上用手点才能验证，而 LOST 卡要靠红色审批流程才能造出来，走不到。
  */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class CardsPanelActionsTest {
 
     @get:Rule

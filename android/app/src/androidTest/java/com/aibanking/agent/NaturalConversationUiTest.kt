@@ -3,7 +3,7 @@ package com.aibanking.agent
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.lifecycle.ViewModelProvider
 import com.aibanking.agent.data.SessionStore
@@ -158,7 +158,7 @@ class NaturalConversationUiTest {
             .put("recurring_transactions", case.optBoolean("recurring_transactions")))
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextClearance()
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performTextInput("Bank@2026")
-        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
+        ui.submitLoginForm()
         ui.waitUntil(25_000) { ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().size == 1 }
         Thread.sleep(400)
     }

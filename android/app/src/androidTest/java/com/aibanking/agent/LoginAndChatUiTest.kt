@@ -3,7 +3,7 @@ package com.aibanking.agent
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -121,7 +121,7 @@ class LoginAndChatUiTest {
         }
 
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextInput(DEMO_PASSWORD)
-        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
+        ui.submitLoginForm()
 
         // Device enrollment and FCM token acquisition continue in the
         // background. A valid session must navigate immediately instead of

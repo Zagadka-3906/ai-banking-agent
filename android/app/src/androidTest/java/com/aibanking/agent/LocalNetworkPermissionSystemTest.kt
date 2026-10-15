@@ -8,7 +8,7 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -93,10 +93,7 @@ class LocalNetworkPermissionSystemTest {
             val password = arguments.getString("networkPermissionPassword") ?: "Bank@2026"
             ui.onNodeWithTag(UiTags.LOGIN_USER).performScrollTo().performTextReplacement("user_zhang")
             ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextReplacement(password)
-            // Settle the keyboard before scrolling to a button near the bottom.
-            androidx.test.espresso.Espresso.closeSoftKeyboard()
-            ui.waitForIdle()
-            ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().assertIsEnabled().performClick()
+            ui.submitLoginForm()
             ui.waitUntil(30_000) { ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().size == 1 }
             ui.onNodeWithTag(UiTags.CHAT_INPUT).assertIsDisplayed()
             assertTrue(permissionGranted())

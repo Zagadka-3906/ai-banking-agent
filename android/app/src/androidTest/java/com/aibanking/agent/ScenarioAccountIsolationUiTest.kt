@@ -6,7 +6,7 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aibanking.agent.data.SessionStore
@@ -411,7 +411,7 @@ class ScenarioAccountIsolationUiTest {
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().size == 1 }
         ui.onNodeWithTag(UiTags.LOGIN_USER).performScrollTo().performTextReplacement(principal)
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextReplacement("Bank@2026")
-        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
+        ui.submitLoginForm()
         ui.waitUntil(30_000) { model.state.value.authenticated && model.state.value.principal == principal }
         if (waitForDevice) ui.waitUntil(20_000) { !store.deviceId().isNullOrBlank() }
         ui.onNodeWithTag(UiTags.CHAT_INPUT).assertIsDisplayed()

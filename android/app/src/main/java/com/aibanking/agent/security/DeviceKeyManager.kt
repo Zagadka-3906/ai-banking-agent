@@ -74,11 +74,11 @@ class DeviceKeyManager(private val alias: String = DEFAULT_ALIAS) {
     }
 
     /** Explicit key deletion; logout/revocation retain its registered identity. */
-    fun deleteKey(): Unit = synchronized(KEY_LOCK) {
-        loadKeyStore().apply {
-            if (containsAlias(alias)) deleteEntry(alias)
+    fun deleteKey() {
+        synchronized(KEY_LOCK) {
+            val keyStore = loadKeyStore()
+            if (keyStore.containsAlias(alias)) keyStore.deleteEntry(alias)
         }
-        Unit
     }
 
     private fun generateKeyPair(keyStore: KeyStore, strongBox: Boolean): KeyPair {

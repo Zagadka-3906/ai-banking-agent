@@ -20,6 +20,11 @@ import com.aibanking.agent.ui.UiTags
  * "the click was swallowed" workaround landed in one class only, and the other
  * silently kept failing with a timeout that pointed at the wrong thing.  One
  * implementation, one behaviour.
+ *
+ * Tests create their environment through the v2 factories. ComposeContentTestRule
+ * remains the shared (non-deprecated) interface in junit4, including for v2.
+ * waitForIdle/semantics operations drain queued composition work; waitUntil also
+ * yields to real network and Keystore work, which is outside the virtual clock.
  */
 
 /** Log in unless a session was already restored from storage. */
@@ -35,11 +40,7 @@ internal fun ComposeContentTestRule.ensureLoggedIn(password: String, timeoutMs: 
     }
     if (onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty()) {
         onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextInput(password)
-        // Compose idle does not wait for the system IME's inset animation. Close
-        // it before locating the button so its bounds cannot move under the tap.
-        Espresso.closeSoftKeyboard()
-        waitForIdle()
-        onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+        submitLoginForm()
     }
     waitUntil(timeoutMs) {
         // Exactly one: a leftover Activity from an earlier test in the same
@@ -49,6 +50,14 @@ internal fun ComposeContentTestRule.ensureLoggedIn(password: String, timeoutMs: 
         // somewhere it is not looking.
         onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().size == 1
     }
+}
+
+/** Submit after typing, once the system keyboard can no longer move the button. */
+internal fun ComposeContentTestRule.submitLoginForm() {
+    // Compose idle alone does not wait for the system IME's inset animation.
+    Espresso.closeSoftKeyboard()
+    waitForIdle()
+    onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
 }
 
 /**

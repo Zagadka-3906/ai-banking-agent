@@ -140,7 +140,7 @@ data class ChatUiState(
     /** 逐题风险测评组件（输入框上方）：非空即展示。 */
     val quiz: RiskQuizUi? = null,
     /** 测评完成后的档案结果（渲染彩色结果卡）。 */
-    val profileResult: Map<String, Any>? = null,
+    val profileResult: Map<*, *>? = null,
     /** Predicted next requests shown above the editor; tapping sends immediately. */
     val suggestions: List<String> = DEFAULT_PREDICTED_SUGGESTIONS,
     /** 银行卡管理页：卡片列表 + 添加表单。 */
@@ -1263,7 +1263,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 lastProblem = if (clearProblem) null else state.lastProblem,
                 showProblem = if (clearProblem) false else state.showProblem,
                 messages = messages, quiz = parseQuiz(envelope.displayResult),
-                profileResult = envelope.displayResult?.get("profile_result") as? Map<String, Any>,
+                profileResult = envelope.displayResult?.get("profile_result") as? Map<*, *>,
                 suggestions = predictedSuggestions(envelope))
         }
         persistMessages()

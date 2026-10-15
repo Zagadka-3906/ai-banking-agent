@@ -3,7 +3,7 @@ package com.aibanking.agent
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aibanking.agent.ui.UiTags
@@ -20,6 +20,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /** Real chat approvals and task-panel buttons, with isolated scheduler time. */
+@BankingRegression
 class ScenarioTaskLifecycleUiTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()

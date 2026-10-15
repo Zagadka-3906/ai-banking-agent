@@ -4,7 +4,7 @@ import android.os.SystemClock
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aibanking.agent.data.AgentApi
@@ -250,7 +250,7 @@ class ScenarioOutcomeUiTest {
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().size == 1 }
         ui.onNodeWithTag(UiTags.LOGIN_USER).performScrollTo().performTextReplacement(principal)
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextReplacement("Bank@2026")
-        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
+        ui.submitLoginForm()
         ui.waitUntil(30_000) { model.state.value.authenticated && model.state.value.principal == principal }
         ui.onNodeWithTag(UiTags.CHAT_INPUT).assertIsDisplayed()
     }

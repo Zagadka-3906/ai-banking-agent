@@ -9,8 +9,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -45,7 +45,7 @@ class LoginLayoutTest {
         ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().assertIsNotEnabled()
         ui.onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextInput("Bank@2026")
         ui.onNodeWithTag(UiTags.LOGIN_OTP).performScrollTo().performTextInput("888888")
-        ui.onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().assertIsEnabled().performClick()
+        ui.submitLoginForm()
         ui.runOnIdle { assertEquals(Triple("user_zhang", "Bank@2026", "888888"), submitted) }
     }
 

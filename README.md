@@ -51,7 +51,7 @@ flowchart LR
 
 Windows 电脑需 Python 3.10–3.12、JDK 17 或 21、Android SDK API 37（平台包 `platforms;android-37.0`、Build Tools 36.0.0）与 Android Emulator。首次可运行 `android/tools/install-android-toolchain.ps1` 安装构建工具链，再通过 Android Studio 安装 Emulator 和系统镜像、创建名为 `bankagent` 的 AVD。
 
-Android 项目使用 AGP 9.4.1、Gradle Wrapper 9.8.1 和 AGP 内置 Kotlin 2.2.10，Compose 编译器与 Kotlin 保持同版本。`compileSdk` / `targetSdk` 为 37，最低运行版本仍为 Android 8.0（API 26）；构建使用仓库中的 `gradlew.bat`，无需手动切换全局 Gradle。
+Android 项目使用 AGP 9.4.1、Gradle Wrapper 9.8.1；保留 AGP 内置 Kotlin 集成，通过官方支持的 runtime dependency 将 Kotlin / Compose 编译器同步升级至 2.4.21。`compileSdk` / `targetSdk` 为 37，最低运行版本仍为 Android 8.0（API 26）；构建使用仓库中的 `gradlew.bat`，无需手动切换全局 Gradle。Compose 界面测试使用 v2 Rule，剩余 AGP 内部弃用警告及验证范围见 [测试 Rule 迁移与 Gradle 兼容检查](docs/Android测试Rule迁移与Gradle兼容检查-2026-10-15.md)。
 
 安装脚本与 CI 使用 Android Command-line Tools 23.0（构建号 `16111833`）以识别 SDK 37.0 的包信息；本机脚本将它安装到独立的 `cmdline-tools/23.0` 目录并优先加入 PATH，保留已有旧版本。
 
