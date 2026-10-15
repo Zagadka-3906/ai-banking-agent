@@ -1926,6 +1926,9 @@ _BEHAVIOR_OPERATION_SIGNALS: dict[str, str] = {
 GENERIC_OPERATION_RISK: dict[str, str] = {
     # Yellow: a reversible/low-value action still needs an explicit click.
     "CARD_APPLY": "YELLOW",
+    # Subscription/debit lists are yellow by contest policy: the user confirms
+    # before Core releases them, and the confirmation is a single-use nonce.
+    "SUBSCRIPTION_QUERY": "YELLOW",
     "SUBSCRIPTION_CANCEL": "YELLOW",
     "SCHEDULED_TRANSFER": "YELLOW",
     "SPLIT_BILL": "YELLOW",
@@ -2935,31 +2938,25 @@ def compare_wealth(
     return {"code": 200, "disclaimer": "对比仅基于演示资料，不构成投资建议。", "data": rows}
 
 
-@app.get("/api/v1/subscriptions/{user_id}")
-def get_subscriptions(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="SUBSCRIPTION_QUERY", request_id=request_id)
-    _ensure_account(user_id)
-    rows = [dict(row) for row in SUBSCRIPTIONS.get(user_id, [])]
-    audit_event("SUBSCRIPTION_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
-    return {"code": 200, "data": rows}
+def _subscription_query_result(user_id: str) -> dict[str, Any]:
+    """YELLOW: registered debits plus recurring candidates from verified records.
 
+    Only ``execute_operation`` calls this, after the user confirmed a
+    ``SUBSCRIPTION_QUERY`` precheck; there is no unconfirmed read route.
+    """
 
-@app.get("/api/v1/subscriptions/{user_id}/detect")
-def detect_subscriptions(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    """GREEN: identify recurring debit candidates from verified records."""
-
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="SUBSCRIPTION_DETECT", request_id=request_id)
-    _ensure_account(user_id)
     from subscription_detector import detect_recurring_debits
 
-    registered = [dict(row, source="REGISTERED") for row in SUBSCRIPTIONS.get(user_id, []) if row.get("status") == "ACTIVE"]
+    subscriptions = [dict(row) for row in SUBSCRIPTIONS.get(user_id, [])]
+    registered = [dict(row, source="REGISTERED") for row in subscriptions if row.get("status") == "ACTIVE"]
     registered_merchants = {str(row["merchant"]).casefold() for row in registered}
     detected = [row for row in detect_recurring_debits(TRANSACTIONS, user_id=user_id) if row["merchant"].casefold() not in registered_merchants]
-    candidates = registered + detected
-    audit_event("SUBSCRIPTION_DETECT", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(candidates)})
-    return {"code": 200, "data": candidates, "renewal_reminders": [{"subscription_id": row["subscription_id"], "next_charge": row["next_charge"], "message": f"{row['merchant']} 将于 {row['next_charge']} 扣款 ¥{row['amount']:.2f}"} for row in registered]}
+    return {
+        "status": "QUERIED",
+        "subscriptions": subscriptions,
+        "candidates": registered + detected,
+        "renewal_reminders": [{"subscription_id": row["subscription_id"], "next_charge": row["next_charge"], "message": f"{row['merchant']} 将于 {row['next_charge']} 扣款 ¥{row['amount']:.2f}"} for row in registered],
+    }
 
 
 @app.post("/api/v1/subscriptions/{user_id}/reminders")
@@ -3288,7 +3285,7 @@ def operation_precheck(
         reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_QUERY", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation in {"SCHEDULED_TRANSFER", "SPLIT_BILL", "WEALTH_PURCHASE", "WEALTH_REDEEM", "CARD_LIMIT"} and (amount_input is None or float(amount_input) <= 0):
             raise SecurityError("该操作需要明确的正数金额", 400, "AMOUNT_REQUIRED")
@@ -4021,7 +4018,7 @@ def execute_operation(
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
         reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_QUERY", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation == "CARD_LIMIT":
             effective_limit = req.new_limit if req.new_limit is not None else req.amount
@@ -4202,6 +4199,8 @@ def execute_operation(
                             except (KeyError, ValueError):
                                 pass
                     result.update({"status": "CANCELLED", "subscription": selected})
+                elif operation == "SUBSCRIPTION_QUERY":
+                    result.update(_subscription_query_result(req.user_id))
                 elif operation == "SCHEDULED_TRANSFER":
                     scheduled_at = operation_context.get("scheduled_at")
                     schedule = {"schedule_id": f"SCH{uuid.uuid4().hex[:10].upper()}", "user_id": req.user_id, "target": req.target, "amount": amount, "card_id": req.card_id, "scheduled_at": scheduled_at, "status": "SCHEDULED"}

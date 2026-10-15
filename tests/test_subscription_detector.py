@@ -32,9 +32,20 @@ def test_detect_endpoint_does_not_create_cancellable_mandate():
     main.TRANSACTIONS.extend([_charge("user_zhang", "新视频服务", today - timedelta(days=30), "NEW1"),
                               _charge("user_zhang", "新视频服务", today, "NEW2")])
     with TestClient(main.app) as client:
-        found = client.get("/api/v1/subscriptions/user_zhang/detect", headers={"X-User-Id": "user_zhang"})
-        assert found.status_code == 200
-        candidate = next(row for row in found.json()["data"] if row["merchant"] == "新视频服务")
+        headers = {"X-User-Id": "user_zhang"}
+        # Yellow read: no unconfirmed route, and the nonce needs a confirmation.
+        assert client.get("/api/v1/subscriptions/user_zhang/detect", headers=headers).status_code in {404, 405}
+        body = {"user_id": "user_zhang", "operation": "SUBSCRIPTION_QUERY"}
+        pre = client.post("/api/v1/risk/precheck/operation", json=body, headers=headers)
+        assert pre.status_code == 200 and pre.json()["risk_level"] == "YELLOW", pre.text
+        token = pre.json()["auth_token"]
+        assert client.post("/api/v1/operations/execute", json=body, headers={**headers, "X-Auth-Token": token}).status_code == 428
+        pre = client.post("/api/v1/risk/precheck/operation", json=body, headers=headers)
+        token = pre.json()["auth_token"]
+        assert client.post("/api/v1/auth/confirm", json={}, headers={**headers, "X-Auth-Token": token}).status_code == 200
+        found = client.post("/api/v1/operations/execute", json=body, headers={**headers, "X-Auth-Token": token})
+        assert found.status_code == 200, found.text
+        candidate = next(row for row in found.json()["data"]["candidates"] if row["merchant"] == "新视频服务")
         assert candidate["status"] == "CANDIDATE"
         assert all(row["subscription_id"] != candidate["subscription_id"] for row in main.SUBSCRIPTIONS["user_zhang"])
     main.reset_state()

@@ -206,6 +206,14 @@ class LoginAndChatUiTest {
         lateinit var viewModel: ChatViewModel
         ui.runOnIdle { viewModel = ViewModelProvider(ui.activity)[ChatViewModel::class.java] }
 
+        // Yellow tier: the subscription list is released only after confirmation.
+        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+            !viewModel.state.value.busy && viewModel.state.value.pending != null
+        }
+        ui.runOnIdle {
+            assertTrue(viewModel.state.value.pending?.summary?.contains("订阅") == true)
+            viewModel.approve()
+        }
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             !viewModel.state.value.busy &&
                 viewModel.state.value.suggestions.firstOrNull() == "取消 Apple 订阅"

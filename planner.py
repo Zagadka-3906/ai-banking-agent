@@ -78,7 +78,6 @@ GREEN_INTENTS = {
     Intent.WEALTH_RECOMMEND.value,
     Intent.WEALTH_RISK_ASSESSMENT.value,
     Intent.WEALTH_COMPARE.value,
-    Intent.SUBSCRIPTION_QUERY.value,
     Intent.CARD_QUERY.value,
 }
 YELLOW_INTENTS = {
@@ -86,6 +85,7 @@ YELLOW_INTENTS = {
     Intent.SCHEDULED_TRANSFER.value,
     Intent.SPLIT_BILL.value,
     Intent.CROSS_SCENE_LOCK.value,
+    Intent.SUBSCRIPTION_QUERY.value,
     Intent.SUBSCRIPTION_CANCEL.value,
     Intent.CARD_APPLY.value,
 }

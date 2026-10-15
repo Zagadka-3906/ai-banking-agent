@@ -103,12 +103,13 @@ def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[
     if category is not None:
         bill_params["category"] = category
     bill_query = urlencode(bill_params)
-    detected = bool(slots.get("detect_subscriptions"))
+    if intent == Intent.SUBSCRIPTION_QUERY.value:
+        # Yellow tier: the channel cannot collect the required confirmation.
+        return "APP_HANDOFF", handoff_card("订阅查询需要您确认后执行，请在 App 内查询。")
     paths = {
         Intent.BALANCE_QUERY.value: f"accounts/{principal}/balance",
         Intent.BILL_QUERY.value: f"accounts/{principal}/transactions?{bill_query}",
         Intent.BILL_ANALYSIS.value: f"accounts/{principal}/bill-analysis?{bill_query}",
-        Intent.SUBSCRIPTION_QUERY.value: f"subscriptions/{principal}{'/detect' if detected else ''}",
         Intent.CARD_QUERY.value: f"cards/{principal}",
         Intent.WEALTH_QUERY.value: "wealth/products",
     }

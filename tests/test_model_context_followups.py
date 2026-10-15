@@ -84,6 +84,8 @@ def test_explicit_new_query_still_supersedes_pending_target(gateway, monkeypatch
     assert _state(cid)["context"]["pending_clarification"]["intent"] == "SUBSCRIPTION_CANCEL"
 
     second = _send(client, "查询Apple订阅", conversation_id=cid)
-    assert second["approval"] is None, second
+    # The new query supersedes the pending cancel; as a yellow read it asks to
+    # confirm the query itself, never the abandoned cancellation.
+    assert "查询Apple订阅" in second["approval"]["summary"], second
     assert _state(cid)["intent"] == "SUBSCRIPTION_QUERY", second
     assert all(item["status"] == "ACTIVE" for item in main.SUBSCRIPTIONS["user_zhang"])

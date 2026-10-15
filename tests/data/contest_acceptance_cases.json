@@ -168,7 +168,18 @@
           "parsed": {
             "intent": "SUBSCRIPTION_QUERY"
           },
-          "approval": false
+          "approval": true,
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "reply_any": [
+            "Apple",
+            "视频会员"
+          ],
+          "unchanged": true
         }
       },
       {
@@ -177,11 +188,18 @@
           "parsed": {
             "intent": "SUBSCRIPTION_QUERY"
           },
+          "approval": true,
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
           "reply_any": [
             "扣",
             "续费"
           ],
-          "approval": false
+          "unchanged": true
         }
       }
     ]

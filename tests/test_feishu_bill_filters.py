@@ -130,6 +130,17 @@ def test_unrepresentable_filters_handoff_without_any_core_read(monkeypatch, mess
     read.assert_not_called()
 
 
+@pytest.mark.parametrize("message", ["我有哪些订阅", "帮我看看有没有乱扣费", "Apple续费前两天提醒我"])
+def test_yellow_subscription_query_hands_off_without_any_core_read(monkeypatch, message):
+    read = Mock()
+    monkeypatch.setattr(feishu_im.BankClient, "_request", read)
+    status, reply = feishu_im._read_only_reply("user_zhang", "feishu-session", message)
+    assert status == "APP_HANDOFF"
+    assert "确认" in body(reply) and "App" in body(reply)
+    assert not any(item["tag"] == "action" for item in reply.content["elements"])
+    read.assert_not_called()
+
+
 @pytest.mark.parametrize("endpoint", ["transactions", "bill-analysis"])
 def test_core_reserved_characters_are_one_exact_category(bill_core, endpoint):
     core, _ = bill_core

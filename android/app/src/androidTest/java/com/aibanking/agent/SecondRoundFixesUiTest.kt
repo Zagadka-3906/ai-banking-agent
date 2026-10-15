@@ -178,8 +178,11 @@ class SecondRoundFixesUiTest {
 
     @Test
     fun f_subscription_card_does_not_leak_the_status_code() {
-        val reply = ask("查看我的订阅")
-        assertTrue("应当列出订阅：$reply", reply.contains("订阅"))
+        // 订阅查询属于黄区：先确认审批卡，核心才返回订阅数据。
+        ui.sendChatMessage("查看我的订阅")
+        awaitApproval()
+        decide(UiTags.APPROVAL_APPROVE)
+        awaitText("Apple 订阅")
         assertFalse("传输层状态码不是给客户看的事实", textVisible("结果代码"))
     }
 

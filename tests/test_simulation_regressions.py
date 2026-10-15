@@ -114,7 +114,13 @@ def test_two_independent_reminders_are_not_silently_dropped(dialogue):
     for row in main.SUBSCRIPTIONS["user_zhang"]:
         row["next_charge"] = (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%d")
     response = dialogue.say("Apple订阅提前两天提醒我，视频会员提前三天提醒我")
-    assert response["approval"] is None
+    # Each yellow subscription step gets its own confirmation; none is dropped.
+    approvals = 0
+    while response["approval"] is not None:
+        assert response["risk_level"] == "YELLOW", response
+        approvals += 1
+        response = dialogue.approve(response)
+    assert approvals == 2, dialogue.diagnostic()
     reminders = dialogue.tasks()
     assert {(row["payload"]["merchant"], row["payload"]["days_before"]) for row in reminders} == {
         ("Apple 订阅", 2), ("视频会员", 3),

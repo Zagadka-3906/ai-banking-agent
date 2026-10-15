@@ -2090,6 +2090,10 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                 return {"risk_level": "ERROR", "final_response": f"操作风控预检未通过：{_error_message(response)}"}
             data = _response_json(response)
             target = data.get("target") or state.get("target")
+            if target == f"__{data.get('operation') or intent}__":
+                # Core's internal binding placeholder for a target-less action;
+                # Core derives it again at execution, so keep the user's slot.
+                target = state.get("target")
             resolved = {"risk_level": data.get("risk_level", "ERROR"), "auth_token": data.get("auth_token"), "action_requirements": data.get("required_actions", []), "target": target, "context": {**(state.get("context") or {}), "target": target}, "transaction": data.get("transaction"), "risk_reasons": data.get("risk_reasons")}
             if paying_card_id:
                 resolved["slots"] = slots
@@ -2222,6 +2226,13 @@ def _human_readable_action(state: BankingAgentState) -> str:
         return f"解除卡片 {target or ''} 的挂失".strip()
     if intent == Intent.CARD_APPLY.value:
         return "申请一张虚拟卡"
+    if intent == Intent.SUBSCRIPTION_QUERY.value:
+        slots = state.get("slots") or {}
+        if slots.get("renewal_reminder") is True:
+            return f"查询{target or '全部'}订阅并在扣款前 {slots.get('days_before', 2)} 天建立续费提醒"
+        if slots.get("detect_subscriptions") is True:
+            return "查询已登记的订阅代扣，并从账单识别疑似周期扣费"
+        return f"查询{target or '全部'}订阅与代扣记录"
     if intent == Intent.SUBSCRIPTION_CANCEL.value:
         return f"取消 {target or '该'} 的自动扣费"
     if intent == Intent.WEALTH_PURCHASE.value:
@@ -2419,22 +2430,49 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
         if response.status_code >= 400:
             raise RuntimeError(_error_message(response))
         return {"type": intent, "data": _response_json(response)}
-    if intent == Intent.SUBSCRIPTION_QUERY.value:
-        slots = state.get("slots") or {}
-        if slots.get("renewal_reminder") is True:
-            params = {"days_before": slots.get("days_before", 2)}
-            if state.get("target"):
-                params["merchant"] = state["target"]
-            response = _http("POST", f"subscriptions/{user_id}/reminders?{urlencode(params)}", state=state, headers={"X-User-Id": user_id})
-            if response.status_code >= 400:
-                raise RuntimeError(_error_message(response))
-            return {"type": "SUBSCRIPTION_REMINDER", "data": _response_json(response)}
-        suffix = "/detect" if slots.get("detect_subscriptions") is True else ""
-        response = _http("GET", f"subscriptions/{user_id}{suffix}", state=state, headers={"X-User-Id": user_id})
-        if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        return {"type": intent, "data": _response_json(response)}
     raise RuntimeError("不支持的查询类型")
+
+
+def _execute_subscription_query(state: BankingAgentState) -> dict[str, Any]:
+    """YELLOW read: Core releases subscription data only for a confirmed nonce."""
+
+    intent = Intent.SUBSCRIPTION_QUERY.value
+    user_id = state["user_id"]
+    token = state.get("auth_token")
+    if not token:
+        return {"final_response": "订阅查询授权已失效，请重新发起查询。"}
+    try:
+        response = _settle_with_retry(
+            state,
+            method="POST",
+            path="operations/execute",
+            json_body={"user_id": user_id, "operation": intent, "target": state.get("target"), "auth_token": token, "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
+            headers={"X-User-Id": user_id, "X-Auth-Token": token, "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"},
+            idempotency_key=_settle_idempotency_key(state, intent),
+        )
+    except requests.RequestException:
+        return _settle_unknown_response(state)
+    if response.status_code >= 400:
+        return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
+    envelope = _response_json(response)
+    data = envelope.get("data") if isinstance(envelope, dict) else None
+    if not _core_success(envelope, nested_status="QUERIED", required=("subscriptions", "candidates", "renewal_reminders")) or not isinstance(data, dict):
+        return _response_validation_failure(state, "SUBSCRIPTION_QUERY_RECEIPT_INVALID")
+    slots = state.get("slots") or {}
+    if slots.get("renewal_reminder") is True:
+        # Reminders are created only after the confirmed query succeeded.
+        params = {"days_before": slots.get("days_before", 2)}
+        if state.get("target"):
+            params["merchant"] = state["target"]
+        response = _http("POST", f"subscriptions/{user_id}/reminders?{urlencode(params)}", state=state, headers={"X-User-Id": user_id})
+        if response.status_code >= 400:
+            return _settle_failure_response(state, intent, _error_message(response))
+        result = {"type": "SUBSCRIPTION_REMINDER", "data": _response_json(response)}
+    elif slots.get("detect_subscriptions") is True:
+        result = {"type": intent, "data": {"code": 200, "data": data["candidates"], "renewal_reminders": data["renewal_reminders"]}}
+    else:
+        result = {"type": intent, "data": {"code": 200, "data": data["subscriptions"]}}
+    return {"execution_result": result, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"status": "QUERIED"})}
 
 
 def _settle_compensation(state: BankingAgentState, intent: str) -> Optional[str]:
@@ -2552,6 +2590,8 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                 return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
             data = _response_json(response)
             return {"execution_result": {"type": "TRANSFER_SUCCESS", "data": data}, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"transaction_id": data.get("transaction_id"), "transferred_amount": data.get("transferred_amount")})}
+        if intent == Intent.SUBSCRIPTION_QUERY.value:
+            return _execute_subscription_query(state)
         # The remaining write scenarios use explicit mock endpoints.  If an
         # endpoint is not enabled, report a safe refusal rather than claiming
         # completion.

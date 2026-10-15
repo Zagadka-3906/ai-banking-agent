@@ -458,6 +458,13 @@ def test_read_collections_are_rendered_readably(wired):
         config = {"configurable": {"thread_id": f"test-render-{index}"}}
         list(agent.app.stream({"user_id": "user_zhang", "user_input": text}, config=config, stream_mode="values"))
         values = agent.app.get_state(config).values
+        if intent == "SUBSCRIPTION_QUERY":
+            # Yellow read: rendered only after the confirmed nonce is executed.
+            assert values["risk_level"] == "YELLOW" and values.get("final_response") is None, text
+            headers = {"X-User-Id": "user_zhang", "X-Auth-Token": values["auth_token"]}
+            assert wired.post("/api/v1/auth/confirm", json={}, headers=headers).status_code == 200
+            list(agent.app.stream(Command(resume={"confirmed": True}), config=config, stream_mode="values"))
+            values = agent.app.get_state(config).values
         assert values["intent"] == intent, text
         response = values["final_response"]
         assert '"code"' not in response, f"{text} leaked the raw payload"

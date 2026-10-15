@@ -264,7 +264,7 @@ def test_annual_report_can_switch_back_to_current_month(bills):
 
 
 def test_vague_recurring_charge_question_lists_real_subscriptions(dialogue):
-    response = dialogue.say("帮我看看有没有乱扣费")
+    response = dialogue.approve(dialogue.say("帮我看看有没有乱扣费"))
     execution = dialogue.execution("SUBSCRIPTION_QUERY")
     rows = execution["data"]["data"]
     assert {row["subscription_id"] for row in rows if row["status"] == "ACTIVE"} == {"SUB-APPLE", "SUB-VIDEO"}
@@ -275,7 +275,7 @@ def test_vague_recurring_charge_question_lists_real_subscriptions(dialogue):
 
 
 def test_ambiguous_subscription_cancel_asks_then_accepts_merchant_fragment(dialogue):
-    dialogue.say("我有哪些订阅")
+    dialogue.approve(dialogue.say("我有哪些订阅"))
     ambiguous = dialogue.say("把它取消掉")
     assert ambiguous["status"] != "APPROVAL_REQUIRED", dialogue.diagnostic()
     assert dialogue.state["clarification_required"] is True, dialogue.diagnostic()
@@ -297,15 +297,15 @@ def test_generic_cancel_phrase_is_not_mistaken_for_a_merchant_name(dialogue):
 
 
 def test_renewal_followup_stays_in_subscription_context(dialogue):
-    dialogue.say("我有哪些订阅")
-    response = dialogue.say("下次什么时候续费")
+    dialogue.approve(dialogue.say("我有哪些订阅"))
+    response = dialogue.approve(dialogue.say("下次什么时候续费"))
     dialogue.execution("SUBSCRIPTION_QUERY")
     for row in main.SUBSCRIPTIONS[PRINCIPAL]:
         assert row["merchant"] in response["reply"] and row["next_charge"] in response["reply"], dialogue.diagnostic()
 
 
 def test_requested_apple_renewal_reminder_is_a_real_task_not_a_false_claim(dialogue):
-    response = dialogue.say("Apple续费前两天提醒我")
+    response = dialogue.approve(dialogue.say("Apple续费前两天提醒我"))
     reminders = [task for task in dialogue.tasks() if task["task_type"] == "RENEWAL_REMINDER"]
     assert reminders, dialogue.diagnostic()
     assert {task["payload"]["subscription_id"] for task in reminders} == {"SUB-APPLE"}, dialogue.diagnostic()
@@ -319,7 +319,7 @@ def test_cancel_then_refresh_shows_cancelled_merchant_without_affecting_other(di
     pending = dialogue.say("取消Apple订阅")
     completed = dialogue.approve(pending)
     assert "已取消" in completed["reply"]
-    response = dialogue.say("再看看我的订阅")
+    response = dialogue.approve(dialogue.say("再看看我的订阅"))
     execution = dialogue.execution("SUBSCRIPTION_QUERY")
     subscriptions = {row["subscription_id"]: row for row in execution["data"]["data"]}
     assert subscriptions["SUB-APPLE"]["status"] == "CANCELLED"
@@ -469,10 +469,10 @@ def test_reminder_reply_requires_real_task_fields(dialogue):
 
 
 def test_repeated_same_subscription_reminder_keeps_merchant_days_and_single_task(dialogue):
-    dialogue.say("Apple订阅续费前两天提醒我")
+    dialogue.approve(dialogue.say("Apple订阅续费前两天提醒我"))
     original = [task for task in dialogue.tasks() if task["task_type"] == "RENEWAL_REMINDER"]
     assert len(original) == 1, dialogue.diagnostic()
-    response = dialogue.say("同样的提醒再设置一次")
+    response = dialogue.approve(dialogue.say("同样的提醒再设置一次"))
     execution = dialogue.execution("SUBSCRIPTION_REMINDER")
     assert dialogue.state["target"] == "Apple", dialogue.diagnostic()
     assert dialogue.state["slots"]["days_before"] == 2, dialogue.diagnostic()
@@ -484,6 +484,16 @@ def test_repeated_same_subscription_reminder_keeps_merchant_days_and_single_task
     assert execution["data"]["data"][0]["task_id"] == original[0]["task_id"]
     assert original[0]["task_id"] in response["reply"]
     assert main.ACCOUNTS[PRINCIPAL]["balance"] == 15000.0
+
+
+def _send_confirmed(client, message, *, conversation_id):
+    """Subscription queries are yellow: confirm the approval card, then read the result."""
+    pending = _send(client, message, conversation_id=conversation_id)
+    assert pending["status"] == "APPROVAL_REQUIRED", pending
+    assert pending["risk_level"] == "YELLOW", pending
+    completed = client.post(f"/api/v1/agent/approvals/{pending['approval']['approval_id']}", json={"decision": "approve"}, headers=_headers())
+    assert completed.status_code == 200, completed.text
+    return completed.json()
 
 
 @pytest.fixture
@@ -499,7 +509,7 @@ def test_gateway_reminder_plan_completes_while_real_delivery_stays_pending(displ
     client, core = display_gateway
     task_ids = []
     for message in ("Apple续费前两天提醒我", "同样的提醒再设置一次"):
-        response = _send(client, message, conversation_id="reminder-plan-display")
+        response = _send_confirmed(client, message, conversation_id="reminder-plan-display")
         assert response["status"] == "COMPLETED", response
         execution = response["result"]["execution_result"]
         assert execution["type"] == "SUBSCRIPTION_REMINDER"
@@ -522,7 +532,7 @@ def test_gateway_reminder_plan_completes_while_real_delivery_stays_pending(displ
 def test_gateway_rejected_reminder_plan_is_failed_without_creating_a_task(display_gateway):
     client, core = display_gateway
     main.SUBSCRIPTIONS[PRINCIPAL] = [row for row in main.SUBSCRIPTIONS[PRINCIPAL] if row["subscription_id"] != "SUB-APPLE"]
-    response = _send(client, "Apple续费前两天提醒我", conversation_id="reminder-plan-failed")
+    response = _send_confirmed(client, "Apple续费前两天提醒我", conversation_id="reminder-plan-failed")
     task = response["result"]["plan"]["tasks"][0]
     assert task["action"] == "SUBSCRIPTION_REMINDER"
     assert task["status"] == "FAILED", response
@@ -543,7 +553,7 @@ def test_gateway_cancelled_subscriptions_show_historical_dates_and_active_only_s
             json={"decision": "approve"}, headers=_headers(),
         )
         assert completed.status_code == 200 and completed.json()["status"] == "COMPLETED"
-    response = _send(client, "再看看我的订阅", conversation_id=cid)
+    response = _send_confirmed(client, "再看看我的订阅", conversation_id=cid)
     reply = response["reply"]
     apple_line = next(line for line in reply.splitlines() if line.startswith("- Apple"))
     assert "已取消" in apple_line and "原计划扣款" in apple_line
