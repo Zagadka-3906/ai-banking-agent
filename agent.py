@@ -69,6 +69,7 @@ from intent_language import ambiguous_amount, ambiguous_target, business_text, n
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 BANK_API_BASE = os.getenv("BANK_API_BASE", "http://127.0.0.1:8000/api/v1").rstrip("/")
 HTTP_TIMEOUT = max(0.5, min(float(os.getenv("BANK_HTTP_TIMEOUT_SECONDS", "8")), 60.0))
+INJECTION_LOCKED_NOTICE = "多次检测到不安全指令，账户已临时锁定，请稍后再试。"
 MODEL_ENABLED = bool(DEEPSEEK_API_KEY and ChatOpenAI is not None)
 
 # The caller's session credential for the turn currently being executed.
@@ -1498,7 +1499,10 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         text = sanitize_text(raw, field="用户指令", max_length=2000)
     except InjectionError as exc:
         audit_event("PROMPT_INJECTION_BLOCKED", user_id=state.get("user_id"), request_id=state["request_id"], decision="BLOCK", outcome="FAILURE", reason=exc.code)
-        return {**_empty_state(final_response="检测到疑似提示词注入或不安全控制指令，已阻止本次操作。请直接描述银行业务。"), "request_id": state["request_id"]}
+        reply = "检测到疑似提示词注入或不安全控制指令，已阻止本次操作。请直接描述银行业务。"
+        if report_security_signal(exc.code, request_id=state["request_id"]):
+            reply += INJECTION_LOCKED_NOTICE
+        return {**_empty_state(final_response=reply), "request_id": state["request_id"]}
     # The action words inside a negation, quotation or hypothetical are data,
     # not a request to issue an actionable approval. This guard also constrains
     # a model that extracts a confident financial intent from quoted prose.
@@ -1749,6 +1753,27 @@ def _http(method: str, path: str, *, state: BankingAgentState, json_body: Option
         merged["X-Session-Token"] = session_token
     merged.update(headers or {})
     return requests.request(method, f"{BANK_API_BASE}/{path.lstrip('/')}", json=json_body, headers=merged, timeout=HTTP_TIMEOUT)
+
+
+def report_security_signal(signal: str, *, request_id: Optional[str], source: str = "AGENT", session_token: Optional[str] = None) -> bool:
+    """Charge a channel-side block to the caller's Core circuit breaker.
+
+    Best effort: the block itself already happened and was audited here. Core
+    attributes the signal to the session principal only, so a channel without
+    a verified session reports nothing. Returns whether the account is locked.
+    """
+
+    if not (session_token or _CHANNEL_SESSION.get()):
+        return False
+    headers = {"X-Session-Token": session_token} if session_token else None
+    try:
+        response = _http("POST", "security/signals", state={"request_id": request_id}, json_body={"signal": signal, "source": source}, headers=headers)
+    except requests.RequestException:
+        response = None
+    if response is None or response.status_code >= 400:
+        audit_event("SECURITY_SIGNAL", request_id=request_id, decision="ERROR", outcome="UNDELIVERED", reason=signal, metadata={"source": source})
+        return False
+    return _response_json(response).get("locked") is True
 
 
 def _response_json(response: requests.Response) -> dict[str, Any]:

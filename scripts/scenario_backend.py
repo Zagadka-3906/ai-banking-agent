@@ -290,7 +290,7 @@ def run() -> None:
         "BANK_CONVERSATION_DB": "memory", "BANK_APPROVAL_STORE_PATH": "memory",
         "BANK_LEDGER_STORE_PATH": "",
         "BANK_DEVICE_STORE_PATH": str(folder / "devices.json"),
-        "BANK_AUDIT_LOG_PATH": str(folder / f"{args.service}-audit.jsonl"),
+        "BANK_AUDIT_LOG_PATH": "", "BANK_AUDIT_LOG_DIR": str(folder),  # -> {service}-audit.jsonl
         "BANK_AGENT_RATE_LIMIT_PER_MINUTE": "0",
         "BANK_RATE_LIMIT_PER_MINUTE": "0",
         "BANK_SESSION_TTL_SECONDS": "86400",

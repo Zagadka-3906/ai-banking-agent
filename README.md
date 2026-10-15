@@ -66,7 +66,7 @@ py -3.12 -m venv .venv
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-`.env` 是本机配置，已被 Git 忽略。默认 `BANK_DEMO_MODE=1`、`BANK_REQUIRE_SESSION=1`。可选填入 `DEEPSEEK_API_KEY` 调用在线模型；留空时使用规则解析。建议把 `BANK_AUTH_SECRET` 换成本机随机长密钥。账本、设备和审计路径可分别通过 `BANK_LEDGER_STORE_PATH`、`BANK_DEVICE_STORE_PATH`、`BANK_AUDIT_LOG_PATH` 设置为仓库外的绝对路径。完整变量见 [`.env.example`](.env.example)。
+`.env` 是本机配置，已被 Git 忽略。默认 `BANK_DEMO_MODE=1`、`BANK_REQUIRE_SESSION=1`。可选填入 `DEEPSEEK_API_KEY` 调用在线模型；留空时使用规则解析。建议把 `BANK_AUTH_SECRET` 换成本机随机长密钥。账本和设备路径可分别通过 `BANK_LEDGER_STORE_PATH`、`BANK_DEVICE_STORE_PATH` 设置为仓库外的绝对路径。审计默认写入仓库外的 `%LOCALAPPDATA%\bank-agent\audit\core-audit.jsonl` 与 `gateway-audit.jsonl`，Core 和 Gateway 各自一条哈希链、启动时回放校验；可用 `BANK_AUDIT_LOG_DIR` 改目录，设为 `off` 只保留内存。完整变量见 [`.env.example`](.env.example)。
 
 配置账本持久化后，任务队列及其依赖、取消／接管状态、任务结算回执也随账本恢复。旧快照仍可加载，但此前未保存的任务无法自动找回；需要人工核对原有预约与锁资记录。
 
@@ -145,4 +145,4 @@ Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂�
 | `tests/`、`android/app/src/test/`、`android/app/src/androidTest/` | 后端、JVM 与模拟器 UI 测试 |
 | `.github/workflows/ci.yml` | Python 与 Android 构建检查 |
 
-这是单机 Mock 演示。进程内状态与本地文件不具备跨机器事务能力；演示 OTP 为固定值；审计链不等于外部不可抵赖存储；可选在线模型会把输入发送给模型服务。详见[安全自评报告](docs/安全自评报告.md)。
+这是单机 Mock 演示。进程内状态与本地文件不具备跨机器事务能力；未开启 `BANK_MFA_DYNAMIC_OTP=1` 时演示 OTP 为固定值；审计链不等于外部不可抵赖存储；可选在线模型会把输入发送给模型服务。详见[安全自评报告](docs/安全自评报告.md)。

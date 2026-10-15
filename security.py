@@ -353,11 +353,12 @@ def audit_event(
             _AUDIT_CHAIN_ANCHOR = AUDIT_LOGS[excess - 1]["integrity_hash"]
             del AUDIT_LOGS[:excess]
 
-        # File logging is opt-in.  In-memory events keep the mock deterministic
-        # and avoid writing secrets to a working tree by default.
-        audit_path = os.getenv("BANK_AUDIT_LOG_PATH")
+        # Core and Gateway each append their own chain (see ``audit_log_path``);
+        # events are redacted before they reach the file.
+        audit_path = audit_log_path()
         if audit_path:
             try:
+                os.makedirs(os.path.dirname(audit_path) or ".", exist_ok=True)
                 with open(audit_path, "a", encoding="utf-8") as handle:
                     handle.write(json.dumps(event, ensure_ascii=False) + "\n")
             except OSError:
@@ -420,20 +421,52 @@ def verify_audit_chain() -> dict[str, Any]:
     return {"valid": True, "checked_events": checked, "failed_event_id": None}
 
 
+AUDIT_SERVICE = os.getenv("BANK_AUDIT_SERVICE", "").strip().lower() or None
+
+
+def _default_audit_dir() -> str:
+    base = os.getenv("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(base, "bank-agent", "audit")
+
+
+def audit_log_path() -> Optional[str]:
+    """The append-only file this process writes, or None for memory only.
+
+    Core and Gateway read the same ``.env``. Two processes appending separate
+    hash chains to one file broke each other's links, so a restart rejected
+    genuine events as tampered. A service process (``BANK_AUDIT_SERVICE``, set
+    by its entry module) therefore always writes its own file: by default
+    ``<BANK_AUDIT_LOG_DIR>/<service>-audit.jsonl`` outside the repository, and
+    an explicit ``BANK_AUDIT_LOG_PATH`` gains the service name before its
+    suffix. ``BANK_AUDIT_LOG_DIR=off`` keeps the events in memory only.
+    """
+
+    explicit = os.getenv("BANK_AUDIT_LOG_PATH", "").strip()
+    if explicit:
+        if not AUDIT_SERVICE:
+            return explicit
+        stem, suffix = os.path.splitext(explicit)
+        return f"{stem}.{AUDIT_SERVICE}{suffix or '.jsonl'}"
+    if not AUDIT_SERVICE:
+        return None
+    directory = os.getenv("BANK_AUDIT_LOG_DIR", "").strip()
+    if directory.lower() == "off":
+        return None
+    return os.path.join(directory or _default_audit_dir(), f"{AUDIT_SERVICE}-audit.jsonl")
+
+
 def load_audit_file(path: Optional[str] = None) -> dict[str, Any]:
     """Replay an append-only audit file into the in-memory hash chain.
 
-    Configure ``BANK_AUDIT_LOG_PATH`` to keep the audit trail across restarts:
-    each persisted line is re-hashed against the running chain, so a tampered
-    or truncated file is detected instead of being silently trusted.  The
-    function is opt-in and idempotent per process; the in-memory demo stays
-    deterministic when no path is configured.
+    Each persisted line is re-hashed against the running chain, so a tampered
+    or truncated file is detected instead of being silently trusted.  Runs
+    once per process at import, for the file ``audit_log_path`` selects.
     """
 
     global _AUDIT_PREVIOUS_HASH, _AUDIT_CHAIN_ANCHOR
-    target = path or os.getenv("BANK_AUDIT_LOG_PATH")
+    target = path or audit_log_path()
     if not target:
-        return {"loaded_events": 0, "path": None, "message": "BANK_AUDIT_LOG_PATH not configured"}
+        return {"loaded_events": 0, "path": None, "message": "audit file disabled"}
     loaded = 0
     with STATE_LOCK:
         try:
@@ -478,10 +511,11 @@ def load_audit_file(path: Optional[str] = None) -> dict[str, Any]:
 def audit_persistence_status() -> dict[str, Any]:
     """Describe where audit events are stored, without leaking the path secret."""
 
-    configured = bool(os.getenv("BANK_AUDIT_LOG_PATH"))
+    configured = audit_log_path() is not None
     return {
         "mode": "memory+append_only_file" if configured else "memory_only",
         "file_configured": configured,
+        "service": AUDIT_SERVICE,
         "file_loaded_events": _AUDIT_LOAD_SUMMARY.get("loaded_events", 0),
         "file_tampered": bool(_AUDIT_LOAD_SUMMARY.get("tampered")),
         "in_memory_events": len(AUDIT_LOGS),
@@ -2239,9 +2273,9 @@ def reset_security_state() -> None:
     _DEVICE_STORE_BLOCKED = False
 
 
-# Opt-in durability: when a path is configured, the persisted chain is replayed
-# at import time so verification and traces survive a process restart.  With no
-# path configured the in-memory demo remains deterministic and side-effect free.
+# The persisted chain is replayed at import time so verification and traces
+# survive a process restart. Without a service or explicit path (tests, CLI
+# helpers) the in-memory log stays side-effect free.
 _AUDIT_LOAD_SUMMARY: dict[str, Any] = load_audit_file()
 if _AUDIT_LOAD_SUMMARY.get("tampered"):
     logger.error("审计文件哈希链校验失败，已保留已校验前缀: %s", _AUDIT_LOAD_SUMMARY.get("error"))

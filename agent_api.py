@@ -33,6 +33,11 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+
+# Name this process before ``security`` is imported: it selects the Gateway's
+# own audit file, separate from Core's chain (see ``audit_log_path``).
+os.environ["BANK_AUDIT_SERVICE"] = "gateway"
+
 from http_controls import cache_bounded_body
 
 from bank_tools import BankAPIError, BankClient
@@ -168,6 +173,13 @@ def _audit_rejection(request: Request, *, code: str, status_code: int) -> str:
 
 def _rejection_response(request: Request, exc: SecurityError) -> JSONResponse:
     request_id = _audit_rejection(request, code=exc.code, status_code=exc.status_code)
+    if exc.code == "PROMPT_INJECTION_BLOCKED" and getattr(request.state, "identity_source", None) == "session":
+        # Rejected before the graph (for example while an approval is pending):
+        # charge it to the same Core breaker as an in-graph block.
+        from agent import INJECTION_LOCKED_NOTICE, report_security_signal
+
+        if report_security_signal(exc.code, request_id=request_id, session_token=request.headers.get("X-Session-Token")):
+            exc = SecurityError(exc.detail + INJECTION_LOCKED_NOTICE, exc.status_code, exc.code)
     headers = {"X-Request-Id": request_id}
     # Surface the retry hint instead of making the client guess.
     retry_after = getattr(exc, "retry_after", None)

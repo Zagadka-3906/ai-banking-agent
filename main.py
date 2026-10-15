@@ -26,6 +26,11 @@ from typing import Any, Mapping, Optional
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
+
+# Name this process before ``security`` is imported: it selects Core's own
+# audit file, separate from the Gateway's chain (see ``audit_log_path``).
+os.environ["BANK_AUDIT_SERVICE"] = "core"
+
 from http_controls import cache_bounded_body
 
 from security import (
@@ -4690,6 +4695,45 @@ def healthz():
 @app.get("/api/v1/security/health")
 def security_health_endpoint():
     return {"code": 200, **security_health(), "sandbox": sandbox_health(), "ledger_persistence": ledger_store_status()}
+
+
+class SecuritySignalRequest(StrictModel):
+    signal: str
+    source: str = "AGENT"
+
+
+# Blocks a channel decides before any Core call. They count against the same
+# per-account breaker as a bad nonce or password.
+_CHANNEL_SECURITY_SIGNALS = {"PROMPT_INJECTION_BLOCKED"}
+_CHANNEL_SIGNAL_SOURCES = {"AGENT", "FEISHU"}
+
+
+@app.post("/api/v1/security/signals")
+def report_security_signal(
+    req: SecuritySignalRequest,
+    request: Request,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    """Count a Gateway-side block against the caller's own circuit breaker.
+
+    The Gateway rejects injected instructions before reaching Core, so repeated
+    attempts never touched the breaker. Only a verified session principal can
+    be charged: a self-asserted ``X-User-Id`` could otherwise lock another
+    account on purpose.
+    """
+
+    request_id = _request_id(x_request_id)
+    if not _presented_session(request) or not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "上报安全事件需要会话凭证"})
+    signal = str(req.signal or "").strip().upper()
+    source = str(req.source or "").strip().upper()
+    if signal not in _CHANNEL_SECURITY_SIGNALS or source not in _CHANNEL_SIGNAL_SOURCES:
+        raise HTTPException(status_code=400, detail={"code": "SIGNAL_NOT_ALLOWED", "message": "不支持的安全事件类型"})
+    status = record_security_failure(x_user_id, signal, request_id=request_id)
+    audit_event("SECURITY_SIGNAL", user_id=x_user_id, decision="BLOCK", outcome="LOCKED" if status["locked"] else "RECORDED",
+                reason=signal, request_id=request_id, metadata={"source": source, "failure_count": status["failure_count"]})
+    return {"code": 200, "locked": status["locked"], "failure_count": status["failure_count"]}
 
 
 @app.get("/api/v1/security/circuit/{user_id}")

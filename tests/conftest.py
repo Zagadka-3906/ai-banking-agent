@@ -16,7 +16,9 @@ Settings are forced so the suite is hermetic with respect to a developer's local
   intermittently purely because of what the model returned.  Tests that assert
   model-merge behaviour install a fake LLM via ``monkeypatch.setattr(agent,
   "llm", ...)`` and are unaffected.
-* ``BANK_DEVICE_STORE_PATH`` / ``BANK_AUDIT_LOG_PATH`` emptied - both point at
+* ``BANK_DEVICE_STORE_PATH`` / ``BANK_AUDIT_LOG_PATH`` emptied and
+  ``BANK_AUDIT_LOG_DIR=off`` (Core/Gateway otherwise default to a per-service
+  file under the user's app-data directory) - these point at
   *durable stores of real state*, and the suite enrolls devices and writes audit
   events.  Inheriting a live path from a developer's ``.env`` let a test run
   overwrite the real device registry. Emptying them here removes that class of accident;
@@ -43,5 +45,6 @@ os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["BANK_FEISHU_ENABLED"] = "0"
 os.environ["BANK_DEVICE_STORE_PATH"] = ""
 os.environ["BANK_AUDIT_LOG_PATH"] = ""
+os.environ["BANK_AUDIT_LOG_DIR"] = "off"
 os.environ["BANK_LEDGER_STORE_PATH"] = ""
 os.environ["BANK_APPROVAL_STORE_PATH"] = "memory"

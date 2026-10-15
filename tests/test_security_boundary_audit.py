@@ -5,6 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import agent
 import agent_api
 import main
 import security
@@ -31,6 +32,14 @@ def boundary(monkeypatch):
         return response.json()
 
     monkeypatch.setattr(agent_api, "_core_session_subject", lookup)
+
+    def in_process_http(method, path, *, state, json_body=None, headers=None):
+        # Gateway -> Core calls (such as injection reports) stay in-process.
+        merged = {"X-Request-Id": state.get("request_id") or "boundary-test"}
+        merged.update(headers or {})
+        return core.request(method, "/api/v1/" + path.lstrip("/"), json=json_body, headers=merged)
+
+    monkeypatch.setattr(agent, "_http", in_process_http)
     monkeypatch.setenv("BANK_DEMO_MODE", "0")
     yield TestClient(agent_api.app), core, token, other_token
     agent_api.RATE_LIMIT_STATE.clear()
@@ -72,7 +81,10 @@ def test_rejected_client_request_metadata_keeps_server_id_and_principal(boundary
     assert response.status_code == 400
     trace = security.get_audit_trace(response.json()["detail"]["request_id"])
     assert trace["principal"] == "user_zhang"
-    assert trace["stages"] == ["AGENT_INPUT_REJECTED"]
+    # An injected header is suspicious input too: it is charged to the session
+    # principal's Core breaker under the same server-issued request id.
+    assert trace["stages"] == ["AGENT_INPUT_REJECTED", "SECURITY_FAILURE", "SECURITY_SIGNAL"]
+    assert security.circuit_status("user_zhang")["failure_count"] == 1
 
 
 def test_invalid_session_never_attributes_refusal_to_claimed_victim(boundary):

@@ -20,7 +20,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Header, Request
 
-from agent import BILL_CATEGORY_ALIASES, _local_parse
+from agent import BILL_CATEGORY_ALIASES, INJECTION_LOCKED_NOTICE, _local_parse, report_security_signal
 from bank_tools import BankAPIError, BankClient
 from feishu_cards import FeishuReply, binding_card, failure_card, handoff_card, help_card, query_card
 from planner import Intent
@@ -218,7 +218,15 @@ def process_message(event: Any) -> tuple[str, str | FeishuReply] | None:
     request_id = str(event_id)
     try:
         text = sanitize_text(raw_text, field="飞书消息", max_length=2000).strip()
-    except SecurityError:
+    except SecurityError as exc:
+        with _LOCK:
+            binding = dict(_BINDINGS.get(sender_id) or {})
+        if exc.code == "PROMPT_INJECTION_BLOCKED" and binding:
+            audit_event("PROMPT_INJECTION_BLOCKED", user_id=binding["principal"], decision="BLOCK", outcome="FAILURE",
+                        reason=exc.code, request_id=request_id, metadata={"source": "FEISHU"})
+            # Charged to the bound bank account; an unbound sender has none.
+            if report_security_signal(exc.code, request_id=request_id, source="FEISHU", session_token=binding["session_token"]):
+                return chat_id, failure_card(INJECTION_LOCKED_NOTICE, title="账户已临时锁定")
         return chat_id, failure_card("消息包含不安全内容或超过长度限制，请换一种说法。", title="消息未受理")
     if text.startswith("/绑定 "):
         code = text.removeprefix("/绑定 ").strip()

@@ -53,7 +53,7 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     # Never touch developer device/ledger/checkpoint stores.
     os.environ.update({"BANK_DEVICE_STORE_PATH": "", "BANK_LEDGER_STORE_PATH": "", "BANK_APPROVAL_STORE_PATH": "memory",
-                       "BANK_AUDIT_LOG_PATH": "", "BANK_CONVERSATION_DB": "memory", "BANK_FEISHU_ENABLED": "0"})
+                       "BANK_AUDIT_LOG_PATH": "", "BANK_AUDIT_LOG_DIR": "off", "BANK_CONVERSATION_DB": "memory", "BANK_FEISHU_ENABLED": "0"})
     if not args.live:
         os.environ["DEEPSEEK_API_KEY"] = ""
     sys.path.insert(0, str(ROOT))

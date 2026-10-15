@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import pathlib
 
 import pytest
 
+import security
 from security import (
     SecurityError,
     audit_event,
@@ -113,6 +115,7 @@ def test_audit_trace_links_one_request_chain():
 
 
 def test_audit_file_reload_preserves_chain(tmp_path, monkeypatch):
+    monkeypatch.setattr(security, "AUDIT_SERVICE", None)  # plain process: the explicit file as given
     path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("BANK_AUDIT_LOG_PATH", str(path))
     audit_event("PERSISTED_ONE", user_id="user_zhang", outcome="SUCCESS", request_id="req_persist")
@@ -128,7 +131,51 @@ def test_audit_file_reload_preserves_chain(tmp_path, monkeypatch):
     monkeypatch.delenv("BANK_AUDIT_LOG_PATH", raising=False)
 
 
+def test_services_sharing_one_env_write_separate_audit_files(tmp_path, monkeypatch):
+    monkeypatch.delenv("BANK_AUDIT_LOG_PATH", raising=False)
+    monkeypatch.setenv("BANK_AUDIT_LOG_DIR", str(tmp_path))
+    paths = {}
+    for service in ("core", "gateway"):
+        monkeypatch.setattr(security, "AUDIT_SERVICE", service)
+        paths[service] = security.audit_log_path()
+    assert paths == {"core": str(tmp_path / "core-audit.jsonl"), "gateway": str(tmp_path / "gateway-audit.jsonl")}
+    # A legacy shared single-file setting is split by service too.
+    monkeypatch.setenv("BANK_AUDIT_LOG_PATH", str(tmp_path / "audit.jsonl"))
+    assert security.audit_log_path() == str(tmp_path / "audit.gateway.jsonl")
+    monkeypatch.setenv("BANK_AUDIT_LOG_PATH", "")
+    monkeypatch.setenv("BANK_AUDIT_LOG_DIR", "")
+    assert security.audit_log_path().endswith(str(pathlib.Path("bank-agent", "audit", "gateway-audit.jsonl")))
+    monkeypatch.setenv("BANK_AUDIT_LOG_DIR", "OFF")
+    assert security.audit_log_path() is None
+    monkeypatch.setattr(security, "AUDIT_SERVICE", None)
+    monkeypatch.setenv("BANK_AUDIT_LOG_DIR", "")
+    assert security.audit_log_path() is None  # tests and CLI helpers never default to a file
+
+
+def test_concurrent_core_and_gateway_audit_files_both_reload_intact(tmp_path):
+    """Two live processes sharing one .env (the original failure) keep valid chains."""
+    import os
+    import subprocess
+    import sys
+    import time
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    env = {**os.environ, "BANK_AUDIT_LOG_PATH": "", "BANK_AUDIT_LOG_DIR": str(tmp_path), "PYTHONPATH": str(root)}
+    # Both processes import (and replay) before either writes, then interleave.
+    writer = ("import os, sys, time; os.environ['BANK_AUDIT_SERVICE'] = sys.argv[1]; import security; "
+              "time.sleep(max(0.0, float(sys.argv[2]) - time.time())); "
+              "[security.audit_event(sys.argv[1].upper(), outcome=str(i)) or time.sleep(0.02) for i in range(5)]")
+    start = str(time.time() + 3)
+    processes = [subprocess.Popen([sys.executable, "-c", writer, service, start], env=env, cwd=root) for service in ("core", "gateway")]
+    assert all(process.wait(timeout=60) == 0 for process in processes)
+    for service in ("core", "gateway"):
+        check = (f"import os; os.environ['BANK_AUDIT_SERVICE'] = '{service}'; import security; "
+                 "s = security._AUDIT_LOAD_SUMMARY; assert s['loaded_events'] == 5 and not s['tampered'], s")
+        assert subprocess.run([sys.executable, "-c", check], env=env, cwd=root, timeout=60).returncode == 0, service
+
+
 def test_audit_file_tamper_is_detected(tmp_path, monkeypatch):
+    monkeypatch.setattr(security, "AUDIT_SERVICE", None)  # plain process: the explicit file as given
     path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("BANK_AUDIT_LOG_PATH", str(path))
     audit_event("PERSISTED_ONE", user_id="user_zhang", outcome="SUCCESS")
