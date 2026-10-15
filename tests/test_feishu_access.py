@@ -78,3 +78,18 @@ def test_non_integer_platform_codes_never_count_as_success(monkeypatch, code):
         json=lambda: {"code": code, "tenant_access_token": "private-token"}))
     result = feishu_access.probe_access()
     assert result["ok"] is False and result["code"] is None
+
+
+@pytest.mark.parametrize("message, expected", [
+    ("Access denied due to platform policy. If you have questions, contact customer support for help.", "contact_platform_support"),
+    ("Access denied by access control policy. Contact the administrator for assistance.", "contact_administrator"),
+    ("private-secret contact customer support", None),
+])
+def test_policy_hint_uses_only_exact_known_messages(monkeypatch, message, expected):
+    monkeypatch.setenv("FEISHU_APP_ID", "test-app")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "test-secret")
+    monkeypatch.setattr(feishu_access.requests, "post", lambda *a, **kw: SimpleNamespace(status_code=200,
+        json=lambda: {"code": 21001, "msg": message}))
+    result = feishu_access.probe_access()
+    assert result.get("policy_hint") == expected
+    assert message not in repr(result)

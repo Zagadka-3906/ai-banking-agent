@@ -4,6 +4,11 @@ import re
 
 import requests
 
+_POLICY_HINTS = {
+    "Access denied due to platform policy. If you have questions, contact customer support for help.": "contact_platform_support",
+    "Access denied by access control policy. Contact the administrator for assistance.": "contact_administrator",
+}
+
 
 def _correlation_ids(response):
     """Only known platform ID formats may leave the response boundary."""
@@ -36,8 +41,11 @@ def probe_access(*, direct=False):
         payload = response.json()
         code = payload.get("code") if isinstance(payload, dict) else None
         ok = response.status_code == 200 and type(code) is int and code == 0 and bool(payload.get("tenant_access_token"))
+        # Emit only a constant mapped from an exact known message, never raw text.
+        policy_hint = _POLICY_HINTS.get(payload.get("msg")) if code == 21001 and isinstance(payload.get("msg"), str) else None
         return {"ok": ok, "http_status": response.status_code, "code": code if type(code) is int else None,
                 "kind": "available" if ok else "platform_policy_denied" if code == 21001 else "platform_request_failed",
+                **({"policy_hint": policy_hint} if policy_hint else {}),
                 **_correlation_ids(response)}
     except (requests.RequestException, ValueError, TypeError):
         return {"ok": False, "code": None, "kind": "transport_or_protocol_failure"}
