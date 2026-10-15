@@ -37,16 +37,28 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      # Installs cmdline-tools, accepts licences, and provisions the exact SDK
-      # packages required by compileSdk 35.  local.properties is deliberately
-      # git-ignored, so nothing machine-specific is committed.
+      # Bootstrap the CLI only; install SDK packages with its native syntax.
+      # local.properties remains ignored so no machine paths enter the repo.
       - uses: android-actions/setup-android@v3
         with:
-          # The action's default still includes the retired SDK package
-          # "tools", which sdkmanager no longer publishes.  Install only the
-          # packages this compileSdk 35 build actually needs.
-          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
-      - name: Build debug APK and instrumented test APK
+          # CLI 23 understands SDK 37.0 metadata; the action defaults to CLI 16.
+          cmdline-tools-version: "16111833"
+          accept-android-sdk-licenses: false
+          packages: ""
+      - name: Install and verify Android SDK packages
+        shell: bash
+        run: |
+          # Avoid the legacy sdkmanager wrapper and semicolon package syntax.
+          android_cli="$(dirname "$(command -v sdkmanager)")/android"
+          test -x "$android_cli"
+          grep -Eq '^Pkg[.]Revision=23[.]0[[:space:]]*$' "$(dirname "$android_cli")/../source.properties"
+          "$android_cli" --no-metrics --sdk="$ANDROID_HOME" sdk install platform-tools platforms/android-37.0 build-tools/36.0.0
+          test -s "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          test -x "$ANDROID_HOME/platform-tools/adb"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          grep -Eq '^AndroidVersion[.]ApiLevel=37[.]0[[:space:]]*$' "$ANDROID_HOME/platforms/android-37.0/source.properties"
+          grep -Eq '^Pkg[.]Revision=36[.]0[.]0[[:space:]]*$' "$ANDROID_HOME/build-tools/36.0.0/source.properties"
+      - name: Run Android unit tests, lint, and builds
         working-directory: android
         run: |
           chmod +x ./gradlew
@@ -54,7 +66,7 @@ jobs:
           # needs an emulator plus the live banking stack, so they are exercised
           # locally (see app/src/androidTest/.../LoginAndChatUiTest.kt); CI only
           # guarantees they still build.
-          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug assembleDebugAndroidTest
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug assembleRelease assembleDebugAndroidTest
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

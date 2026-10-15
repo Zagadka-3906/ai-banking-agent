@@ -16,6 +16,7 @@ import org.junit.Test
 import java.io.File
 
 /** Native resource rendering: launcher padding, real cutouts and themed-icon masks. */
+@BankingRegression
 class BrandIconTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 

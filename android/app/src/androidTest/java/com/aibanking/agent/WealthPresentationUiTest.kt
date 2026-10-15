@@ -25,6 +25,7 @@ import org.junit.runner.RunWith
 
 /** Missing API fields must remain unknown, including in the visible product cards. */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class WealthPresentationUiTest {
     @get:Rule val ui = createAndroidComposeRule<ComponentActivity>()
 

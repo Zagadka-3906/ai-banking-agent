@@ -16,6 +16,7 @@ import org.xmlpull.v1.XmlPullParser
 
 /** Checks the installed package's backup policy, not an OEM's backup implementation. */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class BackupPolicyTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 

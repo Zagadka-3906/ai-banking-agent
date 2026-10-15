@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
@@ -21,15 +20,21 @@ fun resolvedEndpoint(property: String, fallback: String): String {
 }
 val gatewayUrl = resolvedEndpoint("bankGatewayUrl", "http://10.0.2.2:8100/")
 val coreUrl = resolvedEndpoint("bankCoreUrl", "http://10.0.2.2:8000/")
+// Explicit opt-in for HTTPS hostnames resolved to LAN addresses by internal DNS.
+// false (or omitted) keeps automatic literal/.local/single-label detection.
+val forceLocalNetworkPermission = providers.gradleProperty("bankLocalNetwork").orNull?.let {
+    require(it == "true" || it == "false") { "bankLocalNetwork must be true or false" }
+    it.toBoolean()
+} ?: false
 
 android {
     namespace = "com.aibanking.agent"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.aibanking.agent"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0.0"
 
@@ -40,6 +45,7 @@ android {
         // resolvedEndpoint above).
         buildConfigField("String", "GATEWAY_BASE_URL", "\"$gatewayUrl\"")
         buildConfigField("String", "CORE_BASE_URL", "\"$coreUrl\"")
+        buildConfigField("boolean", "FORCE_LOCAL_NETWORK_PERMISSION", forceLocalNetworkPermission.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -59,6 +65,9 @@ android {
             matchingFallbacks += listOf("debug")
             buildConfigField("String", "GATEWAY_BASE_URL", "\"http://127.0.0.1:18810/\"")
             buildConfigField("String", "CORE_BASE_URL", "\"http://127.0.0.1:18800/\"")
+            // This isolated variant always uses loopback, even when a developer
+            // opts their normal HTTPS endpoints into LAN permission handling.
+            buildConfigField("boolean", "FORCE_LOCAL_NETWORK_PERMISSION", "false")
         }
     }
     testBuildType = if (scenarioTests) "scenario" else "debug"
@@ -67,9 +76,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // AGP's built-in Kotlin inherits the Java target compatibility above.
 
     buildFeatures {
         compose = true
@@ -95,6 +102,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    // Material 3 1.4 no longer brings the icons used by existing screens.
+    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.compose.shimmer)
     implementation(libs.commonmark)
     debugImplementation(libs.androidx.compose.ui.tooling)

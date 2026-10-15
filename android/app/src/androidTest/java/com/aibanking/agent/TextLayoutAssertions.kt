@@ -20,9 +20,10 @@ internal fun SemanticsNodeInteraction.assertTextFullyVisible(expectedText: Strin
         assertEquals("$context; layout text", expectedText, layout.layoutInput.text.text)
         assertTrue("$context; no lines", layout.lineCount > 0)
 
-        // Compose 1.7.5 can reconstruct the semantics paragraph with the parent's
-        // maxWidth while retaining the text node's wrap-content size. Compare
-        // actual line/character bounds, not that paragraph container's width.
+        // Compose's semantics paragraph reconstruction (verified in 1.7.5 and
+        // 1.12.1) can use the parent's maxWidth while retaining the text node's
+        // wrap-content size. Compare actual line/character bounds, not that
+        // paragraph container's width.
         for (line in 0 until layout.lineCount) {
             assertFalse("$context; line $line is ellipsized", layout.isLineEllipsized(line))
             layout.assertBoundsInside(

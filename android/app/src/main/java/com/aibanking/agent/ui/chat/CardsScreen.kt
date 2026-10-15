@@ -52,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,7 +62,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +71,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.aibanking.agent.data.CardRevealView
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.ShimmerSwitch
@@ -100,6 +102,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.Locale
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 /**
  * 银行风格“我的银行卡”页：仿真卡面（渐变卡板 + 脱敏卡号 + 余额）+ 卡片
@@ -244,7 +247,13 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
         modifier = Modifier.fillMaxSize(),
         label = "cardDetail",
     ) { card ->
-        if (card != null) CardDetail(card, viewModel) { selectedCard = null }
+        if (card != null) CardDetail(
+            card = card,
+            revealCard = viewModel::revealCard,
+            onTransfer = { viewModel.prefillCardTransfer(card) },
+            onWealth = viewModel::openWealth,
+            onBack = { selectedCard = null },
+        )
     }
 }
 
@@ -497,11 +506,31 @@ internal fun extractCardNumber(text: String): String? = Regex("(?<!\\d)(?:\\d[ -
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> Unit) {
+internal fun CardDetail(
+    card: CardView,
+    revealCard: suspend (String, String) -> CardRevealView,
+    onTransfer: () -> Unit,
+    onWealth: () -> Unit,
+    onBack: () -> Unit,
+) {
     var pin by remember(card.cardId) { mutableStateOf("") }
-    var reveal by remember(card.cardId) { mutableStateOf<com.aibanking.agent.data.CardRevealView?>(null) }
+    var reveal by remember(card.cardId) { mutableStateOf<CardRevealView?>(null) }
     var error by remember(card.cardId) { mutableStateOf<String?>(null) }
+    var verifying by remember(card.cardId) { mutableStateOf(false) }
+    var revealGeneration by remember(card.cardId) { mutableIntStateOf(0) }
+    var revealJob by remember(card.cardId) { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
+    fun hideSensitiveData() {
+        // Cancellation alone cannot reject a non-cooperative late response, or
+        // one arriving after the user has already returned to this screen.
+        revealGeneration++
+        revealJob?.cancel()
+        revealJob = null
+        reveal = null
+        pin = ""
+        error = null
+        verifying = false
+    }
     LaunchedEffect(reveal?.disclosureId) {
         val shown = reveal ?: return@LaunchedEffect
         val fallback = 30_000L
@@ -513,18 +542,20 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
         reveal = null
     }
     val lifecycleOwner = LocalLifecycleOwner.current
-    BackHandler(onBack = onBack)
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) { reveal = null; pin = "" } }
+    val dismiss = { hideSensitiveData(); onBack() }
+    BackHandler(onBack = dismiss)
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, card.cardId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) hideSensitiveData()
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); reveal = null; pin = "" }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); hideSensitiveData() }
     }
     if (reveal != null) androidx.compose.ui.platform.LocalView.current.let { view -> androidx.compose.runtime.DisposableEffect(Unit) { val window = (view.context as? android.app.Activity)?.window; window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) } } }
-    var verifying by remember(card.cardId) { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("卡片详情", fontWeight = FontWeight.SemiBold) }, navigationIcon = {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                IconButton(onClick = dismiss) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
             })
         },
     ) { padding ->
@@ -565,19 +596,29 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
                         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         BankButton(
                             onClick = {
+                                if (!lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@BankButton
                                 val submittedPin = pin
+                                val generation = ++revealGeneration
                                 pin = ""
                                 error = null
                                 verifying = true
-                                scope.launch {
+                                revealJob = scope.launch {
                                     try {
-                                        reveal = viewModel.revealCard(card.cardId, submittedPin)
+                                        val response = revealCard(card.cardId, submittedPin)
+                                        if (generation == revealGeneration && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                                            reveal = response
+                                        }
                                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                                         throw cancelled
                                     } catch (failure: Exception) {
-                                        error = "验证失败，请检查取款密码"
+                                        if (generation == revealGeneration && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                                            error = "验证失败，请检查取款密码"
+                                        }
                                     } finally {
-                                        verifying = false
+                                        if (generation == revealGeneration) {
+                                            verifying = false
+                                            revealJob = null
+                                        }
                                     }
                                 }
                             },
@@ -601,11 +642,11 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 BankOutlinedButton(
-                    onClick = { reveal = null; viewModel.prefillCardTransfer(card) },
+                    onClick = { hideSensitiveData(); onTransfer() },
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(UiTags.CARD_TRANSFER),
                 ) { Text("转账") }
                 BankButton(
-                    onClick = { reveal = null; onBack(); viewModel.openWealth() },
+                    onClick = { hideSensitiveData(); onBack(); onWealth() },
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(UiTags.CARD_WEALTH),
                 ) { Text("理财") }
             }

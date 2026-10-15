@@ -1,19 +1,19 @@
 [versions]
-commonmark = "0.30.0"
-# Pinned together on purpose: AGP 8.7.x requires Gradle 8.9+ and JDK 17 (see
-# tools/install-android-toolchain.ps1), and the Compose compiler plugin version
-# must match the Kotlin version exactly.
-agp = "8.7.3"
-kotlin = "2.0.21"
-coreKtx = "1.13.1"
-lifecycle = "2.8.7"
-activityCompose = "1.9.3"
-composeBom = "2024.10.01"
-composeShimmer = "1.3.1"
-retrofit = "2.11.0"
-okhttp = "4.12.0"
+commonmark = "0.30.1"
+# This project uses AGP 9.4.1 with Gradle 9.8.1, JDK 17 and built-in Kotlin 2.2.10 (see
+# tools/install-android-toolchain.ps1). Keep the Compose compiler matched to
+# that Kotlin version; applying kotlin-android separately is no longer needed.
+agp = "9.4.1"
+kotlin = "2.2.10"
+coreKtx = "1.19.1"
+lifecycle = "2.11.0"
+activityCompose = "1.13.0"
+composeBom = "2026.09.00"
+composeShimmer = "1.5.0"
+retrofit = "3.0.0"
+okhttp = "5.5.0"
 biometric = "1.1.0"
-coroutines = "1.9.0"
+coroutines = "1.11.0"
 mlkitText = "16.0.1"
 # Instrumented UI tests (run on a device/emulator via connectedDebugAndroidTest).
 # Keep the AndroidX Test stable release family aligned; its minSdk is 21.
@@ -36,6 +36,7 @@ androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graph
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 compose-shimmer = { group = "com.valentinilk.shimmer", name = "compose-shimmer", version.ref = "composeShimmer" }
 
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
@@ -59,5 +60,4 @@ mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

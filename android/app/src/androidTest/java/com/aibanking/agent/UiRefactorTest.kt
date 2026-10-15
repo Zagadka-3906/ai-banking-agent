@@ -26,6 +26,7 @@ import java.io.File
 
 /** No backend: exercise the redesigned form with large text and dark colors. */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class LoginLayoutTest {
     @get:Rule val ui = createComposeRule()
 
@@ -65,6 +66,7 @@ class LoginLayoutTest {
 
 /** Uses the local demo backend, as the existing navigation tests do. */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class UiRefactorSmokeTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
 

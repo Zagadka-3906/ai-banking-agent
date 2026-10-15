@@ -49,7 +49,13 @@ flowchart LR
 
 ### 环境与安装
 
-Windows 电脑需 Python 3.10–3.12、JDK 17 或 21、Android SDK 35 与 Android Emulator。默认虚拟设备名为 `bankagent`；首次可运行 `android/tools/install-android-toolchain.ps1` 安装工具链，并创建同名 AVD。
+Windows 电脑需 Python 3.10–3.12、JDK 17 或 21、Android SDK API 37（平台包 `platforms;android-37.0`、Build Tools 36.0.0）与 Android Emulator。首次可运行 `android/tools/install-android-toolchain.ps1` 安装构建工具链，再通过 Android Studio 安装 Emulator 和系统镜像、创建名为 `bankagent` 的 AVD。
+
+Android 项目使用 AGP 9.4.1、Gradle Wrapper 9.8.1 和 AGP 内置 Kotlin 2.2.10，Compose 编译器与 Kotlin 保持同版本。`compileSdk` / `targetSdk` 为 37，最低运行版本仍为 Android 8.0（API 26）；构建使用仓库中的 `gradlew.bat`，无需手动切换全局 Gradle。
+
+安装脚本与 CI 使用 Android Command-line Tools 23.0（构建号 `16111833`）以识别 SDK 37.0 的包信息；本机脚本将它安装到独立的 `cmdline-tools/23.0` 目录并优先加入 PATH，保留已有旧版本。
+
+脚本通过新版 `android sdk install` 安装并核对平台、Build Tools 的实际文件和版本；CLI 包路径使用 `platforms/android-37.0`、`build-tools/36.0.0`，避免 Windows 兼容版 `sdkmanager.bat` 错误拆分旧分号参数。
 
 ```powershell
 py -3.12 -m venv .venv
@@ -82,6 +88,8 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 健康检查：`http://127.0.0.1:8000/healthz`、`http://127.0.0.1:8100/healthz`。模拟器经 Android 宿主机映射 `10.0.2.2` 连接服务，无需暴露到局域网。修改端口时同步设置 Gradle 参数 `-PbankCoreUrl=...` 与 `-PbankGatewayUrl=...`。
 
+Android 17 起，连接本地服务前会按配置地址请求附近设备权限；仅访问公网或 `127.0.0.1` / `localhost` 时不请求。如果 HTTPS 域名由内网 DNS 解析到局域网地址，构建时补充 `-PbankLocalNetwork=true`。默认按私有 IP、链路本地 IP、`.local` 或单段主机名判断，不发起 DNS 查询；该参数不会在 Android 16 及更早系统请求新权限。
+
 ### 演示账户
 
 | 项目 | 值 |
@@ -109,10 +117,14 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m ruff check . --ignore E402
 cd android
-.\gradlew.bat --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
-# 启动本机服务和模拟器后：
+.\gradlew.bat --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest
+# 启动本机服务和模拟器后；Android 17 首次需先打开应用并允许附近设备：
 .\gradlew.bat --no-daemon :app:connectedDebugAndroidTest
 ```
+
+默认 Debug 端点 `10.0.2.2` 属于本地网络，因此 API 37 首次运行会先显示授权入口；普通 `connectedDebugAndroidTest` 应在完成该授权后执行。专门验证系统拒绝与允许的 `LocalNetworkPermissionSystemTest` 则要求专用模拟器从未授权状态启动，以 `networkPermissionTest=true` 显式启用，并将 Debug 的 Core/Gateway 端点分别设为 `10.0.2.2:18800` / `10.0.2.2:18810`，连接隔离测试服务。
+
+隔离环境的 60 项主要回归使用 `BankingRegression` 标记：选择 `-PbankScenarioTests=true` 和 `-Pandroid.testInstrumentationRunnerArguments.annotation=com.aibanking.agent.BankingRegression`，运行 `connectedScenarioAndroidTest`。同时传入本轮隔离服务的 `controlToken` 和专用模拟器的 `devicePin`；核对报告中实际执行 60 项，且没有失败或跳过。系统权限测试单独运行。
 
 Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂等、自然语言场景；Android JVM 测试覆盖解析与建议，插桩测试覆盖登录、对话、卡片等 UI。步骤与预期结果见[测试用例](docs/测试用例.md)。端到端授权探针：`python scripts/agent_gateway_e2e.py`；健康探针：`python scripts/smoke_test.py`。
 

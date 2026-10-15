@@ -51,13 +51,13 @@ fun ShimmerSwitch(loading: Boolean, modifier: Modifier = Modifier, skeleton: @Co
     ) { isLoading -> if (isLoading) skeleton() else content() }
 }
 
-/** compose-shimmer 1.3.1; placement before background is required by its draw modifier. */
+/** Place the shimmer draw modifier before the background it animates. */
 fun Modifier.shimmerSweep(): Modifier = composed {
     if (LocalBankMotionEnabled.current) shimmer() else this
 }
 
 @Composable
-fun SkeletonBlock(width: Dp? = null, height: Dp, modifier: Modifier = Modifier, corner: Dp = 8.dp) {
+fun SkeletonBlock(height: Dp, modifier: Modifier = Modifier, width: Dp? = null, corner: Dp = 8.dp) {
     val base = if (width != null) Modifier.width(width) else Modifier.fillMaxWidth()
     Box(modifier.then(base).height(height).clip(RoundedCornerShape(corner)).shimmerSweep().background(MaterialTheme.colorScheme.surfaceContainerHighest))
 }

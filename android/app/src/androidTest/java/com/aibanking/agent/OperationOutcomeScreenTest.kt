@@ -45,6 +45,7 @@ import org.junit.runner.RunWith
 
 /** Local UI fixtures: these tests never call the banking services. */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class OperationOutcomeScreenTest {
     @get:Rule val ui = createAndroidComposeRule<ComponentActivity>()
 

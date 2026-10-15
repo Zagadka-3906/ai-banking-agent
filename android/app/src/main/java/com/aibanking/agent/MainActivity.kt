@@ -14,6 +14,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.auth.LoginScreen
+import com.aibanking.agent.ui.auth.LocalNetworkAccessGate
 import com.aibanking.agent.ui.auth.RestoringScreen
 import com.aibanking.agent.ui.chat.ChatScreen
 import com.aibanking.agent.ui.chat.ChatViewModel
@@ -34,36 +35,38 @@ class MainActivity : FragmentActivity() {
         setContent {
             BankAgentTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    val viewModel: ChatViewModel = viewModel()
-                    val state by viewModel.state.collectAsState()
-                    val page = when {
-                        // Unsealing the stored session is Keystore work and runs off
-                        // the main thread, so there is a short window before the app
-                        // knows whether it is logged in.  Showing the login form
-                        // during it would flash a password prompt on every launch.
-                        state.restoring -> RootPage.RESTORING
-                        state.authenticated -> RootPage.CHAT
-                        else -> RootPage.LOGIN
-                    }
-                    // 根级 Screen 切换（恢复态/登录/聊天）共用同一套推入/弹出转场。
-                    AnimatedContent(
-                        targetState = page,
-                        transitionSpec = { pageSlideSpec(RootPage::ordinal) },
-                        label = "rootPage",
-                    ) { current ->
-                        when (current) {
-                            RootPage.RESTORING -> RestoringScreen()
-                            RootPage.CHAT -> ChatScreen(viewModel = viewModel, activity = this@MainActivity)
-                            RootPage.LOGIN -> LoginScreen(
-                                busy = state.busy,
-                                otpRequired = state.otpRequiredAtLogin,
-                                // 登录失败（口令错误 / 核心不可达）和“会话已失效”都由这里
-                                // 显示：之前 state.error 只有聊天页的 Snackbar 会读，登录页
-                                // 完全看不到，输错口令时界面毫无反馈。
-                                error = state.error,
-                                onDismissError = viewModel::dismissMessages,
-                                onLogin = viewModel::login,
-                            )
+                    LocalNetworkAccessGate(activity = this@MainActivity) {
+                        val viewModel: ChatViewModel = viewModel()
+                        val state by viewModel.state.collectAsState()
+                        val page = when {
+                            // Unsealing the stored session is Keystore work and runs off
+                            // the main thread, so there is a short window before the app
+                            // knows whether it is logged in.  Showing the login form
+                            // during it would flash a password prompt on every launch.
+                            state.restoring -> RootPage.RESTORING
+                            state.authenticated -> RootPage.CHAT
+                            else -> RootPage.LOGIN
+                        }
+                        // 根级 Screen 切换（恢复态/登录/聊天）共用同一套推入/弹出转场。
+                        AnimatedContent(
+                            targetState = page,
+                            transitionSpec = { pageSlideSpec(RootPage::ordinal) },
+                            label = "rootPage",
+                        ) { current ->
+                            when (current) {
+                                RootPage.RESTORING -> RestoringScreen()
+                                RootPage.CHAT -> ChatScreen(viewModel = viewModel, activity = this@MainActivity)
+                                RootPage.LOGIN -> LoginScreen(
+                                    busy = state.busy,
+                                    otpRequired = state.otpRequiredAtLogin,
+                                    // 登录失败（口令错误 / 核心不可达）和“会话已失效”都由这里
+                                    // 显示：之前 state.error 只有聊天页的 Snackbar 会读，登录页
+                                    // 完全看不到，输错口令时界面毫无反馈。
+                                    error = state.error,
+                                    onDismissError = viewModel::dismissMessages,
+                                    onLogin = viewModel::login,
+                                )
+                            }
                         }
                     }
                 }

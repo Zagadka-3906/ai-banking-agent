@@ -41,6 +41,7 @@ import java.lang.reflect.Proxy
  * throws a decoding exception inside the real AgentRepository. All other cases
  * use real repositories and HTTP responses. No system clock is changed.
  */
+@BankingRegression
 class ScenarioOutcomeUiTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()

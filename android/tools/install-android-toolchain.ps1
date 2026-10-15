@@ -7,9 +7,9 @@
     Agent without requiring UAC elevation:
 
       * Temurin JDK 17          -> <Base>\jdk-17
-      * Android cmdline-tools   -> <Sdk>\cmdline-tools\latest
+      * Android cmdline-tools   -> <Sdk>\cmdline-tools\<revision>
       * Android platform-tools  -> <Sdk>\platform-tools   (adb)
-      * Android platform/build-tools via sdkmanager
+      * Android platform/build-tools via Android CLI
       * Gradle distribution     -> <Base>\gradle-<ver>    (used only to
                                    bootstrap the project's Gradle wrapper)
 
@@ -22,23 +22,23 @@
     Root directory for the portable toolchain.  Defaults to D:\AndroidDev.
 
 .PARAMETER ApiLevel
-    Android platform API level to install.  Defaults to 35.
+    Android platform package suffix to install.  Defaults to 37.0 (API 37).
 
 .EXAMPLE
     pwsh -File android\tools\install-android-toolchain.ps1
 
 .NOTES
-    Pin the versions below and the Android Gradle Plugin / Gradle / Kotlin
-    versions in android/gradle/libs.versions.toml together: AGP 8.7.x requires
-    Gradle 8.9+ and JDK 17.
+    Keep these defaults aligned with android/app/build.gradle.kts,
+    android/gradle/libs.versions.toml and the Gradle wrapper: this project uses
+    AGP 9.4.1, Gradle 9.8.1, Build Tools 36.0.0 and JDK 17 for SDK 37.
 #>
 [CmdletBinding()]
 param(
     [string]$Base = 'D:\AndroidDev',
-    [string]$ApiLevel = '35',
-    [string]$BuildTools = '35.0.0',
-    [string]$GradleVersion = '8.9',
-    [string]$CmdlineToolsBuild = '13114758',
+    [string]$ApiLevel = '37.0',
+    [string]$BuildTools = '36.0.0',
+    [string]$GradleVersion = '9.8.1',
+    [string]$CmdlineToolsBuild = '16111833',
     # Optional "host:port" of a local HTTP proxy to route Gradle's dependency
     # downloads through (see step 7).  Empty keeps Gradle's own defaults.
     [string]$GradleProxy = ''
@@ -114,7 +114,7 @@ foreach ($dir in @($Base, $DownloadDir, $SdkDir)) {
 }
 
 # ---------------------------------------------------------------------------
-# 1) JDK 17 (Temurin).  AGP 8.7 requires JDK 17; the machine only has a JRE 8.
+# 1) JDK 17 (Temurin), the minimum supported by AGP 9.4.1.
 # ---------------------------------------------------------------------------
 Write-Step 'JDK 17 (Eclipse Temurin)'
 if (-not (Test-Path $JdkDir)) {
@@ -132,49 +132,90 @@ if (-not (Test-Path $JdkDir)) {
 Write-Ok "JAVA_HOME candidate: $JdkDir"
 
 # ---------------------------------------------------------------------------
-# 2) Android cmdline-tools.  sdkmanager/adb are the only SDK entry points we
-#    need; Android Studio can adopt this SDK directory later.
+# 2) Android cmdline-tools. Android CLI 23 understands the SDK 37.0 metadata;
+#    Android Studio can adopt this SDK directory later.
 # ---------------------------------------------------------------------------
 Write-Step 'Android cmdline-tools'
-$CmdlineToolsZip = Join-Path $DownloadDir 'commandlinetools-win.zip'
+$CmdlineToolsZip = Join-Path $DownloadDir "commandlinetools-win-${CmdlineToolsBuild}.zip"
 Get-RemoteFile -Uri "https://dl.google.com/android/repository/commandlinetools-win-${CmdlineToolsBuild}_latest.zip" -OutFile $CmdlineToolsZip -Label 'Android cmdline-tools'
-$CmdlineToolsLatest = Join-Path $SdkDir 'cmdline-tools\latest'
-if (-not (Test-Path $CmdlineToolsLatest)) {
-    $staging = Join-Path $SdkDir '_cmdline-staging'
-    if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
-    Expand-Zip -ZipPath $CmdlineToolsZip -Destination $staging -Label 'Android cmdline-tools'
-    New-Item -ItemType Directory -Force -Path (Split-Path $CmdlineToolsLatest) | Out-Null
-    # The archive nests everything under "cmdline-tools"; sdkmanager requires
-    # the layout <sdk>/cmdline-tools/latest/bin/...
-    Move-Item (Join-Path $staging 'cmdline-tools') $CmdlineToolsLatest
-    Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+if ($CmdlineToolsBuild -eq '16111833' -and
+    (Get-FileHash -LiteralPath $CmdlineToolsZip -Algorithm SHA1).Hash -ne '57d04f2d75eb8e8fffc5000a987e5de4b5a63e9d') {
+    throw "Android cmdline-tools checksum mismatch. Remove the incomplete archive and retry: $CmdlineToolsZip"
 }
 
-$SdkManager = Join-Path $CmdlineToolsLatest 'bin\sdkmanager.bat'
+# Read the archive's revision so an old cmdline-tools/latest is never mistaken
+# for this build. Keep older installations intact and use the standard SDK
+# package directory (23.0 for build 16111833) for the selected revision.
+$archive = [System.IO.Compression.ZipFile]::OpenRead($CmdlineToolsZip)
+try {
+    $sourceProperties = $archive.GetEntry('cmdline-tools/source.properties')
+    if (-not $sourceProperties) { throw 'cmdline-tools archive has no source.properties' }
+    $reader = [System.IO.StreamReader]::new($sourceProperties.Open())
+    try { $archiveProperties = $reader.ReadToEnd() } finally { $reader.Dispose() }
+} finally { $archive.Dispose() }
+$revisionMatch = [regex]::Match($archiveProperties, '(?m)^Pkg\.Revision\s*=\s*(\d+(?:\.\d+)+)\s*$')
+if (-not $revisionMatch.Success) { throw 'cmdline-tools archive has an invalid revision' }
+$CmdlineToolsRevision = $revisionMatch.Groups[1].Value
+$CmdlineToolsDir = Join-Path $SdkDir "cmdline-tools\$CmdlineToolsRevision"
+$SdkManager = Join-Path $CmdlineToolsDir 'bin\sdkmanager.bat'
+$installedProperties = Join-Path $CmdlineToolsDir 'source.properties'
+$correctRevision = (Test-Path -LiteralPath $installedProperties) -and
+    ((Get-Content -LiteralPath $installedProperties -Raw) -match "(?m)^Pkg\.Revision\s*=\s*$([regex]::Escape($CmdlineToolsRevision))\s*$")
+if (-not ((Test-Path -LiteralPath $SdkManager) -and $correctRevision)) {
+    $staging = Join-Path $SdkDir "_cmdline-staging-$([guid]::NewGuid().ToString('N'))"
+    try {
+        Expand-Zip -ZipPath $CmdlineToolsZip -Destination $staging -Label 'Android cmdline-tools'
+        New-Item -ItemType Directory -Force -Path $CmdlineToolsDir | Out-Null
+        Get-ChildItem -LiteralPath (Join-Path $staging 'cmdline-tools') |
+            Copy-Item -Destination $CmdlineToolsDir -Recurse -Force
+    } finally {
+        $sdkRootPath = [System.IO.Path]::GetFullPath($SdkDir).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+        $stagingPath = [System.IO.Path]::GetFullPath($staging)
+        if (-not $stagingPath.StartsWith("$sdkRootPath\", [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clean a staging directory outside the SDK: $stagingPath"
+        }
+        if (Test-Path -LiteralPath $stagingPath) { Remove-Item -LiteralPath $stagingPath -Recurse -Force }
+    }
+}
 if (-not (Test-Path $SdkManager)) { throw "sdkmanager not found at $SdkManager" }
+$AndroidCli = Join-Path $CmdlineToolsDir 'bin\android.exe'
+if (-not (Test-Path -LiteralPath $AndroidCli)) { throw "Android CLI missing at $AndroidCli; use Command-line Tools 23 or later." }
 
-# sdkmanager is a Java program: it needs the JDK we just installed, not the
-# JRE 8 that happens to be on PATH.
+# Gradle and avdmanager need the selected JDK rather than an older Java on PATH.
 $env:JAVA_HOME = $JdkDir
 $env:ANDROID_HOME = $SdkDir
 $env:ANDROID_SDK_ROOT = $SdkDir
-$env:PATH = "$JdkDir\bin;$SdkDir\platform-tools;$env:PATH"
+$env:PATH = "$JdkDir\bin;$SdkDir\platform-tools;$CmdlineToolsDir\bin;$env:PATH"
 
 # ---------------------------------------------------------------------------
-# 3) SDK licences + platform packages.
+# 3) Platform packages. CLI 23 handles licences without the obsolete
+#    sdkmanager --licenses step. Call it directly: the compatibility .bat can
+#    split semicolon package names and still report exit code zero on failure.
 # ---------------------------------------------------------------------------
-Write-Step 'Android SDK licences'
-$yes = (1..200 | ForEach-Object { 'y' }) -join "`n"
-$yes | & $SdkManager --sdk_root="$SdkDir" --licenses | Out-Null
-Write-Ok 'licence prompts answered'
-
-Write-Step "Android SDK packages (platform-tools, android-$ApiLevel, build-tools;$BuildTools)"
-Invoke-Native -FilePath $SdkManager -Arguments @(
-    "--sdk_root=$SdkDir",
+Write-Step "Android SDK packages (platform-tools, platforms/android-$ApiLevel, build-tools/$BuildTools)"
+Invoke-Native -FilePath $AndroidCli -Arguments @(
+    '--no-metrics',
+    "--sdk=$SdkDir",
+    'sdk', 'install',
     'platform-tools',
-    "platforms;android-$ApiLevel",
-    "build-tools;$BuildTools"
+    "platforms/android-$ApiLevel",
+    "build-tools/$BuildTools"
 )
+# Check files and exact package metadata as well as the process exit status.
+foreach ($relativeFile in @('platform-tools\adb.exe', "platforms\android-$ApiLevel\android.jar", "build-tools\$BuildTools\aapt2.exe")) {
+    $installedFile = Join-Path $SdkDir $relativeFile
+    if (-not (Test-Path -LiteralPath $installedFile -PathType Leaf) -or (Get-Item -LiteralPath $installedFile).Length -eq 0) {
+        throw "SDK installation did not produce the expected file: $installedFile"
+    }
+}
+$platformProperties = Get-Content -LiteralPath (Join-Path $SdkDir "platforms\android-$ApiLevel\source.properties") -Raw
+$buildToolsProperties = Get-Content -LiteralPath (Join-Path $SdkDir "build-tools\$BuildTools\source.properties") -Raw
+if ($platformProperties -notmatch "(?m)^AndroidVersion\.ApiLevel\s*=\s*$([regex]::Escape($ApiLevel))\s*$") {
+    throw "Installed Android platform metadata does not match $ApiLevel"
+}
+if ($buildToolsProperties -notmatch "(?m)^Pkg\.Revision\s*=\s*$([regex]::Escape($BuildTools))\s*$") {
+    throw "Installed Build Tools metadata does not match $BuildTools"
+}
 Write-Ok 'SDK packages installed'
 
 # ---------------------------------------------------------------------------
@@ -188,6 +229,10 @@ Write-Step "Gradle $GradleVersion"
 if (-not (Test-Path (Join-Path $GradleDir 'bin\gradle.bat'))) {
     $gradleZip = Join-Path $DownloadDir "gradle-$GradleVersion-bin.zip"
     Get-RemoteFile -Uri "https://services.gradle.org/distributions/gradle-$GradleVersion-bin.zip" -OutFile $gradleZip -Label "Gradle $GradleVersion"
+    if ($GradleVersion -eq '9.8.1' -and
+        (Get-FileHash -LiteralPath $gradleZip -Algorithm SHA256).Hash -ne 'dce76f55f8e251a3a1f130eb120f30b3d271de2b76c9b0729d316b5a1b6dc01f') {
+        throw "Gradle archive checksum mismatch. Remove the incomplete archive and retry: $gradleZip"
+    }
     if (Test-Path $GradleDir) { Remove-Item $GradleDir -Recurse -Force }
     [System.IO.Compression.ZipFile]::ExtractToDirectory($gradleZip, $Base)
 }
@@ -203,11 +248,10 @@ Write-Step 'Persisting user-level environment variables'
 [Environment]::SetEnvironmentVariable('ANDROID_SDK_ROOT', $SdkDir, 'User')
 
 $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-foreach ($entry in @("$JdkDir\bin", "$SdkDir\platform-tools", "$SdkDir\cmdline-tools\latest\bin", "$GradleDir\bin")) {
-    if ($userPath -notlike "*$entry*") {
-        $userPath = if ([string]::IsNullOrWhiteSpace($userPath)) { $entry } else { "$userPath;$entry" }
-    }
-}
+# Prefer the selected tools over older entries while preserving the user's PATH.
+$preferredEntries = @("$JdkDir\bin", "$SdkDir\platform-tools", "$CmdlineToolsDir\bin", "$GradleDir\bin")
+$remainingEntries = @($userPath -split ';' | Where-Object { $_ -and $_ -notin $preferredEntries })
+$userPath = ($preferredEntries + $remainingEntries) -join ';'
 [Environment]::SetEnvironmentVariable('PATH', $userPath, 'User')
 Write-Ok 'JAVA_HOME / ANDROID_HOME / ANDROID_SDK_ROOT / PATH updated for the current user'
 
@@ -254,8 +298,8 @@ systemProp.http.nonProxyHosts=localhost|127.0.0.1|[::1]
 Write-Step 'Verification'
 Write-Host '--- java -version ---'
 & "$JdkDir\bin\java.exe" -version 2>&1 | ForEach-Object { "    $_" }
-Write-Host '--- sdkmanager --list_installed ---'
-& $SdkManager --sdk_root="$SdkDir" --list_installed 2>&1 | Where-Object { $_ -match 'platform|build-tools|Installed' } | ForEach-Object { "    $_" }
+Write-Host '--- android sdk list ---'
+Invoke-Native -FilePath $AndroidCli -Arguments @('--no-metrics', "--sdk=$SdkDir", 'sdk', 'list')
 Write-Host '--- adb version ---'
 & (Join-Path $SdkDir 'platform-tools\adb.exe') version 2>&1 | ForEach-Object { "    $_" }
 Write-Host '--- gradle --version ---'

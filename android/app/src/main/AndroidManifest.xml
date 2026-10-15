@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Requested on API 37+ only when the configured services use local hosts. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 拍照识卡为可选入口；无相机设备仍可手工录入并使用完整应用。 -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />

@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -23,12 +24,12 @@ class SessionStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun saveSession(token: String, principal: String, conversationId: String, expiresAtEpochSeconds: Long = 0) {
-        preferences.edit()
-            .putString(KEY_TOKEN, seal(token))
-            .putString(KEY_PRINCIPAL, seal(principal))
-            .putString(KEY_CONVERSATION, seal(conversationId))
-            .putLong(KEY_EXPIRES_AT, expiresAtEpochSeconds)
-            .apply()
+        preferences.edit {
+            putString(KEY_TOKEN, seal(token))
+            putString(KEY_PRINCIPAL, seal(principal))
+            putString(KEY_CONVERSATION, seal(conversationId))
+            putLong(KEY_EXPIRES_AT, expiresAtEpochSeconds)
+        }
     }
 
     fun sessionToken(): String? = open(KEY_TOKEN)
@@ -52,7 +53,7 @@ class SessionStore(context: Context) {
      *  churn: each enrollment is an audited event on the bank side.
      */
     fun saveDeviceId(deviceId: String) {
-        preferences.edit().putString(KEY_DEVICE, seal(deviceId)).apply()
+        preferences.edit { putString(KEY_DEVICE, seal(deviceId)) }
     }
 
     fun deviceId(): String? = open(KEY_DEVICE)
@@ -67,25 +68,25 @@ class SessionStore(context: Context) {
      *  signature that was guaranteed to be refused.
      */
     fun clearDeviceId() {
-        preferences.edit().remove(KEY_DEVICE).apply()
+        preferences.edit { remove(KEY_DEVICE) }
     }
 
     /** Persist the (already JSON-serialized) chat transcript, sealed like a credential. */
     fun saveMessages(json: String) {
-        preferences.edit().putString(KEY_MESSAGES, seal(json)).apply()
+        preferences.edit { putString(KEY_MESSAGES, seal(json)) }
     }
 
     fun messages(): String? = open(KEY_MESSAGES)
 
     /** Persist the in-progress risk quiz (questions + answers JSON) so a restart restores the widget where it was left. */
     fun saveQuiz(json: String) {
-        preferences.edit().putString(KEY_QUIZ, seal(json)).apply()
+        preferences.edit { putString(KEY_QUIZ, seal(json)) }
     }
 
     fun quiz(): String? = open(KEY_QUIZ)
 
     fun clearQuiz() {
-        preferences.edit().remove(KEY_QUIZ).apply()
+        preferences.edit { remove(KEY_QUIZ) }
     }
 
     /**
@@ -98,14 +99,14 @@ class SessionStore(context: Context) {
      * authenticated user, not to the phone.
      */
     fun clear() {
-        preferences.edit()
-            .remove(KEY_TOKEN)
-            .remove(KEY_PRINCIPAL)
-            .remove(KEY_CONVERSATION)
-            .remove(KEY_EXPIRES_AT)
-            .remove(KEY_MESSAGES)
-            .remove(KEY_QUIZ)
-            .apply()
+        preferences.edit {
+            remove(KEY_TOKEN)
+            remove(KEY_PRINCIPAL)
+            remove(KEY_CONVERSATION)
+            remove(KEY_EXPIRES_AT)
+            remove(KEY_MESSAGES)
+            remove(KEY_QUIZ)
+        }
     }
 
     private fun open(key: String): String? {

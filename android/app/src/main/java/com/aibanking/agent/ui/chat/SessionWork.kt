@@ -39,7 +39,9 @@ internal class SessionWork(
 
     fun launch(block: suspend Lease.() -> Unit): Job {
         val lease = capture()
-        return scope.launch(lease.job) {
+        // The session supervisor is already a child of the owner's Job. Launch
+        // from that owned scope instead of replacing a builder's parent Job.
+        return CoroutineScope(scope.coroutineContext + lease.job).launch {
             lease.check()
             lease.block()
         }
@@ -50,7 +52,7 @@ internal class SessionWork(
         val (lease, version) = synchronized(lock) {
             capture() to (writeVersions[key] ?: 0L).plus(1).also { writeVersions[key] = it }
         }
-        return scope.launch(lease.job + persistenceDispatcher) {
+        return CoroutineScope(scope.coroutineContext + lease.job).launch(persistenceDispatcher) {
             try {
                 lease.commit { if (writeVersions[key] == version) write() }
             } catch (failure: CancellationException) {

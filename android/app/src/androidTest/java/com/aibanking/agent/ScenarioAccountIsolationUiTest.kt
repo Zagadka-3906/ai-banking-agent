@@ -45,6 +45,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Separate device-credential cases use the real Android system prompt with a
  * PIN enrolled on an isolated emulator. Neither simulates a fingerprint sensor.
  */
+@BankingRegression
 class ScenarioAccountIsolationUiTest {
     @get:Rule val ui = createAndroidComposeRule<MainActivity>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
@@ -324,14 +325,24 @@ class ScenarioAccountIsolationUiTest {
         assertTrue(systemPromptVisible())
         if (success) {
             val pin = checkNotNull(InstrumentationRegistry.getArguments().getString("devicePin"))
-            // A visible system window may appear before its EditText owns input
-            // focus. Injecting text at that point can lose the first digit.
-            waitOutsideCompose(10_000) { credentialField()?.isFocused == true }
-            val field = checkNotNull(credentialField())
-            assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pin)
-            }))
-            waitOutsideCompose(5_000) { credentialField()?.text?.length == pin.length }
+            if (android.os.Build.VERSION.SDK_INT >= 37) {
+                // Android 17's credential window need not expose an editable
+                // password node. Drive the real system window with hardware
+                // keys after its accessibility events settle; the tests still
+                // require the actual successful authentication callback.
+                instrumentation.uiAutomation.waitForIdle(300, 5_000)
+                assertTrue(systemPromptVisible())
+                pin.forEach { digit -> injectKey(KeyEvent.KEYCODE_0 + digit.digitToInt()) }
+            } else {
+                // A visible system window may appear before its EditText owns
+                // input focus, which can otherwise lose the first digit.
+                waitOutsideCompose(10_000) { credentialField()?.isFocused == true }
+                val field = checkNotNull(credentialField())
+                assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pin)
+                }))
+                waitOutsideCompose(5_000) { credentialField()?.text?.length == pin.length }
+            }
             injectKey(KeyEvent.KEYCODE_ENTER)
         } else {
             // On API 35 the first Back can dismiss only the PIN keyboard.

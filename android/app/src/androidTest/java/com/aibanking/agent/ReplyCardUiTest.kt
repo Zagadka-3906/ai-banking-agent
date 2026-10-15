@@ -47,6 +47,7 @@ import org.junit.runner.RunWith
 
 /** Reply rendering regressions; all fixtures are local and need no banking service. */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class ReplyCardUiTest {
     @get:Rule
     val ui = createComposeRule()

@@ -43,6 +43,7 @@ import org.junit.runner.RunWith
 
 /** Rendered focus contrast and reachable controls; local fixtures require no service. */
 @RunWith(AndroidJUnit4::class)
+@BankingRegression
 class DesignInputsUiTest {
     @get:Rule val ui = createComposeRule()
 

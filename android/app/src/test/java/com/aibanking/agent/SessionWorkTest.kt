@@ -80,6 +80,22 @@ class SessionWorkTest {
         assertTrue(request.isCancelled)
     }
 
+    @Test fun cancellingOwnerScopeCancelsRequestsAndQueuedPersistence() = runBlocking {
+        val request = sessions.launch { await { awaitCancellation() } }
+        var saved = false
+        val queued = sessions.persist("messages") { saved = true }
+
+        scope.cancel()
+        writes.runAll()
+        request.join()
+        queued.join()
+
+        assertTrue(request.isCancelled)
+        assertTrue(queued.isCancelled)
+        assertFalse(saved)
+        assertFalse(sessions.capture().isActive)
+    }
+
     @Test fun laterLoginWinsWhenEarlierLoginTransportIgnoresCancellation() = runBlocking {
         val firstLogin = CompletableDeferred<String>()
         var credential: String? = null
