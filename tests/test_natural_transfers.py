@@ -5,7 +5,7 @@ The imported gateway fixture redirects every core request into TestClient and
 uses an in-memory checkpointer. No running service or developer ledger is used.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
@@ -268,8 +268,10 @@ def test_tomorrow_afternoon_is_scheduled_and_keeps_explicit_time(gateway):
     cid = "human-tomorrow"
     first = _ask(client, "明天下午三点给李四转50元", cid)
     assert _state(cid)["intent"] == "SCHEDULED_TRANSFER", first
-    scheduled = datetime.fromisoformat(_state(cid)["scheduled_at"])
-    assert scheduled.date() == (datetime.now().astimezone() + timedelta(days=1)).date()
+    # “明天” is the business day in Beijing time, whatever the runner's zone is.
+    beijing = timezone(timedelta(hours=8))
+    scheduled = datetime.fromisoformat(_state(cid)["scheduled_at"]).astimezone(beijing)
+    assert scheduled.date() == (datetime.now(beijing) + timedelta(days=1)).date()
     assert scheduled.hour == 15
     result = _approve(client, first)
     assert result["result"]["execution_result"]["type"] == "SCHEDULED_TRANSFER"

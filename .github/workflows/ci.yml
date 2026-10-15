@@ -3,6 +3,8 @@ name: quality
 on:
   push:
   pull_request:
+  # Manual runs also publish the debug APK (see the upload step).
+  workflow_dispatch:
 
 jobs:
   test:
@@ -67,9 +69,14 @@ jobs:
           # locally (see app/src/androidTest/.../LoginAndChatUiTest.kt); CI only
           # guarantees they still build.
           ./gradlew --no-daemon --stacktrace --warning-mode=all testDebugUnitTest lintDebug assembleDebug assembleRelease assembleDebugAndroidTest
+      # A ~30 MB APK on every push exhausted the account's artifact storage
+      # quota and failed the job. Every push still builds it; only manual runs
+      # publish it, and only for a week.
       - name: Upload debug APK
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: bank-agent-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+          retention-days: 7
