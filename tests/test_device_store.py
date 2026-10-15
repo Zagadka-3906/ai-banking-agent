@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat  # noqa: E402
 
 import security  # noqa: E402
+from support import patch_security  # noqa: E402
 
 
 def spki_b64(private_key) -> str:
@@ -266,7 +267,7 @@ def test_an_unkeyed_store_loads_but_is_reported_as_unkeyed(store, monkeypatch):
     make this test assert the opposite of its name.
     """
 
-    monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", False)
+    patch_security(monkeypatch, "AUTH_SECRET_CONFIGURED", False)
 
     device_id = enroll()
     snapshot = read_store(store)
@@ -290,7 +291,7 @@ def test_a_downgraded_device_store_digest_is_refused(store, monkeypatch):
     # Pin the keyed posture instead of inheriting a developer's local .env.
     # CI intentionally has no deployment secret, while this regression test is
     # specifically about refusing a downgrade from HMAC to an unkeyed digest.
-    monkeypatch.setattr(security, "AUTH_SECRET_CONFIGURED", True)
+    patch_security(monkeypatch, "AUTH_SECRET_CONFIGURED", True)
 
     device_id = enroll()
     snapshot = read_store(store)

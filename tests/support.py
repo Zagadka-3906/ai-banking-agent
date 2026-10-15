@@ -43,6 +43,17 @@ def patch_everywhere(monkeypatch: Any, package: str, name: str, value: Any) -> N
             monkeypatch.setattr(module, name, value)
 
 
+def patch_security(monkeypatch: Any, name: str, value: Any) -> None:
+    """Rebind a ``security`` name where the ``bank_security`` modules read it.
+
+    ``security`` only re-exports the package, so patching the entry alone would
+    not reach the functions that use the name.
+    """
+
+    patch_everywhere(monkeypatch, "bank_security", name, value)
+    monkeypatch.setattr(security, name, value)
+
+
 def session_headers(client: Any, user_id: str = "user_zhang") -> dict[str, str]:
     return {"X-User-Id": user_id, "X-Session-Token": login_session(client, user_id)}
 

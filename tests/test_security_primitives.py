@@ -19,6 +19,7 @@ from security import (
     verify_audit_chain,
 )
 from bank_tools import BankClient
+from support import patch_security
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +116,7 @@ def test_audit_trace_links_one_request_chain():
 
 
 def test_audit_file_reload_preserves_chain(tmp_path, monkeypatch):
-    monkeypatch.setattr(security, "AUDIT_SERVICE", None)  # plain process: the explicit file as given
+    patch_security(monkeypatch, "AUDIT_SERVICE", None)  # plain process: the explicit file as given
     path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("BANK_AUDIT_LOG_PATH", str(path))
     audit_event("PERSISTED_ONE", user_id="user_zhang", outcome="SUCCESS", request_id="req_persist")
@@ -136,7 +137,7 @@ def test_services_sharing_one_env_write_separate_audit_files(tmp_path, monkeypat
     monkeypatch.setenv("BANK_AUDIT_LOG_DIR", str(tmp_path))
     paths = {}
     for service in ("core", "gateway"):
-        monkeypatch.setattr(security, "AUDIT_SERVICE", service)
+        patch_security(monkeypatch, "AUDIT_SERVICE", service)
         paths[service] = security.audit_log_path()
     assert paths == {"core": str(tmp_path / "core-audit.jsonl"), "gateway": str(tmp_path / "gateway-audit.jsonl")}
     # A legacy shared single-file setting is split by service too.
@@ -147,7 +148,7 @@ def test_services_sharing_one_env_write_separate_audit_files(tmp_path, monkeypat
     assert security.audit_log_path().endswith(str(pathlib.Path("bank-agent", "audit", "gateway-audit.jsonl")))
     monkeypatch.setenv("BANK_AUDIT_LOG_DIR", "OFF")
     assert security.audit_log_path() is None
-    monkeypatch.setattr(security, "AUDIT_SERVICE", None)
+    patch_security(monkeypatch, "AUDIT_SERVICE", None)
     monkeypatch.setenv("BANK_AUDIT_LOG_DIR", "")
     assert security.audit_log_path() is None  # tests and CLI helpers never default to a file
 
@@ -175,7 +176,7 @@ def test_concurrent_core_and_gateway_audit_files_both_reload_intact(tmp_path):
 
 
 def test_audit_file_tamper_is_detected(tmp_path, monkeypatch):
-    monkeypatch.setattr(security, "AUDIT_SERVICE", None)  # plain process: the explicit file as given
+    patch_security(monkeypatch, "AUDIT_SERVICE", None)  # plain process: the explicit file as given
     path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("BANK_AUDIT_LOG_PATH", str(path))
     audit_event("PERSISTED_ONE", user_id="user_zhang", outcome="SUCCESS")

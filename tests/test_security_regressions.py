@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import time
 
 import pytest
 
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 import main
 from bank_core import http_edge
 import security
-from support import sign_face_attestation
+from support import patch_security, sign_face_attestation
 
 
 @pytest.fixture()
@@ -79,10 +80,10 @@ def test_circuit_lockout_expiry_is_not_extended_by_retries(monkeypatch):
     """Blocked polling must not turn a finite lockout into a permanent one."""
 
     clock = [100.0]
-    monkeypatch.setattr(security.time, "monotonic", lambda: clock[0])
-    monkeypatch.setattr(security, "MAX_FAILURES", 2)
-    monkeypatch.setattr(security, "LOCKOUT_SECONDS", 60)
-    monkeypatch.setattr(security, "FAILURE_WINDOW_SECONDS", 300)
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    patch_security(monkeypatch, "MAX_FAILURES", 2)
+    patch_security(monkeypatch, "LOCKOUT_SECONDS", 60)
+    patch_security(monkeypatch, "FAILURE_WINDOW_SECONDS", 300)
     security.reset_security_state()
 
     security.record_security_failure("user_zhang", "bad-token")
@@ -376,7 +377,7 @@ def test_convenience_route_cannot_override_operation_name(client: TestClient):
 
 def test_rotated_audit_chain_remains_verifiable(monkeypatch):
     security.reset_security_state()
-    monkeypatch.setattr(security, "AUDIT_MAX_EVENTS", 3)
+    patch_security(monkeypatch, "AUDIT_MAX_EVENTS", 3)
     for index in range(6):
         security.audit_event("TEST", metadata={"index": index, "access_token": "secret-value"})
     assert len(security.AUDIT_LOGS) == 3

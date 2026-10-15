@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import main
 import security
 from scripts import smoke_test
+from support import patch_security
 
 
 @pytest.fixture()
@@ -47,7 +48,7 @@ def test_probe_authenticates_configured_account_and_revokes_session(probe):
 
 def test_probe_supports_login_otp(probe, monkeypatch):
     monkeypatch.setenv("BANK_LOGIN_REQUIRE_OTP", "1")
-    monkeypatch.setattr(security, "MFA_TEST_OTP", "123456")
+    patch_security(monkeypatch, "MFA_TEST_OTP", "123456")
     monkeypatch.setenv("BANK_LOGIN_OTP", "123456")
     assert smoke_test.main() == 0
     assert not security.SESSION_TOKENS

@@ -2,12 +2,14 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
 import main
 import security
+from support import patch_security
 
 
 @pytest.fixture()
@@ -95,7 +97,7 @@ def test_live_successor_keeps_approval_after_original_credential_expires(client,
     approval = _approval(client, original)
     renewed = _renew(client, original)
     after_original_expiry = security.SESSION_TOKENS[original]["expires_at"] + 1
-    monkeypatch.setattr(security.time, "time", lambda: after_original_expiry)
+    monkeypatch.setattr(time, "time", lambda: after_original_expiry)
     # Issuance purges expired credentials, so success cannot depend on retaining
     # the original token in the registry or accepting it beyond its own TTL.
     security.issue_session_token("user_li")
@@ -112,7 +114,7 @@ def test_session_renewal_does_not_extend_the_approval_deadline(client, monkeypat
     approval = _approval(client, original)
     renewed = _renew(client, original)
     expired_at = security.inspect_auth_token(approval)[0]["exp"] + 1
-    monkeypatch.setattr(security.time, "time", lambda: expired_at)
+    monkeypatch.setattr(time, "time", lambda: expired_at)
     assert security.resolve_session(renewed) == "user_zhang"
     balance = main.ACCOUNTS["user_zhang"]["balance"]
 
@@ -161,7 +163,7 @@ def test_concurrent_renewal_cannot_outlive_logout(client, monkeypatch):
         finally:
             logout_finished.set()
 
-    monkeypatch.setattr(security, "_issue_session_token", paused_issue)
+    patch_security(monkeypatch, "_issue_session_token", paused_issue)
     with ThreadPoolExecutor(max_workers=2) as pool:
         renewal = pool.submit(security.renew_session, original)
         try:

@@ -1,6 +1,7 @@
 """In-process evidence for gateway refusal audit and core lockout boundaries."""
 
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -242,6 +243,6 @@ def test_lock_blocks_confirmed_settlement_and_spoofed_header_then_expires(bounda
         assert response.json()["detail"]["code"] == "CIRCUIT_OPEN"
     assert main.ACCOUNTS["user_zhang"] == before
     assert security.circuit_status("user_zhang")["locked_until_epoch"] == locked["locked_until_epoch"]
-    security.SECURITY_STATE["user_zhang"]["locked_until"] = security.time.monotonic() - 1
+    security.SECURITY_STATE["user_zhang"]["locked_until"] = time.monotonic() - 1
     assert security.circuit_status("user_zhang")["locked"] is False
     assert core.get("/api/v1/accounts/user_zhang/balance", headers=headers).status_code == 200
