@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from langgraph.types import Command
 
 import agent
+from bank_agent import runtime
 import main
 from support import sign_face_attestation
 
@@ -36,14 +37,14 @@ def wired(monkeypatch):
     client = TestClient(main.app)
 
     def fake_http(method, path, *, state, json_body=None, headers=None):
-        # Mirror the real ``agent._http`` contract: the request id from graph
+        # Mirror the real ``bank_agent.runtime._http`` contract: the request id from graph
         # state is propagated as X-Request-Id so the core records one linked
         # decision chain.  Replacing the transport must not silently drop it.
         merged = {"X-Request-Id": state.get("request_id") or "test-request"}
         merged.update(headers or {})
         return client.request(method, "/api/v1/" + path.lstrip("/"), json=json_body, headers=merged)
 
-    monkeypatch.setattr(agent, "_http", fake_http)
+    monkeypatch.setattr(runtime, "_http", fake_http)
     yield client
     main.reset_state()
 
@@ -94,7 +95,7 @@ def test_settle_retries_once_with_same_idempotency_key(wired, monkeypatch):
     """A transport failure retries once with the same key (no double settle)."""
 
     captured: list[dict[str, str]] = []
-    real_http = agent._http
+    real_http = runtime._http
     calls = {"n": 0}
 
     def flaky(method, path, *, state, json_body=None, headers=None):
@@ -105,7 +106,7 @@ def test_settle_retries_once_with_same_idempotency_key(wired, monkeypatch):
                 raise requests.ConnectionError("boom")
         return real_http(method, path, state=state, json_body=json_body, headers=headers)
 
-    monkeypatch.setattr(agent, "_http", flaky)
+    monkeypatch.setattr(runtime, "_http", flaky)
     config = {"configurable": {"thread_id": "test-agent-idempotent-retry"}}
     list(agent.app.stream({"user_id": "user_zhang", "user_input": "给李四转账 10 元"}, config=config, stream_mode="values"))
     snapshot = agent.app.get_state(config)
@@ -126,7 +127,7 @@ def test_failed_lock_settle_triggers_compensation_verification(wired, monkeypatc
     audit suite covers a committed operation whose reply is lost.
     """
 
-    real_http = agent._http
+    real_http = runtime._http
 
     def flaky(method, path, *, state, json_body=None, headers=None):
         if method == "POST" and "lock_fund" in path:
@@ -136,7 +137,7 @@ def test_failed_lock_settle_triggers_compensation_verification(wired, monkeypatc
             return response
         return real_http(method, path, state=state, json_body=json_body, headers=headers)
 
-    monkeypatch.setattr(agent, "_http", flaky)
+    monkeypatch.setattr(runtime, "_http", flaky)
     config = {"configurable": {"thread_id": "test-agent-lock-compensation"}}
     list(agent.app.stream({"user_id": "user_zhang", "user_input": "我爱人生日是 2099-10-03，锁定 500 元并提醒订花"}, config=config, stream_mode="values"))
     snapshot = agent.app.get_state(config)
@@ -233,7 +234,7 @@ def test_model_cannot_downgrade_explicit_scheduled_transfer(monkeypatch):
         def invoke(self, _messages):
             return FakeResponse()
 
-    monkeypatch.setattr(agent, "llm", FakeLLM())
+    monkeypatch.setattr(runtime, "llm", FakeLLM())
     parsed = agent._model_parse("下周给李四转 500 元")
     assert parsed["intent"] == "SCHEDULED_TRANSFER"
     assert parsed["scheduled_at"] != "2099-01-01T09:00:00+08:00"
@@ -267,7 +268,7 @@ def test_model_cannot_drop_explicit_birthday_date(monkeypatch):
         def invoke(self, _messages):
             return FakeResponse()
 
-    monkeypatch.setattr(agent, "llm", FakeLLM())
+    monkeypatch.setattr(runtime, "llm", FakeLLM())
     parsed = agent._model_parse("我爱人生日是下周六，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕")
     assert parsed["intent"] == "CROSS_SCENE_LOCK"
     assert parsed["scheduled_at"], "the explicit date must survive the model answer"
@@ -286,7 +287,7 @@ def test_model_incomplete_result_falls_back_to_complete_local_parse(monkeypatch)
         def invoke(self, _messages):
             return FakeResponse()
 
-    monkeypatch.setattr(agent, "llm", FakeLLM())
+    monkeypatch.setattr(runtime, "llm", FakeLLM())
     parsed = agent._model_parse("给李四转账 10 元")
     assert parsed["intent"] == "TRANSFER"
     assert parsed["amount"] == 10.0

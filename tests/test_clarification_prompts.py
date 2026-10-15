@@ -11,17 +11,17 @@ import requests
 pytest.importorskip("langgraph")
 pytest.importorskip("fastapi")
 
-import agent
 import conversation
 import main
 from test_agent_gateway import gateway, _send  # noqa: F401
+from bank_agent import runtime
 
 
 @pytest.fixture
 def channel(gateway, monkeypatch):
     import agent_api
 
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     monkeypatch.setattr(agent_api, "RATE_LIMIT_STATE", {})
 
     def no_network(*args, **kwargs):

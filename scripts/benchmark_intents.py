@@ -58,6 +58,7 @@ def main():
         os.environ["DEEPSEEK_API_KEY"] = ""
     sys.path.insert(0, str(ROOT))
     import agent
+    from bank_agent import runtime
     from planner import ALL_INTENTS, needs_clarification, validate_intent_payload
     from security import InjectionError, sanitize_text
 
@@ -68,7 +69,7 @@ def main():
     if any(case["expect"].get("intent", "UNKNOWN") not in ALL_INTENTS for case in cases):
         raise ValueError("Dataset uses an intent outside the application allowlist")
     results = {}
-    original_model = agent.llm
+    original_model = runtime.llm
     for mode in ("rules", "model"):
         rows = []
         os.environ["BANK_MODEL_FAST_PATH"] = "0"
@@ -89,7 +90,7 @@ def main():
                     self.observation["model_returns"] += 1
                     return response
 
-            agent.llm = ObservedModel(row) if mode == "model" else None
+            runtime.llm = ObservedModel(row) if mode == "model" else None
             started = time.perf_counter()
             try:
                 text = sanitize_text(case["input"], field="评测输入", max_length=2000)

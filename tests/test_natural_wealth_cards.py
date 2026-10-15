@@ -24,6 +24,7 @@ import conversation
 import main
 from support import sign_face_attestation
 from bank_tools import BankClient
+from bank_agent import runtime
 
 
 USER = "user_zhang"
@@ -119,7 +120,7 @@ def dialogue(monkeypatch, tmp_path, request):
     monkeypatch.setenv("BANK_CONVERSATION_DB", "memory")
     monkeypatch.setattr(conversation, "_GRAPH", None)
     monkeypatch.setattr(conversation, "_GRAPH_BACKEND", "uninitialised")
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     main.reset_state()
     core = TestClient(main.app)
     settlements = []
@@ -134,7 +135,7 @@ def dialogue(monkeypatch, tmp_path, request):
     def no_network(*args, **kwargs):
         raise AssertionError("Natural dialogue tests must not use the external network")
 
-    monkeypatch.setattr(agent, "_http", in_process_http)
+    monkeypatch.setattr(runtime, "_http", in_process_http)
     monkeypatch.setattr(requests.sessions.Session, "request", no_network)
     service = conversation.ConversationService(client_factory=lambda principal, session_token=None: BankClient(
         base_url="http://inprocess/api/v1", user_id=principal,

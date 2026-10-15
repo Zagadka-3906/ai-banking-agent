@@ -10,6 +10,7 @@ import pytest
 import sandbox
 from test_agent_gateway import gateway  # noqa: F401
 from support import login_session
+from bank_agent import runtime
 
 
 @pytest.mark.parametrize("expression", [
@@ -123,11 +124,10 @@ def test_read_only_bill_aggregation_still_uses_a_real_process():
 
 
 def test_gateway_bill_sandbox_audit_is_bound_to_verified_subject_and_server_request(gateway, monkeypatch):
-    import agent
     import security
 
     client, core = gateway
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     token = login_session(core)
     response = client.post("/api/v1/agent/messages", json={
         "text": "分析本月账单", "conversation_id": "sandbox-audit-link",

@@ -12,9 +12,9 @@ Settings are forced so the suite is hermetic with respect to a developer's local
   attestations still use enrolled P-256 keys, matching the Android contract.
 * ``DEEPSEEK_API_KEY=""`` - the suite must not depend on a paid,
   nondeterministic external service.  With a real key present (a developer's
-  ``.env``), ``agent.llm`` is live and one test was observed to fail
+  ``.env``), ``bank_agent.runtime.llm`` is live and one test was observed to fail
   intermittently purely because of what the model returned.  Tests that assert
-  model-merge behaviour install a fake LLM via ``monkeypatch.setattr(agent,
+  model-merge behaviour install a fake LLM via ``monkeypatch.setattr(runtime,
   "llm", ...)`` and are unaffected.
 * ``BANK_DEVICE_STORE_PATH`` / ``BANK_AUDIT_LOG_PATH`` emptied and
   ``BANK_AUDIT_LOG_DIR=off`` (Core/Gateway otherwise default to a per-service

@@ -137,9 +137,11 @@ Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂�
 
 | 路径 | 作用 |
 | --- | --- |
-| `main.py`、`security.py`、`mock_merchant.py`、`subscription_detector.py` | Core、授权、虚构账本与商户、周期扣费候选识别 |
+| `main.py`（装配应用）、`bank_core/` | Core：`ledger`/`cards`/`wealth_data`/`contacts` 等领域状态与规则，`payments`/`operations` 风控与授权上下文，`access`/`idempotency`/`persistence`/`http_edge` 横切守卫，`routes/` 按绿区读取、预检确认、执行、任务等分组的接口 |
+| `security.py`、`mock_merchant.py`、`subscription_detector.py` | 授权凭证、熔断与审计链，虚构商户，周期扣费候选识别 |
 | `agent_api.py`、`conversation.py`、`feishu_im.py` | Android 对话网关、SSE、审批句柄和飞书只读私聊接入 |
-| `agent.py`、`planner.py`、`sandbox.py` | LangGraph、意图与任务规划、只读分析沙箱 |
+| `agent.py`（构建默认图）、`bank_agent/` | LangGraph 编排：`runtime`（配置、模型客户端、Core 传输）、`extraction`/`parsing`/`dialogue` 意图与多轮上下文、`nodes/` 五个图节点、`verification`/`rendering` 回执核验与文案 |
+| `planner.py`、`sandbox.py` | 意图白名单与任务规划、只读分析沙箱 |
 | `scheduler.py`、`notification_outbox.py` | 本机任务状态与 AA 事件记录 |
 | `android/app/src/main/` | Android 客户端 |
 | `tests/`、`android/app/src/test/`、`android/app/src/androidTest/` | 后端、JVM 与模拟器 UI 测试 |

@@ -14,6 +14,7 @@ pytest.importorskip("langgraph")
 import agent
 import main
 from test_agent_gateway import gateway, _headers, _send  # noqa: F401
+from bank_agent import runtime
 
 
 def receipt(kind, payload, **state):
@@ -68,9 +69,9 @@ def test_gateway_validation_failure_does_not_leave_a_false_result_card(gateway, 
     import agent_api
 
     client, core = gateway
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     monkeypatch.setattr(agent_api, "RATE_LIMIT_STATE", {})
-    core_http = agent._http
+    core_http = runtime._http
 
     def inconsistent_balance(method, path, **kwargs):
         response = core_http(method, path, **kwargs)
@@ -81,7 +82,7 @@ def test_gateway_validation_failure_does_not_leave_a_false_result_card(gateway, 
             return httpx.Response(200, json=payload)
         return response
 
-    monkeypatch.setattr(agent, "_http", inconsistent_balance)
+    monkeypatch.setattr(runtime, "_http", inconsistent_balance)
     response = _send(client, "查余额", conversation_id="rejected-receipt-card")
     assert "没有声称" in response["reply"], response
     assert not response.get("result"), "Unverified receipt/plan must not remain visible in result cards"
@@ -103,7 +104,7 @@ def test_gateway_aa_does_not_claim_collection_before_each_payer_confirms(gateway
     import agent_api
 
     client, _ = gateway
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     monkeypatch.setattr(agent_api, "RATE_LIMIT_STATE", {})
     main.ACCOUNTS["user_wife"]["balance"] = 0
     first = _send(client, "和李四、王美 AA 分摊 300 元", conversation_id="partial-aa-facts")
@@ -128,7 +129,7 @@ def test_gateway_transfer_receipt_matches_core_resolved_payee(gateway, monkeypat
     import agent_api
 
     client, core = gateway
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     monkeypatch.setattr(agent_api, "RATE_LIMIT_STATE", {})
     if payee == "老李":
         added = core.post(
@@ -137,7 +138,7 @@ def test_gateway_transfer_receipt_matches_core_resolved_payee(gateway, monkeypat
             headers=_headers(),
         )
         assert added.status_code == 200, added.text
-    core_http = agent._http
+    core_http = runtime._http
 
     def altered_receipt(method, path, **kwargs):
         response = core_http(method, path, **kwargs)
@@ -147,7 +148,7 @@ def test_gateway_transfer_receipt_matches_core_resolved_payee(gateway, monkeypat
             return httpx.Response(200, json=payload)
         return response
 
-    monkeypatch.setattr(agent, "_http", altered_receipt)
+    monkeypatch.setattr(runtime, "_http", altered_receipt)
     first = _send(client, f"给{payee}转50元", conversation_id="receipt-payee-binding")
     assert first["status"] == "APPROVAL_REQUIRED", first
     approved = client.post(

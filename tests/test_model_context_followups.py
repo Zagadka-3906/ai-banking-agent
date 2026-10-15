@@ -10,10 +10,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import agent
 import conversation
 import main
 from test_agent_gateway import gateway, _headers, _send  # noqa: F401
+from bank_agent import runtime
 
 
 def _state(conversation_id):
@@ -31,7 +31,7 @@ def _read_only_model(monkeypatch, intent, target):
                 "scheduled_at": None, "event_at": None,
             }, ensure_ascii=False))
 
-    monkeypatch.setattr(agent, "llm", IsolatedReadModel())
+    monkeypatch.setattr(runtime, "llm", IsolatedReadModel())
 
 
 def test_bare_card_id_model_query_must_complete_pending_lost_card_target(gateway, monkeypatch):

@@ -12,6 +12,7 @@ import main
 from test_agent_gateway import gateway as _gateway_fixture, _headers, _send, _parse_sse
 from support import sign_face_attestation
 from workflow_contract import reply_contract
+from bank_agent import runtime
 
 
 @pytest.fixture
@@ -30,7 +31,7 @@ def approve(client, envelope, decision="approve", stream=False):
 def test_explicit_request_skips_model_but_ambiguous_request_uses_it(monkeypatch):
     calls = []
     monkeypatch.setenv("BANK_MODEL_FAST_PATH", "1")
-    monkeypatch.setattr(agent, "llm", SimpleNamespace(invoke=lambda messages: calls.append(messages) or SimpleNamespace(content='{"intent":"UNKNOWN"}')))
+    monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda messages: calls.append(messages) or SimpleNamespace(content='{"intent":"UNKNOWN"}')))
     assert agent._model_parse("给李四转100元")["intent"] == "TRANSFER"
     assert not calls
     assert agent._model_parse("帮我看看情况")["intent"] == "UNKNOWN"
@@ -44,7 +45,7 @@ def test_model_timeout_falls_back_without_inventing_missing_slots(monkeypatch):
     def slow(_):
         release.wait(3)
         return SimpleNamespace(content='{"intent":"TRANSFER","amount":999}')
-    monkeypatch.setattr(agent, "llm", SimpleNamespace(invoke=slow))
+    monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=slow))
     started = time.monotonic()
     try:
         result = agent._model_parse("给李四转账")
@@ -57,14 +58,14 @@ def test_model_timeout_falls_back_without_inventing_missing_slots(monkeypatch):
 def test_independent_reads_overlap_and_propagate_session(gateway, monkeypatch):
     client, _ = gateway
     barrier = threading.Barrier(2)
-    original = agent._http
+    original = runtime._http
     tokens = []
     def synchronized(method, path, **kwargs):
         if path.endswith(("/balance", "/transactions")):
             tokens.append(agent._CHANNEL_SESSION.get())
             barrier.wait(timeout=3)
         return original(method, path, **kwargs)
-    monkeypatch.setattr(agent, "_http", synchronized)
+    monkeypatch.setattr(runtime, "_http", synchronized)
     result = _send(client, "查一下余额，同时查看本月账单", conversation_id="parallel")
     assert result["business_status"] == "SUCCEEDED"
     assert len(result["response"]["sections"]) == 2
@@ -76,14 +77,14 @@ def test_independent_reads_overlap_and_propagate_session(gateway, monkeypatch):
 @pytest.mark.parametrize("malformed", [False, True])
 def test_partial_reads_preserve_only_verified_sections(gateway, monkeypatch, malformed):
     client, _ = gateway
-    original = agent._http
+    original = runtime._http
     def failed(method, path, **kwargs):
         if path.endswith("/balance"):
             if malformed:
                 return SimpleNamespace(status_code=200, json=lambda: {"user_id": "user_li", "total_balance": 123456, "available_balance": 123456, "locked_amount": 0})
             raise requests.Timeout("PRIVATE_BANK_DETAIL")
         return original(method, path, **kwargs)
-    monkeypatch.setattr(agent, "_http", failed)
+    monkeypatch.setattr(runtime, "_http", failed)
     result = _send(client, "查一下余额，同时查看本月账单", conversation_id="partial")
     assert result["business_status"] == "PARTIAL_SUCCESS"
     assert [section["status"] for section in result["response"]["sections"]] == ["FAILED", "SUCCEEDED"]
@@ -163,7 +164,7 @@ def test_lost_receipt_reconciles_without_resubmitting_and_is_owner_scoped(gatewa
     client, core = gateway
     text = "查一下余额，然后给李四转10元，然后给李四转20元" if compound else "给李四转10元"
     pending = _send(client, text, conversation_id="lost-receipt", message_id="original")
-    original = agent._http
+    original = runtime._http
     settlements = []
     def lost(method, path, **kwargs):
         response = original(method, path, **kwargs)
@@ -171,7 +172,7 @@ def test_lost_receipt_reconciles_without_resubmitting_and_is_owner_scoped(gatewa
             settlements.append(kwargs["headers"]["Idempotency-Key"])
             raise requests.ConnectionError("PRIVATE_RECEIPT_ERROR")
         return response
-    monkeypatch.setattr(agent, "_http", lost)
+    monkeypatch.setattr(runtime, "_http", lost)
     unknown = approve(client, pending)
     assert unknown["business_status"] == "PENDING_RECONCILIATION"
     assert _send(client, text, conversation_id="lost-receipt", message_id="original") == unknown

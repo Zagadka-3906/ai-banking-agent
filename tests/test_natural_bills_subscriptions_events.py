@@ -24,6 +24,8 @@ import conversation
 import main
 from planner import build_task_plan, validate_intent_payload
 from test_agent_gateway import gateway, _headers, _send  # noqa: F401
+from support import patch_everywhere
+from bank_agent import runtime
 
 
 PRINCIPAL = "user_zhang"
@@ -100,7 +102,7 @@ class Dialogue:
 def dialogue(monkeypatch):
     monkeypatch.setenv("BANK_CONVERSATION_DB", "memory")
     monkeypatch.setenv("BANK_APPROVAL_STORE_PATH", "memory")
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     main.reset_state()
     graph = agent.build_graph()
     monkeypatch.setattr(conversation, "_GRAPH", graph)
@@ -111,7 +113,7 @@ def dialogue(monkeypatch):
             merged.update(headers or {})
             return core.request(method, "/api/v1/" + path.lstrip("/"), json=json_body, headers=merged)
 
-        monkeypatch.setattr(agent, "_http", fake_http)
+        monkeypatch.setattr(runtime, "_http", fake_http)
         service = conversation.ConversationService(client_factory=lambda *_: _InProcessClient(core))
         value = Dialogue(core, graph, service)
         yield value
@@ -411,7 +413,7 @@ def test_next_week_weekday_after_friday_does_not_skip_an_extra_week(dialogue, mo
         def now(cls, tz=None):
             return friday if tz is None else friday.astimezone(tz)
 
-    monkeypatch.setattr(agent, "datetime", FixedDatetime)
+    patch_everywhere(monkeypatch, "bank_agent", "datetime", FixedDatetime)
     dialogue.say("我爱人生日快到了，锁定1000元生日前两天提醒订花和蛋糕")
     response = dialogue.say("下周三")
     assert response["status"] == "APPROVAL_REQUIRED", dialogue.diagnostic()
@@ -501,7 +503,7 @@ def display_gateway(gateway, monkeypatch):
     import agent_api
 
     monkeypatch.setattr(agent_api, "RATE_LIMIT_STATE", {})
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     return gateway
 
 

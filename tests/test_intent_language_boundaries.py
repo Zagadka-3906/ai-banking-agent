@@ -12,6 +12,7 @@ from intent_language import requested_date_range, split_tasks
 from planner import filter_transactions, validate_intent_payload
 from security import sanitize_text
 from test_agent_gateway import gateway as _gateway_fixture, _headers, _send
+from bank_agent import runtime
 
 
 @pytest.fixture
@@ -165,7 +166,7 @@ def test_range_filters_records_and_survives_category_followup(gateway):
 
 def test_model_cannot_resolve_conflicting_facts_or_change_date_bounds(monkeypatch):
     monkeypatch.setenv("BANK_MODEL_FAST_PATH", "0")
-    monkeypatch.setattr(agent, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps({"intent": "TRANSFER", "target": "李四", "amount": 100, "confidence": 1, "date_scope": "ALL"}))))
+    monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps({"intent": "TRANSFER", "target": "李四", "amount": 100, "confidence": 1, "date_scope": "ALL"}))))
     money = validate_intent_payload(agent._model_parse("给李四转100元或200元"))
     assert money["amount"] is None and money["slots"]["amount_ambiguous"] is True
     payee = validate_intent_payload(agent._model_parse("不是给李四，是给王美转100元"))

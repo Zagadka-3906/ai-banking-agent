@@ -12,6 +12,7 @@ pytest.importorskip("langgraph")
 
 import agent
 from planner import missing_slots, validate_intent_payload
+from bank_agent import runtime
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def model(monkeypatch):
             calls.append(messages)
             return SimpleNamespace(content=json.dumps(payload, ensure_ascii=False))
 
-        monkeypatch.setattr(agent, "llm", SimpleNamespace(invoke=invoke))
+        monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=invoke))
         parsed = validate_intent_payload(agent._model_parse(text))
         assert len(calls) == 1, "The model should still participate in extraction"
         return parsed
@@ -174,5 +175,5 @@ def test_model_may_extract_explicit_disputed_transaction_but_not_invent_it(model
 
 def test_unavailable_or_malformed_model_falls_back_to_local(monkeypatch):
     text = "给李四转账 10 元"
-    monkeypatch.setattr(agent, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content="not json")))
+    monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content="not json")))
     assert agent._model_parse(text) == agent._local_parse(text)

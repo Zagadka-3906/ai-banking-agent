@@ -329,8 +329,8 @@ def run() -> None:
     response_controls = install_response_controls(app, authorize)
 
     if args.service == "gateway":
-        import agent
         import conversation
+        from bank_agent import runtime
         install_receipt_controls(app, authorize)
         original_stream = conversation.SERVICE.start_turn_stream
 
@@ -431,8 +431,8 @@ def run() -> None:
                         output.write(json.dumps(record, ensure_ascii=False) + "\n")
 
         app.add_middleware(ObserveHttpRejections)
-        if agent.llm is not None:
-            real_llm = agent.llm
+        if runtime.llm is not None:
+            real_llm = runtime.llm
             class ObservedModel:
                 def invoke(self, *positional, **keywords):
                     started = time.monotonic()
@@ -447,7 +447,7 @@ def run() -> None:
                     finally:
                         record["elapsed_ms"] = round((time.monotonic() - started) * 1000)
                         model_calls.append(record)
-            agent.llm = ObservedModel()
+            runtime.llm = ObservedModel()
 
     @app.post("/__scenario/reset")
     async def reset(payload: dict, x_scenario_token: str = Header(default="")):

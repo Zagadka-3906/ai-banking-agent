@@ -9,14 +9,14 @@ import pytest
 pytest.importorskip("langgraph")
 pytest.importorskip("fastapi")
 
-import agent
 import main
 from test_agent_gateway import gateway, _send  # noqa: F401
+from bank_agent import runtime
 
 
 @pytest.fixture
 def foreign_bill(gateway, monkeypatch):
-    monkeypatch.setattr(agent, "llm", None)
+    monkeypatch.setattr(runtime, "llm", None)
     client, _ = gateway
     today = datetime.now()
     previous = today.replace(day=1) - timedelta(days=1)

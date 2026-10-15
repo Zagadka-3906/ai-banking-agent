@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 from typing import Any
 
 from cryptography.hazmat.primitives import hashes
@@ -25,6 +26,21 @@ def login_session(client: Any, user_id: str = "user_zhang") -> str:
     )
     assert response.status_code == 200, response.text
     return str(response.json()["session_token"])
+
+
+def patch_everywhere(monkeypatch: Any, package: str, name: str, value: Any) -> None:
+    """Replace *name* in every loaded module of *package* that binds the same object.
+
+    ``bank_core`` / ``bank_agent`` modules import helpers by name, so patching
+    the defining module alone would miss its callers.
+    """
+
+    modules = [module for key, module in list(sys.modules.items()) if key == package or key.startswith(package + ".")]
+    targets = {id(getattr(module, name)) for module in modules if hasattr(module, name)}
+    assert len(targets) == 1, f"{package}: {name!r} is bound to {len(targets)} different objects"
+    for module in modules:
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)
 
 
 def session_headers(client: Any, user_id: str = "user_zhang") -> dict[str, str]:

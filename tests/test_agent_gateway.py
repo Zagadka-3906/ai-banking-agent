@@ -1,6 +1,6 @@
 """Channel gateway tests: the contract a native client (the Android app) sees.
 
-These run entirely in-process: ``agent._http`` and the gateway's core client are
+These run entirely in-process: ``bank_agent.runtime._http`` and the gateway's core client are
 both redirected at a ``TestClient`` wrapping the real core app, so the tests
 exercise the genuine authorization state machine (precheck -> confirm -> MFA ->
 settle) without needing a network listener.
@@ -26,6 +26,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import agent  # noqa: E402
+from bank_agent import runtime
 import conversation  # noqa: E402
 import main  # noqa: E402
 import security  # noqa: E402
@@ -147,7 +148,7 @@ def gateway(monkeypatch):
         GATEWAY_SESSIONS[user_id] = login_session(core, user_id)
 
     def fake_http(method, path, *, state, json_body=None, headers=None):
-        # Mirror the real ``agent._http`` contract: both the request id from
+        # Mirror the real ``bank_agent.runtime._http`` contract: both the request id from
         # graph state and the caller's session credential from the channel
         # context are propagated.  Replacing the transport must not silently
         # drop either of them, or the thing under test stops being tested.
@@ -159,7 +160,7 @@ def gateway(monkeypatch):
         FORWARDED_SESSIONS.append(session_token)
         return core.request(method, "/api/v1/" + path.lstrip("/"), json=json_body, headers=merged)
 
-    monkeypatch.setattr(agent, "_http", fake_http)
+    monkeypatch.setattr(runtime, "_http", fake_http)
     monkeypatch.setattr(
         conversation.SERVICE,
         "_client_factory",

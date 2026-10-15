@@ -5,12 +5,12 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import agent
 import agent_api
 import main
 import security
 from bank_tools import BankAPIError
 from support import login_session
+from bank_agent import runtime
 
 
 @pytest.fixture()
@@ -39,7 +39,7 @@ def boundary(monkeypatch):
         merged.update(headers or {})
         return core.request(method, "/api/v1/" + path.lstrip("/"), json=json_body, headers=merged)
 
-    monkeypatch.setattr(agent, "_http", in_process_http)
+    monkeypatch.setattr(runtime, "_http", in_process_http)
     monkeypatch.setenv("BANK_DEMO_MODE", "0")
     yield TestClient(agent_api.app), core, token, other_token
     agent_api.RATE_LIMIT_STATE.clear()
