@@ -16,10 +16,11 @@ biometric = "1.1.0"
 coroutines = "1.9.0"
 mlkitText = "16.0.1"
 # Instrumented UI tests (run on a device/emulator via connectedDebugAndroidTest).
-androidxTestJunit = "1.2.1"
-androidxTestRunner = "1.6.2"
-# Match the Espresso runtime already supplied by Compose UI test 1.7.5.
-espresso = "3.5.0"
+# Keep the AndroidX Test stable release family aligned; its minSdk is 21.
+# https://developer.android.com/jetpack/androidx/releases/test
+androidxTestJunit = "1.3.0"
+androidxTestRunner = "1.7.0"
+espresso = "3.7.0"
 junit = "4.13.2"
 
 [libraries]

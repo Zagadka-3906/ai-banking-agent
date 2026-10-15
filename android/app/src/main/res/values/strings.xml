@@ -1,13 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">安言 AI 银行</string>
-    <string name="login_title">登录</string>
-    <string name="chat_hint">请输入银行业务指令…</string>
-    <string name="send">发送</string>
-    <string name="approval_yellow_title">黄色风险：请确认本次操作</string>
-    <string name="approval_red_title">红色风险：必须完成服务端多因子认证</string>
-    <string name="approve">确认执行</string>
-    <string name="reject">取消操作</string>
-    <string name="otp_label">短信验证码</string>
-    <string name="verify_with_biometric">用生物识别签名并执行</string>
 </resources>

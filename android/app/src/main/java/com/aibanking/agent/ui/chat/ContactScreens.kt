@@ -388,7 +388,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 modifier = Modifier.widthIn(max = BankSpacing.contentMaxWidth).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                BankScreenHeading("记住重要的人", "填写资料，建立常用转账联系", "联系人管理")
+                BankScreenHeading("记住重要的人", subtitle = "填写资料，建立常用转账联系", eyebrow = "联系人管理")
                 BankSectionCard {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text("基本信息", style = MaterialTheme.typography.titleMedium)

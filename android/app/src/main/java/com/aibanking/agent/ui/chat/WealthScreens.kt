@@ -49,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1047,7 +1048,7 @@ private fun WealthChart(product: ProductView, range: String, modifier: Modifier 
     val chartSurface = MaterialTheme.colorScheme.surface
     val all = product.navSeries.filter { it.nav?.isFinite() == true && it.benchmarkNav?.isFinite() == true }
     val points = rangePoints(all, range)
-    var selectedIndex by remember(points) { mutableStateOf(points.lastIndex.coerceAtLeast(0)) }
+    var selectedIndex by remember(points) { mutableIntStateOf(points.lastIndex.coerceAtLeast(0)) }
 
     Column(
         modifier.semantics {

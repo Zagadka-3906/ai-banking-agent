@@ -75,9 +75,9 @@ fun BankSurfaceContainer(modifier: Modifier = Modifier, content: @Composable () 
 @Composable
 fun BankScreenHeading(
     title: String,
+    modifier: Modifier = Modifier,
     subtitle: String? = null,
     eyebrow: String? = null,
-    modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
