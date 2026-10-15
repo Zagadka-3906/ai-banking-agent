@@ -55,3 +55,5 @@ Gradle `dependencyInsight --configuration unified-test-platform-gradle-work-acti
 - [测试结果并发收集修复 b/565986136](https://android.googlesource.com/platform/tools/base/+/8fa11269c6fffad7772fb7a1e6f6e9faed3f234c)
 - [AGP setVisible 上游问题 560282299](https://issuetracker.google.com/issues/560282299)
 - [Gradle setVisible 弃用说明](https://docs.gradle.org/9.8.1/userguide/upgrading_version_9.html#deprecate-visible-property)
+
+后续稳定渠道、插件源码和安全回退路径的复核见 [AGP 上游警告稳定方案审计](AGP上游警告稳定方案审计-2026-10-15.md)。
