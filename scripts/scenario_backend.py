@@ -298,6 +298,7 @@ def run() -> None:
         "BANK_FEISHU_ENABLED": "0",
         "BANK_LOGIN_REQUIRE_OTP": "0",
         "BANK_MFA_TEST_OTP": "888888",
+        "BANK_MFA_DYNAMIC_OTP": "0",  # deterministic legacy fixtures; explicit issuance still binds a dynamic code
         "BANK_REQUIRE_CLIENT_AUTH": "0",
     })
     if args.mode == "offline":

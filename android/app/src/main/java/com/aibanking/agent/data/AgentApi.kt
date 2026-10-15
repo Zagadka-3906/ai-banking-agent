@@ -76,6 +76,12 @@ data class ReplyResponse(val version: Int = 0, val status: String = "", val summ
 data class StageProgress(val stage: String = "", val label: String = "", val phase: String = "started",
     @SerializedName("elapsed_ms") val elapsedMs: Long = 0, val step: Int = 1)
 
+data class DemoOtpView(
+    @SerializedName("approval_id") val approvalId: String = "",
+    @SerializedName("demo_code") val demoCode: String? = null,
+    @SerializedName("expires_in") val expiresIn: Int = 0,
+)
+
 data class FaceChallengeView(
     val code: Int = 0,
     @SerializedName("approval_id") val approvalId: String = "",
@@ -138,6 +144,9 @@ sealed interface StreamEvent {
 }
 
 interface AgentApi {
+    @POST("api/v1/agent/approvals/{approvalId}/demo-otp")
+    suspend fun demoOtp(@Path("approvalId") approvalId: String,
+        @Header("X-User-Id") userId: String, @Header("X-Session-Token") sessionToken: String?): DemoOtpView
     @Streaming
     @POST("api/v1/agent/approvals/{approvalId}/stream")
     suspend fun resolveApprovalStream(@Path("approvalId") approvalId: String, @Body body: ApprovalRequest,

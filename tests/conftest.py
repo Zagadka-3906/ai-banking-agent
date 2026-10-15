@@ -38,7 +38,9 @@ import os
 
 os.environ["BANK_REQUIRE_SESSION"] = "0"
 os.environ["BANK_DEMO_MODE"] = "1"
+os.environ["BANK_MFA_DYNAMIC_OTP"] = "0"
 os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["BANK_FEISHU_ENABLED"] = "0"
 os.environ["BANK_DEVICE_STORE_PATH"] = ""
 os.environ["BANK_AUDIT_LOG_PATH"] = ""
 os.environ["BANK_LEDGER_STORE_PATH"] = ""

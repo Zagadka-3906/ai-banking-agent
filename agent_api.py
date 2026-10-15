@@ -404,6 +404,16 @@ def get_agent_trace(
     return {"code": 200, **SERVICE.aggregate_trace(principal=principal, request_id=sanitize_text(request_id, field="请求编号", max_length=128), session_token=x_session_token)}
 
 
+@app.post("/api/v1/agent/approvals/{approval_id}/demo-otp")
+def post_demo_otp(approval_id: str, request: Request,
+                  x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+                  x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_DEMO_OTP")
+    _guard_rate_limit(principal)
+    return JSONResponse({"code": 200, **SERVICE.demo_otp(principal=principal, approval_id=approval_id, session_token=x_session_token)},
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/v1/agent/approvals/{approval_id}/face-challenge")
 def post_face_challenge(
     approval_id: str,

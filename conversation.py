@@ -929,6 +929,17 @@ class ConversationService:
                                          operation_id=operation_id, envelope=envelope)
             return envelope
 
+    def demo_otp(self, *, principal: str, approval_id: str, session_token: Optional[str] = None) -> dict[str, Any]:
+        approval = self._require_approval(principal, approval_id)
+        if approval.risk_level != "RED" or not approval.auth_token:
+            raise ConversationError("当前审批无需或不能获取验证码", 400, "MFA_NOT_REQUIRED")
+        try:
+            response = self._client(principal, session_token).request_demo_otp(approval.auth_token, request_id=approval.request_id)
+        except BankAPIError as exc:
+            raise self._core_failure(exc) from exc
+        return {"approval_id": approval_id, "demo_code": response.get("demo_code"),
+                "expires_in": response.get("expires_in"), "delivery": "local_demo"}
+
     def face_challenge(self, *, principal: str, approval_id: str, session_token: Optional[str] = None) -> dict[str, Any]:
         """Fetch a liveness challenge for the *device* to sign.
 

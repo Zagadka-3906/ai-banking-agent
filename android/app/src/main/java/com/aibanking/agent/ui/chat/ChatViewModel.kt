@@ -440,7 +440,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         sessionExpiresAtMillis = 0L
     }
 
+    private var draftRevision = 0L
+    private var voiceGeneration = 0L
+
+    internal fun captureVoiceResult(): (String) -> Unit {
+        markUserActivity()
+        val voice = ++voiceGeneration
+        val lease = sessionWork.capture()
+        val revision = draftRevision
+        val original = _state.value.input
+        val messages = _state.value.messages.size
+        return { text ->
+            if (lease.isActive && voice == voiceGeneration && _state.value.authenticated && !_state.value.busy && revision == draftRevision &&
+                _state.value.input == original && _state.value.messages.size == messages) {
+                lease.commit { onInputChange(text.take(2000)) }
+            }
+        }
+    }
+
     fun onInputChange(value: String) {
+        draftRevision++
         markUserActivity()
         _state.update { it.copy(input = value) }
     }
@@ -772,6 +791,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val rows = io { tasks.list(principal, credential().orEmpty()) }
                 _state.update { it.copy(tasks = rows, panelBusy = false, notice = "任务已取消") }
             } catch (failure: GatewayException) {
+                check()
+                applyPanelFailure(failure)
+            }
+        }
+    }
+
+    fun takeoverTask(taskId: String, reason: String) {
+        if (_state.value.panelBusy || reason.isBlank() || reason.length > 300) return
+        if (_state.value.tasks.none { it.taskId == taskId && it.status in setOf("PENDING", "WAITING_USER", "FAILED") }) return
+        val principal = _state.value.principal
+        _state.update { it.copy(panelBusy = true, error = null) }
+        sessionWork.launch {
+            try {
+                io { tasks.takeover(taskId, reason.trim(), principal, credential().orEmpty()) }
+                val rows = io { tasks.list(principal, credential().orEmpty()) }
+                _state.update { it.copy(tasks = rows, panelBusy = false, notice = "已暂停关联任务，待人工处理；已完成操作及锁定资金请按回执核对") }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
                 check()
                 applyPanelFailure(failure)
             }
@@ -1475,6 +1512,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     GatewayException("DEVICE_VERIFICATION_FAILED", "本机验证未完成，请返回原审批卡检查设备验证设置。", 400)
                 })
+            }
+        }
+    }
+
+    fun requestDemoOtp() {
+        val approval = _state.value.pending ?: return
+        if (!approval.mfaRequired || _state.value.busy) return
+        val principal = _state.value.principal
+        _state.update { it.copy(busy = true, error = null) }
+        sessionWork.launch {
+            try {
+                val result = await { agent.requestDemoOtp(principal, credential(), approval.approvalId) }
+                if (_state.value.pending?.approvalId == approval.approvalId && result.approvalId == approval.approvalId) {
+                    val code = result.demoCode?.takeIf { it.matches(Regex("[0-9]{6}")) }
+                        ?: throw GatewayException("CORE_PROTOCOL_ERROR", "未返回有效演示验证码", 502)
+                    _state.update { it.copy(busy = false, notice = "本机演示验证码：$code，有效 ${result.expiresIn} 秒；未发送短信") }
+                } else _state.update { it.copy(busy = false) }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
+                applyFailure(if (failure is GatewayException) failure else GatewayException("CLIENT_ERROR", "无法获取演示验证码，请重试", 0))
+                _state.update { it.copy(busy = false) }
             }
         }
     }

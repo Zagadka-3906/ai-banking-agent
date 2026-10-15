@@ -51,6 +51,7 @@ from security import (
     inspect_auth_token,
     issue_auth_token,
     issue_face_challenge,
+    issue_demo_otp,
     issue_session_token,
     list_devices,
     record_security_failure,
@@ -3700,6 +3701,16 @@ def mfa_verify(req: MFAVerifyRequest, x_auth_token: Optional[str] = Header(None,
     return {"code": 200, **result}
 
 
+@app.post("/api/v1/auth/mfa/otp")
+def mfa_demo_otp(req: FaceChallengeRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    request_id = _request_id(x_request_id)
+    try:
+        actor = _require_token_subject(req.auth_token, body_user=req.user_id, header_user=x_user_id, action="DEMO_OTP", request_id=request_id)
+        return {"code": 200, **issue_demo_otp(req.auth_token, user_id=actor, request_id=request_id)}
+    except SecurityError as exc:
+        _record_failure_and_raise(exc, user_id=x_user_id, action="DEMO_OTP", request_id=request_id)
+
+
 @app.post("/api/v1/auth/mfa/face/challenge")
 @app.post("/api/v1/risk/mfa/face/challenge")
 def mfa_face_challenge(req: FaceChallengeRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
@@ -4569,9 +4580,15 @@ def _task_action(task_id: str, action: str, req: TaskActionRequest, x_user_id: O
     # Task state and its schedule/split reservation form one ledger mutation.
     # Hold the same lock used by settlement so cancellation cannot win only
     # half of that operation or be snapshotted between those changes.
-    with STATE_LOCK:
-        response = _task_action_locked(task_id, action, req, x_user_id, x_request_id)
-        persist_ledger()
+    request_id = _request_id(x_request_id)
+    with _ledger_transaction():
+        response = _task_action_locked(task_id, action, req, x_user_id, request_id)
+        try:
+            persist_ledger()
+        except Exception:
+            audit_event(action, user_id=x_user_id, decision="BLOCK", outcome="PERSISTENCE_FAILED_ROLLBACK",
+                        request_id=request_id, metadata={"task_id": task_id})
+            raise
         return response
 
 
@@ -4616,7 +4633,33 @@ def _task_action_locked(task_id: str, action: str, req: TaskActionRequest, x_use
                         except (KeyError, ValueError):
                             pass
         else:
-            task = TASK_STORE.takeover(safe_id, owner_id=actor, reason=reason)
+            task = TASK_STORE.get(safe_id, owner_id=actor)
+            if task is None:
+                raise KeyError(safe_id)
+            if task.status not in {TaskState.PENDING, TaskState.WAITING_USER, TaskState.FAILED, TaskState.HUMAN_TAKEOVER}:
+                raise ValueError("task cannot be taken over in its current state")
+            # Pause the entire dependent branch. A takeover must not leave
+            # sibling orders sharing this reservation eligible for execution.
+            paused = {safe_id}
+            lock_id = task.payload.get("lock_id")
+            while True:
+                newly_paused = []
+                for dependent in TASK_STORE.list(owner_id=actor):
+                    if dependent.task_id in paused:
+                        continue
+                    related = bool(set(dependent.depends_on) & paused) or bool(lock_id and dependent.payload.get("lock_id") == lock_id)
+                    if related and dependent.status == TaskState.RUNNING:
+                        raise ValueError("related task is currently running; reconcile before takeover")
+                    if related and dependent.status in {TaskState.PENDING, TaskState.WAITING_USER, TaskState.FAILED}:
+                        newly_paused.append(dependent)
+                if not newly_paused:
+                    break
+                for dependent in newly_paused:
+                    paused.add(dependent.task_id)
+            # Validate every node first so a rejection cannot partially pause
+            # the branch. The enclosing STATE_LOCK also serializes execution.
+            for paused_id in paused:
+                TASK_STORE.takeover(paused_id, owner_id=actor, reason=reason)
     except (SecurityError, KeyError, ValueError) as exc:
         if isinstance(exc, SecurityError):
             _record_failure_and_raise(exc, user_id=actor, action=action, request_id=request_id)

@@ -80,7 +80,7 @@ def test_process_timeout_stops_the_actual_running_child(monkeypatch):
             return result
 
     monkeypatch.setattr(sandbox, "ProcessPoolExecutor", RecordingExecutor)
-    monkeypatch.setattr(sandbox, "_evaluate_worker", _sleeping_worker)
+    monkeypatch.setattr(sandbox, "_evaluate_os_worker", _sleeping_worker)
     try:
         with pytest.raises(sandbox.SandboxError, match="超时"):
             sandbox.evaluate_expression("1", [], timeout_seconds=0.1)

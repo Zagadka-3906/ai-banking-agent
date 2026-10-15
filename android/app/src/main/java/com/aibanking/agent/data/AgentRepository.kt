@@ -78,6 +78,10 @@ class AgentRepository(
         api.faceChallenge(approvalId = approvalId, userId = principal, sessionToken = sessionToken)
     }
 
+    suspend fun requestDemoOtp(principal: String, sessionToken: String?, approvalId: String): DemoOtpView = normalizing {
+        api.demoOtp(approvalId, principal, sessionToken)
+    }
+
     /**
      * Run a turn and report its progress as it happens.
      *

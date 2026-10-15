@@ -73,6 +73,36 @@ class ScenarioAccountIsolationUiTest {
         }
     }
 
+    @Test fun delayed_voice_draft_is_discarded_after_account_switch() {
+        lateinit var result: (String) -> Unit
+        ui.runOnIdle { result = model.captureVoiceResult() }
+        logout()
+        login(BOB)
+        ui.runOnIdle { result("给李四转2000元") }
+        assertEquals("", model.state.value.input)
+        assertNull(model.state.value.pending)
+        queryBalance()
+    }
+
+    @Test fun voice_result_cannot_replace_later_manual_edits_or_auto_send() {
+        lateinit var result: (String) -> Unit
+        ui.runOnIdle { result = model.captureVoiceResult(); model.onInputChange("手工输入") }
+        ui.runOnIdle { result("给李四转2000元") }
+        assertEquals("手工输入", model.state.value.input)
+        ui.runOnIdle { result = model.captureVoiceResult(); result("查询余额") }
+        assertEquals("查询余额", model.state.value.input)
+        assertFalse(model.state.value.busy)
+        assertNull(model.state.value.pending)
+        ui.runOnIdle {
+            val old = model.captureVoiceResult()
+            val latest = model.captureVoiceResult()
+            old("给李四转2000元")
+            assertEquals("查询余额", model.state.value.input)
+            latest("查看卡片")
+            assertEquals("查看卡片", model.state.value.input)
+        }
+    }
+
     @Test fun delayed_success_and_sse_progress_do_not_enter_another_account_or_its_storage() {
         delayedStream("success", BOB, "delayed-success")
     }
@@ -166,7 +196,7 @@ class ScenarioAccountIsolationUiTest {
         logout()
         login(BOB)
         requestRedApproval("CARD-002")
-        enterOtp()
+        enterDynamicOtp()
         openSystemPrompt()
         finishSystemPrompt(success = true)
         ui.waitUntil(30_000) { !model.state.value.busy && model.state.value.pending == null }
@@ -448,6 +478,19 @@ class ScenarioAccountIsolationUiTest {
         ui.waitUntil(40_000) { !model.state.value.busy && model.state.value.pending != null }
         assertTrue(checkNotNull(model.state.value.pending).mfaRequired)
         assertNull(model.state.value.error)
+    }
+
+    private fun enterDynamicOtp() {
+        val label = "获取本机一次性演示验证码"
+        ui.onNodeWithTag(UiTags.CHAT_LIST).performScrollToNode(hasText(label))
+        ui.onNodeWithText(label).performScrollTo().performClick()
+        val matcher = hasText("本机演示验证码：", substring = true)
+        ui.waitUntil(10_000) { ui.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
+        val text = ui.onNode(matcher).fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString("") { it.text }
+        val code = checkNotNull(Regex("[0-9]{6}").find(text)).value
+        ui.onNodeWithTag(UiTags.CHAT_LIST).performScrollToNode(hasTestTag(UiTags.APPROVAL_OTP))
+        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextReplacement(code)
+        assertEquals(code, model.state.value.otp)
     }
 
     private fun enterOtp() {

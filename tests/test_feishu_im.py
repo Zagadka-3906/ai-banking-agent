@@ -32,6 +32,16 @@ def card_body(reply: FeishuReply) -> str:
     return "\n".join(item["text"]["content"] for item in reply.content["elements"] if item["tag"] == "div")
 
 
+def test_sdk_policy_failure_is_visible_without_exposing_exception_secrets():
+    feishu_im.reset_state()
+    client = Mock()
+    client.im.v1.message.create.side_effect = RuntimeError("token=private-marker code: 21001 platform policy denied")
+    assert feishu_im._send_reply(client, "test-chat", "test", "test-event") is False
+    status = feishu_im.bot_status()
+    assert status["last_failure"] == {"stage": "send_message", "code": 21001, "kind": "platform_policy_denied"}
+    assert "private-marker" not in repr(status)
+
+
 def test_binding_read_only_replay_and_unbind(monkeypatch):
     feishu_im.reset_state()
     monkeypatch.setenv("BANK_FEISHU_ENABLED", "0")

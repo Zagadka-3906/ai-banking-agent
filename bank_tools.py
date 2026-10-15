@@ -194,6 +194,10 @@ class BankClient:
             headers=self._headers(principal=self.user_id, auth_token=auth_token, request_id=request_id),
         ).json()
 
+    def request_demo_otp(self, auth_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
+        return self._request("POST", "auth/mfa/otp", json={"auth_token": auth_token},
+                             headers=self._headers(principal=self.user_id, auth_token=auth_token, request_id=request_id)).json()
+
     def verify_mfa(
         self,
         auth_token: str,

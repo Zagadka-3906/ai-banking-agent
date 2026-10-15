@@ -36,6 +36,7 @@ _MAX_CODES = 1000
 _MAX_BINDINGS = 10000
 _MAX_EVENTS = 10000
 _BOT_STATE = "disabled"
+_BOT_LAST_FAILURE: dict[str, Any] | None = None
 
 
 def _enabled() -> bool:
@@ -44,12 +45,13 @@ def _enabled() -> bool:
 
 def reset_state() -> None:
     """Clear ephemeral state for isolated tests."""
-    global _BOT_STATE
+    global _BOT_STATE, _BOT_LAST_FAILURE
     with _LOCK:
         _CODES.clear()
         _BINDINGS.clear()
         _EVENTS.clear()
         _BOT_STATE = "disabled"
+        _BOT_LAST_FAILURE = None
 
 
 def _bill_category_supported(message: str, category: Any) -> bool:
@@ -273,8 +275,22 @@ def _send_reply(client: Any, chat_id: str, reply: str | FeishuReply, event_id: s
                .request_body(CreateMessageRequestBody.builder().receive_id(chat_id)
                              .msg_type(payload.msg_type).content(json.dumps(payload.content, ensure_ascii=False))
                              .uuid(event_id).build()).build())
-    response = client.im.v1.message.create(request)
-    return bool(response.success())
+    global _BOT_LAST_FAILURE
+    try:
+        response = client.im.v1.message.create(request)
+        success = bool(response.success())
+        if not success:
+            code = getattr(response, "code", None)
+            _BOT_LAST_FAILURE = {"stage": "send_message", "code": code if isinstance(code, int) else None,
+                                 "kind": "platform_policy_denied" if code == 21001 else "platform_request_failed"}
+        return success
+    except Exception as error:
+        # SDK exceptions may carry credentials/URLs. Keep only a numeric code.
+        match = re.search(r"code[:=]\s*(\d{3,8})", str(error))
+        code = int(match.group(1)) if match else None
+        _BOT_LAST_FAILURE = {"stage": "send_message", "code": code,
+                             "kind": "platform_policy_denied" if code == 21001 else "sdk_request_failed"}
+        return False
 
 
 def start_bot() -> None:
@@ -292,8 +308,17 @@ def start_bot() -> None:
         raise RuntimeError("Feishu SDK missing: pip install -r requirements-feishu.txt")
 
     def worker() -> None:
-        global _BOT_STATE
+        global _BOT_STATE, _BOT_LAST_FAILURE
         import lark_oapi as lark
+        from feishu_access import probe_access
+
+        _BOT_STATE = "checking_access"
+        access = probe_access()
+        if not access["ok"]:
+            _BOT_STATE = "access_failed"
+            _BOT_LAST_FAILURE = {"stage": "tenant_token", "code": access["code"], "kind": access["kind"]}
+            audit_event("FEISHU_CONNECTION", outcome="FAILED", metadata=_BOT_LAST_FAILURE)
+            return
 
         api_client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
         inbox: queue.Queue[Any] = queue.Queue(maxsize=1000)
@@ -336,4 +361,4 @@ def start_bot() -> None:
 
 @router.get("/status")
 def bot_status():
-    return {"code": 200, "enabled": _enabled(), "state": _BOT_STATE}
+    return {"code": 200, "enabled": _enabled(), "state": _BOT_STATE, "last_failure": _BOT_LAST_FAILURE}

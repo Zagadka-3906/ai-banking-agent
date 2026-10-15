@@ -83,9 +83,26 @@ interface TaskApi {
         @Header("X-User-Id") userId: String,
         @Header("X-Session-Token") sessionToken: String,
     ): TaskActionResponse
+
+    @POST("api/v1/tasks/{taskId}/takeover")
+    suspend fun takeover(
+        @Path("taskId") taskId: String,
+        @Body body: TaskActionRequest,
+        @Header("X-User-Id") userId: String,
+        @Header("X-Session-Token") sessionToken: String,
+    ): TaskActionResponse
 }
 
 class TaskRepository(private val api: TaskApi) {
+
+    suspend fun takeover(taskId: String, reason: String, principal: String, sessionToken: String): TaskView = try {
+        api.takeover(taskId, TaskActionRequest(reason), principal, sessionToken).data
+            ?: throw GatewayException(null, "核心服务未返回接管状态，请刷新核对", 502)
+    } catch (failure: HttpException) {
+        throw failure.asGatewayException()
+    } catch (failure: IOException) {
+        throw GatewayException(null, "无法连接核心服务，请刷新核对接管状态", 0)
+    }
 
     suspend fun splitInbox(principal: String, sessionToken: String): List<SplitRequestView> = try {
         api.splitInbox(userId = principal, sessionToken = sessionToken).data

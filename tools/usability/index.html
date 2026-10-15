@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>安言体验测试记录</title>
+<style>body{font:18px/1.7 system-ui,sans-serif;background:#faf7f1;color:#182340;max-width:850px;margin:48px auto;padding:0 24px}h1{font-size:36px}label{display:block;margin:18px 0}input,select,button{font:inherit;padding:10px;border:1px solid #98a0b1;border-radius:6px}button{background:#263559;color:white;cursor:pointer;margin:6px}button:disabled{opacity:.4}small{display:block;color:#535d71}#timer{font-size:38px}#task{border-top:1px solid #ccc;padding-top:24px}output{white-space:pre-wrap}#error{color:#a02030}</style>
+<h1>安言体验测试</h1>
+<p>参与者实际操作 Android 应用，主持人用本页计时。只记录匿名编号、耗时、交互次数和结果，不填写密码、验证码、账户信息或聊天原文。数据只保存在当前页面，刷新前请导出。</p>
+<label>匿名参与者编号 <input id="participant" maxlength="24" placeholder="P01" pattern="[A-Za-z0-9_-]+"></label>
+<label>对照流程名称 <input id="baseline" maxlength="100" placeholder="由主持人预先确定，整轮保持一致"></label>
+<label>测试次序 <select id="order"><option value="agent,baseline">对话入口先测</option><option value="baseline,agent">对照流程先测</option></select></label>
+<small>建议交替分配测试次序。对照流程不存在的任务记录“入口不可用”，不得捏造传统银行耗时。每项任务开始前由主持人恢复隔离测试数据，并确认网络和应用就绪。</small>
+<label><input type="checkbox" id="consent"> 我了解本轮仅使用虚构数据，同意记录匿名体验结果。</label>
+<div id="task"><h2 id="title"></h2><p id="prompt"></p><p id="mode"></p><div id="timer">0.0 秒</div></div>
+<button id="start">开始计时</button><button id="stop" disabled>结束计时</button>
+<label>交互次数 <input id="steps" type="number" min="0" step="1" value="0"><small>按预先统一口径计数：点击、提交或一次完整语音输入各记一次；普通逐字输入不逐字符计数。</small></label>
+<label>实际结果 <select id="outcome"><option value="PASS">完成且主持人核对通过</option><option value="FAIL">未完成或结果不正确</option><option value="UNAVAILABLE">入口不可用</option></select></label>
+<button id="save" disabled>保存本项并继续</button><button id="export">导出记录 JSON</button>
+<p id="error" role="alert"></p><output id="summary"></output>
+<script>
+const tasks=[['BALANCE','查询当前可用余额','金额必须与隔离 Core 一致。'],['TRANSFER','给李四转 300 元','检查收款人、金额并确认，主持人核对唯一回执。'],['BILL','分析本月餐饮支出','检查日期、分类及统计金额。'],['WEALTH','比较 CJ01002 和 AY90204','核对两款产品及风险信息。'],['CARD','查看银行卡与交易限额','只查询，避免改变后续测试条件。'],['BIRTHDAY','为爱人 2099-10-03 的生日锁定 1000 元，提醒订鲜花和蛋糕','核对锁资与任务；不得把待执行订单当作已履约。']];
+const $=id=>document.getElementById(id);let rows=[],index=0,started=null,elapsed=null,interval=null;
+function show(){const task=tasks[Math.floor(index/2)];if(!task){$('title').textContent='本轮已完成，请导出';$('start').disabled=true;return}const modes=$('order').value.split(',');$('title').textContent=task[1];$('prompt').textContent=task[2];$('mode').textContent='本项入口：'+(modes[index%2]==='agent'?'安言对话入口':'指定对照流程');$('summary').textContent='已记录 '+rows.length+' 项';}
+$('order').onchange=()=>{if(rows.length||started!==null){$('error').textContent='开始后不可更改次序';$('order').disabled=true}show()};
+$('start').onclick=()=>{if(!$('consent').checked||!$('participant').value.match(/^[A-Za-z0-9_-]{1,24}$/)||!$('baseline').value.trim()){ $('error').textContent='请填写匿名编号、对照流程并确认参与';return} $('error').textContent='';['participant','baseline','order'].forEach(id=>$(id).disabled=true);started=performance.now();elapsed=null;$('start').disabled=true;$('stop').disabled=false;interval=setInterval(()=>$('timer').textContent=((performance.now()-started)/1000).toFixed(1)+' 秒',100)};
+$('stop').onclick=()=>{elapsed=(performance.now()-started)/1000;clearInterval(interval);$('stop').disabled=true;$('save').disabled=false};
+$('save').onclick=()=>{const steps=Number($('steps').value);if(!Number.isInteger(steps)||steps<0){$('error').textContent='交互次数须为非负整数';return}rows.push({participant:$('participant').value,task:tasks[Math.floor(index/2)][0],mode:$('order').value.split(',')[index%2],baseline:$('baseline').value.trim(),seconds:Number(elapsed.toFixed(3)),interactions:steps,outcome:$('outcome').value,consent:true,source:'human_observed',recorded_at:new Date().toISOString()});index++;started=null;$('save').disabled=true;$('start').disabled=false;$('steps').value=0;$('outcome').value='PASS';$('timer').textContent='0.0 秒';show()};
+$('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify({schema_version:1,records:rows},null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='anyan-usability-'+($('participant').value||'incomplete')+'.json';a.click();URL.revokeObjectURL(url)};
+window.onbeforeunload=e=>{if(rows.length){e.preventDefault();e.returnValue='请先导出记录'}};show();
+</script></html>

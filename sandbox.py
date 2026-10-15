@@ -16,6 +16,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, TimeoutE
 from concurrent.futures.process import BrokenProcessPool
 import json
 import math
+import multiprocessing
 import os
 import operator
 import threading
@@ -334,6 +335,12 @@ class _BoundIntermediateOperations(ast.NodeTransformer):
         ), node)
 
 
+def _evaluate_os_worker(expression: str, data: Any) -> Any:
+    from sandbox_limits import apply_worker_limits
+    apply_worker_limits()
+    return _evaluate_worker(expression, data)
+
+
 def _evaluate_worker(expression: str, data: Any) -> Any:
     tree = validate_expression(expression)
     _bounded_value(data, byte_limit=MAX_INPUT_BYTES)
@@ -394,8 +401,10 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
     executor: Any = None
     using_process = True
     try:
-        executor = ProcessPoolExecutor(max_workers=1)
-        future = executor.submit(_evaluate_worker, expression, safe_data)
+        # Spawn avoids inheriting the gateway's address space and credentials;
+        # it also makes the fixed resource budget predictable on POSIX hosts.
+        executor = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+        future = executor.submit(_evaluate_os_worker, expression, safe_data)
     except (PermissionError, OSError, RuntimeError) as exc:
         if not _allow_thread_fallback():
             _record_telemetry(executor="process", isolation="none", fallback_reason="submit_failure", failure=True)
@@ -554,6 +563,8 @@ def sandbox_health() -> dict[str, Any]:
         "max_value_depth": MAX_VALUE_DEPTH,
         "max_value_nodes": MAX_VALUE_NODES,
         "memory_limit": "bounded_values_not_os_rss",
+        "process_resource_policy": "windows_job_512MiB_3s" if os.name == "nt" else "posix_rlimit_512MiB_3s",
+        "os_network_filesystem_isolation": False,
         "thread_timeout": "caller_deadline_not_thread_termination" if _allow_thread_fallback() else "disabled_fail_closed",
         "thread_fallback_enabled": _allow_thread_fallback(),
         "safe_functions": sorted(_SAFE_FUNCTIONS),

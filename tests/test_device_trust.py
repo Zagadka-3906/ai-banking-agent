@@ -232,6 +232,27 @@ def test_red_transfer_succeeds_with_a_device_signature(client):
     assert float(balance["available_balance"]) == 13000.0
 
 
+def test_dynamic_demo_otp_and_device_signature_settle_once(client, monkeypatch):
+    monkeypatch.setenv("BANK_MFA_DYNAMIC_OTP", "1")
+    headers = session_headers(client, "user_zhang")
+    key = new_device_key()
+    device_id = enroll(client, headers, key)
+    token = red_precheck(client, headers)["auth_token"]
+    issued = client.post("/api/v1/auth/mfa/otp", json={"auth_token": token}, headers=headers)
+    assert issued.status_code == 200
+    code = issued.json()["demo_code"]
+    assert len(code) == 6 and issued.json()["expires_in"] <= 60
+    signature = sign_challenge(key, device_id, face_challenge(client, headers, token))
+    body = {"otp": code, "face_attestation": signature}
+    verified = client.post("/api/v1/auth/mfa/verify", json=body, headers={**headers, "X-Auth-Token": token})
+    assert verified.status_code == 200, verified.text
+    replay = client.post("/api/v1/auth/mfa/verify", json=body, headers={**headers, "X-Auth-Token": token})
+    assert replay.status_code == 409
+    result = client.post("/api/v1/transfers/execute", json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 2000,
+                         "remark": REMARK, "auth_token": token, "mfa_proof": verified.json()["mfa_proof"]}, headers={**headers, "X-Auth-Token": token})
+    assert result.status_code == 200, result.text
+
+
 def test_device_signature_is_verified_even_outside_demo_mode(client, monkeypatch):
     """The device path is the always-on factor, not a demo affordance."""
 

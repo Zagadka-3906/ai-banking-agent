@@ -123,6 +123,7 @@ class NaturalConversationUiTest {
                         }
                     } catch (failure: Throwable) {
                         observation.put("ui_error", "${failure.javaClass.simpleName}: ${failure.message}")
+                        runCatching { control(18800, "state") }.getOrNull()?.let { observation.put("after", it) }
                         observation.put("server_records", runCatching { control(18810, "records") }.getOrNull())
                         runCatching { screenshot("$id-${turnIndex + 1}-error") }
                         val focus = shell("dumpsys window").lineSequence().firstOrNull { it.contains("mCurrentFocus") }.orEmpty()
@@ -139,6 +140,8 @@ class NaturalConversationUiTest {
             File(folder, "observations.json").writeText(report.toString(2))
         }
         assertTrue("No scenario was selected", report.length() > 0)
+        shell("cp ${File(folder, "observations.json").absolutePath} /data/local/tmp/anyan-natural-observations.json")
+        check(shell("cat /data/local/tmp/anyan-natural-observations.json") == report.toString(2)) { "Observation export failed" }
         // Business expectations are assessed by scripts/evaluate_agent_scenarios.py,
         // retaining every mismatch rather than stopping the matrix at the first one.
     }

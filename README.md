@@ -14,7 +14,9 @@ Agent 回执使用 `response.version=1` 协议，分别提供 `turn_status` 与 
 
 资金操作丢失回执时返回操作编号，Android 自动进行最多 10 次只读核对，之后可点“核对结果”。Gateway 根据会话所有者向 Core 的 `/api/v1/operations/{operation_id}` 查询原幂等记录，通过原回执验证后才推进任务；查询不会再次提交资金操作。操作回执随账本持久化，保留期默认 24 小时；无法找到有效回执时继续显示待核对，不推断失败或回滚。
 
-设计原则是**模型理解需求，Core 决定能否执行**。服务端对意图、金额、对象、会话和风险等级再次校验；黄区要求明确确认，红区还要求演示 OTP 与已登记 Android Keystore 设备签名。没有模型密钥时使用确定性规则解析，仍可本地演示。
+设计原则是**模型理解需求，Core 决定能否执行**。服务端对意图、金额、对象、会话和风险等级再次校验；黄区要求明确确认，红区还要求演示 OTP 与已登记 Android Keystore 设备签名。审批卡可获取绑定本次授权、最长 60 秒的一次性本机演示码，推荐设置 `BANK_MFA_DYNAMIC_OTP=1`；不发送真实短信。没有模型密钥时使用确定性规则解析，仍可本地演示。
+
+Android 增加端侧语音入口：有端侧识别服务的 API 31+ 设备可将语音转为可编辑文字，不自动发送；不支持时继续文字输入。任务页展示依赖、状态与原因，可请求人工处理并暂停关联待执行步骤；已完成操作和锁资保留，没有在线客服。完整变更、模型对比、飞书平台限制及真人测试入口见[参赛完善与验收](docs/参赛完善与验收-2026-10-15.md)。
 
 ## 交付材料
 
@@ -27,6 +29,7 @@ Agent 回执使用 `response.version=1` 协议，分别提供 `turn_status` 与 
 | 权限分级与已知风险 | [安全自评报告](docs/安全自评报告.md) |
 | 可复现测试步骤 | [测试用例](docs/测试用例.md) |
 | 已执行验证结果与限制 | [验证记录](docs/验证记录.md) |
+| 赛题逐项覆盖、评测与验收工具 | [参赛完善与验收](docs/参赛完善与验收-2026-10-15.md) |
 | 项目检查、修复与后续项 | [项目检查与完善（2026-10-14）](docs/项目检查与完善-2026-10-14.md) |
 | 飞书机器人创建、配置与接入状态 | [接入说明](docs/飞书IM接入.md) |
 
@@ -96,7 +99,7 @@ Android 17 起，连接本地服务前会按配置地址请求附近设备权限
 | --- | --- |
 | 用户 | `user_zhang`、`user_li`、`user_wife` |
 | 登录口令 | `Bank@2026` |
-| 红区演示 OTP | `888888` |
+| 红区演示 OTP | 审批卡获取一次性演示码；旧测试兼容码为 `888888`，动态模式禁用固定码回退 |
 
 红区还需要模拟器设置屏幕锁或生物识别，并让应用登记 Keystore 公钥。以上凭据仅用于虚构账户。
 
@@ -124,7 +127,7 @@ cd android
 
 默认 Debug 端点 `10.0.2.2` 属于本地网络，因此 API 37 首次运行会先显示授权入口；普通 `connectedDebugAndroidTest` 应在完成该授权后执行。专门验证系统拒绝与允许的 `LocalNetworkPermissionSystemTest` 则要求专用模拟器从未授权状态启动，以 `networkPermissionTest=true` 显式启用，并将 Debug 的 Core/Gateway 端点分别设为 `10.0.2.2:18800` / `10.0.2.2:18810`，连接隔离测试服务。
 
-隔离环境的 60 项主要回归使用 `BankingRegression` 标记：选择 `-PbankScenarioTests=true` 和 `-Pandroid.testInstrumentationRunnerArguments.annotation=com.aibanking.agent.BankingRegression`，运行 `connectedScenarioAndroidTest`。同时传入本轮隔离服务的 `controlToken` 和专用模拟器的 `devicePin`；核对报告中实际执行 60 项，且没有失败或跳过。系统权限测试单独运行。
+隔离环境的 68 项主要回归使用 `BankingRegression` 标记：选择 `-PbankScenarioTests=true` 和 `-Pandroid.testInstrumentationRunnerArguments.annotation=com.aibanking.agent.BankingRegression`，运行 `connectedScenarioAndroidTest`。同时传入本轮隔离服务的 `controlToken` 和专用模拟器的 `devicePin`；核对报告中实际执行 68 项，且没有失败或跳过。系统权限测试单独运行。可使用 `scripts/run_android_regression.py` 自动创建隔离服务、检查专用模拟器和核对 XML / protobuf 结果；手动及每周设备 CI 见 `.github/workflows/android-regression.yml`。
 
 Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂等、自然语言场景；Android JVM 测试覆盖解析与建议，插桩测试覆盖登录、对话、卡片等 UI。步骤与预期结果见[测试用例](docs/测试用例.md)。端到端授权探针：`python scripts/agent_gateway_e2e.py`；健康探针：`python scripts/smoke_test.py`。
 

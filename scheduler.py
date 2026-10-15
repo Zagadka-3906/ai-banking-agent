@@ -160,7 +160,13 @@ class TaskStore:
             return self.transition(task_id, TaskState.CANCELLED, owner_id=owner_id)
 
     def takeover(self, task_id: str, *, owner_id: Optional[str] = None, reason: str = "人工接管") -> ScheduledTask:
-        return self.transition(task_id, TaskState.HUMAN_TAKEOVER, error=reason, owner_id=owner_id)
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task or (owner_id is not None and task.owner_id != owner_id):
+                raise KeyError(task_id)
+            if task.status == TaskState.RUNNING:
+                raise ValueError("task is currently running; reconcile before takeover")
+            return self.transition(task_id, TaskState.HUMAN_TAKEOVER, error=reason, owner_id=owner_id)
 
     def reset(self) -> None:
         with self._lock:

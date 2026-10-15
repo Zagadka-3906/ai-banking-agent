@@ -268,6 +268,8 @@ def redact(value: Any) -> Any:
         "mfa_token",
         "mfa_proof",
         "otp",
+        "demo_code",
+        "otp_digest",
         "sms_code",
         "secret",
         "password",
@@ -1940,8 +1942,39 @@ def verify_login_otp(otp: Any) -> bool:
     return isinstance(otp, str) and bool(expected) and hmac.compare_digest(otp.strip(), expected)
 
 
+def issue_demo_otp(auth_token: str, *, user_id: str, request_id: Optional[str] = None) -> dict[str, Any]:
+    """A local demo delivery channel, never a claim of SMS delivery."""
+    if not demo_mode():
+        raise SecurityError("演示验证码仅限 Mock 模式", 403, "DEMO_ONLY")
+    with STATE_LOCK:
+        payload, record = _lookup_auth_locked(auth_token)
+        if payload.get("from_user") != user_id:
+            raise SecurityError("验证码主体不一致", 403, "IDENTITY_MISMATCH")
+        if payload.get("risk_level") != "RED":
+            raise SecurityError("当前操作无需强验证", 400, "MFA_NOT_REQUIRED")
+        if record.get("mfa_verified") or int(record.get("mfa_attempts", 0)) >= 3:
+            raise SecurityError("当前验证不可重新发码", 423, "MFA_LOCKED")
+        now = time.time()
+        if now - float(record.get("otp_issued_at", 0)) < 30 or int(record.get("otp_issues", 0)) >= 3:
+            raise SecurityError("验证码请求过于频繁，请稍后重试", 429, "OTP_RATE_LIMITED")
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        record["otp_digest"] = hmac.new(AUTH_SECRET, (str(payload["jti"]) + ":" + code).encode(), hashlib.sha256).hexdigest()
+        record["otp_expires_at"] = min(float(payload["exp"]), now + 60)
+        record["otp_issued_at"] = now
+        record["otp_issues"] = int(record.get("otp_issues", 0)) + 1
+        audit_event("DEMO_OTP_ISSUED", user_id=user_id, decision="ALLOW", outcome="ISSUED", request_id=request_id,
+                    metadata={"jti": payload["jti"], "delivery": "local_demo", "expires_at": record["otp_expires_at"]})
+        return {"demo_code": code, "expires_in": max(0, int(record["otp_expires_at"] - now)), "delivery": "local_demo"}
+
+
 def _factor_sms_otp(ctx: dict[str, Any]) -> bool:
     otp = ctx.get("otp")
+    record = ctx.get("auth_record") or {}
+    if record.get("otp_digest"):
+        digest = hmac.new(AUTH_SECRET, (str(ctx["auth_payload"]["jti"]) + ":" + str(otp or "").strip()).encode(), hashlib.sha256).hexdigest()
+        return time.time() < record.get("otp_expires_at", 0) and hmac.compare_digest(digest, record["otp_digest"])
+    if demo_mode() and os.getenv("BANK_MFA_DYNAMIC_OTP", "0") == "1":
+        return False
     expected = MFA_TEST_OTP if demo_mode() else os.getenv("BANK_MFA_OTP", "")
     return isinstance(otp, str) and bool(expected) and hmac.compare_digest(otp.strip(), expected)
 
@@ -2011,6 +2044,7 @@ def verify_mfa(
                 "otp": otp,
                 "face_attestation": face_attestation,
                 "auth_payload": payload,
+                "auth_record": record,
                 "user_id": principal,
             }
             if validator(ctx):

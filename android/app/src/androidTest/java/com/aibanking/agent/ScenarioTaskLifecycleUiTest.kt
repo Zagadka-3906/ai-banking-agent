@@ -109,6 +109,20 @@ class ScenarioTaskLifecycleUiTest {
         File(folder, "quiz-profile.json").writeText(JSONObject(checkNotNull(model.state.value.profileResult)).toString(2))
     }
 
+    @Test fun scheduled_task_can_pause_for_manual_review_from_the_real_panel() {
+        create("明天下午三点给李四转50元")
+        openTasks()
+        ui.onNodeWithTag("task_takeover").performScrollTo().performClick()
+        ui.onNodeWithText("处理原因").performTextInput("需要人工核对日期")
+        ui.onNodeWithText("确认暂停").performClick()
+        ui.waitUntil(20_000) { !model.state.value.panelBusy && model.state.value.tasks.single().status == "HUMAN_TAKEOVER" }
+        assertEquals("需要人工核对日期", model.state.value.tasks.single().error)
+        val state = evidence("manual-review")
+        assertEquals(15000.0, state.getDouble("balance"), 0.001)
+        control(18800, "advance-due", JSONObject())
+        assertEquals("HUMAN_TAKEOVER", control(18800, "state").getJSONArray("tasks").getJSONObject(0).getString("status"))
+    }
+
     private fun create(text: String) {
         ui.sendChatMessage(text)
         ui.waitUntil(100_000) { !model.state.value.busy && model.state.value.pending != null }

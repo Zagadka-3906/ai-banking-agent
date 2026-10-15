@@ -172,6 +172,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             splitRequests = state.splitRequests,
             busy = state.panelBusy,
             onCancel = viewModel::cancelTask,
+            onTakeover = viewModel::takeoverTask,
             onPaySplit = viewModel::prepareSplitPayment,
             onDeclineSplit = viewModel::declineSplit,
             onDismiss = viewModel::dismissPanels,
@@ -288,6 +289,7 @@ private fun ChatHome(
                             otp = state.otp,
                             busy = state.busy,
                             onOtpChange = viewModel::onOtpChange,
+                            onRequestOtp = viewModel::requestDemoOtp,
                             onReject = viewModel::reject,
                             onApprove = viewModel::approve,
                             onBiometricApprove = {
@@ -370,6 +372,8 @@ private fun ChatHome(
             InputRow(
                 value = state.input,
                 enabled = state.canSend,
+                voiceEnabled = state.authenticated && !state.busy,
+                captureVoiceResult = viewModel::captureVoiceResult,
                 onValueChange = viewModel::onInputChange,
                 onSend = viewModel::send,
                 modifier = Modifier.verificationFrost(redVerification),
@@ -503,6 +507,7 @@ private fun ApprovalCard(
     busy: Boolean,
     canPromptBiometric: Boolean,
     onOtpChange: (String) -> Unit,
+    onRequestOtp: () -> Unit,
     onReject: () -> Unit,
     onApprove: () -> Unit,
     onBiometricApprove: () -> Unit,
@@ -559,12 +564,13 @@ private fun ApprovalCard(
                     colors = bankTextFieldColors(),
                     value = otp,
                     onValueChange = onOtpChange,
-                    label = { Text("短信验证码（测试码：888888）") },
+                    label = { Text("验证码") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_OTP),
                 )
+                TextButton(onClick = onRequestOtp, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), enabled = !busy && remainingSeconds > 0) { Text("获取本机一次性演示验证码") }
                 if (!canPromptBiometric) {
                     Text(
                         "本设备未录入生物识别凭据，无法完成红色风险强验证。",
@@ -666,6 +672,8 @@ private fun RiskQuizPanel(
 private fun InputRow(
     value: String,
     enabled: Boolean,
+    voiceEnabled: Boolean,
+    captureVoiceResult: () -> (String) -> Unit,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     modifier: Modifier = Modifier,
@@ -675,6 +683,7 @@ private fun InputRow(
     Surface(color = MaterialTheme.colorScheme.background, modifier = modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            VoiceInputButton(enabled = voiceEnabled, captureResult = captureVoiceResult)
             OutlinedTextField(
                 value = value, onValueChange = onValueChange,
                 placeholder = { Text("说说您想办的事…", style = MaterialTheme.typography.bodyMedium) },
@@ -775,10 +784,29 @@ private fun TaskPanel(
     splitRequests: List<SplitRequestView>,
     busy: Boolean,
     onCancel: (String) -> Unit,
+    onTakeover: (String, String) -> Unit,
     onPaySplit: (SplitRequestView) -> Unit,
     onDeclineSplit: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var takeoverId by remember { mutableStateOf<String?>(null) }
+    var takeoverReason by remember { mutableStateOf("") }
+    if (takeoverId != null) {
+        AlertDialog(
+            onDismissRequest = { takeoverId = null },
+            title = { Text("请求人工处理") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("将暂停本任务及关联的待执行步骤。已完成操作不会撤销，已锁定资金不会自动释放。本机演示没有在线客服。")
+                OutlinedTextField(value = takeoverReason, onValueChange = { takeoverReason = it.take(300) },
+                    label = { Text("处理原因") }, modifier = Modifier.fillMaxWidth(), maxLines = 4)
+            } },
+            confirmButton = { TextButton(colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), enabled = !busy && takeoverReason.isNotBlank(), onClick = {
+                takeoverId?.let { onTakeover(it, takeoverReason) }
+                takeoverId = null
+            }) { Text("确认暂停") } },
+            dismissButton = { TextButton(colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), onClick = { takeoverId = null }) { Text("返回") } },
+        )
+    }
     // The sheet window never takes focus, so system Back reaches the Activity
     // dispatcher and would finish the app instead of closing the panel.
     BackHandler(enabled = true) { onDismiss() }
@@ -817,10 +845,24 @@ private fun TaskPanel(
                             })
                         }
                         taskSummary(task)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                        Text("任务编号 · ${task.taskId}", style = MaterialTheme.typography.bodySmall)
+                        task.dependsOn.forEach { dependency ->
+                            val prerequisite = tasks.firstOrNull { it.taskId == dependency }
+                            Text("依赖 · ${prerequisite?.let { taskTypeLabel(it.taskType) } ?: dependency}：${prerequisite?.let { taskStatusLabel(it.status) } ?: "待核对"}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        task.error?.takeIf { it.isNotBlank() }?.let { Text("原因 · $it", style = MaterialTheme.typography.bodySmall) }
+                        if (task.status == "HUMAN_TAKEOVER") {
+                            SelectionContainer { Text("已暂停，待人工处理。请将任务编号和原因交给演示负责人核对；本应用不会自动恢复执行。", style = MaterialTheme.typography.bodySmall) }
+                        }
+                        if (task.status == "FAILED" && task.compensation != null) {
+                            Text("存在待核对的补偿事项，请核对账本与回执；此处不代表已退款或已释放资金。", style = MaterialTheme.typography.bodySmall)
+                        }
                         formatLocalTimestamp(task.runAt)?.let { Text("计划时间 · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         if (task.status in CANCELLABLE_TASK_STATUSES) {
                             BankSecondaryButton("取消", { onCancel(task.taskId) }, enabled = !busy,
                                 modifier = Modifier.fillMaxWidth().testTag(UiTags.TASK_CANCEL))
+                            BankSecondaryButton("请求人工处理", { takeoverId = task.taskId; takeoverReason = "" }, enabled = !busy,
+                                modifier = Modifier.fillMaxWidth().testTag("task_takeover"))
                         }
                     }
                 }

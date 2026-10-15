@@ -67,8 +67,8 @@ class _ErrorFuture:
 
 
 class _SubmitFailureExecutor:
-    def __init__(self, max_workers=1):
-        del max_workers
+    def __init__(self, max_workers=1, mp_context=None):
+        del max_workers, mp_context
 
     def submit(self, fn, expression, data):
         del fn, expression, data
@@ -87,8 +87,8 @@ class _ThreadExecutor:
 
 
 class _BrokenProcessExecutor:
-    def __init__(self, max_workers=1):
-        del max_workers
+    def __init__(self, max_workers=1, mp_context=None):
+        del max_workers, mp_context
 
     def submit(self, fn, expression, data):
         del fn, expression, data
