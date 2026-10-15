@@ -132,6 +132,7 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
                     }
                 }
                 OutlinedTextField(
+                    colors = bankTextFieldColors(),
                     value = state.contactSearch,
                     onValueChange = viewModel::onContactSearchChange,
                     placeholder = { Text("搜索姓名或电话") },
@@ -392,6 +393,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text("基本信息", style = MaterialTheme.typography.titleMedium)
                         OutlinedTextField(
+                            colors = bankTextFieldColors(),
                             value = state.contactName,
                             onValueChange = { viewModel.onContactFormChange(name = it) },
                             label = { Text("姓名") },
@@ -403,6 +405,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                             modifier = Modifier.fillMaxWidth(),
                         )
                         OutlinedTextField(
+                            colors = bankTextFieldColors(),
                             value = state.contactPhone,
                             onValueChange = { viewModel.onContactFormChange(phone = it) },
                             label = { Text("电话") },
@@ -432,6 +435,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                             }
                         }
                         OutlinedTextField(
+                            colors = bankTextFieldColors(),
                             value = state.contactBirthday,
                             onValueChange = { viewModel.onContactFormChange(birthday = it) },
                             label = { Text("生日（可选）") },

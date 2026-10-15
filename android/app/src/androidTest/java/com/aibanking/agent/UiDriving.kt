@@ -3,11 +3,14 @@ package com.aibanking.agent
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.test.espresso.Espresso
 import com.aibanking.agent.ui.UiTags
 
 /**
@@ -32,7 +35,11 @@ internal fun ComposeContentTestRule.ensureLoggedIn(password: String, timeoutMs: 
     }
     if (onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty()) {
         onNodeWithTag(UiTags.LOGIN_PASSWORD).performScrollTo().performTextInput(password)
-        onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().performClick()
+        // Compose idle does not wait for the system IME's inset animation. Close
+        // it before locating the button so its bounds cannot move under the tap.
+        Espresso.closeSoftKeyboard()
+        waitForIdle()
+        onNodeWithTag(UiTags.LOGIN_BUTTON).performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
     }
     waitUntil(timeoutMs) {
         // Exactly one: a leftover Activity from an earlier test in the same

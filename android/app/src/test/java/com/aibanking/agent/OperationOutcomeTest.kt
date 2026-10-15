@@ -79,10 +79,11 @@ class OperationOutcomeTest {
         assertEquals("查询已完成", outcomeFor(completed(receipt("BALANCE"), receipt("BILL_QUERY")))?.title)
     }
 
-    @Test fun credential_rotation_is_not_presented_as_query_or_actual_password_entry() {
+    @Test fun password_change_requires_login_with_the_new_password() {
         val outcome = checkNotNull(outcomeFor(completed(receipt("PASSWORD_CHANGE"))))
         assertEquals("登录凭证已更新", outcome.title)
-        assertTrue(outcome.guidance.contains("未设置新的登录密码"))
+        assertTrue(outcome.guidance.contains("原登录会话已失效"))
+        assertTrue(outcome.guidance.contains("使用新密码重新登录"))
     }
 
     @Test fun completed_profile_is_recognized_with_or_without_recommendations() {

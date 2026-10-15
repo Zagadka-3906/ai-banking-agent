@@ -76,7 +76,7 @@ private fun successfulOutcome(message: ChatMessage): OperationOutcome {
         }
         if (reminders.isNotEmpty()) add("请核对回执中的提醒任务状态及未建立原因；提醒不会自动扣费或取消订阅。")
         if ("FRAUD_DISPUTE" in types) add("关联卡片已冻结，争议工单仍需人工审核，当前未执行退款。")
-        if ("PASSWORD_CHANGE" in types) add("演示凭证已更新，本次操作未设置新的登录密码。")
+        if ("PASSWORD_CHANGE" in types) add("登录密码已更新，原登录会话已失效，请使用新密码重新登录。")
     }.ifEmpty { listOf("以本页回执和当前账户记录为准。") }.joinToString("\n")
     return OperationOutcome(title, if (onlyEmptyReminders) "请求已处理" else "结果已核验", guidance,
         if (onlyEmptyReminders) OutcomeTone.NEUTRAL else OutcomeTone.SUCCESS)

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shared brand silhouette: a conversation bubble and shield with two open lines.
+     Transparent cutouts, rather than painted bars, also work as a themed icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <path
+        android:fillColor="#16131F"
+        android:fillType="evenOdd"
+        android:pathData="M32,0 Q34.5,0 37,2 C44,7 50,9 57,11 C62,13 64,17 64,22 L64,33 C64,45 56,56 35,63 Q32,64 29,63 C23,61 18,57 15,55 Q14,54 12,55 L9,56 Q7,57 7.5,54 L9.5,48 Q10,46 8,44 C2,39 0,34 0,28 L0,22 C0,17 2,13 7,11 C15,8 23,4 28,1 Q30,0 32,0 Z M17,20 H47 C49.2,20 51,21.8 51,24 C51,26.2 49.2,28 47,28 H17 C14.8,28 13,26.2 13,24 C13,21.8 14.8,20 17,20 Z M20,34 H44 C46.2,34 48,35.8 48,38 C48,40.2 46.2,42 44,42 H20 C17.8,42 16,40.2 16,38 C16,35.8 17.8,34 20,34 Z" />
+</vector>

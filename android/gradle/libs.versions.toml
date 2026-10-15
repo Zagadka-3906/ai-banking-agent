@@ -18,6 +18,8 @@ mlkitText = "16.0.1"
 # Instrumented UI tests (run on a device/emulator via connectedDebugAndroidTest).
 androidxTestJunit = "1.2.1"
 androidxTestRunner = "1.6.2"
+# Match the Espresso runtime already supplied by Compose UI test 1.7.5.
+espresso = "3.5.0"
 junit = "4.13.2"
 
 [libraries]
@@ -44,6 +46,7 @@ androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-te
 androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestJunit" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espresso" }
 junit4 = { group = "junit", name = "junit", version.ref = "junit" }
 
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }

@@ -26,6 +26,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -34,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.aibanking.agent.data.ApprovalView
@@ -254,33 +256,7 @@ private fun ChatHome(
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Box(Modifier.size(40.dp).bankHardShadow(MaterialTheme.shapes.medium, 2.dp).clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.primary).border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.medium), contentAlignment = Alignment.Center) {
-                            BankIcon(BankIconKind.Bank, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                        }
-                        Column {
-                            Text("安言 · 智能管家", style = MaterialTheme.typography.titleMedium)
-                            Text("随时为您，安心打理", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = viewModel::openTasks, modifier = Modifier.testTag(UiTags.OPEN_TASKS)) {
-                        BankIcon(BankIconKind.Check, contentDescription = "待办任务")
-                    }
-                    IconButton(onClick = viewModel::openDevices, modifier = Modifier.testTag(UiTags.OPEN_DEVICES)) {
-                        BankIcon(BankIconKind.Shield, contentDescription = "设备管理")
-                    }
-                    IconButton(onClick = viewModel::logout, modifier = Modifier.testTag(UiTags.LOGOUT)) {
-                        BankIcon(BankIconKind.Logout, contentDescription = "退出登录")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
-        },
+        topBar = { BankChatTopBar(viewModel::openTasks, viewModel::openDevices, viewModel::logout) },
     ) { padding ->
         // Keep transaction context legible while the approval asks for confirmation.
         val redVerification = state.pending?.mfaRequired == true
@@ -402,35 +378,84 @@ private fun ChatHome(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun BankChatTopBar(onTasks: () -> Unit, onDevices: () -> Unit, onLogout: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // Keep every action reachable at large text sizes without squeezing the app name.
+        val compact = maxWidth < 360.dp || LocalDensity.current.fontScale > 1.3f
+        TopAppBar(
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (!compact) Box(Modifier.size(40.dp).bankHardShadow(MaterialTheme.shapes.medium, 2.dp)
+                        .clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.primary)
+                        .border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.medium),
+                        contentAlignment = Alignment.Center) {
+                        BankBrandMark(Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                    Column {
+                        Text(if (compact) "安言" else "安言 · 智能管家", style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (!compact) Text("随时为您，安心打理", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            actions = {
+                IconButton(onClick = onTasks, modifier = Modifier.testTag(UiTags.OPEN_TASKS)) {
+                    BankIcon(BankIconKind.Check, contentDescription = "待办任务")
+                }
+                IconButton(onClick = onDevices, modifier = Modifier.testTag(UiTags.OPEN_DEVICES)) {
+                    BankIcon(BankIconKind.Shield, contentDescription = "设备管理")
+                }
+                IconButton(onClick = onLogout, modifier = Modifier.testTag(UiTags.LOGOUT)) {
+                    BankIcon(BankIconKind.Logout, contentDescription = "退出登录")
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+        )
+    }
+}
+
+private data class WelcomeAction(val label: String, val prompt: String, val icon: BankIconKind, val readOnly: Boolean)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChatWelcome(onSuggestion: (String) -> Unit) {
+internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         BankHeroCard {
             BankSticker("智能管家 · 随时待命")
             Text("想办什么，直接说", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text("先说明理解、步骤与风险，再按等级执行。", style = MaterialTheme.typography.bodySmall)
             val actions = listOf(
-                Triple("查询余额", "查一下余额", BankIconKind.Wallet),
-                Triple("转一笔钱", "我想转账", BankIconKind.Transfer),
-                Triple("分析账单", "上月钱花哪儿了", BankIconKind.Chart),
-                Triple("查看订阅", "查看我的订阅", BankIconKind.Card),
+                WelcomeAction("查询余额", "查一下余额", BankIconKind.Wallet, true),
+                WelcomeAction("转一笔钱", "我想转账", BankIconKind.Transfer, false),
+                WelcomeAction("分析账单", "上月钱花哪儿了", BankIconKind.Chart, true),
+                WelcomeAction("查看订阅", "查看我的订阅", BankIconKind.Card, true),
             )
-            actions.chunked(2).forEachIndexed { index, row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEach { (label, prompt, icon) ->
-                        Surface(onClick = { onSuggestion(prompt) }, shape = MaterialTheme.shapes.medium,
-                            color = Color.White, contentColor = BankPalette.Ink,
-                            border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink),
-                            modifier = Modifier.weight(1f).bankHardShadow(MaterialTheme.shapes.medium, 2.dp)) {
-                            Row(Modifier.heightIn(min = 48.dp).padding(10.dp), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val accent = if (index == 0) BankPalette.Green else BankPalette.Yellow
-                                Box(Modifier.size(28.dp).clip(RoundedCornerShape(7.dp)).background(accent)
-                                    .border(BankPalette.borderWidth, BankPalette.Ink, RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
-                                    BankIcon(icon, Modifier.size(16.dp), tint = BankPalette.Ink)
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val columns = if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.3f) 1 else 2
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    actions.chunked(columns).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            row.forEach { (label, prompt, icon, readOnly) ->
+                                Surface(onClick = { onSuggestion(prompt) }, shape = MaterialTheme.shapes.medium,
+                                    color = Color.White, contentColor = BankPalette.Ink,
+                                    border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink),
+                                    modifier = Modifier.weight(1f).bankHardShadow(MaterialTheme.shapes.medium, 2.dp)) {
+                                    Row(Modifier.heightIn(min = 48.dp).padding(10.dp), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        val accent = if (readOnly) BankPalette.Green else BankPalette.Neutral
+                                        Box(Modifier.size(28.dp).clip(RoundedCornerShape(7.dp)).background(accent)
+                                            .border(BankPalette.borderWidth, BankPalette.Ink, RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
+                                            BankIcon(icon, Modifier.size(16.dp), tint = BankPalette.Ink)
+                                        }
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(label, style = MaterialTheme.typography.titleSmall)
+                                            Text(if (readOnly) "直接查询" else "补充信息后再确认", style = MaterialTheme.typography.labelMedium)
+                                        }
+                                    }
                                 }
-                                Text(label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                             }
                         }
                     }
@@ -531,6 +556,7 @@ private fun ApprovalCard(
             }
             if (isRed) {
                 OutlinedTextField(
+                    colors = bankTextFieldColors(),
                     value = otp,
                     onValueChange = onOtpChange,
                     label = { Text("短信验证码（测试码：888888）") },
@@ -653,8 +679,7 @@ private fun InputRow(
                 value = value, onValueChange = onValueChange,
                 placeholder = { Text("说说您想办的事…", style = MaterialTheme.typography.bodyMedium) },
                 shape = MaterialTheme.shapes.medium,
-                colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                    focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedBorderColor = MaterialTheme.colorScheme.outline),
+                colors = bankTextFieldColors(),
                 modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT), maxLines = 4,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { send() }),

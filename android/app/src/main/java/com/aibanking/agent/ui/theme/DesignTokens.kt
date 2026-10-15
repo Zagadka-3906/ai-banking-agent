@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 object BankPalette {
     val Ink = Color(0xFF16131F)
     val Wisteria = Color(0xFFB9A9F5)
+    val DeepPurple = Color(0xFF5A3EC0)
     val Lavender = Color(0xFFEAE5FC)
     val Moon = Color(0xFFF7F6FA)
     val Muted = Color(0xFF4E4A5C)
@@ -42,6 +43,7 @@ object BankSpacing {
 
 @Immutable
 data class BankSemanticColors(
+    val inputFocus: Color,
     val positive: Color,
     val negative: Color,
     val neutral: Color,
@@ -60,6 +62,7 @@ data class BankSemanticColors(
 )
 
 private val LightSemanticColors = BankSemanticColors(
+    inputFocus = BankPalette.DeepPurple,
     // Chinese finance convention: red means gain, green means loss.
     positive = Color(0xFFD92D20),
     negative = Color(0xFF159947),
@@ -79,6 +82,7 @@ private val LightSemanticColors = BankSemanticColors(
 )
 
 private val DarkSemanticColors = BankSemanticColors(
+    inputFocus = BankPalette.Wisteria,
     positive = Color(0xFFFF8A80),
     negative = Color(0xFF63D391),
     neutral = Color(0xFFCCC7DB),

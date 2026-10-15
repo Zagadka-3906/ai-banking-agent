@@ -17,9 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,6 +42,26 @@ import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
+
+/** Pastel brand fills stay on buttons; input labels and focus need stronger contrast. */
+@Composable
+fun bankTextFieldColors(): TextFieldColors {
+    val colors = MaterialTheme.colorScheme
+    val focus = LocalBankSemanticColors.current.inputFocus
+    return OutlinedTextFieldDefaults.colors(
+        focusedContainerColor = colors.surface,
+        unfocusedContainerColor = colors.surface,
+        disabledContainerColor = colors.surface,
+        errorContainerColor = colors.surface,
+        focusedBorderColor = focus,
+        unfocusedBorderColor = colors.outline,
+        focusedLabelColor = focus,
+        cursorColor = focus,
+        errorCursorColor = colors.error,
+        selectionColors = TextSelectionColors(handleColor = focus, backgroundColor = focus.copy(alpha = 0.25f)),
+    )
+}
 
 @Composable
 fun BankSurfaceContainer(modifier: Modifier = Modifier, content: @Composable () -> Unit) {

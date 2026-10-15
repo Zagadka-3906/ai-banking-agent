@@ -91,6 +91,7 @@ import com.aibanking.agent.ui.components.BankStatusChip
 import com.aibanking.agent.ui.components.BankSticker
 import com.aibanking.agent.ui.components.BankTextButton
 import com.aibanking.agent.ui.components.bankHardShadow
+import com.aibanking.agent.ui.components.bankTextFieldColors
 import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
@@ -432,6 +433,7 @@ private fun AddCardSheet(
             Text("添加银行卡", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             Text("输入卡号，或拍照识别后核对信息。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(
+                colors = bankTextFieldColors(),
                 value = number,
                 onValueChange = { number = it; source = "MANUAL"; confirmed = false; error = null },
                 label = { Text("卡号（必填）") },
@@ -466,6 +468,7 @@ private fun AddCardSheet(
                 }
             }
             OutlinedTextField(
+                colors = bankTextFieldColors(),
                 value = label,
                 onValueChange = { onFieldChange(null, it) },
                 label = { Text("备注（可选，例如：工资卡）") },
@@ -548,6 +551,7 @@ private fun CardDetail(card: CardView, viewModel: ChatViewModel, onBack: () -> U
                     Text("验证后展示完整信息，30 秒后自动隐藏。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (reveal == null) {
                         OutlinedTextField(
+                            colors = bankTextFieldColors(),
                             value = pin, onValueChange = { pin = it; error = null },
                             label = { Text("演示卡取款密码") },
                             singleLine = true,

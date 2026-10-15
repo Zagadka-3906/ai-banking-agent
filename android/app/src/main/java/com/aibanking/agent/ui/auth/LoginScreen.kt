@@ -47,7 +47,7 @@ private fun BrandMark() {
         Modifier.size(56.dp).bankHardShadow(MaterialTheme.shapes.large).clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.primary).border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.large),
         contentAlignment = Alignment.Center,
     ) {
-        BankIcon(BankIconKind.Bank, Modifier.size(30.dp), tint = MaterialTheme.colorScheme.onPrimary)
+        BankBrandMark(Modifier.size(30.dp), tint = MaterialTheme.colorScheme.onPrimary)
     }
 }
 
@@ -100,6 +100,7 @@ fun LoginScreen(
                     }
                     OutlinedTextField(
                         value = userId, onValueChange = { userId = it }, enabled = !busy,
+                        colors = bankTextFieldColors(),
                         label = { Text("用户标识") }, singleLine = true, shape = MaterialTheme.shapes.medium,
                         leadingIcon = { BankIcon(BankIconKind.People) },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
@@ -107,6 +108,7 @@ fun LoginScreen(
                     )
                     OutlinedTextField(
                         value = password, onValueChange = { password = it }, enabled = !busy,
+                        colors = bankTextFieldColors(),
                         label = { Text("登录口令") }, singleLine = true, shape = MaterialTheme.shapes.medium,
                         leadingIcon = { BankIcon(BankIconKind.Shield) },
                         trailingIcon = {
@@ -122,6 +124,7 @@ fun LoginScreen(
                     AnimatedVisibility(otpRequired) {
                         OutlinedTextField(
                             value = otp, onValueChange = { otp = it.filter(Char::isDigit).take(8) }, enabled = !busy,
+                            colors = bankTextFieldColors(),
                             label = { Text("二次短信验证码") }, singleLine = true, shape = MaterialTheme.shapes.medium,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { submit() }),

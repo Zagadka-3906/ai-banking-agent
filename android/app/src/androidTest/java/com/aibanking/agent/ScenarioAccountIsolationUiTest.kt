@@ -284,8 +284,12 @@ class ScenarioAccountIsolationUiTest {
     }
 
     private fun openSystemPrompt() {
+        // The OTP keyboard can still be moving the approval card after Compose
+        // becomes idle. Settle it before locating and tapping the real button.
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
+        ui.waitForIdle()
         ui.onNodeWithTag(UiTags.CHAT_LIST).performScrollToNode(hasTestTag(UiTags.APPROVAL_APPROVE))
-        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().assertIsEnabled().performClick()
+        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
         waitOutsideCompose(15_000) { systemPromptVisible() }
     }
 
