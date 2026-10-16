@@ -110,6 +110,8 @@ Android 17 起，连接本地服务前会按配置地址请求附近设备权限
 | 余额、账单、理财查询 | “查余额”“上月钱花哪儿了” | 登录会话，GREEN |
 | 模拟转账、AA、预约 | “给李四转 300 元” | 转账预检 + 确认；AA 先发请求，各参与人独立授权付款；当日转账累计超过 1000 元升 RED |
 | 理财申赎、卡片敏感变更 | “申购 200 元”“挂失卡片” | RED，OTP + 设备签名 |
+| 撤销未执行的安排 | “撤销刚才那笔预约”“取消生日锁定”“撤回 AA 请求” | YELLOW；只撤销尚未动用资金的预约、无人付款的 AA 与资金锁定；已完成的转账不能撤销 |
+| 卡片交易渠道 | “关闭境外交易”“开通网上支付” | 关闭为 YELLOW，开通为 RED（OTP + 设备签名）；关闭网上支付后商户订单被拒 |
 | 订阅查询与识别、取消、生日锁资 | “我有哪些订阅”“识别周期扣费”“取消订阅”“锁定 1000 元” | 订阅查询（含识别与续费提醒）、取消已登记代扣与锁资均为 YELLOW，确认后 Core 才返回或变更；检测只产生待核实候选；模拟商户下单到期后再次确认 |
 
 模型只输出受约束的意图 JSON；`planner.py` 校验意图和槽位。Core 以短期、单次凭证重新核对主体、金额、对象、余额与风险等级。审批仅向 Android 返回不透明句柄。完整调用链见[技术文档](docs/技术文档.md)。
@@ -137,12 +139,12 @@ Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂�
 
 | 路径 | 作用 |
 | --- | --- |
-| `main.py`（装配应用）、`bank_core/` | Core：`ledger`/`cards`/`wealth_data`/`contacts` 等领域状态与规则，`payments`/`operations` 风控与授权上下文，`access`/`idempotency`/`persistence`/`http_edge` 横切守卫，`routes/` 按绿区读取、预检确认、执行、任务等分组的接口 |
+| `main.py`（装配应用）、`bank_core/` | Core：`ledger`/`cards`/`wealth_data`/`contacts` 等领域状态与规则，`undo` 可撤销规则，`payments`/`operations` 风控与授权上下文，`access`/`idempotency`/`persistence`/`http_edge` 横切守卫，`routes/` 按绿区读取、预检确认、执行、任务等分组的接口 |
 | `security.py`（重新导出）、`bank_security/` | Core 与 Gateway 共用的安全边界：`sanitize` 输入清洗与注入检测，`audit` 审计哈希链与分服务文件，`circuit` 熔断与行为风控，`authorization`/`mfa` 授权凭证、确认与强验证，`sessions`/`passwords` 会话与口令，`devices` 设备信任根与设备库 |
 | `mock_merchant.py`、`subscription_detector.py` | 虚构商户，周期扣费候选识别 |
-| `agent_api.py`、`conversation.py`、`feishu_im.py` | Android 对话网关、SSE、审批句柄和飞书只读私聊接入 |
+| `agent_api.py`、`conversation.py`、`feishu_im.py`、`speech_asr.py` | Android 对话网关、SSE、审批句柄（会话轮次与审批处理在 `bank_agent/conversation_*`、`approval_store`）、飞书只读私聊接入、云端语音识别转发 |
 | `agent.py`（构建默认图）、`bank_agent/` | LangGraph 编排：`runtime`（配置、模型客户端、Core 传输）、`extraction`/`parsing`/`dialogue` 意图与多轮上下文、`nodes/` 五个图节点、`verification`/`rendering` 回执核验与文案 |
-| `planner.py`、`sandbox.py` | 意图白名单与任务规划、只读分析沙箱 |
+| `planner.py`（重新导出）、`bank_planning/`、`sandbox.py` | `intents` 意图白名单、风险分级与校验，`plans` 任务计划，`bill_analysis` 账单分析；只读分析沙箱 |
 | `scheduler.py`、`notification_outbox.py` | 本机任务状态与 AA 事件记录 |
 | `android/app/src/main/` | Android 客户端 |
 | `tests/`、`android/app/src/test/`、`android/app/src/androidTest/` | 后端、JVM 与模拟器 UI 测试 |
