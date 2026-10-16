@@ -63,6 +63,10 @@ import com.aibanking.agent.ui.anim.breathe
 import com.aibanking.agent.ui.anim.popOnChange
 import com.aibanking.agent.ui.anim.rememberEntranceTracker
 import com.aibanking.agent.ui.anim.riseIn
+import com.aibanking.agent.ui.anim.RiskSignal
+import com.aibanking.agent.ui.anim.RiskTier
+import com.aibanking.agent.ui.anim.riskEdgeGlow
+import com.aibanking.agent.ui.anim.riskTierOf
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.aibanking.agent.ui.anim.pageSlideSpec
@@ -131,8 +135,21 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         action()
     }
     BackHandler(enabled = drawerState.isOpen) { drawerScope.launch { drawerState.close() } }
+    // Screen-edge ring in the colour of the latest risk tier: a pending approval
+    // (yellow or red) keeps it breathing until decided; a new reply flashes once.
+    val pendingApproval = state.pending
+    val lastRiskReply = state.messages.lastOrNull {
+        it.role == ChatRole.ASSISTANT && !it.isApprovalPreviewMessage() && riskTierOf(it.riskLevel) != null
+    }
+    val riskSignal = when {
+        pendingApproval != null -> RiskSignal("approval:${pendingApproval.approvalId}",
+            if (pendingApproval.mfaRequired) RiskTier.RED else RiskTier.YELLOW, sustained = true)
+        lastRiskReply != null -> RiskSignal("reply:${lastRiskReply.id}", requireNotNull(riskTierOf(lastRiskReply.riskLevel)), sustained = false)
+        else -> null
+    }
     // Conversation first: every other destination lives in the side drawer.
     ModalNavigationDrawer(
+        modifier = Modifier.riskEdgeGlow(riskSignal),
         drawerState = drawerState,
         gesturesEnabled = page == AppPage.CHAT || drawerState.isOpen,
         drawerContent = {
