@@ -3,6 +3,8 @@ package com.aibanking.agent.ui.anim
 import android.graphics.BlurMaskFilter
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PathMeasure
 import android.graphics.RectF
 import android.graphics.SweepGradient
 import androidx.compose.animation.core.Animatable
@@ -81,8 +83,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
     val motion = LocalBankMotionEnabled.current
     val intensity = remember { Animatable(0f) }
     val spread = remember { Animatable(1f) }
-    // Events already on screen when composed (a restored conversation) or already
-    // shown once never light up again.
     val rotation = remember { Animatable(0f) }
     // Events already on screen when composed (a restored conversation) or already
     // shown once never light up again.
@@ -103,9 +103,10 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
             if (motion) {
                 spread.snapTo(0f)
                 intensity.snapTo(0f)
-                // Grow and brighten together: the light travels from the centre to the edges.
-                launch { spread.animateTo(1f, tween(900, easing = EmphasizedDecelerateEasing)) }
-                intensity.animateTo(1f, tween(700, easing = FastOutSlowInEasing))
+                // Light rises from the middle of both sides and runs up and down the
+                // border until the four ends meet at the top and the bottom.
+                launch { spread.animateTo(1f, tween(1300, easing = FastOutSlowInEasing)) }
+                intensity.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
             } else {
                 spread.snapTo(1f)
                 intensity.snapTo(1f)
@@ -126,39 +127,78 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
             GlowLayer(strokeDp = 3f, blurDp = 3f, alpha = 0.95f), // bright core
         )
     }
-    val rect = remember { RectF() }
     val matrix = remember { Matrix() }
-    val tier = signal?.tier
-    val palette = remember(tier) { tier?.glowPalette() }
+    val border = remember { BorderPath() }
+    // Keep the last tier so the light can fade out after the approval is resolved.
+    val lastTier = remember { arrayOfNulls<RiskTier>(1) }
+    signal?.tier?.let { lastTier[0] = it }
     drawWithContent {
         drawContent()
         val a = intensity.value
-        if (a <= 0.01f || palette == null) return@drawWithContent
+        val tier = lastTier[0]
+        if (a <= 0.01f || tier == null) return@drawWithContent
         val cx = size.width / 2f
         val cy = size.height / 2f
-        val p = spread.value
-        // From a small rounded box in the middle out to the screen edges.
-        val halfW = cx * (0.18f + 0.82f * p)
-        val halfH = cy * (0.10f + 0.90f * p)
-        val corner = 40.dp.toPx() * (0.5f + 0.5f * p)
-        val shader = SweepGradient(cx, cy, palette, null)
+        val shader = SweepGradient(cx, cy, tier.glowPalette(), null)
         matrix.setRotate(rotation.value, cx, cy)
         shader.setLocalMatrix(matrix)
+        val path = border.revealed(size.width, size.height, 40.dp.toPx(), spread.value)
         drawIntoCanvas { canvas ->
             layers.forEach { layer ->
-                val stroke = layer.strokeDp.dp.toPx()
                 val blur = layer.blurDp.dp.toPx()
                 if (layer.blurPx != blur) {
                     layer.paint.maskFilter = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
                     layer.blurPx = blur
                 }
-                layer.paint.strokeWidth = stroke
+                layer.paint.strokeWidth = layer.strokeDp.dp.toPx()
+                layer.paint.strokeCap = Paint.Cap.ROUND
                 layer.paint.shader = shader
                 layer.paint.alpha = (255 * a * layer.alpha).toInt().coerceIn(0, 255)
-                // Centre the stroke on the edge so half the light falls inside the screen.
-                rect.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH)
-                canvas.nativeCanvas.drawRoundRect(rect, corner, corner, layer.paint)
+                // The stroke is centred on the screen edge, so half the light falls inside.
+                canvas.nativeCanvas.drawPath(path, layer.paint)
             }
         }
+    }
+}
+
+/**
+ * The screen border as one closed path that starts at the top centre and runs
+ * clockwise, so by symmetry the right middle sits at a quarter of its length,
+ * the bottom centre at half and the left middle at three quarters. Revealing
+ * a growing window around both side midpoints makes the light run up and down
+ * from the sides and meet at the top and bottom centres.
+ */
+private class BorderPath {
+    private val full = Path()
+    private val revealed = Path()
+    private val measure = PathMeasure()
+    private var key = 0L
+
+    fun revealed(width: Float, height: Float, corner: Float, progress: Float): Path {
+        val sizeKey = (width.toBits().toLong() shl 32) or height.toBits().toLong()
+        if (sizeKey != key) {
+            key = sizeKey
+            val r = corner.coerceAtMost(minOf(width, height) / 2f)
+            full.reset()
+            full.moveTo(width / 2f, 0f)
+            full.lineTo(width - r, 0f)
+            full.arcTo(RectF(width - 2 * r, 0f, width, 2 * r), 270f, 90f)
+            full.lineTo(width, height - r)
+            full.arcTo(RectF(width - 2 * r, height - 2 * r, width, height), 0f, 90f)
+            full.lineTo(r, height)
+            full.arcTo(RectF(0f, height - 2 * r, 2 * r, height), 90f, 90f)
+            full.lineTo(0f, r)
+            full.arcTo(RectF(0f, 0f, 2 * r, 2 * r), 180f, 90f)
+            full.close()
+            measure.setPath(full, false)
+        }
+        revealed.rewind()
+        val length = measure.length
+        val half = length / 4f * progress.coerceIn(0f, 1f)
+        if (half <= 0f) return revealed
+        for (center in floatArrayOf(length / 4f, length * 3f / 4f)) {
+            measure.getSegment(center - half, center + half, revealed, true)
+        }
+        return revealed
     }
 }

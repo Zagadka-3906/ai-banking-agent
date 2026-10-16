@@ -65,23 +65,24 @@ internal fun OperationOutcomeScreen(
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
             .padding(20.dp).testTag(UiTags.OUTCOME_SCREEN),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Surface(shape = CircleShape, color = accent,
-                contentColor = if (outcome.tone == OutcomeTone.NEUTRAL) MaterialTheme.colorScheme.onPrimaryContainer else semantic.onRiskContainer,
-                modifier = Modifier.size(88.dp).riseIn(rise = 0.dp, fromScale = 0.4f, durationMillis = 520)) {
-                Box(contentAlignment = Alignment.Center) {
-                    BankIcon(when (outcome.tone) { OutcomeTone.SUCCESS -> BankIconKind.Check
-                        OutcomeTone.FAILURE -> BankIconKind.Close
-                        OutcomeTone.PENDING -> BankIconKind.Search
-                        OutcomeTone.NEUTRAL -> BankIconKind.Shield }, Modifier.size(42.dp))
-                }
-            }
+            OutcomeBadge(
+                tone = outcome.tone,
+                container = accent,
+                mark = when (outcome.tone) {
+                    OutcomeTone.SUCCESS -> semantic.riskGreen
+                    OutcomeTone.FAILURE -> semantic.riskRed
+                    OutcomeTone.PENDING -> semantic.riskYellow
+                    OutcomeTone.NEUTRAL -> MaterialTheme.colorScheme.onPrimaryContainer
+                },
+            )
             Text(outcome.title, style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.riseIn(delayMillis = 160, rise = 12.dp).testTag(UiTags.OUTCOME_TITLE))
+                modifier = Modifier.riseIn(delayMillis = 420, rise = 16.dp, durationMillis = 420).testTag(UiTags.OUTCOME_TITLE))
             BankStatusChip(outcome.label, when (outcome.tone) { OutcomeTone.SUCCESS -> BankSemanticStatus.RiskGreen
                 OutcomeTone.FAILURE -> BankSemanticStatus.RiskRed
                 OutcomeTone.PENDING -> BankSemanticStatus.RiskYellow
-                OutcomeTone.NEUTRAL -> BankSemanticStatus.Neutral })
-            BankSectionCard(modifier = Modifier.fillMaxWidth()) {
+                OutcomeTone.NEUTRAL -> BankSemanticStatus.Neutral },
+                Modifier.riseIn(delayMillis = 520, rise = 0.dp, fromScale = 0.8f, durationMillis = 300))
+            BankSectionCard(modifier = Modifier.fillMaxWidth().riseIn(delayMillis = 600, rise = 24.dp, durationMillis = 460)) {
                 BankSticker(if (outcome.tone == OutcomeTone.FAILURE) "原因与下一步" else "安言 · 办理回执")
                 SelectionContainer { AgentMarkdown(message?.text ?: problem?.message.orEmpty()) }
                 ReplyDivider()
@@ -101,7 +102,7 @@ internal fun OperationOutcomeScreen(
             }
             if (message != null && (!message.result.isNullOrEmpty() || !message.traceId.isNullOrBlank())) {
                 BankSecondaryButton(if (showReceipt) "收起回执详情" else "查看回执详情", { showReceipt = !showReceipt },
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.OUTCOME_RECEIPT))
+                    modifier = Modifier.fillMaxWidth().riseIn(delayMillis = 720, rise = 16.dp, durationMillis = 380).testTag(UiTags.OUTCOME_RECEIPT))
                 if (showReceipt) BankSectionCard(modifier = Modifier.fillMaxWidth()) {
                     SelectionContainer {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,15 +122,15 @@ internal fun OperationOutcomeScreen(
                             .semantics { liveRegion = LiveRegionMode.Polite })
                 }
                 BankSecondaryButton(if (message.reconciling) "正在核对结果…" else "核对办理结果", onReconcile,
-                    enabled = !message.reconciling, modifier = Modifier.fillMaxWidth().testTag(UiTags.OUTCOME_RECONCILE))
+                    enabled = !message.reconciling, modifier = Modifier.fillMaxWidth().riseIn(delayMillis = 760, rise = 16.dp, durationMillis = 380).testTag(UiTags.OUTCOME_RECONCILE))
             } else if (message?.businessStatus == "PENDING_RECONCILIATION") {
                 Text("此回执缺少核对信息，请返回对话查看现有回执和账户记录。", style = MaterialTheme.typography.bodyMedium)
             }
             if (outcome.tone == OutcomeTone.SUCCESS) {
                 BankSecondaryButton("查看账户余额", onBalance, enabled = canQuery,
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.OUTCOME_BALANCE))
+                    modifier = Modifier.fillMaxWidth().riseIn(delayMillis = 800, rise = 16.dp, durationMillis = 380).testTag(UiTags.OUTCOME_BALANCE))
                 BankSecondaryButton("查看待办任务", onTasks,
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.OUTCOME_TASKS))
+                    modifier = Modifier.fillMaxWidth().riseIn(delayMillis = 860, rise = 16.dp, durationMillis = 380).testTag(UiTags.OUTCOME_TASKS))
             }
         }
     }

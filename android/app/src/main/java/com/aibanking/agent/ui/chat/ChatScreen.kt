@@ -66,7 +66,6 @@ import com.aibanking.agent.ui.anim.riseIn
 import com.aibanking.agent.ui.anim.RiskSignal
 import com.aibanking.agent.ui.anim.RiskTier
 import com.aibanking.agent.ui.anim.riskEdgeGlow
-import com.aibanking.agent.ui.anim.riskTierOf
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.aibanking.agent.ui.anim.pageSlideSpec
@@ -135,18 +134,11 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         action()
     }
     BackHandler(enabled = drawerState.isOpen) { drawerScope.launch { drawerState.close() } }
-    // Screen-edge ring in the colour of the latest risk tier: a pending approval
-    // (yellow or red) keeps it breathing until decided; a new reply flashes once.
+    // Screen-edge light while a yellow or red approval waits for the user; it
+    // fades once decided. The completed reply does not light it again.
     val pendingApproval = state.pending
-    val lastRiskReply = state.messages.lastOrNull {
-        // Read-only (green) replies raise no glow; only yellow and red do.
-        it.role == ChatRole.ASSISTANT && !it.isApprovalPreviewMessage() && riskTierOf(it.riskLevel).let { tier -> tier != null && tier != RiskTier.GREEN }
-    }
-    val riskSignal = when {
-        pendingApproval != null -> RiskSignal("approval:${pendingApproval.approvalId}",
-            if (pendingApproval.mfaRequired) RiskTier.RED else RiskTier.YELLOW, sustained = true)
-        lastRiskReply != null -> RiskSignal("reply:${lastRiskReply.id}", requireNotNull(riskTierOf(lastRiskReply.riskLevel)), sustained = false)
-        else -> null
+    val riskSignal = pendingApproval?.let {
+        RiskSignal("approval:${it.approvalId}", if (it.mfaRequired) RiskTier.RED else RiskTier.YELLOW, sustained = true)
     }
     // Conversation first: every other destination lives in the side drawer.
     ModalNavigationDrawer(
