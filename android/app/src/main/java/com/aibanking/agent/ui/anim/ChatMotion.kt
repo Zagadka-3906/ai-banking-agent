@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
@@ -174,6 +175,20 @@ fun GradientRevealText(text: String, colors: List<Color>, modifier: Modifier = M
 }
 
 /**
+ * Whether numbers in this subtree may count up. Only a reply that has just
+ * arrived allows it, so returning to the chat or scrolling back shows the
+ * final amounts at once.
+ */
+val LocalCountUpAllowed = staticCompositionLocalOf { false }
+
+/** Numbers already counted in this app run, by caller-chosen key. */
+object CountUpMemory {
+    private val counted = HashSet<String>()
+
+    fun firstTime(key: String): Boolean = synchronized(counted) { counted.add(key) }
+}
+
+/**
  * Shows [format] of a number counting up from zero once, while semantics keep
  * the final text so assistive technology and tests read the real value.
  */
@@ -185,8 +200,13 @@ fun CountUpText(
     style: TextStyle = LocalTextStyle.current,
     color: Color = Color.Unspecified,
     durationMillis: Int = 700,
+    onceKey: String? = null,
 ) {
-    val motion = LocalBankMotionEnabled.current && !LocalInBackPreviewBeneath.current && value.isFinite()
+    // Count only the first time a number is seen: with [onceKey], once per key and
+    // value for this app run; otherwise only where a newly arrived reply allows it.
+    val firstTime = remember(onceKey, value) { onceKey == null || CountUpMemory.firstTime("$onceKey|$value") }
+    val allowed = if (onceKey != null) firstTime else LocalCountUpAllowed.current
+    val motion = allowed && LocalBankMotionEnabled.current && !LocalInBackPreviewBeneath.current && value.isFinite()
     val progress = remember(value) { Animatable(if (motion) 0f else 1f) }
     LaunchedEffect(value) { if (motion) progress.animateTo(1f, tween(durationMillis, easing = FastOutSlowInEasing)) }
     val finalText = format(value)

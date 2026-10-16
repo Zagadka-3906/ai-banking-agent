@@ -63,6 +63,7 @@ import com.aibanking.agent.ui.anim.breathe
 import com.aibanking.agent.ui.anim.popOnChange
 import com.aibanking.agent.ui.anim.rememberEntranceTracker
 import com.aibanking.agent.ui.anim.riseIn
+import com.aibanking.agent.ui.anim.LocalCountUpAllowed
 import com.aibanking.agent.ui.anim.RiskSignal
 import com.aibanking.agent.ui.anim.RiskTier
 import com.aibanking.agent.ui.anim.riskEdgeGlow
@@ -379,8 +380,11 @@ private fun ChatHome(
                     val fresh = remember(message.id) { entrance.isNew(message.id) }
                     val arrive = if (message.role == ChatRole.USER) Modifier.riseIn(fresh, rise = 6.dp, fromX = 28.dp, durationMillis = 280)
                         else Modifier.riseIn(fresh, delayMillis = 60, rise = 18.dp, durationMillis = 420)
-                    MessageBubble(message, Modifier.animateItem().then(arrive).verificationFrost(redVerification),
-                        onReconcile = { viewModel.reconcileMessage(message.id) }, onOutcome = { viewModel.openOutcome(message.id) })
+                    // Amounts count up only in a reply that has just arrived.
+                    CompositionLocalProvider(LocalCountUpAllowed provides fresh) {
+                        MessageBubble(message, Modifier.animateItem().then(arrive).verificationFrost(redVerification),
+                            onReconcile = { viewModel.reconcileMessage(message.id) }, onOutcome = { viewModel.openOutcome(message.id) })
+                    }
                 }
                 state.pending?.let { approval ->
                     item(key = "approval:${approval.approvalId}") {

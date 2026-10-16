@@ -328,7 +328,7 @@ private fun CardFace(card: CardView) {
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("可用余额", color = foreground.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium)
-                CountUpText(card.availableBalance, { "¥" + String.format(Locale.CHINA, "%,.2f", it) },
+                CountUpText(card.availableBalance, { "¥" + String.format(Locale.CHINA, "%,.2f", it) }, onceKey = "card:${card.cardId}",
                     color = foreground, style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.SemiBold))
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
