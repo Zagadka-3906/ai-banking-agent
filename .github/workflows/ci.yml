@@ -24,6 +24,9 @@ jobs:
         run: python -m pytest -q --cov --cov-report=term:skip-covered --cov-report=markdown-append:"$GITHUB_STEP_SUMMARY"
       - name: Lint
         run: python -m ruff check . --ignore E402
+      - name: Type check (mypy)
+        # Scope and per-module relaxations live in [tool.mypy] in pyproject.toml.
+        run: python -m mypy
       - name: Dependency audit (pip-audit)
         # Online runs fail on known CVEs; offline runs skip instead of failing
         # so local, no-network machines keep the rest of the suite green.

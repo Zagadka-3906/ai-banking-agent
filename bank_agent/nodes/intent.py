@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 
 from planner import (
@@ -78,7 +78,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         return {**empty_state(final_response="这是对操作的否定、引用或假设，我没有发起执行或审批。如需实际办理，请单独明确业务、对象和金额。"),
                 "request_id": request_id, "context": {}}
     # 问卷进行中：本回合输入按答题处理，不走常规意图解析。
-    prior_context = state.get("context") if isinstance(state.get("context"), dict) else {}
+    prior_context = state.get("context")
+    if not isinstance(prior_context, dict):
+        prior_context = {}
     compound = prior_context.get("compound_workflow") if state.get("continue_workflow") or prior_context.get("pending_clarification") or prior_context.get("risk_quiz") else None
     if compound and compound["steps"][compound["index"]].get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
         compound = None
@@ -98,10 +100,10 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         if compound and quiz_result.get("profile_result"):
             context = {**prior_context, "risk_quiz": None, "compound_workflow": compound}
             if compound["steps"][compound["index"]]["payload"]["intent"] == Intent.WEALTH_RISK_ASSESSMENT.value:
-                resumed = workflow_next_node({**state, **quiz_result, "context": context})
+                resumed = workflow_next_node(cast(BankingAgentState, {**state, **quiz_result, "context": context}))
             else:
-                resumed = intent_parser_node({**state, **quiz_result, "context": context, "continue_workflow": True,
-                                               "user_input": compound["steps"][compound["index"]]["text"], "final_response": None})
+                resumed = intent_parser_node(cast(BankingAgentState, {**state, **quiz_result, "context": context, "continue_workflow": True,
+                                               "user_input": compound["steps"][compound["index"]]["text"], "final_response": None}))
             resumed.update({"profile_result": quiz_result["profile_result"], "risk_quiz": {"active": False}})
             return resumed
         return quiz_result
@@ -121,7 +123,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         parsed["confidence"] = None
     pending = prior_context.get("pending_clarification")
     if isinstance(pending, dict) and pending.get("intent") == Intent.WEALTH_COMPARE.value and "product_ids" in (pending.get("missing") or []):
-        previous = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
+        previous = pending.get("payload")
+        if not isinstance(previous, dict):
+            previous = {}
         previous_ids = list(previous.get("product_ids") or [])
         explicit_ids = local_parse(text).get("product_ids") or []
         if len(previous_ids) == 1 and len(explicit_ids) == 1 and text.strip().upper() == explicit_ids[0]:
@@ -134,7 +138,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     parsed = merge_pending_clarification(parsed, state, text)
     # Explicit back-references ("再转一次", "还是上次那个") reuse the previous
     # turn's request; the operation is re-authorized from scratch.
-    prior = state.get("context") if isinstance(state.get("context"), dict) else {}
+    prior = state.get("context")
+    if not isinstance(prior, dict):
+        prior = {}
     parsed = validate_intent_payload(resolve_ellipsis(parsed, prior, text, state.get("execution_result")))
     if compound:
         step = compound["steps"][compound["index"]]

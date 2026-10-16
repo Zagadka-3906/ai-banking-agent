@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==8.3.5", "pytest-cov==7.1.0", "httpx==0.28.1", "ruff>=0.6", "mypy>=1.11"]
+dev = ["pytest==8.3.5", "pytest-cov==7.1.0", "httpx==0.28.1", "ruff>=0.6", "mypy==2.3.1"]
 feishu = ["lark-oapi==1.7.3"]
 
 [tool.pytest.ini_options]
@@ -43,6 +43,28 @@ omit = ["tests/*", "scripts/*", "tools/*", "android/*", "build/*", ".venv/*", "c
 skip_empty = true
 fail_under = 82
 precision = 1
+
+[tool.mypy]
+# Static type check of the application packages and entry modules (CI gate).
+# Third-party libraries without stubs are treated as Any.
+python_version = "3.12"
+files = ["bank_core", "bank_agent", "bank_security", "bank_planning", "*.py"]
+exclude = ["^build/", "^tests/", "^scripts/", "^tools/"]
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# These mixins are only ever used through conversation.ConversationManager,
+# which supplies the shared state (_lock, _graph, _approvals, ...) they read.
+module = ["bank_agent.conversation_turns", "bank_agent.conversation_approvals"]
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+# FastAPI injects ``request: Request = None``; an Optional[Request] annotation
+# would instead turn it into a query parameter.
+module = ["bank_core.routes.*"]
+implicit_optional = true
 
 [tool.ruff]
 line-length = 140

@@ -153,6 +153,8 @@ def _verify_device_attestation(
             public_key = _load_der_public_key(base64.b64decode(str(device.get("public_key")), validate=True))
         except Exception:
             return None
+        if not isinstance(public_key, crypto_ec.EllipticCurvePublicKey):
+            return None
         payload = device_facing_payload(challenge_id, subject, str(challenge.get("jti") or ""))
         try:
             public_key.verify(signature, payload, crypto_ec.ECDSA(crypto_hashes.SHA256()))

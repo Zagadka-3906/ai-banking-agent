@@ -126,7 +126,9 @@ def card_source_states(operation: str) -> Optional[set[str]]:
 
 
 def card_channels(card: Mapping[str, Any]) -> dict[str, bool]:
-    stored = card.get("channels") if isinstance(card.get("channels"), dict) else {}
+    stored = card.get("channels")
+    if not isinstance(stored, dict):
+        stored = {}
     return {channel: stored.get(channel) is not False for channel in CARD_CHANNELS}
 
 

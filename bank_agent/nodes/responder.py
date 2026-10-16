@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 
 from planner import (
@@ -56,7 +56,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                 rendered.append(str(item.get("error") or "这项查询未完成"))
                 continue
             child = {**state, **sub, "execution_result": item, "execution_results": None, "final_response": None}
-            validated = responder_node(child)
+            validated = responder_node(cast(BankingAgentState, child))
             if validated.get("business_status") == "FAILED":
                 sanitized.append({"type": item.get("type"), "business_status": "FAILED", "error": "查询回执未通过核验"})
             else:
@@ -94,7 +94,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         return {"final_response": f"查询成功：账户总余额 **¥{float(data.get('total_balance', 0)):,.2f}**，锁定资金 **¥{float(data.get('locked_amount', 0)):,.2f}**，可用余额 **¥{float(data.get('available_balance', 0)):,.2f}**。"}
     if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") == "OVERSEAS_TRANSACTION":
         rows = result.get("records")
-        facts = result.get("facts")
+        facts = result.get("facts") or {}
         if (
             not isinstance(rows, list)
             or not valid_bill_facts(facts)
@@ -179,7 +179,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
             return response_validation_failure(state, "BILL_FACTS_RENDER_INVALID")
     if rtype == "LOCK_SUCCESS":
         data = result.get("data", {})
-        required = ("lock_id", "locked_amount", "remaining_available")
+        required: tuple[str, ...] = ("lock_id", "locked_amount", "remaining_available")
         if (
             not isinstance(data, dict)
             or str(data.get("status", "")).upper() != "LOCKED"
@@ -318,7 +318,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
             or (state.get("target") is not None and product.get("product_id") != state["target"])
         ):
             return response_validation_failure(state, "WEALTH_PURCHASE_RESULT_INVALID")
-        return {"final_response": f"理财申购已由核心确认：{product.get('name')}，金额 ¥{float(holding.get('principal')):,.2f}，持仓编号 `{holding.get('holding_id')}`。以上为沙箱结果，不构成投资建议。"}
+        return {"final_response": f"理财申购已由核心确认：{product.get('name')}，金额 ¥{float(holding.get('principal') or 0):,.2f}，持仓编号 `{holding.get('holding_id')}`。以上为沙箱结果，不构成投资建议。"}
     if rtype == Intent.WEALTH_REDEEM.value:
         envelope = result.get("data")
         data = envelope.get("data") if isinstance(envelope, dict) else None
@@ -331,7 +331,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
             or (state.get("target") is not None and data["product"].get("product_id") != state["target"])
         ):
             return response_validation_failure(state, "WEALTH_REDEEM_RESULT_INVALID")
-        return {"final_response": f"理财赎回已由核心确认，到账金额 ¥{float(data.get('redeemed_amount')):,.2f}。以上为沙箱结果。"}
+        return {"final_response": f"理财赎回已由核心确认，到账金额 ¥{float(data.get('redeemed_amount') or 0):,.2f}。以上为沙箱结果。"}
     expected_nested_status = {
         Intent.CARD_APPLY.value: "ISSUED",
         Intent.CARD_LIMIT.value: "LIMIT_UPDATED",
@@ -347,7 +347,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         Intent.CARD_CHANNEL.value: "CHANNEL_UPDATED",
         Intent.UNDO_OPERATION.value: "UNDONE",
         Intent.FRAUD_DISPUTE.value: "CARD_PROTECTED",
-    }.get(rtype)
+    }.get(str(rtype))
     if rtype:
         if expected_nested_status is None:
             return response_validation_failure(state, "UNSUPPORTED_RESULT_TYPE")
@@ -355,7 +355,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         if not core_success(envelope, nested_status=expected_nested_status):
             return response_validation_failure(state, "GENERIC_RESULT_STATUS_INVALID")
         if expected_nested_status is not None:
-            payload = envelope.get("data")
+            payload = (envelope or {}).get("data")
             if not isinstance(payload, dict):
                 return response_validation_failure(state, "GENERIC_RESULT_INVALID")
             required_by_type = {
@@ -393,7 +393,9 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                     return response_validation_failure(state, "CARD_LIMIT_RESULT_INVALID")
                 if rtype == Intent.CARD_CHANNEL.value:
                     slots = state.get("slots") or {}
-                    channels = card.get("channels") if isinstance(card.get("channels"), dict) else {}
+                    channels = card.get("channels")
+                    if not isinstance(channels, dict):
+                        channels = {}
                     if (payload.get("channel") != slots.get("card_channel") or payload.get("enabled") is not slots.get("channel_enabled")
                             or channels.get(payload.get("channel")) is not slots.get("channel_enabled")):
                         return response_validation_failure(state, "CARD_CHANNEL_RESULT_INVALID")
@@ -410,7 +412,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                         or case.get("card_id") != card["card_id"]
                         or transaction.get("card_id") != card["card_id"]
                         or ((state.get("transaction") or {}).get("tx_id") is not None
-                            and state["transaction"]["tx_id"] != transaction["tx_id"])
+                            and (state.get("transaction") or {}).get("tx_id") != transaction["tx_id"])
                     ):
                         return response_validation_failure(state, "DISPUTE_RESULT_INVALID")
             elif rtype == Intent.UNDO_OPERATION.value:
@@ -466,9 +468,13 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
     """Business-language confirmation, never an internal intent code."""
 
     payload = (state.get("execution_result") or {}).get("data") or {}
-    inner = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    inner = payload.get("data")
+    if not isinstance(inner, dict):
+        inner = {}
     target = state.get("target")
-    card = inner.get("card") if isinstance(inner.get("card"), dict) else {}
+    card = inner.get("card")
+    if not isinstance(card, dict):
+        card = {}
     card_id = card.get("card_id")
     scheduled_label = inner.get("scheduled_at") or state.get("scheduled_at") or "约定时间"
     if rtype == Intent.SCHEDULED_TRANSFER.value:
@@ -498,7 +504,7 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
         kind = inner.get("kind")
         undone = {"SCHEDULED_TRANSFER": "✅ 已撤销这笔预约转账，到期不会再执行。",
                   "SPLIT_BILL": "✅ 已撤回这笔 AA 收款请求，参与人无需再付款。",
-                  "FUND_RESERVATION": "✅ 已解除资金锁定，资金恢复可用，关联的提醒和订单草稿已取消。"}.get(kind, "✅ 已撤销。")
+                  "FUND_RESERVATION": "✅ 已解除资金锁定，资金恢复可用，关联的提醒和订单草稿已取消。"}.get(str(kind), "✅ 已撤销。")
         return undone + "已完成的资金操作不受影响。"
     if rtype == Intent.CARD_LIMIT.value:
         limit = card.get("daily_limit")

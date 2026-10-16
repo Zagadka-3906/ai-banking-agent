@@ -32,7 +32,7 @@ from security import (
 )
 
 
-def resolve_payee(value: str, *, from_user: Optional[str] = None) -> tuple[str, dict[str, Any]]:
+def resolve_payee(value: Optional[str], *, from_user: Optional[str] = None) -> tuple[str, dict[str, Any]]:
     safe_value = sanitize_text(value, field="收款人", max_length=128)
     # The caller's own contact book is the first payee allow-list.  A name or
     # phone resolves directly; a kinship word ("爱人"/"儿子"/"兄弟"…) resolves

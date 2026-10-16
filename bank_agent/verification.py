@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any
+from typing import Any, TypeGuard
 
 
 from planner import (
@@ -45,7 +45,7 @@ def response_validation_failure(state: BankingAgentState, reason: str) -> dict[s
             "todo_card": None, "plan": None}
 
 
-def finite_number(value: Any, *, nonnegative: bool = False) -> bool:
+def finite_number(value: Any, *, nonnegative: bool = False) -> TypeGuard[float]:
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -197,7 +197,7 @@ def valid_bill_facts(facts: Any) -> bool:
             return False
         if not finite_number(item.get("amount"), nonnegative=True) or not finite_number(item.get("share"), nonnegative=True):
             return False
-        if float(item.get("share")) > 1.0 + 1e-9:
+        if float(item["share"]) > 1.0 + 1e-9:
             return False
     anomalies = facts.get("anomalies") or []
     if not isinstance(anomalies, list):

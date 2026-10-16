@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Optional, cast
 
 from bank_tools import BankAPIError
 from workflow_contract import reply_contract
@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - dependency guidance path
     build_graph = None  # type: ignore[assignment]
 
     @contextmanager
-    def channel_session(token: Optional[str]):  # type: ignore[misc]
+    def channel_session(token: Optional[str]):
         """Fallback when the graph module is unavailable: present nothing."""
 
         yield
@@ -26,12 +26,12 @@ except Exception:  # pragma: no cover - dependency guidance path
 try:
     from langgraph.checkpoint.memory import MemorySaver
 except Exception:  # pragma: no cover
-    MemorySaver = None  # type: ignore[assignment]
+    MemorySaver = None  # type: ignore[assignment,misc]
 
 try:
     from langgraph.types import Command
 except Exception:  # pragma: no cover
-    Command = None  # type: ignore[assignment]
+    Command = None  # type: ignore[assignment,misc]
 from bank_agent.conversation_base import (  # noqa: F401
     APPROVAL_MAX_ATTEMPTS,
     APPROVAL_TTL_SECONDS,
@@ -136,7 +136,7 @@ class ApprovalsMixin:
             if checked.get("business_status") == "FAILED":
                 return self._envelope_from_state(conversation_id=conversation_id, state=state, request_id=None)
             graph.update_state(config, {"execution_result": result, "execution_results": None, "final_response": None,
-                                       "business_status": None, "plan": advance_plan(state, str(state.get("intent")), outcome="SUCCESS")}, as_node="executor")
+                                       "business_status": None, "plan": advance_plan(cast(Any, state), str(state.get("intent")), outcome="SUCCESS")}, as_node="executor")
             with channel_session(session_token):
                 graph.invoke(None, config)
             envelope = self._settle_turn(principal=principal, conversation_id=conversation_id, thread_id=thread_id,
@@ -347,7 +347,7 @@ class ApprovalsMixin:
             if completed_workflow:
                 completed_workflow = json.loads(json.dumps(completed_workflow))
                 completed_workflow["steps"][completed_workflow["index"]]["status"] = "CANCELLED"
-            cleared = {
+            cleared: dict[str, Any] = {
                 "context": {}, "auth_token": None, "mfa_proof": None,
                 "user_confirmed": False, "clarification_required": False,
                 "plan": None,
@@ -369,7 +369,9 @@ class ApprovalsMixin:
     @staticmethod
     def _core_failure(exc: BankAPIError) -> ConversationError:
         payload = exc.payload if isinstance(exc.payload, dict) else {}
-        detail = payload.get("detail") if isinstance(payload.get("detail"), dict) else {}
+        detail = payload.get("detail")
+        if not isinstance(detail, dict):
+            detail = {}
         code = str(detail.get("code") or "CORE_REJECTED")
         message = str(detail.get("message") or exc)
         status = exc.status_code or 502

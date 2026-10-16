@@ -13,7 +13,7 @@ from bank_security.errors import SecurityError
 try:
     from argon2 import PasswordHasher as _PasswordHasher
 except ImportError:  # pragma: no cover - dependency guidance path
-    _PasswordHasher = None  # type: ignore[assignment]
+    _PasswordHasher = None  # type: ignore[assignment,misc]
 
 PASSWORDS_AVAILABLE = _PasswordHasher is not None
 _PASSWORD_HASHER = _PasswordHasher() if _PasswordHasher is not None else None
@@ -37,13 +37,15 @@ def hash_password(password: Any) -> str:
     if len(password) > 512:
         # argon2 is not a reason to accept an unbounded allocation.
         raise SecurityError("口令过长", 400, "WEAK_PASSWORD")
+    if _PASSWORD_HASHER is None:
+        raise SecurityError("服务端未启用口令校验", 503, "PASSWORDS_UNAVAILABLE")
     return _PASSWORD_HASHER.hash(password)
 
 
 def verify_password(password: Any, digest: Optional[str]) -> bool:
     """Verify a password against a stored digest, failing closed on any error."""
 
-    if not PASSWORDS_AVAILABLE or not isinstance(digest, str) or not digest:
+    if not PASSWORDS_AVAILABLE or _PASSWORD_HASHER is None or not isinstance(digest, str) or not digest:
         return False
     if not isinstance(password, str) or not password:
         return False

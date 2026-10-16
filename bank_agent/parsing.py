@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, TypeGuard
 
 
 from planner import (
@@ -450,7 +450,7 @@ def model_parse(text: str) -> dict[str, Any]:
             # qualifier still forbids silently executing it immediately.
             merged["intent"] = Intent.SCHEDULED_TRANSFER.value
 
-        def stated(value: Any, *, identifier: bool = False) -> bool:
+        def stated(value: Any, *, identifier: bool = False) -> TypeGuard[str]:
             if not isinstance(value, str) or not value.strip() or len(value) > 120:
                 return False
             value = value.strip()
@@ -462,19 +462,19 @@ def model_parse(text: str) -> dict[str, Any]:
         references = {"他", "她", "它", "我", "本人", "我们", "这个", "那个", "这张卡", "那张卡",
                       "同一位", "同一个", "同一个收款人", "刚才那位", "刚才那个", "那个人", "上次那个"}
 
-        def stated_name(value: Any) -> bool:
+        def stated_name(value: Any) -> TypeGuard[str]:
             return (
                 stated(value) and len(value.strip()) >= 2
                 and value.strip() not in references
                 and (not value.strip().isdigit() or bool(re.fullmatch(r"1\d{10}", value.strip())))
             )
 
-        candidate = parsed.get("target")
-        if not local.get("target") and not (local.get("slots") or {}).get("target_ambiguous") and stated_name(candidate):
+        model_target = parsed.get("target")
+        if not local.get("target") and not (local.get("slots") or {}).get("target_ambiguous") and stated_name(model_target):
             # A card tail or generic label must be resolved against the caller's
             # real cards, not promoted to a model-invented CARD identifier.
-            if not merged["intent"].startswith("CARD_") or re.fullmatch(r"(?i)CARD-[0-9a-z]{2,}", candidate.strip()):
-                merged["target"] = candidate.strip()
+            if not merged["intent"].startswith("CARD_") or re.fullmatch(r"(?i)CARD-[0-9a-z]{2,}", model_target.strip()):
+                merged["target"] = model_target.strip()
         if merged["intent"] == Intent.SPLIT_BILL.value:
             merged["target"] = None
         if not local.get("participants") and isinstance(parsed.get("participants"), list):
@@ -508,7 +508,7 @@ def model_parse(text: str) -> dict[str, Any]:
         if isinstance(model_slots, Mapping) and "transaction_id" not in slots:
             transaction_id = model_slots.get("transaction_id")
             if stated(transaction_id, identifier=True):
-                slots["transaction_id"] = transaction_id.strip()
+                slots["transaction_id"] = str(transaction_id).strip()
         merged["slots"] = slots
         if merged["intent"] == Intent.CROSS_SCENE_LOCK.value:
             merged["event_at"] = local.get("scheduled_at")

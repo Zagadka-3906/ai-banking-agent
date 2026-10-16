@@ -1,7 +1,7 @@
 """OS resource limits for disposable analysis workers, not full OS isolation."""
 from __future__ import annotations
 
-import os
+import sys
 
 _job_handle = None
 MEMORY_BYTES = 512 * 1024 * 1024
@@ -10,13 +10,18 @@ CPU_SECONDS = 3
 
 def apply_worker_limits() -> str:
     """Fail closed if the requested limits cannot be installed."""
-    if os.name != "nt":
+    if sys.platform != "win32":
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (MEMORY_BYTES, MEMORY_BYTES))
         resource.setrlimit(resource.RLIMIT_CPU, (CPU_SECONDS, CPU_SECONDS))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         return "posix_rlimit"
+    return _apply_windows_job()
 
+
+def _apply_windows_job() -> str:
+    if sys.platform != "win32":  # narrows the platform for type checkers
+        raise OSError("Windows job objects are only available on Windows")
     import ctypes
     from ctypes import wintypes
 

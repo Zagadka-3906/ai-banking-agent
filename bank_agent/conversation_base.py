@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover - dependency guidance path
     build_graph = None  # type: ignore[assignment]
 
     @contextmanager
-    def channel_session(token: Optional[str]):  # type: ignore[misc]
+    def channel_session(token: Optional[str]):
         """Fallback when the graph module is unavailable: present nothing."""
 
         yield
@@ -24,12 +24,12 @@ except Exception:  # pragma: no cover - dependency guidance path
 try:
     from langgraph.checkpoint.memory import MemorySaver
 except Exception:  # pragma: no cover
-    MemorySaver = None  # type: ignore[assignment]
+    MemorySaver = None  # type: ignore[assignment,misc]
 
 try:
     from langgraph.types import Command
 except Exception:  # pragma: no cover
-    Command = None  # type: ignore[assignment]
+    Command = None  # type: ignore[assignment,misc]
 
 
 logger = logging.getLogger("mock_banking.conversation")

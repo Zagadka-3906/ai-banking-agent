@@ -210,10 +210,11 @@ def scheduled_at_from_text(text: str) -> Optional[str]:
         clock = re.search(r"(凌晨|早上|上午|中午|下午|晚上|傍晚)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]+)\s*(?:点|时|[:：])\s*(半|\d{1,2}|[零〇一二两三四五六七八九十]+)?(?:分)?", text)
         if clock:
             raw_hour, raw_minute = clock.group(2), clock.group(3)
-            hour = int(raw_hour) if raw_hour.isdigit() else chinese_number(raw_hour)
-            minute = 30 if raw_minute == "半" else (int(raw_minute) if raw_minute and raw_minute.isdigit() else (chinese_number(raw_minute) if raw_minute else 0))
-            if hour is None or minute is None:
+            parsed_hour = int(raw_hour) if raw_hour.isdigit() else chinese_number(raw_hour)
+            parsed_minute = 30 if raw_minute == "半" else (int(raw_minute) if raw_minute and raw_minute.isdigit() else (chinese_number(raw_minute) if raw_minute else 0))
+            if parsed_hour is None or parsed_minute is None:
                 return None
+            hour, minute = parsed_hour, parsed_minute
             if clock.group(1) in {"下午", "晚上", "傍晚", "中午"} and hour < 12:
                 hour += 12
             if clock.group(1) == "凌晨" and hour == 12:

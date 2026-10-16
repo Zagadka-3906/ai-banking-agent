@@ -11,7 +11,7 @@ from typing import Any, Mapping, Optional
 try:  # security.py is available in the application, but keep this module reusable.
     from security import InjectionError, sanitize_text
 except Exception:  # pragma: no cover - only used when imported in isolation
-    class InjectionError(ValueError):
+    class InjectionError(ValueError):  # type: ignore[no-redef]
         pass
 
     def sanitize_text(value: Any, *, field: str = "文本", max_length: int = 2000) -> str:
@@ -303,14 +303,18 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
 
     intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
     missing: list[str] = []
-    slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+    slots = parsed.get("slots")
+    if not isinstance(slots, Mapping):
+        slots = {}
     for slot_name in ("amount", "target", "date_range", "request"):
         if slots.get(f"{slot_name}_ambiguous") is True:
             missing.append(slot_name)
     if missing:
         return missing
     if intent == Intent.WEALTH_RISK_ASSESSMENT.value:
-        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+        slots = parsed.get("slots")
+        if not isinstance(slots, Mapping):
+            slots = {}
         tolerance = str(slots.get("loss_tolerance") or "").upper().strip()
         experience = str(slots.get("experience") or "").upper().strip()
         horizon = slots.get("horizon_years")
@@ -375,7 +379,9 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
             # Some operations (card/report-lost) do not have an amount.  A
             # full redemption states its amount as "全部" and is resolved
             # against the real holding before the precheck.
-            slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+            slots = parsed.get("slots")
+            if not isinstance(slots, Mapping):
+                slots = {}
             if not (intent == Intent.WEALTH_REDEEM.value and slots.get("redeem_all") is True):
                 missing.append("amount")
     return missing

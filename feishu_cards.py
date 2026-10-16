@@ -176,7 +176,7 @@ def query_card(intent: str, scope: str, result: dict[str, Any], *, category: str
                 masked = "卡号未提供"
             label = _safe(row.get("label") or row.get("type") or "卡片")
             status = {"ACTIVE": "正常使用", "FROZEN": "已冻结", "LOST": "已挂失"}.get(
-                row.get("status"), _safe(row.get("status") or "状态未知"))
+                str(row.get("status")), _safe(row.get("status") or "状态未知"))
             elements.append({"tag": "hr"})
             elements.append(_div(f"**{label}**\n{_safe(masked)} · {status}"))
         if not rows:
@@ -187,7 +187,7 @@ def query_card(intent: str, scope: str, result: dict[str, Any], *, category: str
         elements = [_div(f"**订阅与周期扣费 · 共 {len(rows)} 项**")]
         for row in rows[:8]:
             status = {"CANDIDATE": "待核实", "ACTIVE": "扣费中", "CANCELLED": "已取消"}.get(
-                row.get("status"), _safe(row.get("status") or "状态未知"))
+                str(row.get("status")), _safe(row.get("status") or "状态未知"))
             elements.append({"tag": "hr"})
             elements.append(_div(f"**{_safe(row.get('merchant') or '商户')}**\n{_money(row.get('amount'))} · {status}"))
             if row.get("next_charge"):

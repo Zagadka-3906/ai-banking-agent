@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover - dependency guidance path
     build_graph = None  # type: ignore[assignment]
 
     @contextmanager
-    def channel_session(token: Optional[str]):  # type: ignore[misc]
+    def channel_session(token: Optional[str]):
         """Fallback when the graph module is unavailable: present nothing."""
 
         yield
@@ -55,12 +55,12 @@ except Exception:  # pragma: no cover - dependency guidance path
 try:
     from langgraph.checkpoint.memory import MemorySaver
 except Exception:  # pragma: no cover
-    MemorySaver = None  # type: ignore[assignment]
+    MemorySaver = None  # type: ignore[assignment,misc]
 
 try:
     from langgraph.types import Command
 except Exception:  # pragma: no cover
-    Command = None  # type: ignore[assignment]
+    Command = None  # type: ignore[assignment,misc]
 from bank_agent.conversation_base import (  # noqa: F401
     APPROVAL_TTL_SECONDS,
     CHANNEL_NAMESPACE,
@@ -219,13 +219,13 @@ class ConversationService(TurnsMixin, ApprovalsMixin):
                     self._approvals.pop(key, None)
                 elif approval.resolved and approval.expired:
                     self._approvals.pop(key, None)
-            for key, (created_at, _) in list(self._turns.items()):
+            for turn_key, (created_at, _) in list(self._turns.items()):
                 if now - created_at > TURN_CACHE_TTL_SECONDS:
-                    self._turns.pop(key, None)
+                    self._turns.pop(turn_key, None)
             if len(self._turns) > TURN_CACHE_MAX_RECORDS:
                 ordered = sorted(self._turns.items(), key=lambda item: item[1][0])
-                for key, _ in ordered[: len(self._turns) - TURN_CACHE_MAX_RECORDS]:
-                    self._turns.pop(key, None)
+                for turn_key, _ in ordered[: len(self._turns) - TURN_CACHE_MAX_RECORDS]:
+                    self._turns.pop(turn_key, None)
 
     @staticmethod
     def _config(thread_id: str) -> dict[str, Any]:

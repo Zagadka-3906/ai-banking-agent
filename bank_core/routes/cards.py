@@ -182,6 +182,7 @@ def reveal_card(user_id: str, card_id: str, req: CardRevealRequest, request: Req
             CARD_DISCLOSURE_FAILURES[key] = {"failed": failed, "locked_until": 0}
             exc = SecurityError("卡片查看验证失败", 401, "CARD_DISCLOSURE_DENIED")
         record_failure_and_raise(exc, user_id=actor, action="CARD_DETAIL_REVEAL", request_id=request_id)
+    assert card is not None and vault is not None  # implied by valid_target
     CARD_DISCLOSURE_FAILURES.pop(key, None)
     disclosure_id = f"DISC-{uuid.uuid4().hex[:12].upper()}"
     expires_at = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()

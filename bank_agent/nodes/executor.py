@@ -63,7 +63,9 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             raise RuntimeError(error_message(response))
         rows = response_json(response).get("data", [])
         rows = filter_transactions(rows, state.get("date_scope") or "ALL", date_range=state.get("date_range"))
-        slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
+        slots = state.get("slots")
+        if not isinstance(slots, dict):
+            slots = {}
         category = slots.get("category")
         question = str(state.get("user_input") or "")
         specific_overseas = (
@@ -113,7 +115,9 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             raise RuntimeError(error_message(response))
         return {"type": intent, "data": response_json(response)}
     if intent == Intent.WEALTH_RISK_ASSESSMENT.value:
-        slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
+        slots = state.get("slots")
+        if not isinstance(slots, dict):
+            slots = {}
         # Do not let a missing/invalid questionnaire answer turn into a
         # silently guessed LOW/NONE/one-year assessment.  The planner normally
         # routes this to clarification; this defensive check also protects the
@@ -127,7 +131,7 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
         try:
             if isinstance(horizon_raw, bool):
                 raise ValueError
-            horizon_years = int(horizon_raw)
+            horizon_years = int(horizon_raw)  # type: ignore[arg-type]  # None/garbage is rejected below
         except (TypeError, ValueError):
             return {"final_response": "风险评估还需要明确的投资期限（例如 3 年），我不会替您猜测。", "clarification_required": True}
         if horizon_years < 0 or horizon_years > 100:
@@ -294,7 +298,7 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
             if response.status_code >= 400:
                 return settle_failure_response(state, intent, error_message(response), compensation=_settle_compensation(state, intent))
             data = response_json(response)
-            pending_notes = {"schedule_orders": f"提醒与订单草稿已挂载核心任务中心（{data.get('reminder_task_id')} / {', '.join(map(str, data.get('order_task_ids') or []))}），到期保持 WAITING_USER，不自动下单"}
+            pending_notes: dict[str, str] = {"schedule_orders": f"提醒与订单草稿已挂载核心任务中心（{data.get('reminder_task_id')} / {', '.join(map(str, data.get('order_task_ids') or []))}），到期保持 WAITING_USER，不自动下单"}
             return {"execution_result": {"type": "LOCK_SUCCESS", "data": data}, "todo_card": {"title": "🎂 爱人生日提醒与代订备忘录", "locked_fund": f"¥{float(state.get('amount') or 1000):,.2f}", "schedule": "生日倒计时 2 天自动提醒订购鲜花与蛋糕", "status": "已创建（订单草稿待到期确认）", "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids", [])}, "plan": advance_plan(state, intent, outcome="SUCCESS", data={"lock_id": data.get("lock_id"), "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids")}, pending_notes=pending_notes)}
         if intent == Intent.TRANSFER.value:
             token = state.get("auth_token")
@@ -302,8 +306,9 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                 return {"final_response": "转账授权已失效，请重新发起转账。"}
             remark = state.get("extra_info") or "智能转账"
             headers = {"X-User-Id": user_id, "X-Auth-Token": token, "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"}
-            if state.get("mfa_proof"):
-                headers["X-MFA-Proof"] = state["mfa_proof"]  # type: ignore[index]
+            mfa_proof = state.get("mfa_proof")
+            if mfa_proof:
+                headers["X-MFA-Proof"] = mfa_proof
             try:
                 response = settle_with_retry(
                     state,
@@ -339,7 +344,7 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
             if response.status_code >= 400:
                 return settle_failure_response(state, intent, error_message(response), compensation=_settle_compensation(state, intent))
             data = response_json(response)
-            pending_notes: dict[str, str] = {}
+            pending_notes = {}
             if intent == Intent.SPLIT_BILL.value:
                 pending_notes["notify_participants"] = f"分摊请求已登记（{data.get('task_id')}），参与人通知为扩展项，保持待办"
             return {"execution_result": {"type": intent, "data": data}, "plan": advance_plan(state, intent, outcome="SUCCESS", data={"status": data.get("status"), "task_id": data.get("task_id")}, pending_notes=pending_notes)}

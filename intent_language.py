@@ -64,7 +64,7 @@ def ambiguous_amount(text: str) -> bool:
 def ambiguous_target(text: str) -> bool:
     source = business_text(text)
     references = re.findall(r"(?:转账给|转给|汇给|打给|给|向|收款人(?:改成|改为|换成|是|为))\s*(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*([一-龥A-Za-z0-9·_-]{1,24}?)(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))", source)
-    names = set()
+    names: set[str] = set()
     for reference in references:
         names.update(name.strip() for name in re.split(r"或(?:者)?|还是|和|与|、", reference) if name.strip())
     if len(names) > 1:
@@ -131,9 +131,9 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
             return resolved(date(int(y1 or y2 or year), int(m1), int(d1)), date(int(y2 or y1 or year), int(m2), int(d2)))
         short = re.search(atom + r"\s*(?:到|至|~|～|—)\s*(\d{1,2})(?:日|号)", source)
         if short:
-            year, month, first, last = short.groups()
-            selected_year = int(year or (today.year - 1 if "去年" in source else today.year))
-            return resolved(date(selected_year, int(month), int(first)), date(selected_year, int(month), int(last)))
+            year_text, month_text, first, last = short.groups()
+            selected_year = int(year_text or (today.year - 1 if "去年" in source else today.year))
+            return resolved(date(selected_year, int(month_text), int(first)), date(selected_year, int(month_text), int(last)))
         if re.search(r"(?:月\d{1,2}(?:日|号)?|\d{4}-\d{1,2}-\d{1,2})\s*(?:到|至|~|～|—)", source):
             return {"error": "DATE_RANGE_UNRESOLVED"}
         month = re.search(r"(?:(20\d{2})年|去年|今年)?\s*(\d{1,2})月(?:份)?(?!\d)", source)
@@ -145,8 +145,8 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
             return resolved(start, end)
         single = re.search(atom, source)
         if single:
-            year, month, day = single.groups()
-            selected = date(int(year or (today.year - 1 if "去年" in source else today.year)), int(month), int(day))
+            year_text, month_text, day = single.groups()
+            selected = date(int(year_text or (today.year - 1 if "去年" in source else today.year)), int(month_text), int(day))
             return resolved(selected, selected)
         if "昨天" in source:
             return resolved(today - timedelta(days=1), today - timedelta(days=1))

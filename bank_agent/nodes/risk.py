@@ -388,7 +388,7 @@ def human_review_node(state: BankingAgentState) -> dict[str, Any]:
         return {"user_confirmed": bool(state.get("user_confirmed", False))}
     intent = state.get("intent")
     desc = _human_readable_action(state)
-    payload = {
+    payload: dict[str, Any] = {
         "message": f"您正准备进行：{desc}",
         "risk_level": risk,
         "intent": intent,

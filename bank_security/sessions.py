@@ -87,6 +87,7 @@ def renew_session(token: Optional[str], *, request_id: Optional[str] = None) -> 
     # between them and leave a newly issued successor alive after sign-out.
     with STATE_LOCK:
         principal = resolve_session(token)
+        assert token is not None  # resolve_session rejects a missing token
         issued = _issue_session_token(
             principal, session_id=SESSION_TOKENS[token]["sid"], request_id=request_id,
         )
@@ -174,6 +175,7 @@ def revoke_session(token: Optional[str], *, request_id: Optional[str] = None) ->
 
     with STATE_LOCK:
         principal = resolve_session(token)
+        assert token is not None  # resolve_session rejects a missing token
         session_id = SESSION_TOKENS[token]["sid"]
         doomed = [key for key, record in SESSION_TOKENS.items()
                   if record.get("sub") == principal and record.get("sid") == session_id]

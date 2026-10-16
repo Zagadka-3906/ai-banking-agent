@@ -298,7 +298,7 @@ def operation_precheck(
                 # conversational request omitted a card id.  This prevents a
                 # card replacement between precheck and execution from
                 # redirecting the action.
-                target = req.card_id or card.get("card_id")
+                target = str(req.card_id or card.get("card_id"))
     except SecurityError as exc:
         record_failure_and_raise(exc, user_id=actor, action="OPERATION_PRECHECK", request_id=request_id)
     # Risk calculation, nonce reservation and issuance share one lock. This

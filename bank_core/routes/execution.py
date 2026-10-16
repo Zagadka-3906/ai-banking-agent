@@ -405,7 +405,7 @@ def execute_operation(
                 if required_states and current_status not in required_states:
                     raise SecurityError("卡片当前状态不允许该操作", 409, "INVALID_CARD_STATE")
             if operation != "CARD_APPLY" and card:
-                target = req.card_id or card.get("card_id")
+                target = str(req.card_id or card.get("card_id"))
         if not token:
             raise SecurityError("该操作需要先完成风险预检", 403, "TOKEN_REQUIRED")
         validated_participants = validate_split_participants(req.user_id, req.participants) if operation == "SPLIT_BILL" else list(req.participants or [])

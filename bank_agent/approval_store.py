@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover - dependency guidance path
     build_graph = None  # type: ignore[assignment]
 
     @contextmanager
-    def channel_session(token: Optional[str]):  # type: ignore[misc]
+    def channel_session(token: Optional[str]):
         """Fallback when the graph module is unavailable: present nothing."""
 
         yield
@@ -26,12 +26,12 @@ except Exception:  # pragma: no cover - dependency guidance path
 try:
     from langgraph.checkpoint.memory import MemorySaver
 except Exception:  # pragma: no cover
-    MemorySaver = None  # type: ignore[assignment]
+    MemorySaver = None  # type: ignore[assignment,misc]
 
 try:
     from langgraph.types import Command
 except Exception:  # pragma: no cover
-    Command = None  # type: ignore[assignment]
+    Command = None  # type: ignore[assignment,misc]
 from bank_agent.conversation_base import (  # noqa: F401
     logger,
 )
@@ -197,7 +197,7 @@ def persist_approvals_locked(approvals: Mapping[str, Approval]) -> None:
         logger.exception("Unable to persist the approval registry")
 
 
-def load_approval_store() -> dict[str, dict[str, Any]]:
+def load_approval_store() -> dict[str, Any]:
     """Load persisted approvals, refusing anything that fails validation."""
 
     global _APPROVAL_STORE_BLOCKED

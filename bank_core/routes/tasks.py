@@ -103,7 +103,7 @@ def decline_split(split_id: str, x_user_id: Optional[str] = Header(None, alias="
     with ledger_transaction():
         split = next((row for row in SPLIT_REQUESTS if row.get("split_id") == safe_id), None)
         item = next((row for row in split.get("collection", []) if row.get("account_id") == actor), None) if split else None
-        if not item:
+        if not item or split is None:
             raise HTTPException(status_code=404, detail={"code": "SPLIT_NOT_FOUND", "message": "AA 请求不存在"})
         if item.get("status") != "PENDING":
             raise HTTPException(status_code=409, detail={"code": "SPLIT_SHARE_NOT_PENDING", "message": "该份额已处理"})

@@ -167,7 +167,7 @@ def wealth_risk_assessment(
         if quiz_mode:
             answers_norm: dict[str, str] = {}
             for number in map(str, range(1, 9)):
-                letter = str(req.answers.get(number) or "").strip().upper()
+                letter = str((req.answers or {}).get(number) or "").strip().upper()
                 if letter not in RISK_QUIZ_SCORES[int(number)]:
                     allowed = "/".join(sorted(RISK_QUIZ_SCORES[int(number)]))
                     raise SecurityError(f"第 {number} 题答案无效（仅支持 {allowed}）", 400, "INVALID_ASSESSMENT")
@@ -175,7 +175,7 @@ def wealth_risk_assessment(
             score = sum(RISK_QUIZ_SCORES[int(q)][letter] for q, letter in answers_norm.items())
             grade = risk_grade_for_score(score)
             type_name, _traits, _levels = RISK_GRADE_META[grade]
-            idem_payload = {"user_id": req.user_id, "answers": answers_norm}
+            idem_payload: dict[str, Any] = {"user_id": req.user_id, "answers": answers_norm}
             profile_payload = {
                 "risk_profile": grade,
                 "score": score,
@@ -252,7 +252,7 @@ def wealth_risk_assessment(
         response = {
             "code": 200,
             "risk_profile": grade,
-            "horizon_years": int(req.horizon_years),
+            "horizon_years": int(req.horizon_years or 0),
             "disclaimer": "风险评估仅供演示，不构成投资建议。",
         }
     idempotency_complete(actor, "wealth_risk_assessment", idempotency_key, idem_payload, response)

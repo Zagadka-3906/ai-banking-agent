@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping, Optional
 try:  # security.py is available in the application, but keep this module reusable.
     from security import InjectionError, sanitize_text
 except Exception:  # pragma: no cover - only used when imported in isolation
-    class InjectionError(ValueError):
+    class InjectionError(ValueError):  # type: ignore[no-redef]
         pass
 
     def sanitize_text(value: Any, *, field: str = "文本", max_length: int = 2000) -> str:
@@ -24,8 +24,8 @@ try:  # The read-only expression sandbox is optional: bill aggregation prefers i
     # unavailable (e.g. standalone planner usage or a blocked process spawn).
     from sandbox import SandboxError, evaluate_expression
 except Exception:  # pragma: no cover - only used when imported in isolation
-    SandboxError = ValueError
-    evaluate_expression = None
+    SandboxError = ValueError  # type: ignore[assignment,misc]
+    evaluate_expression = None  # type: ignore[assignment]
 
 
 def _parse_timestamp(value: Any) -> Optional[datetime]:
@@ -124,6 +124,8 @@ def filter_transactions(records: Iterable[Mapping[str, Any]], scope: str, *, now
     timestamp near midnight falls into the correct local day.
     """
 
+    start: Optional[date]
+    end: Optional[date]
     if scope == "CUSTOM":
         if not isinstance(date_range, Mapping):
             raise ValueError("自定义时间范围缺失")
@@ -139,7 +141,7 @@ def filter_transactions(records: Iterable[Mapping[str, Any]], scope: str, *, now
         parsed = _parse_timestamp(record.get("time"))
         if start is not None:
             local_day = _local_date(parsed)
-            if local_day is None or not (start <= local_day < end):
+            if local_day is None or end is None or not (start <= local_day < end):
                 continue
         output.append(dict(record))
     return output

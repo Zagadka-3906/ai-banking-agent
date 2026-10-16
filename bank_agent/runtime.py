@@ -10,9 +10,10 @@ import contextvars
 import os
 import uuid
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import requests
+from pydantic import SecretStr
 
 from security import audit_event
 from workflow_runtime import model_timeout
@@ -28,6 +29,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency in minimal tests
     pass
 
+_LANGGRAPH_IMPORT_ERROR: Optional[Exception]
 try:
     from langchain_core.messages import HumanMessage, SystemMessage
     from langchain_openai import ChatOpenAI
@@ -35,9 +37,9 @@ try:
     from langgraph.graph import END, StateGraph
     from langgraph.types import interrupt
 except Exception as exc:  # pragma: no cover - makes helper imports testable without extras
-    ChatOpenAI = None  # type: ignore[assignment]
-    HumanMessage = SystemMessage = None  # type: ignore[assignment]
-    MemorySaver = StateGraph = END = interrupt = None  # type: ignore[assignment]
+    ChatOpenAI = None  # type: ignore[assignment,misc]
+    HumanMessage = SystemMessage = None  # type: ignore[assignment,misc]
+    MemorySaver = StateGraph = END = interrupt = None  # type: ignore[assignment,misc]
     _LANGGRAPH_IMPORT_ERROR = exc
 else:
     _LANGGRAPH_IMPORT_ERROR = None
@@ -68,10 +70,11 @@ def channel_session(token: Optional[str]):
     finally:
         _CHANNEL_SESSION.reset(handle)
 
+llm: Any
 if MODEL_ENABLED:
     llm = ChatOpenAI(
         model=os.getenv("BANK_LLM_MODEL", "deepseek-chat"),
-        api_key=DEEPSEEK_API_KEY,
+        api_key=SecretStr(DEEPSEEK_API_KEY),
         base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         temperature=0.0,
         timeout=model_timeout(),
@@ -81,8 +84,8 @@ else:
     llm = None
 
 
-def _http(method: str, path: str, *, state: BankingAgentState, json_body: Optional[dict[str, Any]] = None, headers: Optional[dict[str, str]] = None) -> requests.Response:
-    merged = {"X-Request-Id": state.get("request_id") or f"agent_{uuid.uuid4().hex}"}
+def _http(method: str, path: str, *, state: BankingAgentState, json_body: Optional[dict[str, Any]] = None, headers: Optional[Mapping[str, Optional[str]]] = None) -> requests.Response:
+    merged: dict[str, Optional[str]] = {"X-Request-Id": state.get("request_id") or f"agent_{uuid.uuid4().hex}"}
     # When the core requires a session for writes, the calls a turn makes on the
     # user's behalf must present the user's own credential.  It arrives through a
     # ContextVar rather than graph state: state is written to the checkpointer,

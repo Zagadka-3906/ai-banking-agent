@@ -103,7 +103,9 @@ def render_cards(data: Mapping[str, Any]) -> str:
             line += f" ｜ 今日已用 ¥{float(item.get('daily_spent_today')):,.2f}"
         if finite_number(item.get("daily_remaining"), nonnegative=True):
             line += f" ｜ 今日剩余 ¥{float(item.get('daily_remaining')):,.2f}"
-        channels = item.get("channels") if isinstance(item.get("channels"), dict) else {}
+        channels = item.get("channels")
+        if not isinstance(channels, dict):
+            channels = {}
         closed = [name for key, name in (("ONLINE", "网上支付"), ("OVERSEAS", "境外交易")) if channels.get(key) is False]
         if closed:
             line += " ｜ 已关闭 " + "、".join(closed)
@@ -117,4 +119,4 @@ def bill_scope_label(result: Mapping[str, Any]) -> str:
     if result.get("date_scope") == "CUSTOM":
         bounds = result.get("date_range") or {}
         return f"{bounds['start']} 至 {bounds['end']}"
-    return {"TODAY": "今天", "MONTH": "本月", "LAST_MONTH": "上月", "YEAR": "今年", "ALL": "全部时间"}.get(result.get("date_scope"), "指定时间范围内")
+    return {"TODAY": "今天", "MONTH": "本月", "LAST_MONTH": "上月", "YEAR": "今年", "ALL": "全部时间"}.get(str(result.get("date_scope")), "指定时间范围内")

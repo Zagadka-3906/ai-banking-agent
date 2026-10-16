@@ -83,7 +83,7 @@ def consumed_task_ids(plan: TaskPlan, intent: str) -> tuple[list[str], Optional[
     return consumed, settle
 
 
-def advance_plan(state: BankingAgentState, intent: str, *, outcome: str, data: Optional[dict[str, Any]] = None, error: Optional[str] = None, pending_notes: Optional[dict[str, str]] = None) -> Optional[dict[str, Any]]:
+def advance_plan(state: BankingAgentState, intent: Optional[str], *, outcome: str, data: Optional[dict[str, Any]] = None, error: Optional[str] = None, pending_notes: Optional[dict[str, str]] = None) -> Optional[dict[str, Any]]:
     """Advance the plan ledger truthfully after a run step.
 
     ``SUCCESS`` marks every consumed step (validation, MFA gate, settle)
@@ -95,7 +95,7 @@ def advance_plan(state: BankingAgentState, intent: str, *, outcome: str, data: O
     plan = plan_from_state(state)
     if plan is None:
         return None
-    consumed, settle_id = consumed_task_ids(plan, intent)
+    consumed, settle_id = consumed_task_ids(plan, intent or "")
     if not settle_id:
         return plan.to_dict()
     notes = pending_notes or {}
@@ -130,7 +130,7 @@ def settle_with_retry(state: BankingAgentState, *, method: str, path: str, json_
 
     endpoint = {"transfers/execute": "transfer_execute", "accounts/lock_fund": "lock_fund", "operations/execute": "operation_execute"}.get(path)
     state["reconciliation"] = {"operation_id": idempotency_key, "endpoint": endpoint,
-                               "result_type": {"transfer_execute": "TRANSFER_SUCCESS", "lock_fund": "LOCK_SUCCESS"}.get(endpoint, state.get("intent"))}
+                               "result_type": {"transfer_execute": "TRANSFER_SUCCESS", "lock_fund": "LOCK_SUCCESS"}.get(endpoint or "") or state.get("intent")}
     attempt = 0
     while True:
         try:

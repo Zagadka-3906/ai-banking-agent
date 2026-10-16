@@ -366,7 +366,7 @@ def behavior_status(user_id: Optional[str]) -> dict[str, Any]:
         security_state = SECURITY_STATE[principal]
         locked_until = float(security_state.get("locked_until", 0.0))
         locked = locked_until > now
-        base = {
+        base: dict[str, Any] = {
             "principal": principal,
             "score": 0,
             "threshold": behavior_risk_threshold(),

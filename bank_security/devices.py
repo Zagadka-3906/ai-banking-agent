@@ -31,7 +31,7 @@ try:
     from cryptography.hazmat.primitives.asymmetric import ec as crypto_ec
     from cryptography.hazmat.primitives.serialization import load_der_public_key as _load_der_public_key
 except ImportError:  # pragma: no cover - dependency guidance path
-    InvalidSignature = None  # type: ignore[assignment]
+    InvalidSignature = None  # type: ignore[assignment,misc]
     crypto_hashes = None  # type: ignore[assignment]
     crypto_ec = None  # type: ignore[assignment]
     _load_der_public_key = None  # type: ignore[assignment]
@@ -261,6 +261,7 @@ def revoke_device(device_id: str, *, user_id: str, request_id: Optional[str] = N
 
 DEVICE_STORE_VERSION = 1
 _DEVICE_STORE_BLOCKED = False
+_DEVICE_STORE_LOAD_SUMMARY: dict[str, Any] = {}
 
 
 def _device_store_target(path: Optional[str] = None) -> Optional[str]:

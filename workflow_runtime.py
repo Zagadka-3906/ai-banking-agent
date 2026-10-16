@@ -7,11 +7,11 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from security import audit_event
 
-_observer = contextvars.ContextVar("bank_workflow_observer", default=None)
+_observer: contextvars.ContextVar[Optional[Callable[[dict], None]]] = contextvars.ContextVar("bank_workflow_observer", default=None)
 _model_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bank-model")
 _model_slots = threading.BoundedSemaphore(2)
 STAGES = {

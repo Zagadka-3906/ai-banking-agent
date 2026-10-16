@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import NoReturn, Optional
 
 from fastapi import HTTPException, Request
 
@@ -38,7 +38,7 @@ def server_request_id(value: Optional[str]) -> str:
     return f"REQ{uuid.uuid4().hex}"
 
 
-def raise_security(exc: SecurityError) -> None:
+def raise_security(exc: SecurityError) -> NoReturn:
     raise HTTPException(
         status_code=exc.status_code,
         detail={"code": exc.code, "message": exc.detail},
@@ -46,7 +46,7 @@ def raise_security(exc: SecurityError) -> None:
     )
 
 
-def record_failure_and_raise(exc: SecurityError, *, user_id: Optional[str], action: str, request_id: str) -> None:
+def record_failure_and_raise(exc: SecurityError, *, user_id: Optional[str], action: str, request_id: str) -> NoReturn:
     security_codes = {
         "TOKEN_REQUIRED", "INVALID_TOKEN", "INVALID_TOKEN_SIGNATURE", "TOKEN_NOT_FOUND", "TOKEN_REPLAY", "TOKEN_EXPIRED",
         "TOKEN_BINDING_MISMATCH", "TOKEN_CONTEXT_MISMATCH", "TOKEN_INVALID", "TOKEN_OPERATION_MISMATCH", "MFA_FAILED", "MFA_PROOF_INVALID",
@@ -86,7 +86,7 @@ _WRITE_ACTIONS_REQUIRING_HEADER = {
 }
 
 
-def get_actor(requested_user: str, presented_user: Optional[str], *, action: str, request_id: str) -> str:
+def get_actor(requested_user: Optional[str], presented_user: Optional[str], *, action: str, request_id: str) -> str:
     # A body/path user id is an object selector, not authentication.  Require
     # a presented principal for every operation that can mint a nonce or
     # mutate state; otherwise a caller could deliberately attribute repeated

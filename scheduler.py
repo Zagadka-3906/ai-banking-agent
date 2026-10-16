@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from copy import deepcopy
+import builtins
 import threading
 import uuid
 from typing import Any, Optional
@@ -185,7 +186,7 @@ class TaskStore:
         with self._lock:
             return deepcopy(self._tasks), deepcopy(self._by_key)
 
-    def export_records(self) -> list[dict[str, Any]]:
+    def export_records(self) -> builtins.list[dict[str, Any]]:
         """Serialize tasks together with the ledger that owns their effects."""
 
         with self._lock:
@@ -244,7 +245,7 @@ class TaskStore:
             self._by_key.clear()
             self._by_key.update(deepcopy(by_key))
 
-    def ready(self, *, now: Optional[datetime] = None) -> list[ScheduledTask]:
+    def ready(self, *, now: Optional[datetime] = None) -> builtins.list[ScheduledTask]:
         """Return pending tasks whose dependencies and due time are satisfied."""
 
         current = now or datetime.now(timezone.utc)

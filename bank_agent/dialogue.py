@@ -81,7 +81,9 @@ def _slot_answer(text: str, slot: str, parsed: Mapping[str, Any]) -> Any:
     if slot == "product_ids":
         return list(parsed.get("product_ids") or []) or None
     if slot in {"loss_tolerance", "experience", "horizon_years"}:
-        slots = parsed.get("slots") if isinstance(parsed.get("slots"), Mapping) else {}
+        slots = parsed.get("slots")
+        if not isinstance(slots, Mapping):
+            slots = {}
         return slots.get(slot)
     return None
 
@@ -308,12 +310,18 @@ def merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState
     different intent always wins over the pending one.
     """
 
-    prior = state.get("context") if isinstance(state.get("context"), dict) else {}
+    prior = state.get("context")
+
+    if not isinstance(prior, dict):
+
+        prior = {}
     pending = prior.get("pending_clarification")
     if not isinstance(pending, dict):
         return parsed
     pending_intent = str(pending.get("intent") or "")
-    pending_payload = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
+    pending_payload = pending.get("payload")
+    if not isinstance(pending_payload, dict):
+        pending_payload = {}
     if not pending_intent or pending_intent == Intent.UNKNOWN.value or not pending_payload:
         return parsed
     incoming_intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
@@ -376,7 +384,9 @@ def merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState
         if (parsed.get("slots") or {}).get(f"{slot}_ambiguous"):
             continue
         if slot in {"loss_tolerance", "experience", "horizon_years"}:
-            slots = merged.get("slots") if isinstance(merged.get("slots"), Mapping) else {}
+            slots = merged.get("slots")
+            if not isinstance(slots, Mapping):
+                slots = {}
             if slots.get(slot) in (None, "", [], {}):
                 value = _slot_answer(text, slot, parsed)
                 if value is not None:

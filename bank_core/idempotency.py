@@ -48,8 +48,8 @@ def idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: An
     except SecurityError as exc:
         record_failure_and_raise(exc, user_id=actor, action="IDEMPOTENCY", request_id=request_id)
     if not safe_key or len(safe_key) < 8:
-        exc = SecurityError("幂等键长度不足", 400, "INVALID_IDEMPOTENCY_KEY")
-        record_failure_and_raise(exc, user_id=actor, action="IDEMPOTENCY", request_id=request_id)
+        error = SecurityError("幂等键长度不足", 400, "INVALID_IDEMPOTENCY_KEY")
+        record_failure_and_raise(error, user_id=actor, action="IDEMPOTENCY", request_id=request_id)
     fingerprint = idempotency_fingerprint(payload)
     now = time.time()
     with STATE_LOCK:
