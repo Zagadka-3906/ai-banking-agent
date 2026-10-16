@@ -119,8 +119,9 @@ Android 17 起，连接本地服务前会按配置地址请求附近设备权限
 ## 测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q --cov          # 分支覆盖率，低于 82% 失败
 .\.venv\Scripts\python.exe -m ruff check . --ignore E402
+.\.venv\Scripts\python.exe -m mypy                    # 范围见 pyproject.toml 的 [tool.mypy]
 cd android
 .\gradlew.bat --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest
 # 启动本机服务和模拟器后；Android 17 首次需先打开应用并允许附近设备：
