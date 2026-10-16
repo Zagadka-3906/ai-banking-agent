@@ -4,7 +4,9 @@ import com.aibanking.agent.BuildConfig
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.HttpException
@@ -33,6 +35,15 @@ class AgentRepository(
 
     suspend fun unbindFeishu(sessionToken: String): FeishuUnbindView = normalizing {
         api.unbindFeishu(sessionToken)
+    }
+
+    suspend fun speechStatus(sessionToken: String): SpeechStatusView = normalizing {
+        api.speechStatus(sessionToken)
+    }
+
+    /** Upload one 16 kHz mono WAV clip; only call after the user's cloud-recognition consent. */
+    suspend fun transcribe(sessionToken: String, wav: ByteArray): TranscriptView = normalizing {
+        api.transcribe(wav.toRequestBody("audio/wav".toMediaType()), sessionToken)
     }
 
     suspend fun sendMessage(

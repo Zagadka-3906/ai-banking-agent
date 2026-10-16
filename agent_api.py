@@ -44,6 +44,8 @@ from bank_tools import BankAPIError, BankClient
 from conversation import SERVICE, ConversationError
 from security import SecurityError, audit_event, sanitize_text
 from feishu_im import router as feishu_im_router, start_bot as start_feishu_bot
+import speech_asr
+from starlette.concurrency import run_in_threadpool
 
 
 @asynccontextmanager
@@ -322,6 +324,67 @@ def post_message(
         request_id=request_id,
         client_request_id=client_request_id,
     )
+
+
+@app.get("/api/v1/agent/speech/status")
+def get_speech_status(
+    request: Request,
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    """Whether cloud speech recognition is configured, and the audio it accepts."""
+
+    _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="SPEECH_STATUS")
+    return {"code": 200, **speech_asr.status()}
+
+
+# The client sends this header only after the user agreed, on the device, that
+# their voice may be sent to the cloud recogniser.
+SPEECH_CONSENT_VALUE = "cloud-asr"
+
+
+def _speech_hint_names(principal: str, session_token: Optional[str], request_id: str) -> list[str]:
+    """The caller's payee names as recognition context; best effort, never required."""
+
+    names: list[str] = []
+    client = BankClient(user_id=principal, session_token=session_token)
+    for path in (f"contacts/{principal}", f"contacts/{principal}/book"):
+        try:
+            payload = client._request("GET", path, headers={"X-Request-Id": request_id}, read_only=True).json()
+        except (BankAPIError, ValueError):
+            continue
+        names.extend(speech_asr.contact_names(payload.get("data") if isinstance(payload, dict) else None))
+    return names
+
+
+@app.post("/api/v1/agent/speech/transcribe")
+async def post_speech_transcribe(
+    request: Request,
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_speech_consent: Optional[str] = Header(None, alias="X-Speech-Consent"),
+):
+    """Transcribe one short 16 kHz mono WAV clip for the user to review.
+
+    The text is only returned; sending it remains an ordinary, separately
+    checked message, and any approval still needs the user's click.
+    """
+
+    principal = await run_in_threadpool(_request_principal, request, session_token=x_session_token,
+                                        user_id=x_user_id, action="SPEECH_TRANSCRIBE")
+    _guard_rate_limit(principal)
+    if x_speech_consent != SPEECH_CONSENT_VALUE:
+        raise SecurityError("使用云端语音识别前需要您同意上传语音", 428, "SPEECH_CONSENT_REQUIRED")
+    if not speech_asr.enabled():
+        raise SecurityError("云端语音识别未启用，请使用文字输入", 503, "ASR_DISABLED")
+    audio = await request.body()
+    seconds = speech_asr.wav_seconds(audio)
+    request_id = request.state.request_id
+    names = await run_in_threadpool(_speech_hint_names, principal, x_session_token, request_id)
+    text = await run_in_threadpool(speech_asr.transcribe, audio, names=names)
+    audit_event("SPEECH_TRANSCRIBE", user_id=principal, decision="ALLOW", outcome="SUCCESS", request_id=request_id,
+                metadata={"seconds": seconds, "bytes": len(audio), "hint_names": len(names), "chars": len(text)})
+    return {"code": 200, "text": text, "seconds": seconds}
 
 
 def _sse(event: str, data: Any) -> str:

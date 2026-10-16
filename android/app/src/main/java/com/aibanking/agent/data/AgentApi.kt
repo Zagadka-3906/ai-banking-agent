@@ -2,6 +2,7 @@ package com.aibanking.agent.data
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.HttpException
 import retrofit2.http.Body
@@ -98,6 +99,16 @@ data class FeishuBindingCodeView(
 
 data class FeishuUnbindView(val code: Int = 0, val status: String = "")
 
+/** Whether the gateway can relay cloud speech recognition, and the audio it accepts. */
+data class SpeechStatusView(
+    @SerializedName("cloud_asr") val cloudAsr: Boolean = false,
+    @SerializedName("sample_rate") val sampleRate: Int = 16_000,
+    @SerializedName("max_seconds") val maxSeconds: Int = 20,
+)
+
+/** A transcript for the user to review in the input box; it is never sent by itself. */
+data class TranscriptView(val text: String = "", val seconds: Double = 0.0)
+
 /** A normalized gateway/transport failure, so the UI never shows a raw stack. */
 class GatewayException(
     val code: String?,
@@ -165,6 +176,17 @@ interface AgentApi {
     suspend fun unbindFeishu(
         @Header("X-Session-Token") sessionToken: String,
     ): FeishuUnbindView
+
+    @GET("api/v1/agent/speech/status")
+    suspend fun speechStatus(@Header("X-Session-Token") sessionToken: String): SpeechStatusView
+
+    /** Sent only after the user agreed on the device to cloud recognition. */
+    @POST("api/v1/agent/speech/transcribe")
+    suspend fun transcribe(
+        @Body audio: RequestBody,
+        @Header("X-Session-Token") sessionToken: String,
+        @Header("X-Speech-Consent") consent: String = "cloud-asr",
+    ): TranscriptView
 
     @POST("api/v1/agent/messages")
     suspend fun sendMessage(

@@ -374,6 +374,8 @@ private fun ChatHome(
                 enabled = state.canSend,
                 voiceEnabled = state.authenticated && !state.busy,
                 captureVoiceResult = viewModel::captureVoiceResult,
+                cloudSpeechAvailable = viewModel::cloudSpeechAvailable,
+                transcribeCloud = viewModel::transcribeCloud,
                 onValueChange = viewModel::onInputChange,
                 onSend = viewModel::send,
                 modifier = Modifier.verificationFrost(redVerification),
@@ -674,6 +676,8 @@ private fun InputRow(
     enabled: Boolean,
     voiceEnabled: Boolean,
     captureVoiceResult: () -> (String) -> Unit,
+    cloudSpeechAvailable: ((Boolean) -> Unit) -> Unit,
+    transcribeCloud: (ByteArray, (String) -> Unit, (String) -> Unit) -> Unit,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     modifier: Modifier = Modifier,
@@ -683,7 +687,8 @@ private fun InputRow(
     Surface(color = MaterialTheme.colorScheme.background, modifier = modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            VoiceInputButton(enabled = voiceEnabled, captureResult = captureVoiceResult)
+            VoiceInputButton(enabled = voiceEnabled, captureResult = captureVoiceResult,
+                cloudAvailable = cloudSpeechAvailable, transcribeCloud = transcribeCloud)
             OutlinedTextField(
                 value = value, onValueChange = onValueChange,
                 placeholder = { Text("说说您想办的事…", style = MaterialTheme.typography.bodyMedium) },

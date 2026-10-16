@@ -662,6 +662,40 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // -- cloud speech recognition (used only without an on-device recogniser) --
+
+    internal fun cloudSpeechAvailable(onResult: (Boolean) -> Unit) {
+        val token = sessionToken ?: return onResult(false)
+        sessionWork.launch {
+            val available = try {
+                io { agent.speechStatus(token) }.cloudAsr
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                false
+            }
+            onResult(available)
+        }
+    }
+
+    /** Upload a consented clip; the transcript goes through [deliver] into the input box only. */
+    internal fun transcribeCloud(wav: ByteArray, deliver: (String) -> Unit, onFailure: (String) -> Unit) {
+        val token = sessionToken ?: return onFailure("请先登录后再使用语音")
+        markUserActivity()
+        sessionWork.launch {
+            try {
+                val text = io { agent.transcribe(token, wav) }.text
+                if (text.isBlank()) onFailure("没有识别到语音内容，请再说一遍") else deliver(text)
+            } catch (failure: GatewayException) {
+                check()
+                onFailure(failure.message ?: "语音识别失败，请输入文字")
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                check()
+                onFailure("语音识别暂时不可用，请输入文字")
+            }
+        }
+    }
+
     // -- device management panel -------------------------------------------
 
     fun openDevices() {
