@@ -35,6 +35,18 @@ def test_rollback_phrases_are_not_read_as_new_actions(text, kind):
     assert parsed["intent"] == "UNDO_OPERATION" and parsed["slots"]["undo_kind"] == kind
 
 
+@pytest.mark.parametrize(("chip", "kind"), [
+    ("撤销这笔预约", "SCHEDULED_TRANSFER"),
+    ("撤回这笔 AA 请求", "SPLIT_BILL"),
+    ("取消生日锁定", "FUND_RESERVATION"),
+])
+def test_android_rollback_chips_parse_as_the_matching_undo(chip, kind):
+    # The Android follow-up chips (UNDO_SUGGESTIONS in ChatViewModel.kt) send
+    # these exact phrases; each must reach the rollback of the same kind.
+    parsed = local_parse(chip)
+    assert parsed["intent"] == "UNDO_OPERATION" and parsed["slots"]["undo_kind"] == kind
+
+
 @pytest.mark.parametrize(("text", "channel", "enabled"), [
     ("关闭境外交易", "OVERSEAS", False), ("开通境外支付", "OVERSEAS", True),
     ("关闭网上支付", "ONLINE", False), ("尾号3082的卡禁止网购", "ONLINE", False), ("恢复网上支付", "ONLINE", True),

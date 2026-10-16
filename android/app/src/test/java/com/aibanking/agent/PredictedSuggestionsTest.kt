@@ -24,6 +24,38 @@ class PredictedSuggestionsTest {
     }
 
     @Test
+    fun completed_reservations_offer_their_rollback_first() {
+        val expected = mapOf(
+            "SCHEDULED_TRANSFER" to ("SCHEDULED_TRANSFER" to "撤销这笔预约"),
+            "SPLIT_BILL" to ("SPLIT_BILL" to "撤回这笔 AA 请求"),
+            "CROSS_SCENE_LOCK" to ("LOCK_SUCCESS" to "取消生日锁定"),
+        )
+        for ((intent, pair) in expected) {
+            val (type, rollback) = pair
+            val suggestions = predictedSuggestions(
+                TurnEnvelope(intent = intent, result = mapOf("execution_result" to mapOf("type" to type))),
+            )
+            assertEquals(rollback, suggestions.first())
+        }
+    }
+
+    @Test
+    fun settled_transfer_never_offers_a_rollback() {
+        val suggestions = predictedSuggestions(
+            TurnEnvelope(intent = "TRANSFER", result = mapOf("execution_result" to mapOf("type" to "TRANSFER_SUCCESS"))),
+        )
+        assertTrue(suggestions.none { it.contains("撤销") || it.contains("撤回") })
+    }
+
+    @Test
+    fun a_pending_reservation_shows_approval_controls_not_a_rollback() {
+        val suggestions = predictedSuggestions(
+            TurnEnvelope(intent = "SCHEDULED_TRANSFER", approval = ApprovalView(approvalId = "approval-2")),
+        )
+        assertEquals(listOf("取消这次操作", "修改这次操作", "更换办理对象"), suggestions)
+    }
+
+    @Test
     fun approval_only_offers_safe_revision_paths() {
         val suggestions = predictedSuggestions(
             TurnEnvelope(

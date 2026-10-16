@@ -1686,6 +1686,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 private fun ChatMessage.isApprovalPreviewMessage(): Boolean =
     approvalPreview || (role == ChatRole.ASSISTANT && text.trimStart().startsWith("您正准备进行："))
 
+/**
+ * Follow-ups after a reservation completes. The first phrase is the rollback
+ * request; the gateway parses it as UNDO_OPERATION of the same kind (pinned by
+ * tests/test_undo_and_card_channel.py), and Core still asks for confirmation.
+ */
+internal val UNDO_SUGGESTIONS: Map<String, List<String>> = mapOf(
+    "SCHEDULED_TRANSFER" to listOf("撤销这笔预约", "查看账户余额", "再转一笔"),
+    "SPLIT_BILL" to listOf("撤回这笔 AA 请求", "查看账户余额", "查询最近转账"),
+    "LOCK_SUCCESS" to listOf("取消生日锁定", "查看账户余额", "查看本月账单"),
+)
+
 /** Derive bounded, actionable next turns from the completed server turn. */
 internal fun predictedSuggestions(envelope: TurnEnvelope): List<String> {
     // Approval controls always win. Graph state can retain suggestions from an
@@ -1711,6 +1722,10 @@ internal fun predictedSuggestions(envelope: TurnEnvelope): List<String> {
     val currentRiskAssessment =
         envelope.result?.get("profile_result") != null || "WEALTH_RISK_ASSESSMENT" in context
     if (currentRiskAssessment && serverSuggestions.isNotEmpty()) return serverSuggestions
+
+    // A reservation that has not moved money can be withdrawn; offer that first,
+    // keyed on the verified execution type so a failed attempt never shows it.
+    UNDO_SUGGESTIONS[executionType]?.let { return it }
 
     return when {
         "TRANSFER" in context || "SPLIT_BILL" in context ->
