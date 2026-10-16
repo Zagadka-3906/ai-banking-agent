@@ -40,26 +40,53 @@ def provider(gateway, monkeypatch):  # noqa: F811
 
     def fake_post(url, *, headers, json, timeout):
         calls.append({"url": url, "headers": headers, "json": json})
-        return SimpleNamespace(status_code=200, json=lambda: {"choices": [{"message": {"content": "给李四转三百元"}}]})
+        native = {"output": {"text": "给李四转三百元"}}
+        compatible = {"choices": [{"message": {"content": "给李四转三百元"}}]}
+        return SimpleNamespace(status_code=200, json=lambda: native if "multimodal-generation" in url else compatible)
 
     monkeypatch.setattr(speech_asr, "_post", fake_post)
     return client, calls
 
 
-def test_transcript_is_returned_for_review_with_contacts_as_context(provider):
+def _sent_audio(data_url: str) -> bytes:
+    assert data_url.startswith("data:audio/wav;base64,")
+    return base64.b64decode(data_url.split(",", 1)[1])
+
+
+def test_qwen_audio_uses_native_api_with_contacts_as_hotwords(provider):
+    """Request shape verified against Model Studio on 2026-10-16 (qwen-audio-3.0-asr-flash)."""
     client, calls = provider
     response = client.post("/api/v1/agent/speech/transcribe", content=wav(), headers={**_headers(), **CONSENT})
     assert response.status_code == 200, response.text
     assert response.json()["text"] == "给李四转三百元" and response.json()["seconds"] == 1.5
-    body = calls[0]["json"]
-    assert calls[0]["url"].endswith("/chat/completions")
+    call = calls[0]
+    assert call["url"].endswith("/api/v1/services/aigc/multimodal-generation/generation")
+    assert call["headers"]["X-DashScope-SSE"] == "disable"
+    body = call["json"]
     assert body["model"] == "qwen-audio-3.0-asr-flash"
+    params = body["parameters"]
+    assert params["format"] == "wav" and params["sample_rate"] == "16000" and params["language_hints"] == ["zh"]
+    assert params["vocabulary"]["李四"] == 5 and "转账" in params["vocabulary"]
+    assert _sent_audio(body["input"]["messages"][0]["content"][0]["input_audio"]["data"]) == wav()
+
+
+def test_qwen3_uses_compatible_api_and_keeps_spoken_numbers(provider, monkeypatch):
+    """Request shape verified against Model Studio on 2026-10-16 (qwen3-asr-flash)."""
+    client, calls = provider
+    monkeypatch.setenv("BANK_ASR_MODEL", "qwen3-asr-flash")
+    response = client.post("/api/v1/agent/speech/transcribe", content=wav(), headers={**_headers(), **CONSENT})
+    assert response.status_code == 200, response.text
+    body = calls[0]["json"]
+    assert calls[0]["url"].endswith("/compatible-mode/v1/chat/completions")
     # ITN would turn "一百五" into "150" and skip the parser's ambiguity question.
     assert body["asr_options"] == {"language": "zh", "enable_itn": False}
-    context = body["messages"][0]["content"]
-    assert body["messages"][0]["role"] == "system" and "李四" in context and "转账" in context
-    audio = body["messages"][1]["content"][0]["input_audio"]["data"]
-    assert audio.startswith("data:audio/wav;base64,") and base64.b64decode(audio.split(",", 1)[1]) == wav()
+    system, user = body["messages"]
+    assert system["role"] == "system" and isinstance(system["content"], list)  # a plain string is rejected
+    assert "李四" in system["content"][0]["text"] and "转账" in system["content"][0]["text"]
+    audio = user["content"][0]["input_audio"]
+    assert audio["format"] == "wav" and _sent_audio(audio["data"]) == wav()
+    status = client.get("/api/v1/agent/speech/status", headers=_headers()).json()
+    assert status["keeps_spoken_numbers"] is True
     # Nothing was sent as a message, and the audit keeps metadata only.
     event = next(row for row in security.get_audit_logs(limit=200) if row["action"] == "SPEECH_TRANSCRIBE")
     assert "李四" not in json.dumps(event, ensure_ascii=False) and event["metadata"]["seconds"] == 1.5
@@ -102,6 +129,7 @@ def test_disabled_without_key_and_status_reports_it(gateway, monkeypatch):  # no
     monkeypatch.setenv("DASHSCOPE_API_KEY", "k")
     status = client.get("/api/v1/agent/speech/status", headers=_headers()).json()
     assert status["cloud_asr"] is True and status["format"] == "audio/wav" and status["max_seconds"] == 20
+    assert status["keeps_spoken_numbers"] is False  # the default qwen-audio model always writes digits
 
 
 def test_provider_failure_never_leaks_its_body_or_the_key(provider, monkeypatch):
@@ -114,9 +142,16 @@ def test_provider_failure_never_leaks_its_body_or_the_key(provider, monkeypatch)
 
 def test_empty_or_control_character_transcripts(provider, monkeypatch):
     client, _ = provider
-    monkeypatch.setattr(speech_asr, "_post", lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"choices": [{"message": {"content": "\x00 \x07"}}]}))
+    monkeypatch.setattr(speech_asr, "_post", lambda *a, **k: SimpleNamespace(status_code=200, json=lambda: {"output": {"text": "\x00 \x07"}}))
     response = client.post("/api/v1/agent/speech/transcribe", content=wav(), headers={**_headers(), **CONSENT})
     assert response.status_code == 422 and response.json()["detail"]["code"] == "ASR_EMPTY"
+
+
+def test_contact_annotations_are_dropped_from_hotwords():
+    # The demo's contact list shows "王美（爱人）"; live ASR heard "王梅" until the
+    # hotword was the spoken name itself.
+    rows = [{"display_name": "王美（爱人）"}, {"name": "李四 (同事)"}, {"display_name": "张三"}, {"display_name": "（）"}]
+    assert speech_asr.contact_names(rows) == ["王美", "李四", "张三"]
 
 
 def test_hint_context_is_bounded_and_deduplicated():
