@@ -9,11 +9,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from bank_core.access import (
-    _record_failure_and_raise,
+    record_failure_and_raise,
 )
 from bank_core.cards import CARD_CHANNELS
 from bank_core.contacts import (
-    _aa_request_eligible,
+    aa_request_eligible,
 )
 from bank_core.ledger import (
     SCHEDULED_TRANSFERS,
@@ -25,8 +25,8 @@ from bank_core.models import (
     OperationPrecheckRequest,
 )
 from bank_core.payments import (
-    _daily_spent,
-    _resolve_target,
+    daily_spent,
+    resolve_payee,
 )
 from bank_core.wealth_data import (
     WEALTH_PRODUCTS,
@@ -45,7 +45,7 @@ from security import (
 
 # Sensitive operations that feed the behaviour-combination breaker.  The
 # signal names line up with ``security.BEHAVIOR_SIGNAL_WEIGHTS``.
-_BEHAVIOR_OPERATION_SIGNALS: dict[str, str] = {
+BEHAVIOR_OPERATION_SIGNALS: dict[str, str] = {
     "CARD_REPORT_LOST": "CARD_REPORT_LOST",
     "CARD_FREEZE": "CARD_STATE_CHANGE",
     "CARD_UNFREEZE": "CARD_STATE_CHANGE",
@@ -77,12 +77,12 @@ GENERIC_OPERATION_RISK: dict[str, str] = {
     "PASSWORD_CHANGE": "RED",
     "FRAUD_PROTECT": "RED",
     # Default for an unknown direction; switching a channel off is YELLOW
-    # (see ``_operation_risk_level``), switching one on stays RED.
+    # (see ``operation_risk_level``), switching one on stays RED.
     "CARD_CHANNEL": "RED",
 }
 
 
-def _pending_transfer_amount(user_id: str, *, exclude_schedule_id: Optional[str] = None) -> float:
+def pending_transfer_amount(user_id: str, *, exclude_schedule_id: Optional[str] = None) -> float:
     """Return unconsumed transfer reservations for cumulative risk checks.
 
     A precheck is a reservation, not a settlement.  Counting active signed
@@ -117,7 +117,7 @@ def _pending_transfer_amount(user_id: str, *, exclude_schedule_id: Optional[str]
     return round(total, 2)
 
 
-def _operation_target(req: OperationPrecheckRequest | OperationExecuteRequest) -> str:
+def operation_target(req: OperationPrecheckRequest | OperationExecuteRequest) -> str:
     """Stable token binding for a generic operation."""
 
     candidate = req.product_id or req.card_id or req.target or getattr(req, "merchant", None)
@@ -126,7 +126,7 @@ def _operation_target(req: OperationPrecheckRequest | OperationExecuteRequest) -
     return f"__{req.operation.upper()}__"
 
 
-def _operation_amount(value: Optional[float], *, operation: str = "") -> float:
+def operation_amount(value: Optional[float], *, operation: str = "") -> float:
     """Normalize an operation amount, or return the non-financial sentinel.
 
     The signed token format uses cents and requires a positive value, so
@@ -158,14 +158,14 @@ def _operation_amount(value: Optional[float], *, operation: str = "") -> float:
     return amount_to_cents(value) / 100.0
 
 
-def _context_hash(context: dict[str, Any]) -> str:
+def hash_operation_context(context: dict[str, Any]) -> str:
     """Return a deterministic digest for approval-bound operation details."""
 
     canonical = json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _normalize_datetime(value: Optional[str], *, field: str, require_future: bool = False) -> Optional[str]:
+def normalize_datetime(value: Optional[str], *, field: str, require_future: bool = False) -> Optional[str]:
     """Normalize an ISO/date value for token binding and scheduler use.
 
     A date without a time is interpreted at 09:00 in UTC for deterministic
@@ -191,10 +191,10 @@ def _normalize_datetime(value: Optional[str], *, field: str, require_future: boo
     return parsed.isoformat()
 
 
-def _birthday_times(event_at: Optional[str], reminder_at: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+def birthday_times(event_at: Optional[str], reminder_at: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
     """Normalize a cross-scene event and derive the auditable reminder time."""
 
-    normalized_event = _normalize_datetime(event_at, field="事件日期", require_future=True) if event_at else None
+    normalized_event = normalize_datetime(event_at, field="事件日期", require_future=True) if event_at else None
     if not normalized_event:
         if reminder_at:
             raise SecurityError("缺少生日日期，无法计算提醒时间", 400, "EVENT_DATE_REQUIRED")
@@ -202,13 +202,13 @@ def _birthday_times(event_at: Optional[str], reminder_at: Optional[str] = None) 
     event_dt = datetime.fromisoformat(normalized_event)
     expected_reminder = (event_dt - timedelta(days=2)).isoformat()
     if reminder_at:
-        normalized_reminder = _normalize_datetime(reminder_at, field="提醒日期")
+        normalized_reminder = normalize_datetime(reminder_at, field="提醒日期")
         if normalized_reminder != expected_reminder:
             raise SecurityError("提醒时间必须是事件日期前 2 天", 400, "INVALID_REMINDER_TIME")
     return normalized_event, expected_reminder
 
 
-def _operation_context(
+def build_operation_context(
     *,
     operation: str,
     target: str,
@@ -247,7 +247,7 @@ def _operation_context(
     # merchant still changes the digest and is rejected.
     merchant_value = merchant or (target if operation == "SUBSCRIPTION_CANCEL" else None)
     safe_merchant = sanitize_text(merchant_value, field="商户", max_length=120) if merchant_value else None
-    normalized_schedule = _normalize_datetime(
+    normalized_schedule = normalize_datetime(
         scheduled_at,
         field="计划时间",
         require_future=operation == "SCHEDULED_TRANSFER",
@@ -281,7 +281,7 @@ def _operation_context(
     return context
 
 
-def _card_channel_args(operation: str, channel: Any, enable: Any) -> tuple[Optional[str], Optional[bool]]:
+def card_channel_args(operation: str, channel: Any, enable: Any) -> tuple[Optional[str], Optional[bool]]:
     """Validate the CARD_CHANNEL switch; other operations must not carry one."""
 
     if operation != "CARD_CHANNEL":
@@ -294,7 +294,7 @@ def _card_channel_args(operation: str, channel: Any, enable: Any) -> tuple[Optio
     return name, enable
 
 
-def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> dict[str, Any]:
+def fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> dict[str, Any]:
     """Resolve exactly one owned suspicious overseas transaction."""
     rows = [row for row in TRANSACTIONS if row.get("account_id") == user_id and (row.get("category") == "可疑交易" or row.get("country"))]
     if transaction_id:
@@ -312,7 +312,7 @@ def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> di
     return row
 
 
-def _validate_split_participants(user_id: str, participants: Optional[list[str]]) -> list[str]:
+def validate_split_participants(user_id: str, participants: Optional[list[str]]) -> list[str]:
     """Resolve AA participants against the Core contact allow-list.
 
     Participant names are used for the local split-event record,
@@ -332,10 +332,10 @@ def _validate_split_participants(user_id: str, participants: Optional[list[str]]
     resolved_ids: set[str] = set()
     for value in values:
         display = sanitize_text(value, field="分摊参与人", max_length=120)
-        target_id, _ = _resolve_target(display, from_user=user_id)
+        target_id, _ = resolve_payee(display, from_user=user_id)
         # An AA request only names a verified contact. Money moves later only
         # when the participant authenticates and approves an ordinary transfer.
-        if not _aa_request_eligible(user_id, display):
+        if not aa_request_eligible(user_id, display):
             raise SecurityError(
                 f"“{display}”尚未确认关联账户，AA 请求只能发给已确认的联系人",
                 403,
@@ -348,7 +348,7 @@ def _validate_split_participants(user_id: str, participants: Optional[list[str]]
     return resolved
 
 
-def _operation_risk_level(user_id: str, operation: str, amount: float, *, channel_enabled: Optional[bool] = None) -> str:
+def operation_risk_level(user_id: str, operation: str, amount: float, *, channel_enabled: Optional[bool] = None) -> str:
     """Return the core-owned risk class for a generic operation.
 
     An AA request does not debit anyone. Each participant's eventual payment
@@ -362,18 +362,18 @@ def _operation_risk_level(user_id: str, operation: str, amount: float, *, channe
     if operation not in {"SCHEDULED_TRANSFER"}:
         return GENERIC_OPERATION_RISK[operation]
     with STATE_LOCK:
-        accumulated_after = round(_daily_spent(user_id) + _pending_transfer_amount(user_id) + float(amount), 2)
+        accumulated_after = round(daily_spent(user_id) + pending_transfer_amount(user_id) + float(amount), 2)
     return "YELLOW" if accumulated_after <= 1000.0 else "RED"
 
 
-def _fund_lock_risk_level(amount: Any) -> str:
+def fund_lock_risk_level(amount: Any) -> str:
     """Escalate a large reservation/release to the red verification tier."""
 
     normalized = amount_to_cents(amount) / 100.0
     return "YELLOW" if normalized <= 1000.0 else "RED"
 
 
-def _validate_operation_name(operation: str) -> str:
+def validate_operation_name(operation: str) -> str:
     try:
         normalized = sanitize_text(operation, field="操作类型", max_length=64).upper()
     except SecurityError:
@@ -383,7 +383,7 @@ def _validate_operation_name(operation: str) -> str:
     return normalized
 
 
-def _ensure_product_suitable(user_id: str, product_id: str) -> dict[str, Any]:
+def ensure_product_suitable(user_id: str, product_id: str) -> dict[str, Any]:
     """Return a product only when it is compatible with the user's risk file."""
 
     product_id = sanitize_text(product_id, field="理财产品编号", max_length=64).upper()
@@ -409,7 +409,7 @@ def _ensure_product_suitable(user_id: str, product_id: str) -> dict[str, Any]:
     return product
 
 
-def _resolve_subscription(user_id: str, target: Optional[str], merchant: Optional[str]) -> dict[str, Any]:
+def resolve_subscription(user_id: str, target: Optional[str], merchant: Optional[str]) -> dict[str, Any]:
     """Resolve one subscription deterministically before signing approval."""
 
     candidate = sanitize_text(target or merchant, field="订阅商户或编号", max_length=128)
@@ -434,7 +434,7 @@ def _resolve_subscription(user_id: str, target: Optional[str], merchant: Optiona
     return matches[0]
 
 
-def _require_token_subject(
+def require_token_subject(
     auth_token: str,
     *,
     body_user: Optional[str],
@@ -471,5 +471,5 @@ def _require_token_subject(
         # ``{"user_id": "victim"}`` and open the victim's circuit breaker.
         # Only a presented header principal is eligible for attribution; when
         # no header exists, use the anonymous bucket in the security module.
-        _record_failure_and_raise(exc, user_id=header_user, action=action, request_id=request_id)
+        record_failure_and_raise(exc, user_id=header_user, action=action, request_id=request_id)
         raise AssertionError("unreachable")

@@ -9,8 +9,8 @@ from planner import (
     Intent,
 )
 from bank_agent.verification import (
-    _finite_number,
-    _valid_text_field,
+    finite_number,
+    valid_text_field,
 )
 
 
@@ -30,7 +30,7 @@ def _render_product_line(item: Mapping[str, Any]) -> str:
     )
 
 
-def _render_wealth(data: Mapping[str, Any], intent: str) -> str:
+def render_wealth(data: Mapping[str, Any], intent: str) -> str:
     """Render wealth products as a readable list instead of a raw JSON blob."""
 
     rows = data.get("data") or []
@@ -46,14 +46,14 @@ def _render_wealth(data: Mapping[str, Any], intent: str) -> str:
     if not rows:
         lines.append("- 暂无可展示的产品。")
     disclaimer = data.get("disclaimer")
-    if _valid_text_field(disclaimer, max_length=300):
+    if valid_text_field(disclaimer, max_length=300):
         lines.append(f"> {disclaimer}")
     if intent != Intent.WEALTH_RECOMMEND.value:
         lines.append("> 年化为产品资料展示值，不代表实际收益；申购前需完成风险测评。")
     return "\n".join(lines)
 
 
-def _render_holdings(data: Mapping[str, Any]) -> str:
+def render_holdings(data: Mapping[str, Any]) -> str:
     """Render the customer's own positions; never the bank's product shelf."""
 
     rows = data.get("data") or []
@@ -66,14 +66,14 @@ def _render_holdings(data: Mapping[str, Any]) -> str:
             f"- `{item.get('holding_id')}` {item.get('product_name') or item.get('product_id')} ｜ "
             f"本金 ¥{float(item.get('principal') or 0):,.2f}"
         )
-        if _finite_number(item.get("estimated_value"), nonnegative=True):
+        if finite_number(item.get("estimated_value"), nonnegative=True):
             line += f" ｜ 参考市值 ¥{float(item.get('estimated_value')):,.2f}"
         lines.append(line)
     lines.append("> 市值为演示估算值，实际收益以产品结算为准。")
     return "\n".join(lines)
 
 
-def _render_subscriptions(data: Mapping[str, Any]) -> str:
+def render_subscriptions(data: Mapping[str, Any]) -> str:
     rows = data.get("data") or []
     lines = [f"🔁 订阅/代扣共 {len(rows)} 项："]
     for item in rows:
@@ -94,14 +94,14 @@ def _render_subscriptions(data: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _render_cards(data: Mapping[str, Any]) -> str:
+def render_cards(data: Mapping[str, Any]) -> str:
     rows = data.get("data") or []
     lines = [f"💳 卡片共 {len(rows)} 张："]
     for item in rows:
         line = f"- `{item.get('card_id')}`（{item.get('type')}）｜ 状态 {item.get('status')} ｜ 日限额 ¥{float(item.get('daily_limit') or 0):,.2f}"
-        if _finite_number(item.get("daily_spent_today"), nonnegative=True):
+        if finite_number(item.get("daily_spent_today"), nonnegative=True):
             line += f" ｜ 今日已用 ¥{float(item.get('daily_spent_today')):,.2f}"
-        if _finite_number(item.get("daily_remaining"), nonnegative=True):
+        if finite_number(item.get("daily_remaining"), nonnegative=True):
             line += f" ｜ 今日剩余 ¥{float(item.get('daily_remaining')):,.2f}"
         channels = item.get("channels") if isinstance(item.get("channels"), dict) else {}
         closed = [name for key, name in (("ONLINE", "网上支付"), ("OVERSEAS", "境外交易")) if channels.get(key) is False]
@@ -113,7 +113,7 @@ def _render_cards(data: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _bill_scope_label(result: Mapping[str, Any]) -> str:
+def bill_scope_label(result: Mapping[str, Any]) -> str:
     if result.get("date_scope") == "CUSTOM":
         bounds = result.get("date_range") or {}
         return f"{bounds['start']} 至 {bounds['end']}"

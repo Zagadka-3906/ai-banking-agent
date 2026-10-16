@@ -23,12 +23,12 @@ from bank_agent.state import (
     BankingAgentState,
 )
 from bank_agent.runtime import (
-    _error_message,
-    _response_json,
+    error_message,
+    response_json,
     interrupt,
 )
 from bank_agent.verification import (
-    _finite_number,
+    finite_number,
 )
 
 
@@ -53,8 +53,8 @@ def _card_by_tail(state: BankingAgentState, text: str) -> tuple[Optional[str], O
         return None, None, False
     response = runtime._http("GET", f"cards/{state['user_id']}", state=state, headers={"X-User-Id": state["user_id"]})
     if response.status_code >= 400:
-        return None, f"暂时无法核对卡片尾号：{_error_message(response)}", False
-    rows = _response_json(response).get("data")
+        return None, f"暂时无法核对卡片尾号：{error_message(response)}", False
+    rows = response_json(response).get("data")
     if not isinstance(rows, list):
         return None, "核心返回的卡片列表无效，请稍后再试。", False
     matches = [card for card in rows if isinstance(card, dict) and str(card.get("last4") or str(card.get("number_masked") or "")[-4:]) == tail.group(1)]
@@ -102,8 +102,8 @@ def _redeem_all_principal(state: BankingAgentState) -> tuple[Optional[float], Op
     product_id = str(state.get("target") or "").upper()
     response = runtime._http("GET", f"wealth/holdings/{state['user_id']}", state=state, headers={"X-User-Id": state["user_id"]})
     if response.status_code >= 400:
-        return None, f"暂时无法读取您的持仓：{_error_message(response)}"
-    rows = _response_json(response).get("data")
+        return None, f"暂时无法读取您的持仓：{error_message(response)}"
+    rows = response_json(response).get("data")
     if not isinstance(rows, list):
         return None, "核心返回的持仓数据无效，请稍后再试。"
     total = 0.0
@@ -134,8 +134,8 @@ def _resolve_undo_target(state: BankingAgentState) -> dict[str, Any]:
         return {"risk_level": "UNKNOWN", "final_response": "已完成的转账无法撤销或退回，系统不会发起反向付款。如需追回，请联系收款人，或在任务页请求人工处理。仍未执行的预约转账、未付款的 AA 请求和资金锁定可以撤销。"}
     response = runtime._http("GET", "tasks/undoable", state=state, headers={"X-User-Id": state["user_id"]})
     if response.status_code >= 400:
-        raise RuntimeError(_error_message(response))
-    rows = [row for row in (_response_json(response).get("data") or []) if isinstance(row, dict)]
+        raise RuntimeError(error_message(response))
+    rows = [row for row in (response_json(response).get("data") or []) if isinstance(row, dict)]
     match = next((row for row in rows if kind == "LAST" or row.get("task_type") == kind), None)
     if match is None:
         label = UNDO_KINDS.get(kind, "操作")
@@ -197,19 +197,19 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                     return {"risk_level": "UNKNOWN", "final_response": failure}
             response = runtime._http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": core_operation(intent), "amount": amount or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else paying_card_id, "transaction_id": slots.get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": amount if intent == Intent.CARD_LIMIT.value else None, "channel": slots.get("card_channel") if intent == Intent.CARD_CHANNEL.value else None, "enable": slots.get("channel_enabled") if intent == Intent.CARD_CHANNEL.value else None, "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
-                detail = _response_json(response).get("detail")
+                detail = response_json(response).get("detail")
                 code = detail.get("code") if isinstance(detail, dict) else None
                 if code in {"CARD_ID_REQUIRED", "CARD_NOT_FOUND"}:
                     if intent.startswith("CARD_") and intent != Intent.CARD_APPLY.value:
-                        return clarify_card(f"{_error_message(response)}。请回复要操作的卡片编号（例如 CARD-001）。")
+                        return clarify_card(f"{error_message(response)}。请回复要操作的卡片编号（例如 CARD-001）。")
                     if intent in _PAYING_CARD_INTENTS:
                         return _pending_slot_clarification(
                             state, intent,
-                            f"{_error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
+                            f"{error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
                             ["paying_card"],
                         )
-                return {"risk_level": "ERROR", "final_response": f"操作风控预检未通过：{_error_message(response)}"}
-            data = _response_json(response)
+                return {"risk_level": "ERROR", "final_response": f"操作风控预检未通过：{error_message(response)}"}
+            data = response_json(response)
             target = data.get("target") or state.get("target")
             if target == f"__{data.get('operation') or intent}__":
                 # Core's internal binding placeholder for a target-less action;
@@ -231,8 +231,8 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         try:
             response = runtime._http("POST", "risk/precheck/lock", state=state, json_body={"user_id": state["user_id"], "amount": state.get("amount"), "event_at": state.get("scheduled_at"), "reason": state.get("extra_info") or "跨场景联动储备"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
-                return {"risk_level": "ERROR", "final_response": f"资金预检未通过：{_error_message(response)}"}
-            data = _response_json(response)
+                return {"risk_level": "ERROR", "final_response": f"资金预检未通过：{error_message(response)}"}
+            data = response_json(response)
             return {
                 "risk_level": data.get("risk_level", "ERROR"),
                 "auth_token": data.get("auth_token"),
@@ -265,15 +265,15 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                     slots = {**slots, "paying_card_id": paying_card_id}
             response = runtime._http("POST", "risk/precheck", state=state, json_body={"from_user": state["user_id"], "target_name_or_id": target, "amount": amount, "card_id": paying_card_id, "remark": state.get("extra_info") or "智能转账"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
-                detail = _response_json(response).get("detail")
+                detail = response_json(response).get("detail")
                 if isinstance(detail, dict) and detail.get("code") in {"CARD_ID_REQUIRED", "CARD_NOT_FOUND"}:
                     return _pending_slot_clarification(
                         state, intent,
-                        f"{_error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
+                        f"{error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
                         ["paying_card"],
                     )
-                return {"risk_level": "ERROR", "final_response": f"风控评估未通过：{_error_message(response)}"}
-            data = _response_json(response)
+                return {"risk_level": "ERROR", "final_response": f"风控评估未通过：{error_message(response)}"}
+            data = response_json(response)
             return {
                 "risk_level": data.get("risk_level", "ERROR"),
                 "auth_token": data.get("auth_token"),
@@ -405,7 +405,7 @@ def human_review_node(state: BankingAgentState) -> dict[str, Any]:
         transaction = payload["transaction"] if isinstance(payload["transaction"], dict) else {}
         reasons = "、".join(str(item) for item in payload["risk_reasons"])
         amount = transaction.get("amount")
-        amount_text = f"¥{float(amount):,.2f}" if _finite_number(amount, nonnegative=True) else "金额待核验"
+        amount_text = f"¥{float(amount):,.2f}" if finite_number(amount, nonnegative=True) else "金额待核验"
         payload["message"] = (
             f"已核验交易 {transaction.get('tx_id') or '未知编号'}："
             f"{transaction.get('merchant') or '未知商户'}，{amount_text}，"

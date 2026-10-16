@@ -29,8 +29,8 @@ def test_otp_bound_to_approval_expires_and_never_logs_plaintext(core, monkeypatc
     token = red_token(core)
     other = red_token(core)
     code = security.issue_demo_otp(token, user_id="user_zhang")["demo_code"]
-    payload, record = security._lookup_auth_locked(token)
-    other_payload, other_record = security._lookup_auth_locked(other)
+    payload, record = security.lookup_auth_locked(token)
+    other_payload, other_record = security.lookup_auth_locked(other)
     ctx = {"otp": code, "auth_payload": payload, "auth_record": record}
     assert security._factor_sms_otp(ctx)
     monkeypatch.setenv("BANK_MFA_DYNAMIC_OTP", "1")
@@ -48,7 +48,7 @@ def test_otp_issuance_cannot_reset_failure_budget(core):
     with pytest.raises(security.SecurityError) as caught:
         security.issue_demo_otp(token, user_id="user_zhang")
     assert caught.value.code == "OTP_RATE_LIMITED"
-    _, record = security._lookup_auth_locked(token)
+    _, record = security.lookup_auth_locked(token)
     record["mfa_attempts"] = 3
     record["otp_issued_at"] = 0
     with pytest.raises(security.SecurityError):

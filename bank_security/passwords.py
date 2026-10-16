@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from bank_security.config import _env_int
+from bank_security.config import env_int
 from bank_security.errors import SecurityError
 
 
@@ -19,8 +19,8 @@ PASSWORDS_AVAILABLE = _PasswordHasher is not None
 _PASSWORD_HASHER = _PasswordHasher() if _PasswordHasher is not None else None
 
 
-# Must come after ``_env_int`` is defined - it validates through it.
-MIN_PASSWORD_LENGTH = _env_int("BANK_MIN_PASSWORD_LENGTH", 8, 6, 128)
+# Must come after ``env_int`` is defined - it validates through it.
+MIN_PASSWORD_LENGTH = env_int("BANK_MIN_PASSWORD_LENGTH", 8, 6, 128)
 
 
 def hash_password(password: Any) -> str:

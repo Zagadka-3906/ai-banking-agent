@@ -152,7 +152,7 @@ def test_product_comparison_accepts_ids_next_to_chinese_text(gateway):
     "比较CJ010020和AY90204", "比较XCJ01002和AY90204", "比较CJ01002A和AY90204",
 ])
 def test_known_product_id_is_not_extracted_from_a_longer_identifier(text):
-    parsed = agent._local_parse(text)
+    parsed = agent.local_parse(text)
     assert parsed["product_ids"] == ["AY90204"]
     assert parsed["target"] != "CJ01002"
 
@@ -437,7 +437,7 @@ def test_streamed_correction_then_cancellation_uses_the_same_safe_path(gateway):
     "给李四转 - 50 元", "尾号1111的卡调额", "给李四转至少50元",
 ])
 def test_identifier_negative_or_imprecise_values_cannot_be_money(text):
-    assert agent._amount_from_text(text) is None
+    assert agent.amount_from_text(text) is None
 
 
 @pytest.mark.parametrize(("text", "intent", "amount"), [
@@ -445,7 +445,7 @@ def test_identifier_negative_or_imprecise_values_cannot_be_money(text):
     ("买点日日盈，投200块", "WEALTH_PURCHASE", 200),
 ])
 def test_shared_money_parser_preserves_explicit_card_and_product_actions(text, intent, amount):
-    parsed = agent._local_parse(text)
+    parsed = agent.local_parse(text)
     assert parsed["intent"] == intent
     assert parsed["amount"] == amount
 

@@ -23,14 +23,14 @@ def _b64decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def _signed_payload(payload: Mapping[str, Any], secret: Optional[bytes] = None) -> str:
+def signed_payload(payload: Mapping[str, Any], secret: Optional[bytes] = None) -> str:
     key = AUTH_SECRET if secret is None else secret
     body = _b64encode(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     signature = _b64encode(hmac.new(key, body.encode("ascii"), hashlib.sha256).digest())
     return f"{body}.{signature}"
 
 
-def _decode_signed(token: str, expected_type: str, secret: Optional[bytes] = None) -> dict[str, Any]:
+def decode_signed(token: str, expected_type: str, secret: Optional[bytes] = None) -> dict[str, Any]:
     key = AUTH_SECRET if secret is None else secret
     if not isinstance(token, str) or len(token) > 8192:
         raise SecurityError("安全凭证格式无效", 403, "INVALID_TOKEN")

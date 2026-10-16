@@ -8,16 +8,16 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from bank_core.access import (
-    _get_actor,
-    _record_failure_and_raise,
-    _request_id,
+    get_actor,
+    record_failure_and_raise,
+    server_request_id,
 )
 from bank_core.ledger import (
     ACCOUNTS,
     TRANSACTIONS,
 )
 from bank_core.payments import (
-    _ensure_account,
+    ensure_account,
 )
 from planner import analyze_transactions, filter_transactions
 from security import (
@@ -34,18 +34,18 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 @router.get("/api/v1/accounts/{user_id}/balance")
 def get_balance(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     # Return a stable not-found result for an unknown resource before doing
     # object-level identity comparison; this avoids leaking whether a valid
     # caller is associated with a different account.
     if user_id not in ACCOUNTS:
         audit_event("BALANCE_QUERY", user_id=x_user_id, decision="BLOCK", outcome="NOT_FOUND", reason="ACCOUNT_NOT_FOUND", request_id=request_id)
         raise HTTPException(status_code=404, detail={"code": "ACCOUNT_NOT_FOUND", "message": "账户不存在"})
-    actor = _get_actor(user_id, x_user_id, action="BALANCE_QUERY", request_id=request_id)
+    actor = get_actor(user_id, x_user_id, action="BALANCE_QUERY", request_id=request_id)
     try:
-        account = _ensure_account(user_id)
+        account = ensure_account(user_id)
     except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=actor, action="BALANCE_QUERY", request_id=request_id)
+        record_failure_and_raise(exc, user_id=actor, action="BALANCE_QUERY", request_id=request_id)
     result = {
         "code": 200,
         "user_name": account["name"],
@@ -60,15 +60,15 @@ def get_balance(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-U
 
 @router.get("/api/v1/accounts/{user_id}/transactions")
 def get_transactions(user_id: str, date_scope: str = "ALL", x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), category: Optional[str] = None):
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     if user_id not in ACCOUNTS:
         audit_event("TRANSACTION_QUERY", user_id=x_user_id, decision="BLOCK", outcome="NOT_FOUND", reason="ACCOUNT_NOT_FOUND", request_id=request_id)
         raise HTTPException(status_code=404, detail={"code": "ACCOUNT_NOT_FOUND", "message": "账户不存在"})
-    actor = _get_actor(user_id, x_user_id, action="TRANSACTION_QUERY", request_id=request_id)
+    actor = get_actor(user_id, x_user_id, action="TRANSACTION_QUERY", request_id=request_id)
     try:
-        _ensure_account(user_id)
+        ensure_account(user_id)
     except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=actor, action="TRANSACTION_QUERY", request_id=request_id)
+        record_failure_and_raise(exc, user_id=actor, action="TRANSACTION_QUERY", request_id=request_id)
     scope = str(date_scope or "ALL").upper()
     scope = {"今年": "YEAR", "年度": "YEAR", "全年": "YEAR"}.get(scope, scope)
     if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"}:
@@ -94,9 +94,9 @@ def _bill_records(user_id: str, scope: str, category: Optional[str]) -> tuple[li
 def get_bill_analysis(user_id: str, date_scope: str = "ALL", x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), category: Optional[str] = None):
     """GREEN: return source-bound bill facts for a report or chart."""
 
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="BILL_ANALYSIS", request_id=request_id)
-    _ensure_account(user_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="BILL_ANALYSIS", request_id=request_id)
+    ensure_account(user_id)
     scope = str(date_scope or "ALL").upper()
     scope = {"今年": "YEAR", "年度": "YEAR", "全年": "YEAR"}.get(scope, scope)
     if scope not in {"TODAY", "MONTH", "LAST_MONTH", "YEAR", "ALL"}:

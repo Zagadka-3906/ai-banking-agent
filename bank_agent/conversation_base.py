@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger("mock_banking.conversation")
 
 
-def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
@@ -48,10 +48,10 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 # nonce that the core will refuse once expired.  A longer handle would let a
 # user approve an operation the core has already invalidated, producing a
 # confusing failure at settle time instead of an honest "please start over".
-APPROVAL_TTL_SECONDS = _env_int("BANK_APPROVAL_TTL_SECONDS", 110, 30, 600)
-APPROVAL_MAX_ATTEMPTS = _env_int("BANK_APPROVAL_MAX_ATTEMPTS", 5, 1, 20)
-TURN_CACHE_TTL_SECONDS = _env_int("BANK_TURN_CACHE_TTL_SECONDS", 900, 60, 86_400)
-TURN_CACHE_MAX_RECORDS = _env_int("BANK_TURN_CACHE_MAX_RECORDS", 2_000, 16, 200_000)
+APPROVAL_TTL_SECONDS = env_int("BANK_APPROVAL_TTL_SECONDS", 110, 30, 600)
+APPROVAL_MAX_ATTEMPTS = env_int("BANK_APPROVAL_MAX_ATTEMPTS", 5, 1, 20)
+TURN_CACHE_TTL_SECONDS = env_int("BANK_TURN_CACHE_TTL_SECONDS", 900, 60, 86_400)
+TURN_CACHE_MAX_RECORDS = env_int("BANK_TURN_CACHE_MAX_RECORDS", 2_000, 16, 200_000)
 
 # Namespace for Android conversation thread ids in the checkpointer.
 CHANNEL_NAMESPACE = "app"

@@ -9,19 +9,19 @@ from typing import Optional
 from fastapi import APIRouter, Header
 
 from bank_core.access import (
-    _get_actor,
-    _record_failure_and_raise,
-    _request_id,
+    get_actor,
+    record_failure_and_raise,
+    server_request_id,
 )
 from bank_core.contacts import (
     ContactAddRequest,
-    _contact_public_view,
-    _resolve_contact_account,
+    contact_public_view,
+    resolve_contact_account,
 )
 from bank_core.idempotency import (
-    _idempotency_abort,
-    _idempotency_begin,
-    _idempotency_complete,
+    idempotency_abort,
+    idempotency_begin,
+    idempotency_complete,
 )
 from bank_core.ledger import (
     ACCOUNTS,
@@ -32,10 +32,10 @@ from bank_core.ledger import (
     CONTACT_RELATIONSHIPS,
     CONTACTS,
     USER_CONTACTS,
-    _ledger_transaction,
+    ledger_transaction,
 )
 from bank_core.payments import (
-    _ensure_account,
+    ensure_account,
 )
 from bank_core.persistence import (
     persist_ledger,
@@ -52,9 +52,9 @@ router = APIRouter()
 
 @router.get("/api/v1/contacts/{user_id}")
 def get_contacts(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="CONTACT_QUERY", request_id=request_id)
-    _ensure_account(user_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="CONTACT_QUERY", request_id=request_id)
+    ensure_account(user_id)
     # Only expose the caller's allow-listed contacts; phone numbers are
     # masked so this endpoint cannot become an account-enumeration oracle.
     rows = []
@@ -76,11 +76,11 @@ def get_contacts(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-
 def list_contact_book(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     """The caller's own contact book (distinct from the built-in payee allow-list)."""
 
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="CONTACT_QUERY", request_id=request_id)
-    _ensure_account(user_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="CONTACT_QUERY", request_id=request_id)
+    ensure_account(user_id)
     with STATE_LOCK:
-        rows = [_contact_public_view(dict(row), caller_id=user_id) for row in USER_CONTACTS.get(user_id, [])]
+        rows = [contact_public_view(dict(row), caller_id=user_id) for row in USER_CONTACTS.get(user_id, [])]
     audit_event("CONTACT_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows), "source": "contact_book"})
     return {"code": 200, "data": rows}
 
@@ -90,19 +90,19 @@ def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] =
     """Add one contact (name, phone, relationship, birthday) for the caller.
 
     The contact becomes a first-class payee: by name or phone it resolves in
-    ``_resolve_target`` like any built-in contact.  Everything is validated at
+    ``resolve_payee`` like any built-in contact.  Everything is validated at
     the boundary - the relationship against a small allow-list, the phone as
     digits, the birthday as a real (not future) calendar date.
     """
 
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="CONTACT_ADD", request_id=request_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="CONTACT_ADD", request_id=request_id)
     idem_payload = {"user_id": user_id, "name": req.name, "phone": req.phone, "relationship": req.relationship, "birthday": req.birthday}
-    cached = _idempotency_begin(actor, "contact_add", idempotency_key, idem_payload, request_id=request_id)
+    cached = idempotency_begin(actor, "contact_add", idempotency_key, idem_payload, request_id=request_id)
     if cached is not None:
         return cached
     try:
-        _ensure_account(user_id)
+        ensure_account(user_id)
         name = sanitize_text(req.name, field="联系人姓名", max_length=120)
         if not name:
             raise SecurityError("联系人姓名不能为空", 400, "CONTACT_NAME_REQUIRED")
@@ -130,11 +130,11 @@ def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] =
                 raise SecurityError("生日不能是未来日期", 400, "INVALID_BIRTHDAY")
             birthday = birthday_value
     except SecurityError as exc:
-        _idempotency_abort(actor, "contact_add", idempotency_key)
-        _record_failure_and_raise(exc, user_id=actor, action="CONTACT_ADD", request_id=request_id)
+        idempotency_abort(actor, "contact_add", idempotency_key)
+        record_failure_and_raise(exc, user_id=actor, action="CONTACT_ADD", request_id=request_id)
 
     with STATE_LOCK:
-        with _ledger_transaction():
+        with ledger_transaction():
             existing = USER_CONTACTS.get(user_id, [])
             if any(row.get("name") == name and row.get("phone") == phone for row in existing):
                 raise SecurityError("该联系人已存在", 409, "CONTACT_EXISTS")
@@ -144,7 +144,7 @@ def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] =
                     409,
                     "CONTACT_LIMIT_REACHED",
                 )
-            account_id, linked_existing, link_verification = _resolve_contact_account(name, phone, caller_id=user_id)
+            account_id, linked_existing, link_verification = resolve_contact_account(name, phone, caller_id=user_id)
             row = {
                 "contact_id": f"CTT{uuid.uuid4().hex[:10].upper()}",
                 "owner_id": user_id,
@@ -159,8 +159,8 @@ def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] =
             }
             USER_CONTACTS.setdefault(user_id, []).append(row)
     persist_ledger()
-    response = {"code": 200, "status": "CREATED", "data": _contact_public_view(dict(row), caller_id=user_id)}
-    _idempotency_complete(actor, "contact_add", idempotency_key, idem_payload, response)
+    response = {"code": 200, "status": "CREATED", "data": contact_public_view(dict(row), caller_id=user_id)}
+    idempotency_complete(actor, "contact_add", idempotency_key, idem_payload, response)
     audit_event(
         "CONTACT_ADD",
         user_id=actor,
@@ -181,12 +181,12 @@ def remove_contact(user_id: str, contact_id: str, x_user_id: Optional[str] = Hea
     transfers and its received funds remain reconcilable.
     """
 
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="CONTACT_DELETE", request_id=request_id)
-    _ensure_account(user_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="CONTACT_DELETE", request_id=request_id)
+    ensure_account(user_id)
     safe_contact_id = sanitize_text(contact_id, field="联系人编号", max_length=64)
     with STATE_LOCK:
-        with _ledger_transaction():
+        with ledger_transaction():
             rows = USER_CONTACTS.get(user_id, [])
             index = next((i for i, row in enumerate(rows) if row.get("contact_id") == safe_contact_id), None)
             if index is None:

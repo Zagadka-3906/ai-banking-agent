@@ -7,18 +7,18 @@ import time
 from typing import Any, Optional
 
 from bank_security.audit import audit_event
-from bank_security.config import STATE_LOCK, _env_int
+from bank_security.config import STATE_LOCK, env_int
 from bank_security.errors import SecurityError
 from bank_security.sanitize import credential_fingerprint, sanitize_text
-from bank_security.tokens import _decode_signed, _signed_payload
+from bank_security.tokens import decode_signed, signed_payload
 
 
 # Reusable, short-lived session credentials.  Unlike the single-use nonce they
 # are not consumed by a settlement, but they expire quickly and are bound to a
 # principal, so a channel no longer has to self-assert X-User-Id.
 SESSION_TOKENS: dict[str, dict[str, Any]] = {}
-SESSION_TTL_SECONDS = _env_int("BANK_SESSION_TTL_SECONDS", 900, 60, 86_400)
-SESSION_MAX_RECORDS = _env_int("BANK_SESSION_MAX_RECORDS", 5000, 100, 200_000)
+SESSION_TTL_SECONDS = env_int("BANK_SESSION_TTL_SECONDS", 900, 60, 86_400)
+SESSION_MAX_RECORDS = env_int("BANK_SESSION_MAX_RECORDS", 5000, 100, 200_000)
 
 
 def _purge_sessions() -> None:
@@ -58,7 +58,7 @@ def _issue_session_token(
     ttl = max(60, min(int(ttl_seconds or SESSION_TTL_SECONDS), 86_400))
     payload = {"typ": "session", "ver": 1, "jti": secrets.token_urlsafe(18),
                "sid": session_id, "sub": principal, "iat": now, "exp": now + ttl}
-    token = _signed_payload(payload)
+    token = signed_payload(payload)
     with STATE_LOCK:
         SESSION_TOKENS[token] = {
             "jti": payload["jti"],
@@ -199,7 +199,7 @@ def resolve_session(token: Optional[str]) -> str:
         raise SecurityError("缺少会话凭证", 401, "SESSION_REQUIRED")
     with STATE_LOCK:
         try:
-            payload = _decode_signed(token, "session")
+            payload = decode_signed(token, "session")
         except SecurityError as exc:
             raise SecurityError("会话凭证无效或已过期", 401, "INVALID_SESSION") from exc
         record = SESSION_TOKENS.get(token)

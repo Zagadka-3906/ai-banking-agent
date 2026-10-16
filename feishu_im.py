@@ -20,7 +20,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Header, Request
 
-from agent import BILL_CATEGORY_ALIASES, INJECTION_LOCKED_NOTICE, _local_parse, report_security_signal
+from agent import BILL_CATEGORY_ALIASES, INJECTION_LOCKED_NOTICE, local_parse, report_security_signal
 from bank_tools import BankAPIError, BankClient
 from feishu_cards import FeishuReply, binding_card, failure_card, handoff_card, help_card, query_card
 from planner import Intent
@@ -97,7 +97,7 @@ def _bill_category_supported(message: str, category: Any) -> bool:
 
 def _read_only_reply(principal: str, session_token: str, message: str) -> tuple[str, str | FeishuReply]:
     """Only fixed Core GET routes are reachable from the IM channel."""
-    parsed = _local_parse(message)
+    parsed = local_parse(message)
     intent = str(parsed.get("intent") or "")
     slots = parsed.get("slots") or {}
     scope = str(parsed.get("date_scope") or "ALL")

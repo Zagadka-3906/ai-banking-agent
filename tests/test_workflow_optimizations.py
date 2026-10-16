@@ -32,9 +32,9 @@ def test_explicit_request_skips_model_but_ambiguous_request_uses_it(monkeypatch)
     calls = []
     monkeypatch.setenv("BANK_MODEL_FAST_PATH", "1")
     monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda messages: calls.append(messages) or SimpleNamespace(content='{"intent":"UNKNOWN"}')))
-    assert agent._model_parse("给李四转100元")["intent"] == "TRANSFER"
+    assert agent.model_parse("给李四转100元")["intent"] == "TRANSFER"
     assert not calls
-    assert agent._model_parse("帮我看看情况")["intent"] == "UNKNOWN"
+    assert agent.model_parse("帮我看看情况")["intent"] == "UNKNOWN"
     assert len(calls) == 1
 
 
@@ -48,7 +48,7 @@ def test_model_timeout_falls_back_without_inventing_missing_slots(monkeypatch):
     monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=slow))
     started = time.monotonic()
     try:
-        result = agent._model_parse("给李四转账")
+        result = agent.model_parse("给李四转账")
         assert time.monotonic() - started < 1
         assert result["amount"] is None
     finally:

@@ -22,16 +22,16 @@ from bank_agent.state import (
     BankingAgentState,
 )
 from bank_agent.extraction import (
-    _amount_from_text,
-    _scheduled_at_from_text,
+    amount_from_text,
+    scheduled_at_from_text,
 )
 from bank_agent.parsing import (
-    _local_parse,
-    _parsed_payload,
+    local_parse,
+    parsed_payload,
 )
 from bank_agent.settlement import (
-    _consumed_task_ids,
-    _plan_from_state,
+    consumed_task_ids,
+    plan_from_state,
 )
 
 
@@ -65,7 +65,7 @@ def _slot_answer(text: str, slot: str, parsed: Mapping[str, Any]) -> Any:
         if chinese:
             # The pending slot supplies the omitted yuan unit, not permission
             # to turn an ambiguous "两三百" into an exact 300-yuan transfer.
-            return _amount_from_text(chinese.group(1) + "元")
+            return amount_from_text(chinese.group(1) + "元")
         return None
     if slot in {"scheduled_at", "event_at"}:
         stated = parsed.get("scheduled_at") or parsed.get("event_at")
@@ -73,7 +73,7 @@ def _slot_answer(text: str, slot: str, parsed: Mapping[str, Any]) -> Any:
             return stated
         # A bare date answer ("10月5号", "下周六") carries no intent keyword, so
         # the pending question is the only thing that makes it a date.
-        return _scheduled_at_from_text(text)
+        return scheduled_at_from_text(text)
     if slot == "target":
         return parsed.get("target")
     if slot == "participants":
@@ -86,13 +86,13 @@ def _slot_answer(text: str, slot: str, parsed: Mapping[str, Any]) -> Any:
     return None
 
 
-_ELLIPSIS_REPEAT = ("再转一次", "再来一次", "再来一笔", "重复上次", "照上次", "和上次一样", "跟上次一样", "同样金额", "一样的金额", "同样的金额")
-_ELLIPSIS_SAME_TARGET = ("上次那个", "还是那个", "还是上次", "原来那个", "同一个", "那个收款人", "那个人")
-_ELLIPSIS_CANCEL_IT = ("取消它", "把它取消", "退掉它", "取消掉", "不要了")
-_ELLIPSIS_SAME_PRODUCT = ("那个产品", "还是那只", "同一只", "换成那个")
+ELLIPSIS_REPEAT = ("再转一次", "再来一次", "再来一笔", "重复上次", "照上次", "和上次一样", "跟上次一样", "同样金额", "一样的金额", "同样的金额")
+ELLIPSIS_SAME_TARGET = ("上次那个", "还是那个", "还是上次", "原来那个", "同一个", "那个收款人", "那个人")
+ELLIPSIS_CANCEL_IT = ("取消它", "把它取消", "退掉它", "取消掉", "不要了")
+ELLIPSIS_SAME_PRODUCT = ("那个产品", "还是那只", "同一只", "换成那个")
 
 
-def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: str, last_result: Optional[dict] = None) -> dict[str, Any]:
+def resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: str, last_result: Optional[dict] = None) -> dict[str, Any]:
     """Resolve explicit back-references from the previous turn's context.
 
     Only phrases that clearly point backwards ("再转一次", "还是上次那个",
@@ -103,8 +103,8 @@ def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: st
     prior_intent = str(prior.get("intent") or "")
     if not prior_intent or prior_intent == Intent.UNKNOWN.value:
         return parsed
-    if any(phrase in text for phrase in _ELLIPSIS_REPEAT):
-        repeated = _parsed_payload(
+    if any(phrase in text for phrase in ELLIPSIS_REPEAT):
+        repeated = parsed_payload(
             prior_intent,
             text=text,
             amount=prior.get("amount"),
@@ -174,12 +174,12 @@ def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: st
                     Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.CARD_LIMIT.value}
     if prior_intent in card_intents and updated.get("intent") in card_intents and any(word in text for word in ("这张", "那张", "同一张")):
         updated["target"] = updated.get("target") or prior.get("target")
-    if any(phrase in text for phrase in _ELLIPSIS_SAME_TARGET) and updated.get("target") in (None, "") and prior.get("target"):
+    if any(phrase in text for phrase in ELLIPSIS_SAME_TARGET) and updated.get("target") in (None, "") and prior.get("target"):
         if updated.get("intent") in (None, Intent.UNKNOWN.value):
             updated["intent"] = prior_intent
             updated["confidence"] = None
         updated["target"] = prior.get("target")
-    if any(phrase in text for phrase in _ELLIPSIS_SAME_PRODUCT) and not updated.get("product_ids") and (prior.get("product_ids") or prior.get("target")):
+    if any(phrase in text for phrase in ELLIPSIS_SAME_PRODUCT) and not updated.get("product_ids") and (prior.get("product_ids") or prior.get("target")):
         candidates = list(prior.get("product_ids") or [])
         if not candidates and prior_intent in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
             candidates = [prior["target"]]
@@ -189,7 +189,7 @@ def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: st
         if updated.get("intent") in (None, Intent.UNKNOWN.value):
             updated["intent"] = prior_intent
             updated["confidence"] = None
-    if any(phrase in text for phrase in _ELLIPSIS_CANCEL_IT) and updated.get("intent") in (None, Intent.UNKNOWN.value):
+    if any(phrase in text for phrase in ELLIPSIS_CANCEL_IT) and updated.get("intent") in (None, Intent.UNKNOWN.value):
         if prior_intent in {Intent.SUBSCRIPTION_QUERY.value, Intent.SUBSCRIPTION_CANCEL.value}:
             updated["intent"] = Intent.SUBSCRIPTION_CANCEL.value
             updated["confidence"] = None
@@ -197,13 +197,13 @@ def _resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: st
     return updated
 
 
-def _split_parts(text: str) -> list[str]:
+def split_parts(text: str) -> list[str]:
     """Split a compound utterance on explicit sequencing markers."""
 
     return split_tasks(text)
 
 
-def _split_read_requests(text: str) -> list[dict[str, Any]]:
+def split_read_requests(text: str) -> list[dict[str, Any]]:
     """Split one utterance into an ordered list of complete read-only requests.
 
     Compound requests such as “先看余额，再分析上月账单” are decomposed into
@@ -212,13 +212,13 @@ def _split_read_requests(text: str) -> list[dict[str, Any]]:
     need its own approval, so the caller falls back to the single-intent flow.
     """
 
-    parts = _split_parts(text)
+    parts = split_parts(text)
     if len(parts) < 2 or len(parts) > 8:
         return []
     requests: list[dict[str, Any]] = []
     seen: set[str] = set()
     for part in parts:
-        parsed = validate_intent_payload(_local_parse(part))
+        parsed = validate_intent_payload(local_parse(part))
         intent = str(parsed.get("intent") or "")
         signature = json.dumps(parsed, sort_keys=True, ensure_ascii=False)
         if intent not in GREEN_INTENTS or signature in seen or needs_clarification(parsed):
@@ -228,15 +228,15 @@ def _split_read_requests(text: str) -> list[dict[str, Any]]:
     return requests if len(requests) >= 2 else []
 
 
-def _has_mutating_part(text: str) -> bool:
+def has_mutating_part(text: str) -> bool:
     """Whether a compound utterance contains a part that changes money/state."""
 
-    parts = _split_parts(text)
+    parts = split_parts(text)
     if len(parts) < 2:
         return False
     for part in parts:
         try:
-            parsed = validate_intent_payload(_local_parse(part))
+            parsed = validate_intent_payload(local_parse(part))
         except Exception:
             continue
         intent = str(parsed.get("intent") or "")
@@ -245,7 +245,7 @@ def _has_mutating_part(text: str) -> bool:
     return False
 
 
-def _build_multi_read_plan(sub_requests: list[dict[str, Any]], plan_id: str, *, sequential: bool = True) -> TaskPlan:
+def build_multi_read_plan(sub_requests: list[dict[str, Any]], plan_id: str, *, sequential: bool = True) -> TaskPlan:
     """Compile several read requests into one dependency-ordered DAG."""
 
     tasks: list[Task] = []
@@ -272,10 +272,10 @@ def _build_multi_read_plan(sub_requests: list[dict[str, Any]], plan_id: str, *, 
     return TaskPlan(plan_id=plan_id, intent=str(sub_requests[0].get("intent") or Intent.UNKNOWN.value), tasks=tasks)
 
 
-def _advance_multi_plan(state: BankingAgentState, sub_requests: list[dict[str, Any]], *, error: Optional[str] = None) -> Optional[dict[str, Any]]:
+def advance_multi_plan(state: BankingAgentState, sub_requests: list[dict[str, Any]], *, error: Optional[str] = None) -> Optional[dict[str, Any]]:
     """Mark the consumed steps of every sub-request in the shared DAG."""
 
-    plan = _plan_from_state(state)
+    plan = plan_from_state(state)
     if plan is None:
         return None
     known = {task.task_id for task in plan.tasks}
@@ -283,7 +283,7 @@ def _advance_multi_plan(state: BankingAgentState, sub_requests: list[dict[str, A
         # Task ids in the combined plan are prefixed per sub-request, so the
         # consumed/settle ids are derived from that sub-request's own plan.
         sub_plan = build_task_plan(parsed, plan_id=f"multi-{index}")
-        _, settle = _consumed_task_ids(sub_plan, str(parsed.get("intent") or ""))
+        _, settle = consumed_task_ids(sub_plan, str(parsed.get("intent") or ""))
         for task in sub_plan.tasks:
             prefixed = f"{index}_{task.task_id}"
             if prefixed not in known:
@@ -298,7 +298,7 @@ def _advance_multi_plan(state: BankingAgentState, sub_requests: list[dict[str, A
     return plan.to_dict()
 
 
-def _merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState, text: str) -> dict[str, Any]:
+def merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState, text: str) -> dict[str, Any]:
     """Fold a bare slot answer back into the intent that is waiting for it.
 
     After the agent asks for a missing slot the user typically replies with

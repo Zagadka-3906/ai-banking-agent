@@ -27,11 +27,11 @@ from bank_agent.runtime import (
     SystemMessage,
 )
 from bank_agent.extraction import (
-    _amount_from_text,
-    _chinese_number,
-    _participants_from_text,
-    _scheduled_at_from_text,
-    _target_from_text,
+    amount_from_text,
+    chinese_number,
+    participants_from_text,
+    scheduled_at_from_text,
+    target_from_text,
 )
 
 
@@ -76,7 +76,7 @@ def _implicit_slots(text: str) -> dict[str, Any]:
     return {}
 
 
-def _parsed_payload(
+def parsed_payload(
     intent: str,
     *,
     text: str,
@@ -139,13 +139,13 @@ def _undo_or_channel_rules(text: str) -> Optional[dict[str, Any]]:
         if kind is None and _UNDO_SETTLED.search(text) and re.search(r"撤销|撤回|退回", text):
             kind = "SETTLED_TRANSFER"
         if kind is not None:
-            return _parsed_payload(Intent.UNDO_OPERATION.value, text=text, slots={"undo_kind": kind})
+            return parsed_payload(Intent.UNDO_OPERATION.value, text=text, slots={"undo_kind": kind})
     channel = next((name for name, pattern in _CHANNEL_WORDS if pattern.search(text)), None)
     if channel and re.search(r"交易|支付|消费|刷卡|网购|使用", text):
         enabled = bool(_CHANNEL_ON.search(text)) and not _CHANNEL_OFF.search(text)
         disabled = bool(_CHANNEL_OFF.search(text)) and not _CHANNEL_ON.search(text)
         if enabled or disabled:
-            return _parsed_payload(Intent.CARD_CHANNEL.value, text=text,
+            return parsed_payload(Intent.CARD_CHANNEL.value, text=text,
                                    slots={"card_channel": channel, "channel_enabled": enabled})
     return None
 
@@ -153,8 +153,8 @@ def _undo_or_channel_rules(text: str) -> Optional[dict[str, Any]]:
 def _local_parse_rules(text: str) -> dict[str, Any]:
     """Conservative offline intent parser used when the LLM is unavailable."""
 
-    amount = _amount_from_text(text)
-    target = _target_from_text(text)
+    amount = amount_from_text(text)
+    target = target_from_text(text)
     product_ids = []
     for product_id in re.findall(r"(?<![A-Za-z0-9])(?:CJ01002|AY90204|ZY18031|QK36509)(?![A-Za-z0-9])", text.upper()):
         if product_id not in product_ids:
@@ -167,13 +167,13 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     # A fraud report must lead to a protective action, never to a card listing.
     protective_intent = _implicit_intent(text, protective=True)
     if protective_intent is not None:
-        return _parsed_payload(
+        return parsed_payload(
             protective_intent,
             text=text,
             amount=amount,
             target=target,
             product_ids=product_ids,
-            scheduled_at=_scheduled_at_from_text(text),
+            scheduled_at=scheduled_at_from_text(text),
         )
     rollback_or_channel = _undo_or_channel_rules(text)
     if rollback_or_channel is not None:
@@ -194,10 +194,10 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     if horizon_match:
         raw_horizon = horizon_match.group(1)
         try:
-            slots["horizon_years"] = int(raw_horizon) if raw_horizon.isdigit() else _chinese_number(raw_horizon)
+            slots["horizon_years"] = int(raw_horizon) if raw_horizon.isdigit() else chinese_number(raw_horizon)
         except (TypeError, ValueError):
             slots.pop("horizon_years", None)
-    participants = _participants_from_text(text)
+    participants = participants_from_text(text)
     for category, phrases in BILL_CATEGORY_ALIASES.items():
         if any(phrase in text for phrase in phrases):
             slots["category"] = category
@@ -207,7 +207,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         before = re.search(r"(?:提前|前)\s*(\d+|[零〇一二两三四五六七八九十]+)\s*天", text)
         if before:
             raw_days = before.group(1)
-            days = int(raw_days) if raw_days.isdigit() else _chinese_number(raw_days)
+            days = int(raw_days) if raw_days.isdigit() else chinese_number(raw_days)
             if days is not None:
                 slots["days_before"] = days
     if any(marker in text for marker in ("识别订阅", "发现订阅", "乱扣费", "周期扣款", "自动识别")):
@@ -219,7 +219,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         scope = "MONTH"
     elif any(x in text for x in ("今年", "年度", "全年", "年度账单")):
         scope = "YEAR"
-    scheduled_at = _scheduled_at_from_text(text)
+    scheduled_at = scheduled_at_from_text(text)
 
     card_action_markers = ("调额", "额度调整", "额度调", "提高额度", "降低额度", "挂失", "解挂", "丢了", "遗失", "解锁卡", "解冻", "冻结", "锁卡", "申请", "办卡")
     if any(x in text for x in ("密码", "口令")) and any(x in text for x in ("修改", "更改", "重置", "更换")):
@@ -317,7 +317,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
             intent = Intent.UNKNOWN.value
     if intent == Intent.SPLIT_BILL.value:
         target = None
-        participants = _participants_from_text(text)
+        participants = participants_from_text(text)
     if intent == Intent.WEALTH_REDEEM.value and re.search(r"(?:全部|全额|所有|都)\s*(?:赎回|卖出|退掉|撤出)|清仓", text):
         # "全部赎回" states the amount by reference to the holding, not by a
         # number.  The principal is read from the core before the precheck, so
@@ -341,7 +341,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     }
 
 
-def _local_parse(text: str) -> dict[str, Any]:
+def local_parse(text: str) -> dict[str, Any]:
     original = text
     parts = split_tasks(text)
     source = business_text(parts[0] if len(parts) > 1 else text)
@@ -349,7 +349,7 @@ def _local_parse(text: str) -> dict[str, Any]:
     parsed["extra_info"] = original
     intent = parsed["intent"]
     if intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
-        parsed["target"] = _target_from_text(re.sub(r"(?i)(?<![A-Za-z0-9])CARD-[0-9a-z]{2,}(?![A-Za-z0-9])", " ", source))
+        parsed["target"] = target_from_text(re.sub(r"(?i)(?<![A-Za-z0-9])CARD-[0-9a-z]{2,}(?![A-Za-z0-9])", " ", source))
     slots = dict(parsed.get("slots") or {})
     reasons = []
     if intent not in GREEN_INTENTS or intent == Intent.UNKNOWN.value:
@@ -393,14 +393,14 @@ def _local_parse(text: str) -> dict[str, Any]:
     return parsed
 
 
-def _model_parse(text: str) -> dict[str, Any]:
+def model_parse(text: str) -> dict[str, Any]:
     """Use model semantics without letting model output supply financial facts.
 
     Omitted/ambiguous amounts and dates are meaningful: preserve their absence
     so the conversation can clarify them.  A model may recognize new wording
     or extract an explicitly named object; only the core resolves that object.
     """
-    local = _local_parse(text)
+    local = local_parse(text)
     if os.getenv("BANK_MODEL_FAST_PATH", "1") == "1":
         candidate = validate_intent_payload(local)
         if (local.get("parse_meta") or {}).get("fast_path_eligible") and candidate.get("intent") != Intent.UNKNOWN.value and not needs_clarification(candidate):
@@ -486,7 +486,7 @@ def _model_parse(text: str) -> dict[str, Any]:
         # introduce an unmentioned product into a comparison or application.
         products = list(local.get("product_ids") or [])
         named_products = {
-            _target_from_text(part)
+            target_from_text(part)
             for part in re.split(r"[\s,，、/。]+|和|与|以及|对比|比较|相比|比|跟", source)
             if part
         }

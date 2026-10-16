@@ -28,7 +28,7 @@ _CHINESE_DIGITS = {
 _CHINESE_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10_000, "亿": 100_000_000}
 
 
-def _chinese_number(value: str) -> Optional[int]:
+def chinese_number(value: str) -> Optional[int]:
     """Parse a bounded Chinese integer without guessing free-form text.
 
     The offline parser only uses this for explicit amount/term expressions
@@ -65,7 +65,7 @@ def _chinese_number(value: str) -> Optional[int]:
     return result if result >= 0 else None
 
 
-def _amount_from_text(text: str) -> Optional[float]:
+def amount_from_text(text: str) -> Optional[float]:
     if len(split_tasks(text)) == 1 and ambiguous_amount(text):
         return None
     # Object identifiers and calendar fields never supply a missing amount.
@@ -112,11 +112,11 @@ def _amount_from_text(text: str) -> Optional[float]:
         return None
     if re.search(r"(?:约|大致)\s*$", money_text[:match.start()]):
         return None
-    parsed = _chinese_number(numeral.lstrip("+"))
+    parsed = chinese_number(numeral.lstrip("+"))
     return float(parsed) if parsed is not None and 0 < parsed <= 100_000_000 else None
 
 
-def _target_from_text(text: str) -> Optional[str]:
+def target_from_text(text: str) -> Optional[str]:
     # Preserve the original alias; the core resolves it against a contact
     # allow-list.  Never default to a person when the user omitted one.
     # 亲属称呼（爱人/儿子/兄弟…）是“关系引用”：原样传给核心，由核心到
@@ -163,7 +163,7 @@ def _target_from_text(text: str) -> Optional[str]:
     return phone.group(1) if phone else None
 
 
-def _scheduled_at_from_text(text: str) -> Optional[str]:
+def scheduled_at_from_text(text: str) -> Optional[str]:
     """Keep the user's date and clock time in the bank's Asia/Shanghai zone."""
 
     from datetime import timezone
@@ -210,8 +210,8 @@ def _scheduled_at_from_text(text: str) -> Optional[str]:
         clock = re.search(r"(凌晨|早上|上午|中午|下午|晚上|傍晚)?\s*(\d{1,2}|[零〇一二两三四五六七八九十]+)\s*(?:点|时|[:：])\s*(半|\d{1,2}|[零〇一二两三四五六七八九十]+)?(?:分)?", text)
         if clock:
             raw_hour, raw_minute = clock.group(2), clock.group(3)
-            hour = int(raw_hour) if raw_hour.isdigit() else _chinese_number(raw_hour)
-            minute = 30 if raw_minute == "半" else (int(raw_minute) if raw_minute and raw_minute.isdigit() else (_chinese_number(raw_minute) if raw_minute else 0))
+            hour = int(raw_hour) if raw_hour.isdigit() else chinese_number(raw_hour)
+            minute = 30 if raw_minute == "半" else (int(raw_minute) if raw_minute and raw_minute.isdigit() else (chinese_number(raw_minute) if raw_minute else 0))
             if hour is None or minute is None:
                 return None
             if clock.group(1) in {"下午", "晚上", "傍晚", "中午"} and hour < 12:
@@ -223,7 +223,7 @@ def _scheduled_at_from_text(text: str) -> Optional[str]:
         return None
 
 
-def _participants_from_text(text: str) -> list[str]:
+def participants_from_text(text: str) -> list[str]:
     """Extract explicit AA names; never treat instructions/headcounts as names."""
 
     body = re.split(r"(?i)AA|分摊|平摊|备注|附言", text, maxsplit=1)[0].strip()
@@ -246,5 +246,5 @@ def _participants_from_text(text: str) -> list[str]:
     return result
 
 
-def _format_hint(missing: list[int]) -> str:
+def format_hint(missing: list[int]) -> str:
     return " ".join(f"{q}A" for q in missing[:3]) + (" …" if len(missing) > 3 else "")

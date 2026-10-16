@@ -14,12 +14,12 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
-from bank_security.config import STATE_LOCK, _env_int, logger
+from bank_security.config import STATE_LOCK, env_int, logger
 from bank_security.sanitize import redact
 
 
 AUDIT_LOGS: list[dict[str, Any]] = []
-AUDIT_MAX_EVENTS = _env_int("BANK_AUDIT_MAX_EVENTS", 5000, 100, 100_000)
+AUDIT_MAX_EVENTS = env_int("BANK_AUDIT_MAX_EVENTS", 5000, 100, 100_000)
 
 
 _AUDIT_PREVIOUS_HASH = "0" * 64
@@ -238,7 +238,7 @@ def audit_persistence_status() -> dict[str, Any]:
     }
 
 
-def _reset_audit_chain_locked() -> None:
+def reset_audit_chain_locked() -> None:
     """Empty the in-memory chain back to genesis.  Assumes ``STATE_LOCK`` is held."""
 
     global _AUDIT_PREVIOUS_HASH, _AUDIT_CHAIN_ANCHOR

@@ -70,7 +70,7 @@ from bank_core.wealth_data import (  # noqa: F401
     WEALTH_HOLDINGS,
     WEALTH_PRODUCTS,
     WEALTH_RISK_PROFILES,
-    _wealth_product_view,
+    wealth_product_view,
 )
 from bank_core.persistence import (  # noqa: F401
     OPERATION_RECEIPTS,
@@ -81,17 +81,17 @@ from bank_core.persistence import (  # noqa: F401
 )
 from bank_core.idempotency import (  # noqa: F401
     IDEMPOTENCY_RECORDS,
-    _idempotency_begin,
+    idempotency_begin,
 )
 from bank_core.models import (  # noqa: F401
     TaskActionRequest,
 )
 from bank_core.payments import (  # noqa: F401
-    _resolve_target,
+    resolve_payee,
 )
 from bank_core.operations import (  # noqa: F401
-    _fraud_transaction,
-    _pending_transfer_amount,
+    fraud_transaction,
+    pending_transfer_amount,
 )
 from bank_core.routes.tasks import (  # noqa: F401
     _task_action,

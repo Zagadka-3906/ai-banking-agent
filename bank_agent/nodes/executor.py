@@ -22,27 +22,27 @@ from bank_agent.state import (
     BankingAgentState,
 )
 from bank_agent.runtime import (
-    _error_message,
-    _response_json,
+    error_message,
+    response_json,
 )
 from bank_agent.verification import (
-    _core_success,
-    _response_validation_failure,
-    _valid_text_field,
+    core_success,
+    response_validation_failure,
+    valid_text_field,
 )
 from bank_agent.risk_quiz import (
-    _fetch_risk_profile,
+    fetch_risk_profile,
 )
 from bank_agent.settlement import (
-    _advance_plan,
-    _consumed_task_ids,
-    _plan_from_state,
-    _settle_failure_response,
-    _settle_unknown_response,
-    _settle_with_retry,
+    advance_plan,
+    consumed_task_ids,
+    plan_from_state,
+    settle_failure_response,
+    settle_unknown_response,
+    settle_with_retry,
 )
 from bank_agent.dialogue import (
-    _advance_multi_plan,
+    advance_multi_plan,
 )
 from bank_agent.nodes.risk import core_operation
 from bank_agent.nodes.responder import (
@@ -55,13 +55,13 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
     if intent == Intent.BALANCE_QUERY.value:
         response = runtime._http("GET", f"accounts/{user_id}/balance", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        return {"type": "BALANCE", "data": _response_json(response)}
+            raise RuntimeError(error_message(response))
+        return {"type": "BALANCE", "data": response_json(response)}
     if intent in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}:
         response = runtime._http("GET", f"accounts/{user_id}/transactions", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        rows = _response_json(response).get("data", [])
+            raise RuntimeError(error_message(response))
+        rows = response_json(response).get("data", [])
         rows = filter_transactions(rows, state.get("date_scope") or "ALL", date_range=state.get("date_range"))
         slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
         category = slots.get("category")
@@ -81,7 +81,7 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             if category in {"境外", "海外", "国外", "境外消费", "海外消费", "国外消费"}:
                 category = None
         if category is not None:
-            if not _valid_text_field(category, max_length=120):
+            if not valid_text_field(category, max_length=120):
                 raise RuntimeError("交易分类无效，请明确需要查询的类别")
             category = category.strip()
             # Apply only the requested classification after the date filter;
@@ -99,19 +99,19 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
     if intent == Intent.WEALTH_HOLDINGS.value:
         response = runtime._http("GET", f"wealth/holdings/{user_id}", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        return {"type": intent, "data": _response_json(response)}
+            raise RuntimeError(error_message(response))
+        return {"type": intent, "data": response_json(response)}
     if intent in {Intent.WEALTH_QUERY.value, Intent.WEALTH_RECOMMEND.value}:
         path = f"wealth/recommend?user_id={user_id}" if intent == Intent.WEALTH_RECOMMEND.value else f"wealth/products?user_id={user_id}"
         if intent == Intent.WEALTH_RECOMMEND.value:
-            profile = ((_fetch_risk_profile(state) or {}).get("data") or {}).get("risk_profile")
+            profile = ((fetch_risk_profile(state) or {}).get("data") or {}).get("risk_profile")
             if profile not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE", "C1", "C2", "C3", "C4", "C5"}:
                 raise RuntimeError("暂时无法读取您的风险档案，请稍后重试")
             path += f"&risk_profile={profile}"
         response = runtime._http("GET", path, state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        return {"type": intent, "data": _response_json(response)}
+            raise RuntimeError(error_message(response))
+        return {"type": intent, "data": response_json(response)}
     if intent == Intent.WEALTH_RISK_ASSESSMENT.value:
         slots = state.get("slots") if isinstance(state.get("slots"), dict) else {}
         # Do not let a missing/invalid questionnaire answer turn into a
@@ -145,20 +145,20 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             headers={"X-User-Id": user_id},
         )
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        return {"type": intent, "data": _response_json(response)}
+            raise RuntimeError(error_message(response))
+        return {"type": intent, "data": response_json(response)}
     if intent == Intent.WEALTH_COMPARE.value:
         product_ids = list(state.get("product_ids") or [])
         query = urlencode({"user_id": user_id, "product_ids": ",".join(product_ids)})
         response = runtime._http("GET", f"wealth/compare?{query}", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        return {"type": intent, "data": _response_json(response)}
+            raise RuntimeError(error_message(response))
+        return {"type": intent, "data": response_json(response)}
     if intent == Intent.CARD_QUERY.value:
         response = runtime._http("GET", f"cards/{user_id}", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        return {"type": intent, "data": _response_json(response)}
+            raise RuntimeError(error_message(response))
+        return {"type": intent, "data": response_json(response)}
     raise RuntimeError("不支持的查询类型")
 
 
@@ -171,7 +171,7 @@ def _execute_subscription_query(state: BankingAgentState) -> dict[str, Any]:
     if not token:
         return {"final_response": "订阅查询授权已失效，请重新发起查询。"}
     try:
-        response = _settle_with_retry(
+        response = settle_with_retry(
             state,
             method="POST",
             path="operations/execute",
@@ -180,13 +180,13 @@ def _execute_subscription_query(state: BankingAgentState) -> dict[str, Any]:
             idempotency_key=_settle_idempotency_key(state, intent),
         )
     except requests.RequestException:
-        return _settle_unknown_response(state)
+        return settle_unknown_response(state)
     if response.status_code >= 400:
-        return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
-    envelope = _response_json(response)
+        return settle_failure_response(state, intent, error_message(response), compensation=_settle_compensation(state, intent))
+    envelope = response_json(response)
     data = envelope.get("data") if isinstance(envelope, dict) else None
-    if not _core_success(envelope, nested_status="QUERIED", required=("subscriptions", "candidates", "renewal_reminders")) or not isinstance(data, dict):
-        return _response_validation_failure(state, "SUBSCRIPTION_QUERY_RECEIPT_INVALID")
+    if not core_success(envelope, nested_status="QUERIED", required=("subscriptions", "candidates", "renewal_reminders")) or not isinstance(data, dict):
+        return response_validation_failure(state, "SUBSCRIPTION_QUERY_RECEIPT_INVALID")
     slots = state.get("slots") or {}
     if slots.get("renewal_reminder") is True:
         # Reminders are created only after the confirmed query succeeded.
@@ -195,20 +195,20 @@ def _execute_subscription_query(state: BankingAgentState) -> dict[str, Any]:
             params["merchant"] = state["target"]
         response = runtime._http("POST", f"subscriptions/{user_id}/reminders?{urlencode(params)}", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
-            return _settle_failure_response(state, intent, _error_message(response))
-        result = {"type": "SUBSCRIPTION_REMINDER", "data": _response_json(response)}
+            return settle_failure_response(state, intent, error_message(response))
+        result = {"type": "SUBSCRIPTION_REMINDER", "data": response_json(response)}
     elif slots.get("detect_subscriptions") is True:
         result = {"type": intent, "data": {"code": 200, "data": data["candidates"], "renewal_reminders": data["renewal_reminders"]}}
     else:
         result = {"type": intent, "data": {"code": 200, "data": data["subscriptions"]}}
-    return {"execution_result": result, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"status": "QUERIED"})}
+    return {"execution_result": result, "plan": advance_plan(state, intent, outcome="SUCCESS", data={"status": "QUERIED"})}
 
 
 def _settle_compensation(state: BankingAgentState, intent: str) -> Optional[str]:
-    plan = _plan_from_state(state)
+    plan = plan_from_state(state)
     if plan is None:
         return None
-    _, settle_id = _consumed_task_ids(plan, intent)
+    _, settle_id = consumed_task_ids(plan, intent)
     if not settle_id:
         return None
     try:
@@ -218,10 +218,10 @@ def _settle_compensation(state: BankingAgentState, intent: str) -> Optional[str]
 
 
 def _settle_idempotency_key(state: BankingAgentState, intent: str) -> Optional[str]:
-    plan = _plan_from_state(state)
+    plan = plan_from_state(state)
     if plan is None:
         return None
-    _, settle_id = _consumed_task_ids(plan, intent)
+    _, settle_id = consumed_task_ids(plan, intent)
     if not settle_id:
         return None
     try:
@@ -258,7 +258,7 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                 results = [future.result() for future in futures]
         else:
             results = [read_one(item) for item in indexed]
-        plan_data = _advance_multi_plan(state, sub_requests)
+        plan_data = advance_multi_plan(state, sub_requests)
         if plan_data:
             for task in plan_data["tasks"]:
                 index = int(task["task_id"].split("_", 1)[0])
@@ -272,16 +272,16 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
             result = _execute_green(state, intent)
             if result.get("clarification_required") or result.get("final_response"):
                 # Never mark the plan completed for an unperformed query.
-                plan = _plan_from_state(state)
+                plan = plan_from_state(state)
                 return {"final_response": result.get("final_response"), "clarification_required": True, "plan": plan.to_dict() if plan else None}
-            return {"execution_result": result, "chart_data": result.get("records") if intent == Intent.BILL_ANALYSIS.value else None, "plan": _advance_plan(state, intent, outcome="SUCCESS", data=result.get("facts") if isinstance(result.get("facts"), dict) else None)}
+            return {"execution_result": result, "chart_data": result.get("records") if intent == Intent.BILL_ANALYSIS.value else None, "plan": advance_plan(state, intent, outcome="SUCCESS", data=result.get("facts") if isinstance(result.get("facts"), dict) else None)}
         user_id = state["user_id"]
         if intent == Intent.CROSS_SCENE_LOCK.value:
             token = state.get("auth_token")
             if not token:
                 return {"final_response": "资金锁定授权已失效，请重新发起该任务。"}
             try:
-                response = _settle_with_retry(
+                response = settle_with_retry(
                     state,
                     method="POST",
                     path="accounts/lock_fund",
@@ -290,12 +290,12 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )
             except requests.RequestException:
-                return _settle_unknown_response(state)
+                return settle_unknown_response(state)
             if response.status_code >= 400:
-                return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
-            data = _response_json(response)
+                return settle_failure_response(state, intent, error_message(response), compensation=_settle_compensation(state, intent))
+            data = response_json(response)
             pending_notes = {"schedule_orders": f"提醒与订单草稿已挂载核心任务中心（{data.get('reminder_task_id')} / {', '.join(map(str, data.get('order_task_ids') or []))}），到期保持 WAITING_USER，不自动下单"}
-            return {"execution_result": {"type": "LOCK_SUCCESS", "data": data}, "todo_card": {"title": "🎂 爱人生日提醒与代订备忘录", "locked_fund": f"¥{float(state.get('amount') or 1000):,.2f}", "schedule": "生日倒计时 2 天自动提醒订购鲜花与蛋糕", "status": "已创建（订单草稿待到期确认）", "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids", [])}, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"lock_id": data.get("lock_id"), "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids")}, pending_notes=pending_notes)}
+            return {"execution_result": {"type": "LOCK_SUCCESS", "data": data}, "todo_card": {"title": "🎂 爱人生日提醒与代订备忘录", "locked_fund": f"¥{float(state.get('amount') or 1000):,.2f}", "schedule": "生日倒计时 2 天自动提醒订购鲜花与蛋糕", "status": "已创建（订单草稿待到期确认）", "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids", [])}, "plan": advance_plan(state, intent, outcome="SUCCESS", data={"lock_id": data.get("lock_id"), "task_id": data.get("task_id"), "reminder_task_id": data.get("reminder_task_id"), "order_task_ids": data.get("order_task_ids")}, pending_notes=pending_notes)}
         if intent == Intent.TRANSFER.value:
             token = state.get("auth_token")
             if not token:
@@ -305,7 +305,7 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
             if state.get("mfa_proof"):
                 headers["X-MFA-Proof"] = state["mfa_proof"]  # type: ignore[index]
             try:
-                response = _settle_with_retry(
+                response = settle_with_retry(
                     state,
                     method="POST",
                     path="transfers/execute",
@@ -314,11 +314,11 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )
             except requests.RequestException:
-                return _settle_unknown_response(state)
+                return settle_unknown_response(state)
             if response.status_code >= 400:
-                return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
-            data = _response_json(response)
-            return {"execution_result": {"type": "TRANSFER_SUCCESS", "data": data}, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"transaction_id": data.get("transaction_id"), "transferred_amount": data.get("transferred_amount")})}
+                return settle_failure_response(state, intent, error_message(response), compensation=_settle_compensation(state, intent))
+            data = response_json(response)
+            return {"execution_result": {"type": "TRANSFER_SUCCESS", "data": data}, "plan": advance_plan(state, intent, outcome="SUCCESS", data={"transaction_id": data.get("transaction_id"), "transferred_amount": data.get("transferred_amount")})}
         if intent == Intent.SUBSCRIPTION_QUERY.value:
             return _execute_subscription_query(state)
         # The remaining write scenarios use explicit mock endpoints.  If an
@@ -326,7 +326,7 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
         # completion.
         if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value, Intent.FRAUD_DISPUTE.value, Intent.CARD_CHANNEL.value, Intent.UNDO_OPERATION.value}:
             try:
-                response = _settle_with_retry(
+                response = settle_with_retry(
                     state,
                     method="POST",
                     path="operations/execute",
@@ -335,15 +335,15 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )
             except requests.RequestException:
-                return _settle_unknown_response(state)
+                return settle_unknown_response(state)
             if response.status_code >= 400:
-                return _settle_failure_response(state, intent, _error_message(response), compensation=_settle_compensation(state, intent))
-            data = _response_json(response)
+                return settle_failure_response(state, intent, error_message(response), compensation=_settle_compensation(state, intent))
+            data = response_json(response)
             pending_notes: dict[str, str] = {}
             if intent == Intent.SPLIT_BILL.value:
                 pending_notes["notify_participants"] = f"分摊请求已登记（{data.get('task_id')}），参与人通知为扩展项，保持待办"
-            return {"execution_result": {"type": intent, "data": data}, "plan": _advance_plan(state, intent, outcome="SUCCESS", data={"status": data.get("status"), "task_id": data.get("task_id")}, pending_notes=pending_notes)}
+            return {"execution_result": {"type": intent, "data": data}, "plan": advance_plan(state, intent, outcome="SUCCESS", data={"status": data.get("status"), "task_id": data.get("task_id")}, pending_notes=pending_notes)}
     except (requests.RequestException, RuntimeError, ValueError) as exc:
         audit_event("EXECUTION", user_id=state.get("user_id"), decision="ERROR", outcome="FAILURE", reason=type(exc).__name__, request_id=state.get("request_id"))
-        return {"final_response": "核心服务暂时不可用，本次查询未完成，请稍后重试。", "business_status": "FAILED", "plan": _advance_plan(state, intent, outcome="FAILURE", error=type(exc).__name__)}
-    return {"execution_result": {"type": "UNKNOWN"}, "plan": _advance_plan(state, intent, outcome="FAILURE", error="UNKNOWN_OPERATION")}
+        return {"final_response": "核心服务暂时不可用，本次查询未完成，请稍后重试。", "business_status": "FAILED", "plan": advance_plan(state, intent, outcome="FAILURE", error=type(exc).__name__)}
+    return {"execution_result": {"type": "UNKNOWN"}, "plan": advance_plan(state, intent, outcome="FAILURE", error="UNKNOWN_OPERATION")}

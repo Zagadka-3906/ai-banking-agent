@@ -167,18 +167,18 @@ def test_range_filters_records_and_survives_category_followup(gateway):
 def test_model_cannot_resolve_conflicting_facts_or_change_date_bounds(monkeypatch):
     monkeypatch.setenv("BANK_MODEL_FAST_PATH", "0")
     monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps({"intent": "TRANSFER", "target": "李四", "amount": 100, "confidence": 1, "date_scope": "ALL"}))))
-    money = validate_intent_payload(agent._model_parse("给李四转100元或200元"))
+    money = validate_intent_payload(agent.model_parse("给李四转100元或200元"))
     assert money["amount"] is None and money["slots"]["amount_ambiguous"] is True
-    payee = validate_intent_payload(agent._model_parse("不是给李四，是给王美转100元"))
+    payee = validate_intent_payload(agent.model_parse("不是给李四，是给王美转100元"))
     assert payee["target"] is None
-    query = validate_intent_payload(agent._model_parse("查询2026-09-01到2026-09-15的账单"))
+    query = validate_intent_payload(agent.model_parse("查询2026-09-01到2026-09-15的账单"))
     assert query["date_scope"] == "CUSTOM" and query["date_range"]["start"] == "2026-09-01"
 
 
 def test_rules_report_evidence_without_a_fabricated_confidence():
-    parsed = agent._local_parse("给李四转100元")
+    parsed = agent.local_parse("给李四转100元")
     assert parsed["confidence"] is None and parsed["parse_meta"]["fast_path_eligible"] is True
-    uncertain = agent._local_parse("给李四转100元或200元")
+    uncertain = agent.local_parse("给李四转100元或200元")
     assert uncertain["parse_meta"]["fast_path_eligible"] is False
     assert "AMOUNT_AMBIGUOUS" in uncertain["parse_meta"]["reason_codes"]
 
@@ -210,7 +210,7 @@ def test_multiple_business_objects_require_a_choice(gateway, text):
     ("用CARD-001申购CJ01002 500元", "WEALTH_PURCHASE", "CJ01002"),
 ])
 def test_paying_card_is_not_the_recipient_or_product(text, intent, target):
-    parsed = agent._local_parse(text)
+    parsed = agent.local_parse(text)
     assert parsed["intent"] == intent and parsed["target"] == target
 
 

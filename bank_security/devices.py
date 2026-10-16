@@ -15,7 +15,7 @@ import time
 from typing import Any, Mapping, Optional
 
 from bank_security.audit import audit_event
-from bank_security.config import AUTH_SECRET_CONFIGURED, STATE_LOCK, _env_int, logger
+from bank_security.config import AUTH_SECRET_CONFIGURED, STATE_LOCK, env_int, logger
 from bank_security.errors import SecurityError
 from bank_security.sanitize import sanitize_text
 from bank_security.store_integrity import resolve_store_digest_algorithm, store_integrity_digest
@@ -27,13 +27,13 @@ from bank_security.store_integrity import resolve_store_digest_algorithm, store_
 # refused) rather than silently accepting an unverified one.
 try:
     from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives import hashes as _crypto_hashes
-    from cryptography.hazmat.primitives.asymmetric import ec as _crypto_ec
+    from cryptography.hazmat.primitives import hashes as crypto_hashes
+    from cryptography.hazmat.primitives.asymmetric import ec as crypto_ec
     from cryptography.hazmat.primitives.serialization import load_der_public_key as _load_der_public_key
 except ImportError:  # pragma: no cover - dependency guidance path
     InvalidSignature = None  # type: ignore[assignment]
-    _crypto_hashes = None  # type: ignore[assignment]
-    _crypto_ec = None  # type: ignore[assignment]
+    crypto_hashes = None  # type: ignore[assignment]
+    crypto_ec = None  # type: ignore[assignment]
     _load_der_public_key = None  # type: ignore[assignment]
 
 DEVICE_KEYS_AVAILABLE = _load_der_public_key is not None
@@ -52,7 +52,7 @@ DEVICE_KEYS_AVAILABLE = _load_der_public_key is not None
 # ---------------------------------------------------------------------------
 
 DEVICE_CURVE = "secp256r1"
-DEVICE_MAX_RECORDS = _env_int("BANK_DEVICE_MAX_RECORDS", 2_000, 16, 200_000)
+DEVICE_MAX_RECORDS = env_int("BANK_DEVICE_MAX_RECORDS", 2_000, 16, 200_000)
 DEVICE_STATUS_ACTIVE = "ACTIVE"
 DEVICE_STATUS_REVOKED = "REVOKED"
 
@@ -100,7 +100,7 @@ def _decode_device_public_key(public_key_b64: str) -> tuple[bytes, Any]:
         raise SecurityError("设备公钥格式无效", 400, "INVALID_DEVICE_KEY") from exc
     # Pin the curve: accepting anything the client offers would let an attacker
     # register a weak/unknown key type and then "prove" liveness with it.
-    if not isinstance(key, _crypto_ec.EllipticCurvePublicKey) or key.curve.name != DEVICE_CURVE:
+    if not isinstance(key, crypto_ec.EllipticCurvePublicKey) or key.curve.name != DEVICE_CURVE:
         raise SecurityError("设备公钥必须是 P-256", 400, "UNSUPPORTED_DEVICE_KEY")
     return raw, key
 
@@ -162,7 +162,7 @@ def enroll_device(
                 existing["label"] = safe_label
             if safe_version:
                 existing["app_version"] = safe_version
-            _persist_devices_locked()
+            persist_devices_locked()
             audit_event(
                 "DEVICE_SEEN",
                 user_id=principal,
@@ -187,7 +187,7 @@ def enroll_device(
         }
         DEVICES[device_id] = record
         _purge_devices()
-        _persist_devices_locked()
+        persist_devices_locked()
 
     audit_event(
         "DEVICE_ENROLLED",
@@ -228,7 +228,7 @@ def revoke_device(device_id: str, *, user_id: str, request_id: Optional[str] = N
         record["revoked_at"] = int(time.time())
         # A revocation that a restart forgets would silently re-arm a device the
         # user just disabled.
-        _persist_devices_locked()
+        persist_devices_locked()
     audit_event(
         "DEVICE_REVOKED",
         user_id=principal,
@@ -300,7 +300,7 @@ def _device_record_valid(device_id: str, record: Any) -> bool:
     return "DEV" + hashlib.sha256(raw).hexdigest()[:24].upper() == device_id
 
 
-def _persist_devices_locked() -> None:
+def persist_devices_locked() -> None:
     """Write the registry atomically.  Assumes ``STATE_LOCK`` is held."""
 
     target = _device_store_target()
@@ -336,7 +336,7 @@ def persist_devices() -> dict[str, Any]:
     """Persist on demand; a no-op when durability is off or writes are frozen."""
 
     with STATE_LOCK:
-        _persist_devices_locked()
+        persist_devices_locked()
     return device_store_status()
 
 
@@ -422,7 +422,7 @@ def device_store_status() -> dict[str, Any]:
     }
 
 
-def _unfreeze_device_store() -> None:
+def unfreeze_device_store() -> None:
     """Lift the write freeze a rejected store file imposes (test reset only)."""
 
     global _DEVICE_STORE_BLOCKED

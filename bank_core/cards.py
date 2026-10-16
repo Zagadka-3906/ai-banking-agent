@@ -46,33 +46,33 @@ CARD_MAX_DAILY_LIMIT = max(
 )
 
 
-def _user_cards(user_id: str) -> list[dict[str, Any]]:
+def user_cards(user_id: str) -> list[dict[str, Any]]:
     return CARDS.get(user_id, [])
 
 
 def _first_active_card(user_id: str) -> Optional[dict[str, Any]]:
-    cards = _user_cards(user_id)
+    cards = user_cards(user_id)
     return next((card for card in cards if card.get("status") == "ACTIVE"), None)
 
 
-def _find_card(user_id: str, card_id: Optional[str]) -> Optional[dict[str, Any]]:
+def find_card(user_id: str, card_id: Optional[str]) -> Optional[dict[str, Any]]:
     """按卡号找卡；未给卡号时回退第一张 ACTIVE 卡（演示单卡语义兼容）。"""
 
-    cards = _user_cards(user_id)
+    cards = user_cards(user_id)
     if card_id:
         card_id = str(card_id)
         return next((card for card in cards if str(card.get("card_id")) == card_id), None)
     return _first_active_card(user_id) or (cards[0] if cards else None)
 
 
-def _select_card(user_id: str, card_id: Optional[str], *, allowed_states: Optional[set[str]] = None) -> dict[str, Any]:
+def select_card(user_id: str, card_id: Optional[str], *, allowed_states: Optional[set[str]] = None) -> dict[str, Any]:
     """Resolve the card one operation applies to, refusing to guess.
 
     Two ways this used to pick the wrong card, both reachable from the app:
 
     * an **omitted** id fell back to "the first ACTIVE card", so a multi-card user
       who pointed at their second card could have the first one frozen;
-    * a **wrong** id fell back the same way (``_find_card(...) or
+    * a **wrong** id fell back the same way (``find_card(...) or
       _first_active_card(...)``), so a typo - or another account's id - silently
       retargeted the operation at whatever card came first.
 
@@ -82,11 +82,11 @@ def _select_card(user_id: str, card_id: Optional[str], *, allowed_states: Option
     fallback.
     """
 
-    cards = _user_cards(user_id)
+    cards = user_cards(user_id)
     if not cards:
         raise SecurityError("当前用户没有可操作的卡片", 404, "CARD_NOT_FOUND")
     if card_id:
-        found = _find_card(user_id, card_id)
+        found = find_card(user_id, card_id)
         if found is None:
             raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
         return found
@@ -116,7 +116,7 @@ CARD_TRANSITIONS: dict[str, dict[str, str]] = {
 CARD_CHANNELS = {"ONLINE": "网上支付", "OVERSEAS": "境外交易"}
 
 
-def _card_source_states(operation: str) -> Optional[set[str]]:
+def card_source_states(operation: str) -> Optional[set[str]]:
     """States ``operation`` can act on, or None when it has no state restriction."""
 
     if operation == "CARD_CHANNEL":
@@ -137,7 +137,7 @@ def _mock_card_masked() -> str:
     return "**** **** **** " + digits[-4:]
 
 
-def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = None, pan_ref: Optional[str] = None, number_masked: Optional[str] = None, last4: Optional[str] = None) -> dict[str, Any]:
+def issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = None, pan_ref: Optional[str] = None, number_masked: Optional[str] = None, last4: Optional[str] = None) -> dict[str, Any]:
     """Append one card to ``user_id``'s wallet, enforcing the per-user ceiling.
 
     Every issuance path funnels through here.  ``CARD_APPLY`` (the agent's
@@ -171,7 +171,7 @@ def _issue_card_locked(user_id: str, *, card_type: str, label: Optional[str] = N
     return card
 
 
-def _card_summary(card: Mapping[str, Any], *, available_balance: Optional[float] = None) -> dict[str, Any]:
+def card_summary(card: Mapping[str, Any], *, available_balance: Optional[float] = None) -> dict[str, Any]:
     """Explicitly safe card projection; private vault references never escape."""
 
     allowed = {"card_id", "last4", "number_masked", "type", "status", "daily_limit", "label"}
@@ -185,7 +185,7 @@ def _card_summary(card: Mapping[str, Any], *, available_balance: Optional[float]
     return result
 
 
-def _normalize_card_number(value: Any) -> str:
+def normalize_card_number(value: Any) -> str:
     number = re.sub(r"[\s-]", "", str(value or ""))
     if not re.fullmatch(r"\d{12,19}", number):
         raise SecurityError("银行卡信息无法核验", 400, "CARD_BINDING_REJECTED")
@@ -202,7 +202,7 @@ def _normalize_card_number(value: Any) -> str:
     return number
 
 
-def _card_mask(number: str) -> str:
+def card_mask(number: str) -> str:
     return f"**** **** **** {number[-4:]}"
 # Per-card, per-day settled spend.  The card's ``daily_limit`` is enforced on
 # settlement, so lowering a limit (CARD_LIMIT) immediately constrains further

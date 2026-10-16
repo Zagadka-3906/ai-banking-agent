@@ -21,12 +21,12 @@ from bank_security.config import (
     STATE_LOCK,
     STRICT_CLIENT_AUTH,
     TOKEN_TTL_SECONDS,
-    _env_int,
+    env_int,
 )
 from bank_security.errors import SecurityError
 from bank_security.sanitize import credential_fingerprint, sanitize_text
 from bank_security.sessions import assert_session_still_valid, session_binding
-from bank_security.tokens import _decode_signed, _signed_payload
+from bank_security.tokens import decode_signed, signed_payload
 
 
 # Public names are kept stable for tests and for the original main.py API.
@@ -37,10 +37,10 @@ MFA_PROOFS: dict[str, dict[str, Any]] = {}
 # auth-token jti and user, expires quickly, and can be satisfied at most once;
 # re-issuing a challenge for the same token revokes the previous one.
 FACE_CHALLENGES: dict[str, dict[str, Any]] = {}
-FACE_CHALLENGE_MAX_RECORDS = _env_int("BANK_FACE_CHALLENGE_MAX_RECORDS", 5000, 100, 200_000)
+FACE_CHALLENGE_MAX_RECORDS = env_int("BANK_FACE_CHALLENGE_MAX_RECORDS", 5000, 100, 200_000)
 
 
-AUTH_TOKEN_MAX_RECORDS = _env_int("BANK_AUTH_TOKEN_MAX_RECORDS", 20_000, 100, 200_000)
+AUTH_TOKEN_MAX_RECORDS = env_int("BANK_AUTH_TOKEN_MAX_RECORDS", 20_000, 100, 200_000)
 
 
 def _amount_to_cents(amount: Any) -> int:
@@ -148,7 +148,7 @@ def issue_auth_token(
         "iat": now,
         "exp": now + ttl,
     }
-    token = _signed_payload(payload)
+    token = signed_payload(payload)
     with STATE_LOCK:
         now_float = time.time()
         expired = [key for key, value in AUTH_TOKENS.items() if float(value.get("expires_at", 0)) <= now_float or value.get("used")]
@@ -172,8 +172,8 @@ def issue_auth_token(
     return token, payload
 
 
-def _lookup_auth_locked(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    payload = _decode_signed(token, "transfer_auth")
+def lookup_auth_locked(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = decode_signed(token, "transfer_auth")
     record = AUTH_TOKENS.get(token)
     if not record:
         raise SecurityError("安全凭证不存在或已失效", 403, "TOKEN_NOT_FOUND")
@@ -188,11 +188,11 @@ def _lookup_auth_locked(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def inspect_auth_token(token: str) -> tuple[dict[str, Any], dict[str, Any]]:
     with STATE_LOCK:
-        payload, record = _lookup_auth_locked(token)
+        payload, record = lookup_auth_locked(token)
         # Inspection is a read-only helper used by the API boundary.  Returning
         # the live record would let an integration accidentally mutate
         # ``used``/``confirmed`` and bypass one-time authorization on a later
-        # call.  Internal mutating paths use ``_lookup_auth_locked`` directly.
+        # call.  Internal mutating paths use ``lookup_auth_locked`` directly.
         return deepcopy(payload), deepcopy(record)
 
 
@@ -200,7 +200,7 @@ def confirm_auth_token(token: str, *, user_id: Optional[str] = None, request_id:
     """Record an explicit user confirmation for a yellow/red operation."""
 
     with STATE_LOCK:
-        payload, record = _lookup_auth_locked(token)
+        payload, record = lookup_auth_locked(token)
         if user_id and payload.get("from_user") != user_id:
             raise SecurityError("确认身份与凭证不一致", 403, "IDENTITY_MISMATCH")
         record["confirmed"] = True
@@ -227,7 +227,7 @@ def cancel_auth_token(
     """
 
     with STATE_LOCK:
-        payload = _decode_signed(token, "transfer_auth")
+        payload = decode_signed(token, "transfer_auth")
         if not user_id or payload.get("from_user") != user_id:
             raise SecurityError("取消身份与凭证不一致", 403, "IDENTITY_MISMATCH")
         assert_session_still_valid(payload.get("session_fp"), presented_session)
@@ -255,7 +255,7 @@ def cancel_auth_token(
         return {"cancelled": True, "status": "CANCELLED"}
 
 
-def _issue_mfa_proof(payload: Mapping[str, Any], auth_token: str) -> str:
+def issue_mfa_proof(payload: Mapping[str, Any], auth_token: str) -> str:
     now = int(time.time())
     proof_jti = secrets.token_urlsafe(18)
     proof_payload = {
@@ -267,7 +267,7 @@ def _issue_mfa_proof(payload: Mapping[str, Any], auth_token: str) -> str:
         "iat": now,
         "exp": now + MFA_TTL_SECONDS,
     }
-    proof = _signed_payload(proof_payload)
+    proof = signed_payload(proof_payload)
     MFA_PROOFS[proof] = {
         "jti": proof_jti,
         "parent_jti": payload["jti"],
@@ -279,7 +279,7 @@ def _issue_mfa_proof(payload: Mapping[str, Any], auth_token: str) -> str:
 
 
 def _validate_mfa_proof_locked(proof: str, payload: Mapping[str, Any], user_id: Optional[str]) -> dict[str, Any]:
-    proof_payload = _decode_signed(proof, "mfa_proof")
+    proof_payload = decode_signed(proof, "mfa_proof")
     record = MFA_PROOFS.get(proof)
     if not record or record.get("token_hash") != credential_fingerprint(proof):
         raise SecurityError("MFA 凭证不存在或无效", 403, "MFA_PROOF_INVALID")
@@ -319,7 +319,7 @@ def authorize_execution(
 
     proof_record: Optional[dict[str, Any]] = None
     with STATE_LOCK:
-        payload, record = _lookup_auth_locked(auth_token)
+        payload, record = lookup_auth_locked(auth_token)
         # An approval minted inside a session dies with that session.
         assert_session_still_valid(payload.get("session_fp"), presented_session)
         if payload.get("operation", "TRANSFER") != operation:

@@ -8,20 +8,20 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from bank_core.access import (
-    _get_actor,
-    _record_failure_and_raise,
-    _request_id,
+    get_actor,
+    record_failure_and_raise,
+    server_request_id,
 )
 from bank_core.ledger import (
     SUBSCRIPTIONS,
     TRANSACTIONS,
-    _ledger_transaction,
+    ledger_transaction,
 )
 from bank_core.operations import (
-    _resolve_subscription,
+    resolve_subscription,
 )
 from bank_core.payments import (
-    _ensure_account,
+    ensure_account,
 )
 from bank_core.persistence import (
     persist_ledger,
@@ -36,7 +36,7 @@ from security import (
 router = APIRouter()
 
 
-def _subscription_query_result(user_id: str) -> dict[str, Any]:
+def subscription_query_result(user_id: str) -> dict[str, Any]:
     """YELLOW: registered debits plus recurring candidates from verified records.
 
     Only ``execute_operation`` calls this, after the user confirmed a
@@ -67,19 +67,19 @@ def create_renewal_reminders(user_id: str, merchant: Optional[str] = None, days_
     the same subscription/date/offset returns the existing task without a duplicate.
     """
 
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="SUBSCRIPTION_REMINDER", request_id=request_id)
-    _ensure_account(user_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="SUBSCRIPTION_REMINDER", request_id=request_id)
+    ensure_account(user_id)
     if isinstance(days_before, bool) or not 0 <= days_before <= 365:
         raise HTTPException(status_code=400, detail={"code": "INVALID_REMINDER_DAYS", "message": "提醒提前天数须在 0 到 365 天之间"})
     created: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     with STATE_LOCK:
-        with _ledger_transaction():
+        with ledger_transaction():
             try:
-                selected_rows = [_resolve_subscription(user_id, merchant, None)] if merchant else list(SUBSCRIPTIONS.get(user_id, []))
+                selected_rows = [resolve_subscription(user_id, merchant, None)] if merchant else list(SUBSCRIPTIONS.get(user_id, []))
             except SecurityError as exc:
-                _record_failure_and_raise(exc, user_id=actor, action="SUBSCRIPTION_REMINDER_CREATE", request_id=request_id)
+                record_failure_and_raise(exc, user_id=actor, action="SUBSCRIPTION_REMINDER_CREATE", request_id=request_id)
             for row in selected_rows:
                 if row.get("status") != "ACTIVE":
                     continue

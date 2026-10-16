@@ -204,7 +204,7 @@ def test_incomplete_transfer_is_clarification(wired):
 
 
 def test_product_id_is_not_parsed_as_amount():
-    parsed = agent._local_parse("申购 CJ01002 1000 元")
+    parsed = agent.local_parse("申购 CJ01002 1000 元")
     assert parsed["target"] == "CJ01002"
     assert parsed["amount"] == 1000.0
 
@@ -235,7 +235,7 @@ def test_model_cannot_downgrade_explicit_scheduled_transfer(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(runtime, "llm", FakeLLM())
-    parsed = agent._model_parse("下周给李四转 500 元")
+    parsed = agent.model_parse("下周给李四转 500 元")
     assert parsed["intent"] == "SCHEDULED_TRANSFER"
     assert parsed["scheduled_at"] != "2099-01-01T09:00:00+08:00"
 
@@ -269,7 +269,7 @@ def test_model_cannot_drop_explicit_birthday_date(monkeypatch):
             return FakeResponse()
 
     monkeypatch.setattr(runtime, "llm", FakeLLM())
-    parsed = agent._model_parse("我爱人生日是下周六，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕")
+    parsed = agent.model_parse("我爱人生日是下周六，帮我锁定 1000 元活期，生日前 2 天提醒我订花和蛋糕")
     assert parsed["intent"] == "CROSS_SCENE_LOCK"
     assert parsed["scheduled_at"], "the explicit date must survive the model answer"
     assert parsed["event_at"]
@@ -288,7 +288,7 @@ def test_model_incomplete_result_falls_back_to_complete_local_parse(monkeypatch)
             return FakeResponse()
 
     monkeypatch.setattr(runtime, "llm", FakeLLM())
-    parsed = agent._model_parse("给李四转账 10 元")
+    parsed = agent.model_parse("给李四转账 10 元")
     assert parsed["intent"] == "TRANSFER"
     assert parsed["amount"] == 10.0
 
@@ -379,7 +379,7 @@ def test_numeric_answer_does_not_fill_a_date_slot(wired):
 
 
 def test_offline_parser_reads_card_limit_without_currency_unit():
-    parsed = agent._local_parse("把我的卡额度调到 5000")
+    parsed = agent.local_parse("把我的卡额度调到 5000")
     assert parsed["intent"] == "CARD_LIMIT"
     assert parsed["amount"] == 5000.0
 
@@ -389,7 +389,7 @@ def test_offline_parser_reads_card_limit_without_currency_unit():
     [("冻结我的卡", "CARD_FREEZE"), ("解冻我的卡", "CARD_UNFREEZE"), ("我的卡丢了", "CARD_REPORT_LOST"), ("解挂我的卡", "CARD_UNREPORT_LOST")],
 )
 def test_offline_parser_prioritizes_card_security_actions(text, expected):
-    assert agent._local_parse(text)["intent"] == expected
+    assert agent.local_parse(text)["intent"] == expected
 
 
 def test_responder_does_not_claim_malformed_balance():
@@ -420,7 +420,7 @@ def test_responder_never_claims_malformed_mutation_result(execution_result):
 
 
 def test_offline_parser_supports_annual_bill_report():
-    parsed = agent._local_parse("请生成今年年度账单报告")
+    parsed = agent.local_parse("请生成今年年度账单报告")
     assert parsed["intent"] == "BILL_ANALYSIS"
     assert parsed["date_scope"] == "YEAR"
 
@@ -436,7 +436,7 @@ def test_offline_parser_supports_annual_bill_report():
     ],
 )
 def test_wealth_listing_and_recommendation_are_distinguished(text, intent):
-    assert agent._local_parse(text)["intent"] == intent
+    assert agent.local_parse(text)["intent"] == intent
 
 
 def test_read_collections_are_rendered_readably(wired):
@@ -483,7 +483,7 @@ def test_read_collections_are_rendered_readably(wired):
     ],
 )
 def test_offline_parser_covers_security_and_wealth_extensions(text, intent):
-    parsed = agent._local_parse(text)
+    parsed = agent.local_parse(text)
     assert parsed["intent"] == intent
 
 
@@ -517,7 +517,7 @@ def test_responder_rejects_malformed_read_collections():
 def test_implicit_phrasings_map_to_allowlisted_intents(text, intent, target, scope):
     """Implicit/vague phrasings resolve deterministically, never to UNKNOWN."""
 
-    parsed = agent._local_parse(text)
+    parsed = agent.local_parse(text)
     assert parsed["intent"] == intent, text
     assert parsed["target"] == target
     assert parsed["date_scope"] == scope
@@ -641,7 +641,7 @@ def test_birthday_reminder_has_verified_run_at(wired):
     ],
 )
 def test_offline_parser_covers_transfer_variants(text, intent):
-    assert agent._local_parse(text)["intent"] == intent
+    assert agent.local_parse(text)["intent"] == intent
 
 
 # ---------------------------------------------------------------------------
@@ -785,7 +785,7 @@ def test_a_card_id_in_the_instruction_is_extracted_as_the_target():
     salary card while the user pointed at the other one.
     """
 
-    assert agent._target_from_text("冻结卡片 CARD-002") == "CARD-002"
-    assert agent._target_from_text("把 card-001 挂失") == "CARD-001"
-    assert agent._target_from_text("给李四转 200 元") == "李四"
-    assert agent._target_from_text("查一下余额") is None
+    assert agent.target_from_text("冻结卡片 CARD-002") == "CARD-002"
+    assert agent.target_from_text("把 card-001 挂失") == "CARD-001"
+    assert agent.target_from_text("给李四转 200 元") == "李四"
+    assert agent.target_from_text("查一下余额") is None

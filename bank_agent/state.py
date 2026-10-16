@@ -57,7 +57,7 @@ class BankingAgentState(TypedDict, total=False):
     date_range: Optional[dict[str, str]]
     parse_meta: Optional[dict[str, Any]]
 
-def _empty_state(*, final_response: Optional[str] = None) -> dict[str, Any]:
+def empty_state(*, final_response: Optional[str] = None) -> dict[str, Any]:
     return {
         "intent": Intent.UNKNOWN.value,
         "target": None,

@@ -9,9 +9,9 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from bank_core.access import (
-    _presented_session,
-    _raise_security,
-    _request_id,
+    request_session_token,
+    raise_security,
+    server_request_id,
 )
 from bank_core.http_edge import (
     API_VERSION,
@@ -20,7 +20,7 @@ from bank_core.models import (
     StrictModel,
 )
 from bank_core.payments import (
-    _ensure_account,
+    ensure_account,
 )
 from bank_core.persistence import (
     ledger_store_status,
@@ -83,8 +83,8 @@ def report_security_signal(
     account on purpose.
     """
 
-    request_id = _request_id(x_request_id)
-    if not _presented_session(request) or not x_user_id:
+    request_id = server_request_id(x_request_id)
+    if not request_session_token(request) or not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "上报安全事件需要会话凭证"})
     signal = str(req.signal or "").strip().upper()
     source = str(req.source or "").strip().upper()
@@ -128,9 +128,9 @@ def security_audit_endpoint(limit: int = 100, user_id: Optional[str] = None, x_a
         # principal.  Merely choosing ``?user_id=...`` is never sufficient.
         try:
             validate_actor(x_user_id or "", x_user_id)
-            _ensure_account(x_user_id or "")
+            ensure_account(x_user_id or "")
         except SecurityError as exc:
-            _raise_security(exc)
+            raise_security(exc)
         user_id = x_user_id
     return {"code": 200, "data": get_audit_logs(limit=limit, user_id=user_id)}
 

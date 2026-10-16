@@ -16,17 +16,17 @@ from security import audit_event
 from bank_agent import runtime
 from bank_agent.state import (
     BankingAgentState,
-    _empty_state,
+    empty_state,
 )
 from bank_agent.runtime import (
-    _error_message,
-    _response_json,
+    error_message,
+    response_json,
 )
 from bank_agent.extraction import (
-    _format_hint,
+    format_hint,
 )
 from bank_agent.rendering import (
-    _render_wealth,
+    render_wealth,
 )
 
 
@@ -130,14 +130,14 @@ def _parse_quiz_answers(text: str, answers: Mapping[str, Any]) -> tuple[dict[str
     return found, invalid
 
 
-def _fetch_risk_profile(state: BankingAgentState) -> Optional[dict[str, Any]]:
+def fetch_risk_profile(state: BankingAgentState) -> Optional[dict[str, Any]]:
     """读取核心里该用户的风险档案与测评余量；读不到按未测评处理。"""
 
     try:
         response = runtime._http("GET", "wealth/risk-profile", state=state, headers={"X-User-Id": state.get("user_id")})
         if response.status_code >= 400:
             return None
-        return _response_json(response)
+        return response_json(response)
     except (requests.RequestException, RuntimeError, ValueError):
         return None
 
@@ -155,7 +155,7 @@ def _quiz_result(
     把回复渲染成理财卡片而不是纯文本清单。
     """
 
-    result = _empty_state(final_response=response_text)
+    result = empty_state(final_response=response_text)
     result.update({
         "intent": Intent.WEALTH_RISK_ASSESSMENT.value,
         # The gateway owns correlation for a turn.  Keep the fallback for
@@ -175,7 +175,7 @@ def _quiz_result(
     return result
 
 
-def _start_risk_quiz(state: BankingAgentState, retake: bool = False) -> dict[str, Any]:
+def start_risk_quiz(state: BankingAgentState, retake: bool = False) -> dict[str, Any]:
     lead = (
         "您可以重新完成风险评估以更新您的风险档案"
         if retake
@@ -188,7 +188,7 @@ def _start_risk_quiz(state: BankingAgentState, retake: bool = False) -> dict[str
     return result
 
 
-def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any]) -> dict[str, Any]:
+def handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any]) -> dict[str, Any]:
     user_id = state.get("user_id")
     request_id = state.get("request_id") or f"agent_{uuid.uuid4().hex}"
     state = {**state, "request_id": request_id}
@@ -207,7 +207,7 @@ def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any])
         remaining = "\n\n".join(_quiz_question_text(q) for q in missing)
         reply = (
             f"已记录 {len(answers)}/8 题，还差第 {numbers} 题：\n\n"
-            f"{remaining}\n\n可继续作答（如 {_format_hint(missing)}），或回复“退出测评”。"
+            f"{remaining}\n\n可继续作答（如 {format_hint(missing)}），或回复“退出测评”。"
         )
         audit_event("RISK_QUIZ", user_id=user_id, decision="ALLOW", outcome="PARTIAL", request_id=request_id, metadata={"answered": len(answers)})
         return _quiz_result(state, reply, {**quiz, "answers": answers}, quiz_payload=RISK_QUIZ_PAYLOAD)
@@ -220,8 +220,8 @@ def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any])
             headers={"X-User-Id": user_id},
         )
         if response.status_code >= 400:
-            raise RuntimeError(_error_message(response))
-        graded = _response_json(response)
+            raise RuntimeError(error_message(response))
+        graded = response_json(response)
     except (requests.RequestException, RuntimeError) as exc:
         retry = " ".join(f"{q}{letter}" for q, letter in sorted(answers.items()))
         return _quiz_result(state, f"测评结果暂时无法保存（{exc}）。您的答案已保留，稍后可重新发送：{retry}", {**quiz, "answers": answers})
@@ -232,8 +232,8 @@ def _handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any])
     try:
         rec = runtime._http("GET", f"wealth/recommend?user_id={user_id}&risk_profile={grade}", state=state, headers={"X-User-Id": user_id})
         if rec.status_code < 400:
-            rec_payload = _response_json(rec)
-            product_text = "\n\n" + _render_wealth(rec_payload, Intent.WEALTH_RECOMMEND.value)
+            rec_payload = response_json(rec)
+            product_text = "\n\n" + render_wealth(rec_payload, Intent.WEALTH_RECOMMEND.value)
             # 结构化产品列表随回复下发，原生客户端渲染为理财卡片。
             execution_result = {"type": Intent.WEALTH_RECOMMEND.value, "data": rec_payload}
     except (requests.RequestException, RuntimeError, ValueError):

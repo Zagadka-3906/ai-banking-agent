@@ -17,12 +17,12 @@ from bank_agent.state import (
     BankingAgentState,
 )
 from bank_agent.runtime import (
-    _error_message,
-    _response_json,
+    error_message,
+    response_json,
 )
 from bank_agent.verification import (
-    _response_validation_failure,
-    _valid_balance_payload,
+    response_validation_failure,
+    valid_balance_payload,
 )
 
 
@@ -58,7 +58,7 @@ _SETTLE_ORDER: dict[str, list[str]] = {
 }
 
 
-def _plan_from_state(state: BankingAgentState) -> Optional[TaskPlan]:
+def plan_from_state(state: BankingAgentState) -> Optional[TaskPlan]:
     raw = state.get("plan")
     if not isinstance(raw, dict):
         return None
@@ -68,7 +68,7 @@ def _plan_from_state(state: BankingAgentState) -> Optional[TaskPlan]:
         return None
 
 
-def _consumed_task_ids(plan: TaskPlan, intent: str) -> tuple[list[str], Optional[str]]:
+def consumed_task_ids(plan: TaskPlan, intent: str) -> tuple[list[str], Optional[str]]:
     """Return the task ids one graph run consumes, and the settle task id."""
 
     if intent in _SETTLE_ORDER:
@@ -83,7 +83,7 @@ def _consumed_task_ids(plan: TaskPlan, intent: str) -> tuple[list[str], Optional
     return consumed, settle
 
 
-def _advance_plan(state: BankingAgentState, intent: str, *, outcome: str, data: Optional[dict[str, Any]] = None, error: Optional[str] = None, pending_notes: Optional[dict[str, str]] = None) -> Optional[dict[str, Any]]:
+def advance_plan(state: BankingAgentState, intent: str, *, outcome: str, data: Optional[dict[str, Any]] = None, error: Optional[str] = None, pending_notes: Optional[dict[str, str]] = None) -> Optional[dict[str, Any]]:
     """Advance the plan ledger truthfully after a run step.
 
     ``SUCCESS`` marks every consumed step (validation, MFA gate, settle)
@@ -92,10 +92,10 @@ def _advance_plan(state: BankingAgentState, intent: str, *, outcome: str, data: 
     readable for the caller.
     """
 
-    plan = _plan_from_state(state)
+    plan = plan_from_state(state)
     if plan is None:
         return None
-    consumed, settle_id = _consumed_task_ids(plan, intent)
+    consumed, settle_id = consumed_task_ids(plan, intent)
     if not settle_id:
         return plan.to_dict()
     notes = pending_notes or {}
@@ -120,7 +120,7 @@ def _advance_plan(state: BankingAgentState, intent: str, *, outcome: str, data: 
     return plan.to_dict()
 
 
-def _settle_with_retry(state: BankingAgentState, *, method: str, path: str, json_body: dict[str, Any], headers: dict[str, str], idempotency_key: Optional[str] = None) -> requests.Response:
+def settle_with_retry(state: BankingAgentState, *, method: str, path: str, json_body: dict[str, Any], headers: dict[str, str], idempotency_key: Optional[str] = None) -> requests.Response:
     """Send a settle request; retry exactly once on transport errors.
 
     The retry reuses the same Idempotency-Key, so a response lost after the
@@ -158,9 +158,9 @@ def _run_compensation(state: BankingAgentState, compensation: Optional[str]) -> 
         try:
             response = runtime._http("GET", f"accounts/{user_id}/balance", state=state, headers={"X-User-Id": user_id})
             if response.status_code >= 400:
-                raise RuntimeError(_error_message(response))
-            data = _response_json(response)
-            if _valid_balance_payload(data) and float(data.get("locked_amount") or 0) <= 0:
+                raise RuntimeError(error_message(response))
+            data = response_json(response)
+            if valid_balance_payload(data) and float(data.get("locked_amount") or 0) <= 0:
                 return {"action": compensation, "outcome": "VERIFIED_NO_MUTATION", "message": "已核对核心账本：锁定金额为 0，无需反向解锁（核心原子回滚确认）。"}
             return {"action": compensation, "outcome": "ESCALATE_HUMAN", "message": "检测到未释放的锁定金额，请人工接管复核。"}
         except Exception as exc:
@@ -170,10 +170,10 @@ def _run_compensation(state: BankingAgentState, compensation: Optional[str]) -> 
     return None
 
 
-def _settle_failure_response(state: BankingAgentState, intent: str, message: str, *, compensation: Optional[str] = None) -> dict[str, Any]:
+def settle_failure_response(state: BankingAgentState, intent: str, message: str, *, compensation: Optional[str] = None) -> dict[str, Any]:
     """Build the safe refusal + failed plan ledger + compensation result."""
 
-    plan = _advance_plan(state, intent, outcome="FAILURE", error=message)
+    plan = advance_plan(state, intent, outcome="FAILURE", error=message)
     audit_event("EXECUTION", user_id=state.get("user_id"), decision="ERROR", outcome="FAILURE", reason=message[:200], request_id=state.get("request_id"))
     compensation_result = _run_compensation(state, compensation)
     lines = [f"{intent} 未完成：{message}"]
@@ -182,12 +182,12 @@ def _settle_failure_response(state: BankingAgentState, intent: str, message: str
     return {"final_response": " ".join(lines), "plan": plan, "business_status": "FAILED"}
 
 
-def _settle_unknown_response(state: BankingAgentState) -> dict[str, Any]:
+def settle_unknown_response(state: BankingAgentState) -> dict[str, Any]:
     # A response can be lost after the core commits. Neither success, failure
     # nor rollback is known, even after our one idempotent retry is exhausted.
     audit_event("EXECUTION", user_id=state.get("user_id"), request_id=state.get("request_id"),
                 decision="RECONCILE", outcome="UNKNOWN", reason="SETTLEMENT_RECEIPT_UNAVAILABLE")
-    response = _response_validation_failure(state, "SETTLEMENT_RECEIPT_UNAVAILABLE")
+    response = response_validation_failure(state, "SETTLEMENT_RECEIPT_UNAVAILABLE")
     response.update({"final_response": "本次操作已提交，暂未取得可核验回执，正在核对结果。请勿重复办理。",
                      "business_status": "PENDING_RECONCILIATION", "reconciliation": state.get("reconciliation"), "plan": state.get("plan")})
     return response

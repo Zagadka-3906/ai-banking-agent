@@ -30,7 +30,7 @@ class ContactAddRequest(StrictModel):
     birthday: Optional[str] = None
 
 
-def _contact_public_view(row: dict[str, Any], *, caller_id: Optional[str] = None) -> dict[str, Any]:
+def contact_public_view(row: dict[str, Any], *, caller_id: Optional[str] = None) -> dict[str, Any]:
     """Client-safe projection of one contact-book row (no account internals).
 
     ``account_name`` is the *payee account holder's* real name, so it is only
@@ -118,7 +118,7 @@ def _contact_link_status(row: Mapping[str, Any], *, caller_id: Optional[str] = N
     return _contact_consent(account_id, str(row.get("phone") or ""), caller_id=owner_id or None)
 
 
-def _aa_request_eligible(user_id: str, name: str) -> bool:
+def aa_request_eligible(user_id: str, name: str) -> bool:
     """Whether ``name`` resolves to a verified recipient of an AA request."""
 
     with STATE_LOCK:
@@ -130,7 +130,7 @@ def _aa_request_eligible(user_id: str, name: str) -> bool:
     return name in CONTACTS
 
 
-def _resolve_contact_account(name: str, phone: str, *, caller_id: Optional[str] = None) -> tuple[str, bool, str]:
+def resolve_contact_account(name: str, phone: str, *, caller_id: Optional[str] = None) -> tuple[str, bool, str]:
     """Return the payee account a contact points at, provisioning one if needed.
 
     A phone that already belongs to a demo account links to it and records

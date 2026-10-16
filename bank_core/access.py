@@ -16,7 +16,7 @@ from security import (
 )
 
 
-def _presented_session(request: Optional[Request]) -> Optional[str]:
+def request_session_token(request: Optional[Request]) -> Optional[str]:
     """The raw session credential this request presented, if any.
 
     Set by ``request_safety_middleware`` after it verified the token, so an
@@ -29,7 +29,7 @@ def _presented_session(request: Optional[Request]) -> Optional[str]:
     return str(value) if value else None
 
 
-def _request_id(value: Optional[str]) -> str:
+def server_request_id(value: Optional[str]) -> str:
     if value:
         try:
             return sanitize_text(value, field="请求编号", max_length=80)
@@ -38,7 +38,7 @@ def _request_id(value: Optional[str]) -> str:
     return f"REQ{uuid.uuid4().hex}"
 
 
-def _raise_security(exc: SecurityError) -> None:
+def raise_security(exc: SecurityError) -> None:
     raise HTTPException(
         status_code=exc.status_code,
         detail={"code": exc.code, "message": exc.detail},
@@ -46,7 +46,7 @@ def _raise_security(exc: SecurityError) -> None:
     )
 
 
-def _record_failure_and_raise(exc: SecurityError, *, user_id: Optional[str], action: str, request_id: str) -> None:
+def record_failure_and_raise(exc: SecurityError, *, user_id: Optional[str], action: str, request_id: str) -> None:
     security_codes = {
         "TOKEN_REQUIRED", "INVALID_TOKEN", "INVALID_TOKEN_SIGNATURE", "TOKEN_NOT_FOUND", "TOKEN_REPLAY", "TOKEN_EXPIRED",
         "TOKEN_BINDING_MISMATCH", "TOKEN_CONTEXT_MISMATCH", "TOKEN_INVALID", "TOKEN_OPERATION_MISMATCH", "MFA_FAILED", "MFA_PROOF_INVALID",
@@ -59,7 +59,7 @@ def _record_failure_and_raise(exc: SecurityError, *, user_id: Optional[str], act
     if exc.code in security_codes:
         record_security_failure(user_id, exc.code, request_id=request_id)
     audit_event(action, user_id=user_id, decision="BLOCK", outcome="FAILURE", reason=exc.code, request_id=request_id, metadata={"message": exc.detail})
-    _raise_security(exc)
+    raise_security(exc)
 
 
 _WRITE_ACTIONS_REQUIRING_HEADER = {
@@ -86,7 +86,7 @@ _WRITE_ACTIONS_REQUIRING_HEADER = {
 }
 
 
-def _get_actor(requested_user: str, presented_user: Optional[str], *, action: str, request_id: str) -> str:
+def get_actor(requested_user: str, presented_user: Optional[str], *, action: str, request_id: str) -> str:
     # A body/path user id is an object selector, not authentication.  Require
     # a presented principal for every operation that can mint a nonce or
     # mutate state; otherwise a caller could deliberately attribute repeated
@@ -94,7 +94,7 @@ def _get_actor(requested_user: str, presented_user: Optional[str], *, action: st
     # enabled for read-only queries.
     if action in _WRITE_ACTIONS_REQUIRING_HEADER and not (presented_user or "").strip():
         exc = SecurityError("写操作需要登录身份", 401, "AUTHENTICATION_REQUIRED")
-        _record_failure_and_raise(exc, user_id=None, action=action, request_id=request_id)
+        record_failure_and_raise(exc, user_id=None, action=action, request_id=request_id)
         raise AssertionError("unreachable")
     try:
         return validate_actor(requested_user, presented_user)
@@ -105,5 +105,5 @@ def _get_actor(requested_user: str, presented_user: Optional[str], *, action: st
         # submit ``requested_user=victim`` with a mismatching header and open
         # the victim's circuit breaker as a denial-of-service primitive.
         failure_user = presented_user or (None if exc.code == "AUTHENTICATION_REQUIRED" else requested_user)
-        _record_failure_and_raise(exc, user_id=failure_user, action=action, request_id=request_id)
+        record_failure_and_raise(exc, user_id=failure_user, action=action, request_id=request_id)
         raise AssertionError("unreachable")

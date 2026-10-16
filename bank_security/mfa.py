@@ -15,8 +15,8 @@ from bank_security.audit import audit_event
 from bank_security.authorization import (
     FACE_CHALLENGES,
     FACE_CHALLENGE_MAX_RECORDS,
-    _issue_mfa_proof,
-    _lookup_auth_locked,
+    issue_mfa_proof,
+    lookup_auth_locked,
 )
 from bank_security.circuit import record_security_failure
 from bank_security.config import (
@@ -32,10 +32,10 @@ from bank_security.devices import (
     DEVICE_KEYS_AVAILABLE,
     DEVICE_STATUS_ACTIVE,
     FACE_ATTESTATION_V2_PREFIX,
-    _crypto_ec,
-    _crypto_hashes,
+    crypto_ec,
+    crypto_hashes,
     _load_der_public_key,
-    _persist_devices_locked,
+    persist_devices_locked,
     device_facing_payload,
 )
 from bank_security.errors import SecurityError
@@ -60,7 +60,7 @@ def issue_face_challenge(auth_token: str, *, user_id: Optional[str] = None, requ
     """
 
     with STATE_LOCK:
-        payload, record = _lookup_auth_locked(auth_token)
+        payload, record = lookup_auth_locked(auth_token)
         principal = payload.get("from_user")
         if user_id and principal != user_id:
             record_security_failure(user_id, "face_challenge_identity_mismatch", request_id=request_id)
@@ -155,11 +155,11 @@ def _verify_device_attestation(
             return None
         payload = device_facing_payload(challenge_id, subject, str(challenge.get("jti") or ""))
         try:
-            public_key.verify(signature, payload, _crypto_ec.ECDSA(_crypto_hashes.SHA256()))
+            public_key.verify(signature, payload, crypto_ec.ECDSA(crypto_hashes.SHA256()))
         except Exception:
             return None
         device["last_seen_at"] = int(now)
-        _persist_devices_locked()
+        persist_devices_locked()
     return challenge
 
 
@@ -189,7 +189,7 @@ def issue_demo_otp(auth_token: str, *, user_id: str, request_id: Optional[str] =
     if not demo_mode():
         raise SecurityError("演示验证码仅限 Mock 模式", 403, "DEMO_ONLY")
     with STATE_LOCK:
-        payload, record = _lookup_auth_locked(auth_token)
+        payload, record = lookup_auth_locked(auth_token)
         if payload.get("from_user") != user_id:
             raise SecurityError("验证码主体不一致", 403, "IDENTITY_MISMATCH")
         if payload.get("risk_level") != "RED":
@@ -257,7 +257,7 @@ def verify_mfa(
     """
 
     with STATE_LOCK:
-        payload, record = _lookup_auth_locked(auth_token)
+        payload, record = lookup_auth_locked(auth_token)
         principal = payload.get("from_user")
         if user_id and principal != user_id:
             record_security_failure(user_id, "mfa_identity_mismatch", request_id=request_id)
@@ -315,7 +315,7 @@ def verify_mfa(
         record["confirmed"] = True
         if face_challenge is not None:
             face_challenge["used"] = True
-        proof = _issue_mfa_proof(payload, auth_token)
+        proof = issue_mfa_proof(payload, auth_token)
         audit_event(
             "MFA_VERIFY",
             user_id=principal,

@@ -94,7 +94,7 @@ def main():
             started = time.perf_counter()
             try:
                 text = sanitize_text(case["input"], field="评测输入", max_length=2000)
-                parsed = validate_intent_payload(agent._model_parse(text) if mode == "model" else agent._local_parse(text))
+                parsed = validate_intent_payload(agent.model_parse(text) if mode == "model" else agent.local_parse(text))
                 row["issues"] = score_case(case, parsed, needs_clarification(parsed))
                 row["parsed"] = {key: parsed.get(key) for key in ("intent", "amount", "target", "date_scope")}
                 row["parse_source"] = (parsed.get("parse_meta") or {}).get("source")

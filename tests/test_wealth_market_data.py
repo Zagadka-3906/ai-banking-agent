@@ -73,12 +73,12 @@ def test_read_projections_cover_recommend_compare_and_legacy_base_records(client
     assert all("nav_series" in item for item in compared.json()["data"])
 
     legacy = {"product_id": "CJ01002", "name": "旧快照产品", "risk_level": "R1"}
-    projected = main._wealth_product_view(legacy)
+    projected = main.wealth_product_view(legacy)
     assert projected["name"] == "旧快照产品"
     assert projected["data_source"] == "MOCK_FIXTURE"
     assert projected["nav_series"][-1]["date"] == "2026-09-15"
     unknown = {"product_id": "CUSTOM-1", "name": "自定义产品"}
-    assert main._wealth_product_view(unknown) == unknown
+    assert main.wealth_product_view(unknown) == unknown
 
 
 def test_zy_detail_matches_high_fidelity_mock_contract(client: TestClient) -> None:

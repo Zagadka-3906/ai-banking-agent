@@ -6,7 +6,7 @@ A settled transfer or purchase is final - there is no reverse payment here.
 
 The task page (``/tasks/{id}/cancel``), unlock (``/accounts/unlock_fund``) and
 the conversational ``UNDO_TASK`` operation share these functions, so the three
-paths cannot drift apart. Callers hold ``_ledger_transaction``.
+paths cannot drift apart. Callers hold ``ledger_transaction``.
 """
 
 from __future__ import annotations

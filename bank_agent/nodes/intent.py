@@ -20,7 +20,7 @@ from security import InjectionError, audit_event, sanitize_text
 from intent_language import business_text, nonexecuting_action
 from bank_agent.state import (
     BankingAgentState,
-    _empty_state,
+    empty_state,
 )
 from bank_agent.runtime import (
     INJECTION_LOCKED_NOTICE,
@@ -28,25 +28,25 @@ from bank_agent.runtime import (
 )
 from bank_agent.risk_quiz import (
     RISK_QUIZ_INTENTS,
-    _fetch_risk_profile,
-    _handle_risk_quiz,
-    _start_risk_quiz,
+    fetch_risk_profile,
+    handle_risk_quiz,
+    start_risk_quiz,
 )
 from bank_agent.parsing import (
-    _local_parse,
-    _model_parse,
+    local_parse,
+    model_parse,
 )
 from bank_agent.dialogue import (
-    _ELLIPSIS_CANCEL_IT,
-    _ELLIPSIS_REPEAT,
-    _ELLIPSIS_SAME_PRODUCT,
-    _ELLIPSIS_SAME_TARGET,
-    _build_multi_read_plan,
-    _has_mutating_part,
-    _merge_pending_clarification,
-    _resolve_ellipsis,
-    _split_parts,
-    _split_read_requests,
+    ELLIPSIS_CANCEL_IT,
+    ELLIPSIS_REPEAT,
+    ELLIPSIS_SAME_PRODUCT,
+    ELLIPSIS_SAME_TARGET,
+    build_multi_read_plan,
+    has_mutating_part,
+    merge_pending_clarification,
+    resolve_ellipsis,
+    split_parts,
+    split_read_requests,
 )
 
 
@@ -60,7 +60,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         reply = "检测到疑似提示词注入或不安全控制指令，已阻止本次操作。请直接描述银行业务。"
         if report_security_signal(exc.code, request_id=state["request_id"]):
             reply += INJECTION_LOCKED_NOTICE
-        return {**_empty_state(final_response=reply), "request_id": state["request_id"]}
+        return {**empty_state(final_response=reply), "request_id": state["request_id"]}
     # The action words inside a negation, quotation or hypothetical are data,
     # not a request to issue an actionable approval. This guard also constrains
     # a model that extracts a confident financial intent from quoted prose.
@@ -75,18 +75,18 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         request_id = state.get("request_id") or f"gw_{uuid.uuid4().hex}"
         audit_event("INTENT_WITHHELD", user_id=state.get("user_id"), request_id=request_id,
                     decision="BLOCK", outcome="CLARIFICATION", reason="NON_EXECUTING_LANGUAGE")
-        return {**_empty_state(final_response="这是对操作的否定、引用或假设，我没有发起执行或审批。如需实际办理，请单独明确业务、对象和金额。"),
+        return {**empty_state(final_response="这是对操作的否定、引用或假设，我没有发起执行或审批。如需实际办理，请单独明确业务、对象和金额。"),
                 "request_id": request_id, "context": {}}
     # 问卷进行中：本回合输入按答题处理，不走常规意图解析。
     prior_context = state.get("context") if isinstance(state.get("context"), dict) else {}
     compound = prior_context.get("compound_workflow") if state.get("continue_workflow") or prior_context.get("pending_clarification") or prior_context.get("risk_quiz") else None
     if compound and compound["steps"][compound["index"]].get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
         compound = None
-    parts = _split_parts(text)
+    parts = split_parts(text)
     if len(parts) > 8:
-        return {**_empty_state(final_response="一次最多办理 8 项任务，请分成两条消息。"), "context": {}, "request_id": state["request_id"]}
+        return {**empty_state(final_response="一次最多办理 8 项任务，请分成两条消息。"), "context": {}, "request_id": state["request_id"]}
     if 2 <= len(parts) <= 8:
-        payloads = [validate_intent_payload(_local_parse(part)) for part in parts]
+        payloads = [validate_intent_payload(local_parse(part)) for part in parts]
         if all(item.get("intent") != Intent.UNKNOWN.value for item in payloads) and any(item["intent"] not in GREEN_INTENTS or item["intent"] in RISK_QUIZ_INTENTS for item in payloads):
             compound = {"id": f"flow_{uuid.uuid4().hex[:12]}", "index": 0,
                         "steps": [{"text": part, "payload": item, "status": "PENDING"} for part, item in zip(parts, payloads)],
@@ -94,7 +94,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             text = parts[0]
     active_quiz = prior_context.get("risk_quiz") if isinstance(prior_context.get("risk_quiz"), dict) else None
     if active_quiz is not None:
-        quiz_result = _handle_risk_quiz(state, text, active_quiz)
+        quiz_result = handle_risk_quiz(state, text, active_quiz)
         if compound and quiz_result.get("profile_result"):
             context = {**prior_context, "risk_quiz": None, "compound_workflow": compound}
             if compound["steps"][compound["index"]]["payload"]["intent"] == Intent.WEALTH_RISK_ASSESSMENT.value:
@@ -106,13 +106,13 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             return resumed
         return quiz_result
     if prior_context.get("intent") == Intent.CROSS_SCENE_LOCK.value and re.search(r"(?:花|蛋糕).*(?:买好|买了吗|下单|订好|已经买)|^(?:已经|都|那)?(?:买好|买了吗|订好|下单)[了了吗呢？?]*$", text.strip()):
-        return {**_empty_state(final_response="尚未购买鲜花或蛋糕。这里只会预留资金、建立提醒和待确认的订单草稿，不会替您向商家付款下单。"),
+        return {**empty_state(final_response="尚未购买鲜花或蛋糕。这里只会预留资金、建立提醒和待确认的订单草稿，不会替您向商家付款下单。"),
                 "context": prior_context, "request_id": state.get("request_id") or f"gw_{uuid.uuid4().hex}"}
     try:
-        parsed = validate_intent_payload(_model_parse(text))
+        parsed = validate_intent_payload(model_parse(text))
     except Exception as exc:
         audit_event("INTENT_PARSE", user_id=state.get("user_id"), request_id=state["request_id"], decision="BLOCK", outcome="FAILURE", reason="INVALID_MODEL_OUTPUT", metadata={"error_type": type(exc).__name__})
-        return {**_empty_state(final_response="暂时无法安全解析这条指令，请补充业务类型、收款人或金额后重试。"), "request_id": state["request_id"]}
+        return {**empty_state(final_response="暂时无法安全解析这条指令，请补充业务类型、收款人或金额后重试。"), "request_id": state["request_id"]}
     # A comparison with one explicit product has a known business intent; only
     # its second product is missing, even without the word "理财".
     product_ids = list(parsed.get("product_ids") or [])
@@ -123,7 +123,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     if isinstance(pending, dict) and pending.get("intent") == Intent.WEALTH_COMPARE.value and "product_ids" in (pending.get("missing") or []):
         previous = pending.get("payload") if isinstance(pending.get("payload"), dict) else {}
         previous_ids = list(previous.get("product_ids") or [])
-        explicit_ids = _local_parse(text).get("product_ids") or []
+        explicit_ids = local_parse(text).get("product_ids") or []
         if len(previous_ids) == 1 and len(explicit_ids) == 1 and text.strip().upper() == explicit_ids[0]:
             # Only a bare, recognized product ID answers this slot. A full new
             # comparison replaces the pair through the regular merge below;
@@ -131,11 +131,11 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             parsed["intent"] = Intent.WEALTH_COMPARE.value
             parsed["product_ids"] = list(dict.fromkeys(previous_ids + explicit_ids))
     # A reply that only answers the previous question belongs to that request.
-    parsed = _merge_pending_clarification(parsed, state, text)
+    parsed = merge_pending_clarification(parsed, state, text)
     # Explicit back-references ("再转一次", "还是上次那个") reuse the previous
     # turn's request; the operation is re-authorized from scratch.
     prior = state.get("context") if isinstance(state.get("context"), dict) else {}
-    parsed = validate_intent_payload(_resolve_ellipsis(parsed, prior, text, state.get("execution_result")))
+    parsed = validate_intent_payload(resolve_ellipsis(parsed, prior, text, state.get("execution_result")))
     if compound:
         step = compound["steps"][compound["index"]]
         if parsed.get("intent") != step["payload"].get("intent"):
@@ -146,21 +146,21 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     # 首次咨询理财（推荐/申购/赎回）或显式要求测评且尚无风险档案：
     # 触发 8 题问卷（C1-C5），完成后再继续办理；浏览类查询不强制。
     if parsed.get("intent") in RISK_QUIZ_INTENTS and not any((parsed.get("slots") or {}).get(f"{field}_ambiguous") for field in ("amount", "target", "date_range", "request")):
-        profile_response = _fetch_risk_profile(state)
+        profile_response = fetch_risk_profile(state)
         has_profile = bool(profile_response and profile_response.get("data"))
         if parsed.get("intent") == Intent.WEALTH_RISK_ASSESSMENT.value or not has_profile:
             # 重做（已有档案）与首测话术不同；重做前先看余量，避免出卷后交卷失败。
             attempts = (profile_response or {}).get("attempts") or {}
             if has_profile and attempts.get("allowed") is False:
-                return _empty_state(final_response=attempts.get("message") or "风险测评次数已达上限，请稍后再试。")
-            return _start_risk_quiz({**state, "context": {**prior_context, "compound_workflow": compound}}, retake=has_profile)
+                return empty_state(final_response=attempts.get("message") or "风险测评次数已达上限，请稍后再试。")
+            return start_risk_quiz({**state, "context": {**prior_context, "compound_workflow": compound}}, retake=has_profile)
     # Several read-only asks in one sentence become one ordered sub-task DAG.
-    sub_requests = _split_read_requests(text)
-    if len(_split_parts(text)) > 1 and not compound and not sub_requests:
-        return {**_empty_state(final_response="这条消息包含多项业务，其中有尚未明确的请求。请逐项补充业务、对象和金额，或分开办理。"), "context": {}, "request_id": state["request_id"]}
+    sub_requests = split_read_requests(text)
+    if len(split_parts(text)) > 1 and not compound and not sub_requests:
+        return {**empty_state(final_response="这条消息包含多项业务，其中有尚未明确的请求。请逐项补充业务、对象和金额，或分开办理。"), "context": {}, "request_id": state["request_id"]}
     # A compound request that also contains a mutating part is never split and
     # never silently half-answered: the user is asked to handle it in steps.
-    mixed_write = _has_mutating_part(text) and not sub_requests and not compound
+    mixed_write = has_mutating_part(text) and not sub_requests and not compound
     # Resolve only explicit conversational references.  A prior recipient is
     # never silently used for a fresh request; the user must say “同一位/他”
     # and the operation remains behind the normal approval gate.
@@ -173,7 +173,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     if sub_requests:
         # One utterance, several read-only asks: compile them into a single
         # dependency-ordered DAG and answer them in sequence.
-        plan = _build_multi_read_plan(sub_requests, plan_id=f"plan_{uuid.uuid4().hex[:12]}", sequential=bool(re.search(r"然后|接着|之后|再", text)))
+        plan = build_multi_read_plan(sub_requests, plan_id=f"plan_{uuid.uuid4().hex[:12]}", sequential=bool(re.search(r"然后|接着|之后|再", text)))
         parsed = {**sub_requests[0], "extra_info": text}
     else:
         plan = build_task_plan(parsed, plan_id=f"plan_{uuid.uuid4().hex[:12]}")
@@ -181,7 +181,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     if mixed_write:
         clarification = True
     # Remember exactly what is still missing so a bare answer on the next turn
-    # can be folded back into this intent (see _merge_pending_clarification).
+    # can be folded back into this intent (see merge_pending_clarification).
     missing_fields = missing_slots(parsed)
     pending_clarification: Optional[dict[str, Any]] = None
     if clarification and parsed.get("intent") != Intent.UNKNOWN.value:
@@ -207,7 +207,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     elif clarification:
         intent = parsed.get("intent")
         if intent == Intent.UNKNOWN.value:
-            if any(phrase in text for phrase in _ELLIPSIS_REPEAT + _ELLIPSIS_SAME_TARGET + _ELLIPSIS_SAME_PRODUCT + _ELLIPSIS_CANCEL_IT):
+            if any(phrase in text for phrase in ELLIPSIS_REPEAT + ELLIPSIS_SAME_TARGET + ELLIPSIS_SAME_PRODUCT + ELLIPSIS_CANCEL_IT):
                 response = "我没有找到可以沿用的上一次操作，请直接说明要办理的业务、对象和金额。"
             else:
                 response = "我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片或订阅。请告诉我具体要办理什么。"

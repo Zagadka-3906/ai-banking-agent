@@ -83,7 +83,7 @@ CONTACT_MAX_PER_USER = max(1, int(os.getenv("BANK_MAX_CONTACTS_PER_USER", "200")
 # Whether a contact-book entry that resolves to a *real* account carries that
 # account owner's consent.  A typed phone number proves nothing on its own, so
 # a provisional link is good enough to pay *to* (the caller's own money) but
-# never proof of account ownership; see ``_aa_request_eligible``.
+# never proof of account ownership; see ``aa_request_eligible``.
 LINK_VERIFIED = "OWNER_CONSENTED"
 LINK_UNVERIFIED = "PROVISIONAL"
 
@@ -130,7 +130,7 @@ register_collections(
 
 
 @contextmanager
-def _ledger_transaction():
+def ledger_transaction():
     """Best-effort atomicity for the in-memory demo ledger.
 
     Production deployments must replace this shim with a database transaction

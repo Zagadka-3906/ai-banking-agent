@@ -51,9 +51,9 @@ def pay_split(client: TestClient, split_id: str, payer: str, amount: float):
 
 
 def test_aa_payment_note_is_parsed_as_transfer_not_new_request():
-    from agent import _local_parse
+    from agent import local_parse
 
-    parsed = _local_parse("给张三转 33.33 元，备注 AA:SPLABC123")
+    parsed = local_parse("给张三转 33.33 元，备注 AA:SPLABC123")
     assert parsed["intent"] == "TRANSFER"
     assert parsed["target"] == "张三"
     assert parsed["amount"] == 33.33
@@ -581,8 +581,8 @@ def test_card_daily_limit_is_enforced_on_settlement(client: TestClient, monkeypa
 def test_the_settlement_card_is_the_card_that_is_charged(client: TestClient, monkeypatch):
     """Regression: enforcement read one card and the counter wrote another.
 
-    ``_enforce_card_limit`` checked the first *ACTIVE* card while
-    ``_record_card_spend`` wrote ``cards[0]``, so with one frozen and one
+    ``enforce_card_limit`` checked the first *ACTIVE* card while
+    ``record_card_spend`` wrote ``cards[0]``, so with one frozen and one
     active card the payment was authorised against the active card's limit and
     recorded on the frozen one - leaving both cards' displayed figures wrong.
     """

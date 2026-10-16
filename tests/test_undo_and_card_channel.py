@@ -6,8 +6,8 @@ import pytest
 
 import main
 import security
-from bank_agent.parsing import _local_parse
-from bank_core.payments import _charge_card_and_balance
+from bank_agent.parsing import local_parse
+from bank_core.payments import charge_card_and_balance
 from test_agent_gateway import _headers, _send, gateway  # noqa: F401
 
 PRINCIPAL = "user_zhang"
@@ -31,7 +31,7 @@ def _approve(client, envelope):
 ])
 def test_rollback_phrases_are_not_read_as_new_actions(text, kind):
     # Previously each of these parsed as the very action it asks to undo.
-    parsed = _local_parse(text)
+    parsed = local_parse(text)
     assert parsed["intent"] == "UNDO_OPERATION" and parsed["slots"]["undo_kind"] == kind
 
 
@@ -40,13 +40,13 @@ def test_rollback_phrases_are_not_read_as_new_actions(text, kind):
     ("关闭网上支付", "ONLINE", False), ("尾号3082的卡禁止网购", "ONLINE", False), ("恢复网上支付", "ONLINE", True),
 ])
 def test_channel_switch_phrases(text, channel, enabled):
-    slots = _local_parse(text)["slots"]
-    assert _local_parse(text)["intent"] == "CARD_CHANNEL" and slots == {"card_channel": channel, "channel_enabled": enabled}
+    slots = local_parse(text)["slots"]
+    assert local_parse(text)["intent"] == "CARD_CHANNEL" and slots == {"card_channel": channel, "channel_enabled": enabled}
 
 
 @pytest.mark.parametrize("text", ["取消Apple订阅", "那笔境外消费不是我的", "给李四转300元", "解冻卡片"])
 def test_existing_intents_are_unchanged(text):
-    assert _local_parse(text)["intent"] not in {"UNDO_OPERATION", "CARD_CHANNEL"}
+    assert local_parse(text)["intent"] not in {"UNDO_OPERATION", "CARD_CHANNEL"}
 
 
 def test_scheduled_transfer_is_undone_with_a_yellow_confirmation(gateway):  # noqa: F811
@@ -131,8 +131,8 @@ def test_closed_online_channel_refuses_merchant_order_payment():
     main.reset_state()
     main.CARDS[PRINCIPAL][0]["channels"] = {"ONLINE": False, "OVERSEAS": True}
     with pytest.raises(security.SecurityError) as refused:
-        _charge_card_and_balance(PRINCIPAL, 49.0, channel="ONLINE")
+        charge_card_and_balance(PRINCIPAL, 49.0, channel="ONLINE")
     assert refused.value.code == "CARD_CHANNEL_DISABLED" and "网上支付" in refused.value.detail
     # Transfers are not card-channel payments and still go through.
-    assert _charge_card_and_balance(PRINCIPAL, 49.0)["card_id"] == "CARD-001"
+    assert charge_card_and_balance(PRINCIPAL, 49.0)["card_id"] == "CARD-001"
     main.reset_state()

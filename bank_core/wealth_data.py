@@ -306,7 +306,7 @@ def _normalized_wealth_series(detail: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 
-def _wealth_product_view(product: Mapping[str, Any]) -> dict[str, Any]:
+def wealth_product_view(product: Mapping[str, Any]) -> dict[str, Any]:
     """Project presentation fixtures without persisting them with the ledger."""
 
     view = deepcopy(dict(product))

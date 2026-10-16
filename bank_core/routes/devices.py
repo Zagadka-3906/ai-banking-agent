@@ -7,15 +7,15 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from bank_core.access import (
-    _get_actor,
-    _record_failure_and_raise,
-    _request_id,
+    get_actor,
+    record_failure_and_raise,
+    server_request_id,
 )
 from bank_core.models import (
     DeviceRegisterRequest,
 )
 from bank_core.payments import (
-    _ensure_account,
+    ensure_account,
 )
 from security import (
     SecurityError,
@@ -47,13 +47,13 @@ def register_device(
     when a session is presented, so the two cannot disagree here.
     """
 
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     if not x_session_token:
         raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "设备注册必须出示会话凭证"})
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
     try:
-        _ensure_account(x_user_id)
+        ensure_account(x_user_id)
         summary = enroll_device(
             req.public_key,
             user_id=x_user_id,
@@ -63,7 +63,7 @@ def register_device(
             request_id=request_id,
         )
     except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=x_user_id, action="DEVICE_REGISTER", request_id=request_id)
+        record_failure_and_raise(exc, user_id=x_user_id, action="DEVICE_REGISTER", request_id=request_id)
     return {"code": 200, **summary}
 
 
@@ -76,12 +76,12 @@ def get_devices(x_session_token: Optional[str] = Header(None, alias="X-Session-T
     or revocable, below - from a self-asserted identity header alone.
     """
 
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     if not x_session_token:
         raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "设备查询必须出示会话凭证"})
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    actor = _get_actor(x_user_id, x_user_id, action="DEVICE_QUERY", request_id=request_id)
+    actor = get_actor(x_user_id, x_user_id, action="DEVICE_QUERY", request_id=request_id)
     rows = list_devices(actor)
     audit_event("DEVICE_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
     return {"code": 200, "data": rows}
@@ -96,14 +96,14 @@ def revoke_registered_device(device_id: str, x_session_token: Optional[str] = He
     security response, not a profile edit.
     """
 
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     if not x_session_token:
         raise HTTPException(status_code=401, detail={"code": "SESSION_REQUIRED", "message": "设备吊销必须出示会话凭证"})
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    actor = _get_actor(x_user_id, x_user_id, action="DEVICE_REVOKE", request_id=request_id)
+    actor = get_actor(x_user_id, x_user_id, action="DEVICE_REVOKE", request_id=request_id)
     try:
         summary = revoke_device(device_id, user_id=actor, request_id=request_id)
     except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=actor, action="DEVICE_REVOKE", request_id=request_id)
+        record_failure_and_raise(exc, user_id=actor, action="DEVICE_REVOKE", request_id=request_id)
     return {"code": 200, **summary}

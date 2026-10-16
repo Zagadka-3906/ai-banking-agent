@@ -54,14 +54,14 @@ def test_comparison_ordinal_uses_the_literal_comparison_order(dialogue):
 
 
 def test_singular_holding_reference_is_resolved_but_multiple_holdings_are_not():
-    parsed = agent._local_parse("把这个产品全部赎回")
+    parsed = agent.local_parse("把这个产品全部赎回")
     prior = {"intent": "WEALTH_HOLDINGS", "product_ids": []}
     result = {"type": "WEALTH_HOLDINGS", "data": {"data": [{"product_id": "CJ01002", "principal": 100}]}}
-    resolved = agent._resolve_ellipsis(parsed, prior, "把这个产品全部赎回", result)
+    resolved = agent.resolve_ellipsis(parsed, prior, "把这个产品全部赎回", result)
     assert resolved["target"] == "CJ01002"
     assert resolved["slots"]["redeem_all"] is True
     result["data"]["data"].append({"product_id": "AY90204", "principal": 1000})
-    assert agent._resolve_ellipsis(parsed, prior, "把这个产品全部赎回", result)["target"] is None
+    assert agent.resolve_ellipsis(parsed, prior, "把这个产品全部赎回", result)["target"] is None
 
 
 def test_holding_reference_survives_the_gateway_new_turn_reset(dialogue):
@@ -76,9 +76,9 @@ def test_holding_reference_survives_the_gateway_new_turn_reset(dialogue):
 
 
 def test_literal_ordinal_overrides_only_model_confidence_not_product_facts():
-    parsed = {**agent._local_parse("那买前一个50元"), "confidence": 0.4}
+    parsed = {**agent.local_parse("那买前一个50元"), "confidence": 0.4}
     prior = {"intent": "WEALTH_COMPARE", "product_ids": ["CJ01002", "AY90204"]}
-    result = agent._resolve_ellipsis(parsed, prior, "那买前一个50元")
+    result = agent.resolve_ellipsis(parsed, prior, "那买前一个50元")
     assert result["target"] == "CJ01002" and result["confidence"] is None
 
 
@@ -142,4 +142,4 @@ def test_short_birthday_purchase_followup_does_not_claim_purchase(dialogue):
 def test_no_suspicious_transactions_is_not_reported_as_multiple(dialogue):
     main.TRANSACTIONS[:] = []
     with pytest.raises(main.SecurityError, match="未找到"):
-        main._fraud_transaction("user_zhang")
+        main.fraud_transaction("user_zhang")

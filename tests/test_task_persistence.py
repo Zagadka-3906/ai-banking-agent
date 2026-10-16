@@ -112,7 +112,7 @@ def test_task_actions_are_durable(durable, action, status):
     assert main.TASK_STORE.get(task_id).status == status
     if action == "cancel":
         assert main.SCHEDULED_TRANSFERS[0]["status"] == "CANCELLED"
-        assert main._pending_transfer_amount("user_zhang") == 0
+        assert main.pending_transfer_amount("user_zhang") == 0
 
 
 def test_renewal_reminder_creation_is_durable_and_deduplicated(durable):
@@ -172,7 +172,7 @@ def test_concurrent_failed_request_cannot_detach_settlement_accounts(durable, mo
 
     resolved = threading.Event()
     resume = threading.Event()
-    resolve_target = main._resolve_target
+    resolve_target = main.resolve_payee
 
     def pause_after_reading_payee(*args, **kwargs):
         result = resolve_target(*args, **kwargs)
@@ -183,8 +183,8 @@ def test_concurrent_failed_request_cannot_detach_settlement_accounts(durable, mo
 
     # Patch every module that resolves payees, as the single-module patch did.
     for module in list(sys.modules.values()):
-        if getattr(module, "__name__", "").startswith("bank_core") and getattr(module, "_resolve_target", None) is resolve_target:
-            monkeypatch.setattr(module, "_resolve_target", pause_after_reading_payee)
+        if getattr(module, "__name__", "").startswith("bank_core") and getattr(module, "resolve_payee", None) is resolve_target:
+            monkeypatch.setattr(module, "resolve_payee", pause_after_reading_payee)
     with ThreadPoolExecutor(max_workers=2) as pool:
         execution = pool.submit(client.post, execute_url, json={**body, "auth_token": token},
                                 headers={**HEADERS, "X-Auth-Token": token, "Idempotency-Key": "concurrent-settlement"})

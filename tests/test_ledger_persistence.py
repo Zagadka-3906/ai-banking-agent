@@ -95,7 +95,7 @@ def test_operation_receipt_survives_restart_and_remains_owner_scoped(client, sto
     assert "auth_token" not in json.dumps(main.OPERATION_RECEIPTS)
     from security import SecurityError
     with pytest.raises(SecurityError) as conflict:
-        main._idempotency_begin("user_zhang", "transfer_execute", operation, {"amount": 999}, request_id="replay-mismatch")
+        main.idempotency_begin("user_zhang", "transfer_execute", operation, {"amount": 999}, request_id="replay-mismatch")
     assert conflict.value.code == "IDEMPOTENCY_KEY_REUSE"
     assert receipt_entry["fingerprint"]
     foreign = client.get(f"/api/v1/operations/{operation}?endpoint=transfer_execute", headers={"X-User-Id": "user_li"}).json()

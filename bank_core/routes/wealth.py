@@ -9,20 +9,20 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from bank_core.access import (
-    _get_actor,
-    _record_failure_and_raise,
-    _request_id,
+    get_actor,
+    record_failure_and_raise,
+    server_request_id,
 )
 from bank_core.idempotency import (
-    _idempotency_abort,
-    _idempotency_begin,
-    _idempotency_complete,
+    idempotency_abort,
+    idempotency_begin,
+    idempotency_complete,
 )
 from bank_core.models import (
     RiskAssessmentRequest,
 )
 from bank_core.payments import (
-    _ensure_account,
+    ensure_account,
 )
 from bank_core.persistence import (
     persist_ledger,
@@ -34,7 +34,7 @@ from bank_core.wealth_data import (
     WEALTH_HOLDINGS,
     WEALTH_PRODUCTS,
     WEALTH_RISK_PROFILES,
-    _wealth_product_view,
+    wealth_product_view,
     profile_rank,
     record_risk_assessment,
     risk_assessment_attempts,
@@ -57,18 +57,18 @@ def get_wealth_products(user_id: Optional[str] = None, x_user_id: Optional[str] 
     requested = user_id or x_user_id
     if not requested:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(requested, x_user_id, action="WEALTH_QUERY", request_id=request_id)
-    _ensure_account(requested)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(requested, x_user_id, action="WEALTH_QUERY", request_id=request_id)
+    ensure_account(requested)
     audit_event("WEALTH_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id)
-    return {"code": 200, "data": [_wealth_product_view(product) for product in WEALTH_PRODUCTS]}
+    return {"code": 200, "data": [wealth_product_view(product) for product in WEALTH_PRODUCTS]}
 
 
 @router.get("/api/v1/wealth/holdings/{user_id}")
 def get_wealth_holdings(user_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(user_id, x_user_id, action="WEALTH_HOLDINGS_QUERY", request_id=request_id)
-    _ensure_account(user_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="WEALTH_HOLDINGS_QUERY", request_id=request_id)
+    ensure_account(user_id)
     rows = [dict(row) for row in WEALTH_HOLDINGS.get(user_id, [])]
     audit_event("WEALTH_HOLDINGS_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
     return {"code": 200, "data": rows}
@@ -79,9 +79,9 @@ def recommend_wealth(user_id: Optional[str] = None, risk_profile: Optional[str] 
     requested = user_id or x_user_id
     if not requested:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(requested, x_user_id, action="WEALTH_RECOMMEND", request_id=request_id)
-    _ensure_account(requested)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(requested, x_user_id, action="WEALTH_RECOMMEND", request_id=request_id)
+    ensure_account(requested)
     stored_profile = (WEALTH_RISK_PROFILES.get(requested) or {}).get("risk_profile")
     profile = str(risk_profile or stored_profile or "CONSERVATIVE").upper()
     if profile not in {"CONSERVATIVE", "BALANCED", "AGGRESSIVE", "C1", "C2", "C3", "C4", "C5"}:
@@ -89,7 +89,7 @@ def recommend_wealth(user_id: Optional[str] = None, risk_profile: Optional[str] 
     max_risk = profile_rank(profile) or 1
     products = [p for p in WEALTH_PRODUCTS if int(str(p.get("risk_level", "R3")).lstrip("R")) <= max_risk]
     audit_event("WEALTH_RECOMMEND", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"risk_profile": profile, "count": len(products)})
-    return {"code": 200, "risk_profile": profile, "risk_profile_label": PROFILE_LABELS.get(profile, profile), "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [_wealth_product_view(p) for p in products]}
+    return {"code": 200, "risk_profile": profile, "risk_profile_label": PROFILE_LABELS.get(profile, profile), "disclaimer": "推荐仅基于演示资料，不构成投资建议。", "data": [wealth_product_view(p) for p in products]}
 
 
 # The stored suitability profile is written with the questionnaire's raw score
@@ -128,9 +128,9 @@ def get_risk_profile(x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 
     if not x_user_id:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(x_user_id, x_user_id, action="WEALTH_QUERY", request_id=request_id)
-    _ensure_account(actor)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(x_user_id, x_user_id, action="WEALTH_QUERY", request_id=request_id)
+    ensure_account(actor)
     profile = risk_profile_view(WEALTH_RISK_PROFILES.get(actor))
     attempts = risk_assessment_attempts(actor)
     audit_event("WEALTH_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"source": "risk_profile", "present": profile is not None})
@@ -157,13 +157,13 @@ def wealth_risk_assessment(
     the investor - they see the type, its traits and the matching levels.
     """
 
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(req.user_id, x_user_id, action="WEALTH_RISK_ASSESSMENT", request_id=request_id)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(req.user_id, x_user_id, action="WEALTH_RISK_ASSESSMENT", request_id=request_id)
     quiz_mode = isinstance(req.answers, dict) and len(req.answers) > 0
     grade: str
     profile_payload: dict[str, Any]
     try:
-        _ensure_account(req.user_id)
+        ensure_account(req.user_id)
         if quiz_mode:
             answers_norm: dict[str, str] = {}
             for number in map(str, range(1, 9)):
@@ -228,15 +228,15 @@ def wealth_risk_assessment(
         attempts = risk_assessment_attempts(req.user_id)
         if not attempts["allowed"]:
             raise SecurityError(attempts["message"], 429, "ASSESSMENT_LIMIT_REACHED")
-        cached = _idempotency_begin(actor, "wealth_risk_assessment", idempotency_key, idem_payload, request_id=request_id)
+        cached = idempotency_begin(actor, "wealth_risk_assessment", idempotency_key, idem_payload, request_id=request_id)
         if cached is not None:
             return cached
         with STATE_LOCK:
             WEALTH_RISK_PROFILES[req.user_id] = profile_payload
         record_risk_assessment(req.user_id)
     except SecurityError as exc:
-        _idempotency_abort(actor, "wealth_risk_assessment", idempotency_key)
-        _record_failure_and_raise(exc, user_id=actor, action="WEALTH_RISK_ASSESSMENT", request_id=request_id)
+        idempotency_abort(actor, "wealth_risk_assessment", idempotency_key)
+        record_failure_and_raise(exc, user_id=actor, action="WEALTH_RISK_ASSESSMENT", request_id=request_id)
     if quiz_mode:
         type_name, traits, levels = RISK_GRADE_META[grade]
         # The score stays on file; the investor sees the type and its meaning.
@@ -255,7 +255,7 @@ def wealth_risk_assessment(
             "horizon_years": int(req.horizon_years),
             "disclaimer": "风险评估仅供演示，不构成投资建议。",
         }
-    _idempotency_complete(actor, "wealth_risk_assessment", idempotency_key, idem_payload, response)
+    idempotency_complete(actor, "wealth_risk_assessment", idempotency_key, idem_payload, response)
     persist_ledger()
     audit_event("WEALTH_RISK_ASSESSMENT", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"profile": grade, "mode": "questionnaire" if quiz_mode else "legacy"})
     return response
@@ -273,9 +273,9 @@ def compare_wealth(
     requested = user_id or x_user_id
     if not requested:
         raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
-    request_id = _request_id(x_request_id)
-    actor = _get_actor(requested, x_user_id, action="WEALTH_COMPARE", request_id=request_id)
-    _ensure_account(requested)
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(requested, x_user_id, action="WEALTH_COMPARE", request_id=request_id)
+    ensure_account(requested)
     values = [sanitize_text(item, field="理财产品编号", max_length=64).upper() for item in str(product_ids or "").split(",") if str(item).strip()]
     if len(values) < 2 or len(values) > 10 or len(set(values)) != len(values):
         raise HTTPException(status_code=400, detail={"code": "INVALID_PRODUCTS", "message": "产品对比至少需要两个不同的产品编号"})
@@ -284,6 +284,6 @@ def compare_wealth(
         product = next((item for item in WEALTH_PRODUCTS if item.get("product_id") == product_id), None)
         if not product:
             raise HTTPException(status_code=404, detail={"code": "PRODUCT_NOT_FOUND", "message": "理财产品不存在"})
-        rows.append(_wealth_product_view(product))
+        rows.append(wealth_product_view(product))
     audit_event("WEALTH_COMPARE", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"product_count": len(rows)})
     return {"code": 200, "disclaimer": "对比仅基于演示资料，不构成投资建议。", "data": rows}

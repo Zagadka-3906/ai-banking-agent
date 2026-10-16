@@ -32,19 +32,19 @@ from bank_agent.runtime import (  # noqa: F401
     report_security_signal,
 )
 from bank_agent.extraction import (  # noqa: F401
-    _amount_from_text,
-    _target_from_text,
+    amount_from_text,
+    target_from_text,
 )
 from bank_agent.parsing import (  # noqa: F401
     BILL_CATEGORY_ALIASES,
-    _local_parse,
-    _model_parse,
+    local_parse,
+    model_parse,
 )
 from bank_agent.settlement import (  # noqa: F401
-    _advance_plan,
+    advance_plan,
 )
 from bank_agent.dialogue import (  # noqa: F401
-    _resolve_ellipsis,
+    resolve_ellipsis,
 )
 from bank_agent.nodes.intent import (  # noqa: F401
     intent_parser_node,

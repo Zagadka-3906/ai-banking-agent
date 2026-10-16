@@ -12,7 +12,7 @@ from bank_security.config import (
     LOCKOUT_SECONDS,
     MAX_FAILURES,
     STATE_LOCK,
-    _env_int,
+    env_int,
 )
 from bank_security.errors import SecurityError
 from bank_security.sanitize import redact
@@ -141,10 +141,10 @@ def record_security_success(user_id: Optional[str]) -> None:
 # score above the threshold opens the same per-principal lockout used by the
 # failure breaker (423 + Retry-After) with an auditable reason.
 # ---------------------------------------------------------------------------
-BEHAVIOR_WINDOW_SECONDS = _env_int("BANK_BEHAVIOR_WINDOW_SECONDS", 600, 60, 3600)
-BEHAVIOR_RISK_THRESHOLD = _env_int("BANK_BEHAVIOR_RISK_THRESHOLD", 80, 10, 1000)
-BEHAVIOR_LARGE_AMOUNT_CENTS = _env_int("BANK_BEHAVIOR_LARGE_AMOUNT_CENTS", 200_000, 100, 10_000_000_000)
-BEHAVIOR_MAX_SIGNALS = _env_int("BANK_BEHAVIOR_MAX_SIGNALS", 200, 20, 5000)
+BEHAVIOR_WINDOW_SECONDS = env_int("BANK_BEHAVIOR_WINDOW_SECONDS", 600, 60, 3600)
+BEHAVIOR_RISK_THRESHOLD = env_int("BANK_BEHAVIOR_RISK_THRESHOLD", 80, 10, 1000)
+BEHAVIOR_LARGE_AMOUNT_CENTS = env_int("BANK_BEHAVIOR_LARGE_AMOUNT_CENTS", 200_000, 100, 10_000_000_000)
+BEHAVIOR_MAX_SIGNALS = env_int("BANK_BEHAVIOR_MAX_SIGNALS", 200, 20, 5000)
 
 BEHAVIOR_SIGNAL_WEIGHTS: dict[str, int] = {
     "SENSITIVE_SUCCESS": 0,
@@ -212,19 +212,19 @@ BEHAVIOR_STATE: dict[str, dict[str, Any]] = defaultdict(lambda: {"timeline": deq
 def behavior_window_seconds() -> int:
     """Effective signal window (read per call so it stays configurable)."""
 
-    return _env_int("BANK_BEHAVIOR_WINDOW_SECONDS", BEHAVIOR_WINDOW_SECONDS, 60, 3600)
+    return env_int("BANK_BEHAVIOR_WINDOW_SECONDS", BEHAVIOR_WINDOW_SECONDS, 60, 3600)
 
 
 def behavior_risk_threshold() -> int:
     """Effective lockout threshold for the accumulated behaviour score."""
 
-    return _env_int("BANK_BEHAVIOR_RISK_THRESHOLD", BEHAVIOR_RISK_THRESHOLD, 10, 1000)
+    return env_int("BANK_BEHAVIOR_RISK_THRESHOLD", BEHAVIOR_RISK_THRESHOLD, 10, 1000)
 
 
 def behavior_large_amount_cents() -> int:
     """Amount above which a settlement counts as a large-transfer signal."""
 
-    return _env_int("BANK_BEHAVIOR_LARGE_AMOUNT_CENTS", BEHAVIOR_LARGE_AMOUNT_CENTS, 100, 10_000_000_000)
+    return env_int("BANK_BEHAVIOR_LARGE_AMOUNT_CENTS", BEHAVIOR_LARGE_AMOUNT_CENTS, 100, 10_000_000_000)
 
 
 def _purge_behavior(state: dict[str, Any], now: float) -> None:

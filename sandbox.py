@@ -28,7 +28,7 @@ class SandboxError(ValueError):
     """Raised when an expression is outside the read-only sandbox policy."""
 
 
-def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
@@ -46,13 +46,13 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
     return max(minimum, min(value, maximum))
 
 
-MAX_EXPRESSION_LENGTH = _env_int("BANK_SANDBOX_MAX_EXPRESSION", 1000, 64, 10000)
-MAX_INPUT_BYTES = _env_int("BANK_SANDBOX_MAX_INPUT_BYTES", 200000, 1024, 5_000_000)
-MAX_RESULT_BYTES = _env_int("BANK_SANDBOX_MAX_RESULT_BYTES", 200000, 1024, 5_000_000)
-MAX_AST_NODES = _env_int("BANK_SANDBOX_MAX_AST_NODES", 256, 32, 4096)
-MAX_COLLECTION_ITEMS = _env_int("BANK_SANDBOX_MAX_COLLECTION_ITEMS", 1000, 16, 100_000)
-MAX_INTEGER_BITS = _env_int("BANK_SANDBOX_MAX_INTEGER_BITS", 4096, 64, 1_000_000)
-MAX_POWER_EXPONENT = _env_int("BANK_SANDBOX_MAX_POWER_EXPONENT", 10000, 1, 1_000_000)
+MAX_EXPRESSION_LENGTH = env_int("BANK_SANDBOX_MAX_EXPRESSION", 1000, 64, 10000)
+MAX_INPUT_BYTES = env_int("BANK_SANDBOX_MAX_INPUT_BYTES", 200000, 1024, 5_000_000)
+MAX_RESULT_BYTES = env_int("BANK_SANDBOX_MAX_RESULT_BYTES", 200000, 1024, 5_000_000)
+MAX_AST_NODES = env_int("BANK_SANDBOX_MAX_AST_NODES", 256, 32, 4096)
+MAX_COLLECTION_ITEMS = env_int("BANK_SANDBOX_MAX_COLLECTION_ITEMS", 1000, 16, 100_000)
+MAX_INTEGER_BITS = env_int("BANK_SANDBOX_MAX_INTEGER_BITS", 4096, 64, 1_000_000)
+MAX_POWER_EXPONENT = env_int("BANK_SANDBOX_MAX_POWER_EXPONENT", 10000, 1, 1_000_000)
 MAX_VALUE_DEPTH = 32
 MAX_VALUE_NODES = 20_000
 DEFAULT_TIMEOUT_SECONDS = _env_float("BANK_SANDBOX_TIMEOUT_SECONDS", 1.5, 0.1, 10.0)

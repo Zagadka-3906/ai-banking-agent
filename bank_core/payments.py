@@ -11,8 +11,8 @@ from bank_core.cards import (
     card_channels,
     CARD_DAILY_SPENT,
     CARD_DAILY_SPENT_DATE,
-    _find_card,
-    _user_cards,
+    find_card,
+    user_cards,
 )
 from bank_core.ledger import (
     ACCOUNTS,
@@ -32,7 +32,7 @@ from security import (
 )
 
 
-def _resolve_target(value: str, *, from_user: Optional[str] = None) -> tuple[str, dict[str, Any]]:
+def resolve_payee(value: str, *, from_user: Optional[str] = None) -> tuple[str, dict[str, Any]]:
     safe_value = sanitize_text(value, field="收款人", max_length=128)
     # The caller's own contact book is the first payee allow-list.  A name or
     # phone resolves directly; a kinship word ("爱人"/"儿子"/"兄弟"…) resolves
@@ -82,7 +82,7 @@ def _resolve_target(value: str, *, from_user: Optional[str] = None) -> tuple[str
     return target_id, receiver
 
 
-def _ensure_account(user_id: str) -> dict[str, Any]:
+def ensure_account(user_id: str) -> dict[str, Any]:
     account = ACCOUNTS.get(user_id)
     if not account:
         raise SecurityError("账户不存在", 404, "ACCOUNT_NOT_FOUND")
@@ -91,7 +91,7 @@ def _ensure_account(user_id: str) -> dict[str, Any]:
     return account
 
 
-def _daily_spent(user_id: str) -> float:
+def daily_spent(user_id: str) -> float:
     today = datetime.now().strftime("%Y-%m-%d")
     # Initialize the date bucket without discarding a deliberately seeded
     # demo counter; only a known prior date is reset on rollover.
@@ -118,16 +118,16 @@ def _split_shares(total_cents: int, participant_count: int) -> tuple[int, int]:
     return participant_share, initiator_share
 
 
-def _prepare_split_shares(user_id: str, total: float, participants: list[str], target: Optional[str]) -> dict[str, Any]:
+def prepare_split_shares(user_id: str, total: float, participants: list[str], target: Optional[str]) -> dict[str, Any]:
     """Create payment requests; only each participant can authorize a debit."""
 
     total_cents = int(round(total * 100))
     participant_share_cents, initiator_share_cents = _split_shares(total_cents, len(participants))
-    _ensure_account(user_id)
+    ensure_account(user_id)
     rows: list[dict[str, Any]] = []
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for name in participants:
-        target_id, account = _resolve_target(name, from_user=user_id)
+        target_id, account = resolve_payee(name, from_user=user_id)
         share = participant_share_cents / 100.0
         rows.append({"name": name, "account_id": target_id, "display_name": account.get("name"), "share": share, "status": "PENDING", "reason": None})
     outstanding = participant_share_cents * len(participants) / 100.0
@@ -143,7 +143,7 @@ def _prepare_split_shares(user_id: str, total: float, participants: list[str], t
     }
 
 
-def _record_split_payment(*, split_id: str, payer_id: str, recipient_id: str, amount: float, transaction_id: str) -> dict[str, Any]:
+def record_split_payment(*, split_id: str, payer_id: str, recipient_id: str, amount: float, transaction_id: str) -> dict[str, Any]:
     """Reconcile one independently authorized transfer with an AA request."""
 
     split = next((row for row in SPLIT_REQUESTS if row.get("split_id") == split_id), None)
@@ -157,12 +157,12 @@ def _record_split_payment(*, split_id: str, payer_id: str, recipient_id: str, am
     participant.update(status="COLLECTED", transaction_id=transaction_id, collected_at=datetime.now().isoformat())
     split["collected_amount"] = round(float(split["collected_amount"]) + amount, 2)
     split["outstanding_amount"] = round(float(split["outstanding_amount"]) - amount, 2)
-    _refresh_split_status(split)
+    refresh_split_status(split)
     split["collected_at"] = datetime.now().isoformat()
     return split
 
 
-def _refresh_split_status(split: dict[str, Any]) -> None:
+def refresh_split_status(split: dict[str, Any]) -> None:
     shares = split.get("collection", [])
     if all(item.get("status") == "COLLECTED" for item in shares):
         split["status"] = "SETTLED"
@@ -174,14 +174,14 @@ def _refresh_split_status(split: dict[str, Any]) -> None:
         split["status"] = "DECLINED"
 
 
-def _split_id_from_remark(remark: str) -> Optional[str]:
+def split_id_from_remark(remark: str) -> Optional[str]:
     match = re.fullmatch(r"AA:(SPL[A-Z0-9]+)", remark, re.IGNORECASE)
     if not match:
         match = re.search(r"(?:备注|附言)\s*[:：为是]?\s*AA:(SPL[A-Z0-9]+)\s*$", remark, re.IGNORECASE)
     return match.group(1).upper() if match else None
 
 
-def _card_daily_spent(card_id: str) -> float:
+def card_daily_spent(card_id: str) -> float:
     today = datetime.now().strftime("%Y-%m-%d")
     if card_id not in CARD_DAILY_SPENT_DATE:
         CARD_DAILY_SPENT_DATE[card_id] = today
@@ -192,7 +192,7 @@ def _card_daily_spent(card_id: str) -> float:
     return float(CARD_DAILY_SPENT.get(card_id, 0.0))
 
 
-def _payment_card(user_id: str, card_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+def payment_card(user_id: str, card_id: Optional[str] = None) -> Optional[dict[str, Any]]:
     """The single card a payment settles against, validated for status.
 
     One resolution for both halves of the check, because enforcement used to
@@ -206,11 +206,11 @@ def _payment_card(user_id: str, card_id: Optional[str] = None) -> Optional[dict[
     than a guess.
     """
 
-    cards = _user_cards(user_id)
+    cards = user_cards(user_id)
     if not cards:
         return None
     if card_id:
-        card = _find_card(user_id, card_id)
+        card = find_card(user_id, card_id)
         if card is None:
             raise SecurityError("卡片不存在或不属于当前用户", 404, "CARD_NOT_FOUND")
         if str(card.get("status")) != "ACTIVE":
@@ -225,14 +225,14 @@ def _payment_card(user_id: str, card_id: Optional[str] = None) -> Optional[dict[
     return active[0]
 
 
-def _enforce_card_limit(user_id: str, amount: float, *, card: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+def enforce_card_limit(user_id: str, amount: float, *, card: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
     """Refuse a settlement that would exceed the paying card's daily limit.
 
     Returns the card that was checked, which the caller must hand to
-    ``_record_card_spend`` so both halves use one card.
+    ``record_card_spend`` so both halves use one card.
     """
 
-    resolved = card if card is not None else _payment_card(user_id)
+    resolved = card if card is not None else payment_card(user_id)
     if not resolved:
         return None
     limit = resolved.get("daily_limit")
@@ -242,23 +242,23 @@ def _enforce_card_limit(user_id: str, amount: float, *, card: Optional[dict[str,
         limit_value = float(limit)
     except (TypeError, ValueError):
         return resolved
-    spent = _card_daily_spent(str(resolved.get("card_id") or ""))
+    spent = card_daily_spent(str(resolved.get("card_id") or ""))
     if round(spent + amount, 2) > round(limit_value, 2):
         raise SecurityError("超出卡片当日支付限额，请调整额度或明日再试", 400, "CARD_LIMIT_EXCEEDED")
     return resolved
 
 
-def _record_card_spend(user_id: str, amount: float, *, card: Optional[dict[str, Any]] = None) -> None:
-    resolved = card if card is not None else _payment_card(user_id)
+def record_card_spend(user_id: str, amount: float, *, card: Optional[dict[str, Any]] = None) -> None:
+    resolved = card if card is not None else payment_card(user_id)
     if not resolved:
         return
     card_id = str(resolved.get("card_id") or "")
     if not card_id:
         return
-    CARD_DAILY_SPENT[card_id] = round(_card_daily_spent(card_id) + amount, 2)
+    CARD_DAILY_SPENT[card_id] = round(card_daily_spent(card_id) + amount, 2)
 
 
-def _charge_card_and_balance(user_id: str, amount: float, *, card_id: Optional[str] = None, channel: Optional[str] = None) -> dict[str, Any]:
+def charge_card_and_balance(user_id: str, amount: float, *, card_id: Optional[str] = None, channel: Optional[str] = None) -> dict[str, Any]:
     """Enforce the paying card's limit and record the spend, consistently.
 
     Used by every path that actually moves money out of the account (transfer,
@@ -267,10 +267,10 @@ def _charge_card_and_balance(user_id: str, amount: float, *, card_id: Optional[s
     cardholder can switch off (``ONLINE`` for merchant orders).
     """
 
-    card = _payment_card(user_id, card_id)
+    card = payment_card(user_id, card_id)
     if card is None:
         raise SecurityError("付款卡片当前不可用于交易", 423, "CARD_BLOCKED")
     if channel and not card_channels(card)[channel]:
         raise SecurityError(f"该卡已关闭{CARD_CHANNELS[channel]}，请先开通或换用其他卡", 423, "CARD_CHANNEL_DISABLED")
-    checked = _enforce_card_limit(user_id, amount, card=card)
+    checked = enforce_card_limit(user_id, amount, card=card)
     return checked or card

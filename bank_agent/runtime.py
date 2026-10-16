@@ -113,10 +113,10 @@ def report_security_signal(signal: str, *, request_id: Optional[str], source: st
     if response is None or response.status_code >= 400:
         audit_event("SECURITY_SIGNAL", request_id=request_id, decision="ERROR", outcome="UNDELIVERED", reason=signal, metadata={"source": source})
         return False
-    return _response_json(response).get("locked") is True
+    return response_json(response).get("locked") is True
 
 
-def _response_json(response: requests.Response) -> dict[str, Any]:
+def response_json(response: requests.Response) -> dict[str, Any]:
     try:
         data = response.json()
     except ValueError as exc:
@@ -126,7 +126,7 @@ def _response_json(response: requests.Response) -> dict[str, Any]:
     return data
 
 
-def _error_message(response: requests.Response) -> str:
+def error_message(response: requests.Response) -> str:
     try:
         data = response.json()
         detail = data.get("detail", data)

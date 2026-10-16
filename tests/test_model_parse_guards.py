@@ -33,7 +33,7 @@ def model(monkeypatch):
             return SimpleNamespace(content=json.dumps(payload, ensure_ascii=False))
 
         monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=invoke))
-        parsed = validate_intent_payload(agent._model_parse(text))
+        parsed = validate_intent_payload(agent.model_parse(text))
         assert len(calls) == 1, "The model should still participate in extraction"
         return parsed
 
@@ -94,7 +94,7 @@ def test_birthday_without_date_does_not_accept_model_date(model):
 
 def test_explicit_relative_date_and_clock_outrank_model(model):
     text = "下周六下午三点半给李四转账 200 元"
-    expected = agent._local_parse(text)["scheduled_at"]
+    expected = agent.local_parse(text)["scheduled_at"]
     parsed = model(text, target="王美", amount=999, scheduled_at="2099-01-01T09:00:00+08:00")
     assert parsed["scheduled_at"] == expected
     assert "T15:30:00+08:00" in parsed["scheduled_at"]
@@ -131,8 +131,8 @@ def test_model_cannot_replace_aa_participants_or_add_unmentioned_products(model)
 
 def test_model_still_recognizes_new_phrasing_and_explicit_new_contact(model):
     text = "麻烦拨 200 元到赵敏户头"
-    assert agent._local_parse(text)["intent"] == "UNKNOWN"
-    assert agent._local_parse(text)["target"] is None
+    assert agent.local_parse(text)["intent"] == "UNKNOWN"
+    assert agent.local_parse(text)["target"] is None
     parsed = model(text, target="赵敏", amount=200)
     assert (parsed["intent"], parsed["target"], parsed["amount"]) == ("TRANSFER", "赵敏", 200)
     assert missing_slots(parsed) == []
@@ -140,7 +140,7 @@ def test_model_still_recognizes_new_phrasing_and_explicit_new_contact(model):
 
 def test_model_still_recognizes_read_only_paraphrase(model):
     text = "请告诉我账户当前可用的资金数额"
-    assert agent._local_parse(text)["intent"] == "UNKNOWN"
+    assert agent.local_parse(text)["intent"] == "UNKNOWN"
     parsed = model(text, intent="BALANCE_QUERY")
     assert parsed["intent"] == "BALANCE_QUERY"
 
@@ -148,18 +148,18 @@ def test_model_still_recognizes_read_only_paraphrase(model):
 @pytest.mark.parametrize("qualifier", ["预约", "明天"])
 def test_model_recognized_transfer_paraphrase_still_respects_scheduling(model, qualifier):
     text = qualifier + "拨 200 元到赵敏户头"
-    assert agent._local_parse(text)["intent"] == "UNKNOWN"
+    assert agent.local_parse(text)["intent"] == "UNKNOWN"
     parsed = model(text, target="赵敏", amount=200)
     assert parsed["intent"] == "SCHEDULED_TRANSFER"
     if qualifier == "预约":
         assert "scheduled_at" in missing_slots(parsed)
     else:
-        assert parsed["scheduled_at"] == agent._local_parse(text)["scheduled_at"]
+        assert parsed["scheduled_at"] == agent.local_parse(text)["scheduled_at"]
 
 
 def test_model_can_compare_explicit_product_aliases_but_not_invent_another(model):
     text = "日日盈和季季丰各有什么优点"
-    assert agent._local_parse(text)["intent"] == "UNKNOWN"
+    assert agent.local_parse(text)["intent"] == "UNKNOWN"
     parsed = model(text, intent="WEALTH_COMPARE", product_ids=["CJ01002", "AY90204", "QK36509"])
     assert parsed["intent"] == "WEALTH_COMPARE"
     assert parsed["product_ids"] == ["CJ01002", "AY90204"]
@@ -176,4 +176,4 @@ def test_model_may_extract_explicit_disputed_transaction_but_not_invent_it(model
 def test_unavailable_or_malformed_model_falls_back_to_local(monkeypatch):
     text = "给李四转账 10 元"
     monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content="not json")))
-    assert agent._model_parse(text) == agent._local_parse(text)
+    assert agent.model_parse(text) == agent.local_parse(text)

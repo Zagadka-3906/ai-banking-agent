@@ -171,7 +171,7 @@ def test_bare_wealth_entry_lists_products(dialogue):
 
 def test_bare_wealth_recovers_stale_clarification(dialogue):
     dialogue.say("现在有哪些在售理财？")
-    payload = agent._local_parse("理财")
+    payload = agent.local_parse("理财")
     payload.pop("confidence", None)
     thread = conversation.conversation_thread_id(USER, dialogue.case_id)
     conversation.get_graph().update_state(

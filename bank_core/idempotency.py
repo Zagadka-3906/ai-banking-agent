@@ -10,7 +10,7 @@ from copy import deepcopy
 from typing import Any, Optional
 
 from bank_core.access import (
-    _record_failure_and_raise,
+    record_failure_and_raise,
 )
 from bank_core.persistence import (
     OPERATION_RECEIPTS,
@@ -30,12 +30,12 @@ IDEMPOTENCY_TTL_SECONDS = max(300, int(os.getenv("BANK_IDEMPOTENCY_TTL_SECONDS",
 IDEMPOTENCY_MAX_RECORDS = max(100, int(os.getenv("BANK_IDEMPOTENCY_MAX_RECORDS", "10000")))
 
 
-def _idempotency_fingerprint(payload: Any) -> str:
+def idempotency_fingerprint(payload: Any) -> str:
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: Any, *, request_id: str) -> Optional[dict[str, Any]]:
+def idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: Any, *, request_id: str) -> Optional[dict[str, Any]]:
     """Reserve a key, or return a previously completed response.
 
     ``None`` means the caller owns a new reservation.  A pending reservation
@@ -46,11 +46,11 @@ def _idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: A
     try:
         safe_key = sanitize_text(key, field="幂等键", max_length=128)
     except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=actor, action="IDEMPOTENCY", request_id=request_id)
+        record_failure_and_raise(exc, user_id=actor, action="IDEMPOTENCY", request_id=request_id)
     if not safe_key or len(safe_key) < 8:
         exc = SecurityError("幂等键长度不足", 400, "INVALID_IDEMPOTENCY_KEY")
-        _record_failure_and_raise(exc, user_id=actor, action="IDEMPOTENCY", request_id=request_id)
-    fingerprint = _idempotency_fingerprint(payload)
+        record_failure_and_raise(exc, user_id=actor, action="IDEMPOTENCY", request_id=request_id)
+    fingerprint = idempotency_fingerprint(payload)
     now = time.time()
     with STATE_LOCK:
         # Opportunistically expire old entries and cap memory.
@@ -81,7 +81,7 @@ def _idempotency_begin(actor: str, endpoint: str, key: Optional[str], payload: A
     return None
 
 
-def _idempotency_completed_request(actor: str, endpoint: str, key: Optional[str], request_fingerprint: str, *, request_id: str) -> Optional[dict[str, Any]]:
+def idempotency_completed_request(actor: str, endpoint: str, key: Optional[str], request_fingerprint: str, *, request_id: str) -> Optional[dict[str, Any]]:
     """Replay a settled request before mutable business prerequisites change.
 
     The ordinary fingerprint still binds the validated execution context. A
@@ -109,14 +109,14 @@ def _idempotency_completed_request(actor: str, endpoint: str, key: Optional[str]
         return deepcopy(entry["response"])
 
 
-def _idempotency_complete(actor: str, endpoint: str, key: Optional[str], payload: Any, response: dict[str, Any], *, request_fingerprint: Optional[str] = None) -> None:
+def idempotency_complete(actor: str, endpoint: str, key: Optional[str], payload: Any, response: dict[str, Any], *, request_fingerprint: Optional[str] = None) -> None:
     if not key:
         return
     safe_key = sanitize_text(key, field="幂等键", max_length=128)
     scoped = (actor, endpoint, safe_key)
     with STATE_LOCK:
         entry = IDEMPOTENCY_RECORDS.get(scoped)
-        if entry and entry.get("fingerprint") == _idempotency_fingerprint(payload):
+        if entry and entry.get("fingerprint") == idempotency_fingerprint(payload):
             entry.update({"status": "COMPLETED", "response": deepcopy(response), "completed_at": time.time()})
             if request_fingerprint is not None:
                 entry["request_fingerprint"] = request_fingerprint
@@ -130,7 +130,7 @@ def _idempotency_complete(actor: str, endpoint: str, key: Optional[str], payload
                     OPERATION_RECEIPTS.pop(oldest, None)
 
 
-def _idempotency_abort(actor: str, endpoint: str, key: Optional[str]) -> None:
+def idempotency_abort(actor: str, endpoint: str, key: Optional[str]) -> None:
     if not key:
         return
     try:

@@ -158,7 +158,7 @@ def _approval_store_target() -> Optional[str]:
     return f"{db}.approvals.json"
 
 
-def _persist_approvals_locked(approvals: Mapping[str, Approval]) -> None:
+def persist_approvals_locked(approvals: Mapping[str, Approval]) -> None:
     """Write the live approvals atomically.  Caller holds ``self._lock``."""
 
     global _APPROVAL_STORE_BLOCKED

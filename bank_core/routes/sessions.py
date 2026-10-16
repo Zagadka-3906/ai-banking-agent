@@ -8,9 +8,9 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from bank_core.access import (
-    _raise_security,
-    _record_failure_and_raise,
-    _request_id,
+    raise_security,
+    record_failure_and_raise,
+    server_request_id,
 )
 from bank_core.ledger import (
     ACCOUNTS,
@@ -55,32 +55,32 @@ def login(req: LoginRequest, x_request_id: Optional[str] = Header(None, alias="X
     guessing regardless of whether the account exists.
     """
 
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     principal = sanitize_text(req.user_id, field="用户标识", max_length=128)
     if not principal:
         raise HTTPException(status_code=400, detail={"code": "INVALID_SUBJECT", "message": "缺少用户标识"})
     try:
         ensure_circuit_closed(principal)
     except SecurityError as exc:
-        _raise_security(exc)
+        raise_security(exc)
 
     account = ACCOUNTS.get(principal)
     if account is None or account.get("status") != "ACTIVE":
-        _record_failure_and_raise(
+        record_failure_and_raise(
             SecurityError("账号或口令不正确", 401, "INVALID_CREDENTIALS"),
             user_id=principal,
             action="LOGIN",
             request_id=request_id,
         )
     if not verify_password(req.password, account.get("password_hash")):
-        _record_failure_and_raise(
+        record_failure_and_raise(
             SecurityError("账号或口令不正确", 401, "INVALID_CREDENTIALS"),
             user_id=principal,
             action="LOGIN",
             request_id=request_id,
         )
     if _login_otp_required() and not verify_login_otp(req.otp):
-        _record_failure_and_raise(
+        record_failure_and_raise(
             SecurityError("短信验证码不正确", 401, "INVALID_LOGIN_OTP"),
             user_id=principal,
             action="LOGIN",
@@ -139,11 +139,11 @@ def renew_session_endpoint(
     expired one is refused before it reaches here and must log in again.
     """
 
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     try:
         result = renew_session(x_session_token, request_id=request_id)
     except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=x_user_id, action="SESSION_RENEW", request_id=request_id)
+        record_failure_and_raise(exc, user_id=x_user_id, action="SESSION_RENEW", request_id=request_id)
     return {"code": 200, **result}
 
 
@@ -161,9 +161,9 @@ def logout(
     logins remain active. Credential rotation revokes every login instead.
     """
 
-    request_id = _request_id(x_request_id)
+    request_id = server_request_id(x_request_id)
     try:
         result = revoke_session(x_session_token, request_id=request_id)
     except SecurityError as exc:
-        _record_failure_and_raise(exc, user_id=x_user_id, action="LOGOUT", request_id=request_id)
+        record_failure_and_raise(exc, user_id=x_user_id, action="LOGOUT", request_id=request_id)
     return {"code": 200, "status": "LOGGED_OUT", "user_id": result["user_id"]}

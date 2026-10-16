@@ -40,7 +40,7 @@ from bank_agent.conversation_base import (  # noqa: F401
 )
 from bank_agent.approval_store import (  # noqa: F401
     Approval,
-    _persist_approvals_locked,
+    persist_approvals_locked,
 )
 
 
@@ -97,7 +97,7 @@ class ApprovalsMixin:
         )
         with self._lock:
             self._approvals[approval.approval_id] = approval
-            _persist_approvals_locked(self._approvals)
+            persist_approvals_locked(self._approvals)
         audit_event(
             "CHANNEL_APPROVAL_ISSUED",
             user_id=principal,
@@ -114,7 +114,7 @@ class ApprovalsMixin:
         return self._stream_operation(lambda: self.resolve_approval(**kwargs), principal=kwargs["principal"])
 
     def reconcile_operation(self, *, principal: str, conversation_id: str, operation_id: str, session_token: Optional[str] = None) -> dict[str, Any]:
-        from agent import _advance_plan, responder_node
+        from agent import advance_plan, responder_node
         thread_id = conversation_thread_id(principal, conversation_id)
         graph = self._graph()
         config = self._config(thread_id)
@@ -136,7 +136,7 @@ class ApprovalsMixin:
             if checked.get("business_status") == "FAILED":
                 return self._envelope_from_state(conversation_id=conversation_id, state=state, request_id=None)
             graph.update_state(config, {"execution_result": result, "execution_results": None, "final_response": None,
-                                       "business_status": None, "plan": _advance_plan(state, str(state.get("intent")), outcome="SUCCESS")}, as_node="executor")
+                                       "business_status": None, "plan": advance_plan(state, str(state.get("intent")), outcome="SUCCESS")}, as_node="executor")
             with channel_session(session_token):
                 graph.invoke(None, config)
             envelope = self._settle_turn(principal=principal, conversation_id=conversation_id, thread_id=thread_id,
@@ -296,7 +296,7 @@ class ApprovalsMixin:
 
         approval.resolved = True
         with self._lock:
-            _persist_approvals_locked(self._approvals)
+            persist_approvals_locked(self._approvals)
 
     def _require_approval(self, principal: str, approval_id: str) -> Approval:
         self._purge()
