@@ -338,5 +338,76 @@
         }
       }
     ]
+  },
+  {
+    "id": "U01",
+    "direction": "回退",
+    "turns": [
+      {
+        "input": "明天上午十点给李四转100元",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "SCHEDULED_TRANSFER",
+            "amount": 100,
+            "target": "李四"
+          },
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": 0,
+          "reply_any": [
+            "预约"
+          ]
+        }
+      },
+      {
+        "input": "撤销刚才那笔预约",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "UNDO_OPERATION"
+          },
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": 0,
+          "reply_any": [
+            "已撤销"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "CH01",
+    "direction": "卡片交易渠道",
+    "turns": [
+      {
+        "input": "关闭境外交易",
+        "expect": {
+          "approval": true,
+          "parsed": {
+            "intent": "CARD_CHANNEL"
+          },
+          "unchanged": true
+        }
+      },
+      {
+        "action": "approve",
+        "expect": {
+          "balance_delta": 0,
+          "reply_any": [
+            "已关闭"
+          ]
+        }
+      }
+    ]
   }
 ]
