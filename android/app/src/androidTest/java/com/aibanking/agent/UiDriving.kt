@@ -99,3 +99,23 @@ private fun ComposeContentTestRule.inputCleared(): Boolean {
 internal fun ComposeContentTestRule.chatInputText(): String? =
     onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().firstOrNull()
         ?.config?.getOrNull(SemanticsProperties.EditableText)?.text
+
+/**
+ * Open a destination from the side drawer (cards, wealth, contacts, tasks,
+ * devices, logout). From a full-screen page the drawer button is not shown, so
+ * go back to the conversation first, as a user would.
+ */
+internal fun ComposeContentTestRule.openFromDrawer(tag: String, timeoutMs: Long = 10_000) {
+    // A detail page (wealth product, contact) needs two steps back to the conversation.
+    repeat(3) {
+        if (onAllNodesWithTag(UiTags.OPEN_DRAWER).fetchSemanticsNodes().isEmpty()) {
+            Espresso.pressBack()
+            waitForIdle()
+        }
+    }
+    waitUntil(timeoutMs) { onAllNodesWithTag(UiTags.OPEN_DRAWER).fetchSemanticsNodes().isNotEmpty() }
+    onNodeWithTag(UiTags.OPEN_DRAWER).performClick()
+    waitForIdle()
+    onNodeWithTag(tag).assertIsDisplayed().performClick()
+    waitForIdle()
+}

@@ -60,7 +60,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -92,7 +94,6 @@ import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
 import com.aibanking.agent.ui.components.BankSticker
 import com.aibanking.agent.ui.components.BankTextButton
-import com.aibanking.agent.ui.components.bankHardShadow
 import com.aibanking.agent.ui.components.bankTextFieldColors
 import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
@@ -163,10 +164,10 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showAdd = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.bankHardShadow(RoundedCornerShape(12.dp)).border(BankPalette.borderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)).testTag(UiTags.CARD_OPEN_ADD),
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.testTag(UiTags.CARD_OPEN_ADD),
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("添加银行卡") },
             )
@@ -274,9 +275,8 @@ private fun CardsSkeleton() {
 private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: Modifier = Modifier, onOpen: () -> Unit = {}) {
     BankCard(
         modifier = modifier.fillMaxWidth().testTag("${UiTags.CARD_DETAIL}:${card.cardId}").clickable(onClick = onOpen),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         CardFace(card)
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -306,14 +306,18 @@ private fun CardFace(card: CardView) {
         "FROZEN" -> semantic.cardFrozen
         else -> if (card.type.contains("虚拟") || card.type.contains("VIRTUAL", ignoreCase = true)) semantic.cardVirtual else semantic.cardActive
     }
-    val foreground = if (base == BankPalette.Ink) Color.White else BankPalette.Ink
+    val dark = base.luminance() < 0.4f
+    val foreground = if (dark) Color.White else BankPalette.Ink
+    // Active debit cards get a deep blue-to-violet face; other states keep their tonal colour.
+    val face = if (base == semantic.cardActive) Brush.linearGradient(listOf(Color(0xFF1B2A4A), Color(0xFF3B2F6B), Color(0xFF6B3F73)))
+        else Brush.linearGradient(listOf(base, base))
     Box(
         Modifier.fillMaxWidth()
-            .background(base)
+            .background(face)
             .padding(24.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            BankSticker("ANYAN · BANKING")
+            Text("ANYAN · BANKING", color = foreground.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.5.sp)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text("安言 AI 银行", color = foreground, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -330,7 +334,7 @@ private fun CardFace(card: CardView) {
                 Box(
                     Modifier.size(width = 34.dp, height = 26.dp)
                         .clip(RoundedCornerShape(7.dp))
-                        .background(BankPalette.Yellow).border(BankPalette.borderWidth, BankPalette.Ink, RoundedCornerShape(7.dp)),
+                        .background(Color(0xFFF6D365)),
                     contentAlignment = Alignment.Center,
                 ) {
                     BankIcon(BankIconKind.Card, Modifier.size(22.dp), tint = BankPalette.Ink)

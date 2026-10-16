@@ -33,7 +33,7 @@ class ScenarioTaskLifecycleUiTest {
         ui.activityRule.scenario.onActivity { model = ViewModelProvider(it)[ChatViewModel::class.java] }
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.LOGOUT).fetchSemanticsNodes().isNotEmpty() ||
             ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty() }
-        if (ui.onAllNodesWithTag(UiTags.LOGOUT).fetchSemanticsNodes().isNotEmpty()) ui.onNodeWithTag(UiTags.LOGOUT).performClick()
+        if (ui.onAllNodesWithTag(UiTags.LOGOUT).fetchSemanticsNodes().isNotEmpty()) ui.openFromDrawer(UiTags.LOGOUT)
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty() }
         control(18810, "reset", JSONObject())
         control(18800, "reset", JSONObject())
@@ -134,7 +134,7 @@ class ScenarioTaskLifecycleUiTest {
     }
 
     private fun openTasks() {
-        ui.onNodeWithTag(UiTags.OPEN_TASKS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_TASKS)
         ui.waitUntil(20_000) { model.state.value.showTasks && !model.state.value.panelBusy && model.state.value.tasks.isNotEmpty() }
         ui.onNodeWithText("待办任务").assertIsDisplayed()
     }

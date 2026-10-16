@@ -21,6 +21,8 @@ object UiTags {
 
     const val OPEN_DEVICES = "open_devices"
     const val OPEN_TASKS = "open_tasks"
+    const val OPEN_DRAWER = "open_drawer"
+    const val NAV_DRAWER = "nav_drawer"
     const val OPEN_CONTACTS = "open_contacts"
     const val OPEN_CARDS = "open_cards"
     const val CARD_OPEN_ADD = "card_open_add"

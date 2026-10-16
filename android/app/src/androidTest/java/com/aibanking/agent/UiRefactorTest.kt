@@ -72,7 +72,7 @@ class UiRefactorSmokeTest {
 
     @Test fun contact_form_search_and_transfer_shortcut_work_together() {
         ui.ensureLoggedIn("Bank@2026")
-        ui.onNodeWithTag(UiTags.OPEN_CONTACTS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_CONTACTS)
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.CONTACT_SEARCH).fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag(UiTags.CONTACT_OPEN_ADD).performClick()
         ui.waitUntil(20_000) { runCatching { ui.onNodeWithText("姓名").assertIsEnabled() }.isSuccess }
@@ -95,7 +95,7 @@ class UiRefactorSmokeTest {
 
     @Test fun all_destinations_remain_reachable_and_preserve_the_chat_draft() {
         ui.ensureLoggedIn("Bank@2026")
-        ui.onNodeWithTag(UiTags.LOGOUT).performClick()
+        ui.openFromDrawer(UiTags.LOGOUT)
         ui.waitUntil(15_000) { ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty() }
         screenshot("01-login")
         ui.ensureLoggedIn("Bank@2026")
@@ -109,23 +109,23 @@ class UiRefactorSmokeTest {
         ui.waitUntil(5_000) { ui.onAllNodesWithTag(UiTags.OPEN_CARDS).fetchSemanticsNodes().isNotEmpty() }
         ui.waitForIdle()
         Thread.sleep(450)
-        ui.onNodeWithTag(UiTags.OPEN_CARDS).assertIsDisplayed().performClick()
+        ui.openFromDrawer(UiTags.OPEN_CARDS)
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.CARD_LIST).fetchSemanticsNodes().isNotEmpty() }
         screenshot("03-cards")
-        ui.onNodeWithTag(UiTags.OPEN_WEALTH).performClick()
+        ui.openFromDrawer(UiTags.OPEN_WEALTH)
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.WEALTH_LIST).fetchSemanticsNodes().isNotEmpty() }
         screenshot("04-wealth")
         ui.onNodeWithTag(UiTags.WEALTH_LIST).performScrollToNode(hasTestTag(UiTags.wealthProduct("ZY18031")))
         ui.onNodeWithTag(UiTags.wealthProduct("ZY18031")).performClick()
         ui.onNodeWithTag(UiTags.WEALTH_DETAIL).assertExists()
         screenshot("05-wealth-detail")
-        ui.onNodeWithTag(UiTags.OPEN_CONTACTS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_CONTACTS)
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.CONTACT_SEARCH).fetchSemanticsNodes().isNotEmpty() }
         screenshot("06-contacts")
-        ui.onNodeWithTag("open_assistant").performClick()
+        ui.openFromDrawer("open_assistant")
         ui.waitUntil(10_000) { ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty() }
         assertEquals("查一下余额", ui.chatInputText())
-        ui.onNodeWithTag(UiTags.OPEN_DEVICES).performClick()
+        ui.openFromDrawer(UiTags.OPEN_DEVICES)
         ui.onNodeWithText("已注册设备").assertExists()
         screenshot("07-devices")
     }

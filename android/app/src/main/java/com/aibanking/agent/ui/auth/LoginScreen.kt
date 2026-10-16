@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.BankSpacing
-import com.aibanking.agent.ui.theme.BankPalette
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 
 @Composable
 fun RestoringScreen() {
@@ -43,12 +43,7 @@ fun RestoringScreen() {
 
 @Composable
 private fun BrandMark() {
-    Box(
-        Modifier.size(56.dp).bankHardShadow(MaterialTheme.shapes.large).clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.primary).border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.large),
-        contentAlignment = Alignment.Center,
-    ) {
-        BankBrandMark(Modifier.size(30.dp), tint = MaterialTheme.colorScheme.onPrimary)
-    }
+    BankGradientMark(Modifier.size(44.dp))
 }
 
 @Composable
@@ -80,17 +75,14 @@ fun LoginScreen(
                 .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(28.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Column(Modifier.padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 BrandMark()
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("安言 AI 银行", style = MaterialTheme.typography.titleLarge)
-                    Text("ANYAN · 您的智能金融伙伴", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            BankHeroCard {
-                BankSticker("您的 AI 银行智能管家")
-                Text("让每一笔，\n都心中有数。", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-                Text("从一句话开始，轻松管理日常财务。", style = MaterialTheme.typography.bodyMedium)
+                Text("安言 AI 银行 · 您的智能金融伙伴", style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("让每一笔，\n都心中有数。",
+                    style = MaterialTheme.typography.displaySmall.copy(brush = LocalBankSemanticColors.current.brandGradient))
+                Text("从一句话开始，轻松管理日常财务。", style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             BankSectionCard {
                 Column(Modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {

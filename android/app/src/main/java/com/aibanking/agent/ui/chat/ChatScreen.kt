@@ -4,6 +4,14 @@ import android.os.SystemClock
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,6 +29,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
@@ -53,6 +64,7 @@ import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -103,48 +115,61 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         else -> AppPage.CHAT
     }
 
-    // Leave more space for the editor while the keyboard is open.
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            if (!WindowInsets.isImeVisible) {
-                BankBottomNavigation(
-                    currentPage = page,
-                    onSelectPage = { targetPage ->
-                        when (targetPage) {
-                            AppPage.CHAT -> viewModel.dismissPanels()
-                            AppPage.CARDS -> viewModel.openCards()
-                            AppPage.WEALTH -> viewModel.openWealth()
-                            AppPage.CONTACTS -> viewModel.openContacts()
-                        }
-                    },
-                )
-            }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
+    fun closeDrawerThen(action: () -> Unit) {
+        drawerScope.launch { drawerState.close() }
+        action()
+    }
+    BackHandler(enabled = drawerState.isOpen) { drawerScope.launch { drawerState.close() } }
+    // Conversation first: every other destination lives in the side drawer.
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = page == AppPage.CHAT || drawerState.isOpen,
+        drawerContent = {
+            BankNavigationDrawer(
+                currentPage = page,
+                principal = state.principal,
+                onChat = { closeDrawerThen(viewModel::dismissPanels) },
+                onCards = { closeDrawerThen(viewModel::openCards) },
+                onWealth = { closeDrawerThen(viewModel::openWealth) },
+                onContacts = { closeDrawerThen(viewModel::openContacts) },
+                onTasks = { closeDrawerThen(viewModel::openTasks) },
+                onDevices = { closeDrawerThen(viewModel::openDevices) },
+                onLogout = { closeDrawerThen(viewModel::logout) },
+            )
         },
-    ) { outerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = outerPadding.calculateBottomPadding()),
-        ) {
-            PredictiveBackPreview(
-                enabled = page != AppPage.CHAT,
-                onBack = viewModel::dismissPanels,
-                beneath = { ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis) },
+    ) {
+        Scaffold(
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            snackbarHost = { SnackbarHost(snackbar) },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) { outerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = outerPadding.calculateBottomPadding())
+                    .navigationBarsPadding(),
             ) {
-                AnimatedContent(
-                    targetState = page,
-                    transitionSpec = { pageSlideSpec(AppPage::ordinal) },
-                    modifier = Modifier.fillMaxSize(),
-                    label = "appPage",
-                ) { current ->
-                    Box(Modifier.fillMaxSize()) {
-                        when (current) {
-                            AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis)
-                            AppPage.CARDS -> CardsUi(state, viewModel)
-                            AppPage.WEALTH -> WealthUi(state, viewModel, snackbar)
-                            AppPage.CONTACTS -> ContactsUi(state, viewModel)
+                PredictiveBackPreview(
+                    enabled = page != AppPage.CHAT,
+                    onBack = viewModel::dismissPanels,
+                    beneath = { ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis, onMenu = {}) },
+                ) {
+                    AnimatedContent(
+                        targetState = page,
+                        transitionSpec = { pageSlideSpec(AppPage::ordinal) },
+                        modifier = Modifier.fillMaxSize(),
+                        label = "appPage",
+                    ) { current ->
+                        Box(Modifier.fillMaxSize()) {
+                            when (current) {
+                                AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis,
+                                    onMenu = { drawerScope.launch { drawerState.open() } })
+                                AppPage.CARDS -> CardsUi(state, viewModel)
+                                AppPage.WEALTH -> WealthUi(state, viewModel, snackbar)
+                                AppPage.CONTACTS -> ContactsUi(state, viewModel)
+                            }
                         }
                     }
                 }
@@ -180,47 +205,90 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     }
 }
 
-/** Ink pill navigation with a lavender selection, adapted to our four destinations. */
+private data class DrawerEntry(val label: String, val icon: BankIconKind, val tag: String, val page: AppPage?, val onClick: () -> Unit)
+
+/** Side drawer in the manner of Gemini: brand header, destinations, account footer. */
 @Composable
-private fun BankBottomNavigation(
+private fun BankNavigationDrawer(
     currentPage: AppPage,
-    onSelectPage: (AppPage) -> Unit,
-    modifier: Modifier = Modifier,
+    principal: String,
+    onChat: () -> Unit,
+    onCards: () -> Unit,
+    onWealth: () -> Unit,
+    onContacts: () -> Unit,
+    onTasks: () -> Unit,
+    onDevices: () -> Unit,
+    onLogout: () -> Unit,
 ) {
-    val destinations = listOf(
-        Triple(AppPage.CHAT, "管家", BankIconKind.Chat),
-        Triple(AppPage.CARDS, "卡包", BankIconKind.Card),
-        Triple(AppPage.WEALTH, "理财", BankIconKind.Chart),
-        Triple(AppPage.CONTACTS, "联系人", BankIconKind.People),
-    )
-    Box(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).navigationBarsPadding()
-        .padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(BankPalette.Ink).padding(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            destinations.forEach { (page, label, icon) ->
-                val active = currentPage == page
-                val tag = when (page) {
-                    AppPage.CHAT -> "open_assistant"
-                    AppPage.CARDS -> UiTags.OPEN_CARDS
-                    AppPage.WEALTH -> UiTags.OPEN_WEALTH
-                    AppPage.CONTACTS -> UiTags.OPEN_CONTACTS
-                }
-                Column(
-                    Modifier.weight(1f).clip(RoundedCornerShape(22.dp))
-                        .background(if (active) BankPalette.Wisteria else Color.Transparent)
-                        .semantics { selected = active }
-                        .clickable(role = Role.Tab) { if (!active) onSelectPage(page) }
-                        .testTag(tag).heightIn(min = 48.dp).padding(vertical = 7.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    BankIcon(icon, Modifier.size(18.dp), tint = if (active) BankPalette.Ink else Color.White)
-                    Text(label, style = MaterialTheme.typography.labelMedium,
-                        color = if (active) BankPalette.Ink else Color.White,
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+    ModalDrawerSheet(
+        drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
+        modifier = Modifier.widthIn(max = 320.dp).testTag(UiTags.NAV_DRAWER),
+    ) {
+        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 16.dp)) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BankGradientMark(Modifier.size(28.dp))
+                Text("安言", style = MaterialTheme.typography.titleLarge)
+            }
+            Spacer(Modifier.height(12.dp))
+            val main = listOf(
+                DrawerEntry("对话", BankIconKind.Chat, "open_assistant", AppPage.CHAT, onChat),
+                DrawerEntry("卡包", BankIconKind.Card, UiTags.OPEN_CARDS, AppPage.CARDS, onCards),
+                DrawerEntry("理财", BankIconKind.Chart, UiTags.OPEN_WEALTH, AppPage.WEALTH, onWealth),
+                DrawerEntry("联系人", BankIconKind.People, UiTags.OPEN_CONTACTS, AppPage.CONTACTS, onContacts),
+            )
+            val tools = listOf(
+                DrawerEntry("待办任务", BankIconKind.Task, UiTags.OPEN_TASKS, null, onTasks),
+                DrawerEntry("设备与飞书", BankIconKind.Shield, UiTags.OPEN_DEVICES, null, onDevices),
+            )
+            main.forEach { DrawerItem(it, selected = it.page == currentPage) }
+            Text("服务", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
+            tools.forEach { DrawerItem(it, selected = false) }
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AccountAvatar(principal)
+                Column(Modifier.weight(1f)) {
+                    Text(principal.ifBlank { "已登录" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("演示账户 · 本机模拟银行", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            DrawerItem(DrawerEntry("退出登录", BankIconKind.Logout, UiTags.LOGOUT, null, onLogout), selected = false)
         }
+    }
+}
+
+@Composable
+private fun DrawerItem(entry: DrawerEntry, selected: Boolean) {
+    NavigationDrawerItem(
+        label = { Text(entry.label, style = MaterialTheme.typography.labelLarge) },
+        icon = { BankIcon(entry.icon, Modifier.size(22.dp)) },
+        selected = selected,
+        onClick = entry.onClick,
+        shape = CircleShape,
+        colors = NavigationDrawerItemDefaults.colors(
+            unselectedContainerColor = Color.Transparent,
+            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+            selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+        modifier = Modifier.heightIn(min = 52.dp).testTag(entry.tag),
+    )
+}
+
+/** Initial-letter avatar on the brand gradient. */
+@Composable
+internal fun AccountAvatar(principal: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    val initial = principal.removePrefix("user_").firstOrNull()?.uppercaseChar()?.toString() ?: "我"
+    Box(
+        modifier.size(36.dp).clip(CircleShape).background(LocalBankSemanticColors.current.brandGradient)
+            .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClickLabel = "打开菜单", onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(initial, style = MaterialTheme.typography.titleSmall, color = Color.White)
     }
 }
 
@@ -236,6 +304,7 @@ private fun ChatHome(
     activity: FragmentActivity,
     listState: LazyListState,
     approvalDeadlineMillis: Long?,
+    onMenu: () -> Unit,
 ) {
     val showWelcome = state.messages.none { it.role == ChatRole.USER }
     // Keep the newest bubble in view.  A LazyColumn does not follow appended
@@ -257,7 +326,8 @@ private fun ChatHome(
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = { BankChatTopBar(viewModel::openTasks, viewModel::openDevices, viewModel::logout) },
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { BankChatTopBar(principal = state.principal, onMenu = onMenu) },
     ) { padding ->
         // Keep transaction context legible while the approval asks for confirmation.
         val redVerification = state.pending?.mfaRequired == true
@@ -271,8 +341,8 @@ private fun ChatHome(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth().testTag(UiTags.CHAT_LIST),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 if (showWelcome) {
                     item(key = "welcome") { ChatWelcome(onSuggestion = viewModel::onSuggestionClick) }
@@ -318,17 +388,17 @@ private fun ChatHome(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(8.dp),
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text("安言正在为您处理…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ThinkingMark()
+                    Text("安言正在为您处理…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             state.lastProblem?.let {
                 BankSecondaryButton("查看原因与下一步", viewModel::openProblem,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).testTag(UiTags.OPEN_FAILURE))
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp).testTag(UiTags.OPEN_FAILURE))
             }
             // Predicted next requests stay directly above the editor. A tap sends
             if (state.busy && state.activeStages.isNotEmpty()) {
@@ -342,12 +412,6 @@ private fun ChatHome(
                         .testTag(UiTags.QUICK_SUGGESTIONS)
                         .verificationFrost(redVerification),
                 ) {
-                    Text(
-                        "猜你想问",
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 0.dp),
@@ -357,11 +421,11 @@ private fun ChatHome(
                                 onClick = { viewModel.onSuggestionClick(suggestion) },
                                 enabled = !state.busy,
                                 modifier = Modifier.testTag(UiTags.quickSuggestion(index)),
-                                label = { Text(suggestion, style = MaterialTheme.typography.labelMedium) },
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline),
+                                label = { Text(suggestion, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(vertical = 10.dp)) },
+                                shape = RoundedCornerShape(16.dp),
+                                border = null,
                                 colors = SuggestionChipDefaults.suggestionChipColors(
-                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                                     labelColor = MaterialTheme.colorScheme.onSurface,
                                 ),
                             )
@@ -384,83 +448,63 @@ private fun ChatHome(
     }
 }
 
+/** Menu, product name and account avatar - the Gemini top bar, nothing else. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun BankChatTopBar(onTasks: () -> Unit, onDevices: () -> Unit, onLogout: () -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        // Keep every action reachable at large text sizes without squeezing the app name.
-        val compact = maxWidth < 360.dp || LocalDensity.current.fontScale > 1.3f
-        TopAppBar(
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (!compact) Box(Modifier.size(40.dp).bankHardShadow(MaterialTheme.shapes.medium, 2.dp)
-                        .clip(MaterialTheme.shapes.medium).background(MaterialTheme.colorScheme.primary)
-                        .border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.medium),
-                        contentAlignment = Alignment.Center) {
-                        BankBrandMark(Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                    Column {
-                        Text(if (compact) "安言" else "安言 · 智能管家", style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (!compact) Text("随时为您，安心打理", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            },
-            actions = {
-                IconButton(onClick = onTasks, modifier = Modifier.testTag(UiTags.OPEN_TASKS)) {
-                    BankIcon(BankIconKind.Check, contentDescription = "待办任务")
-                }
-                IconButton(onClick = onDevices, modifier = Modifier.testTag(UiTags.OPEN_DEVICES)) {
-                    BankIcon(BankIconKind.Shield, contentDescription = "设备管理")
-                }
-                IconButton(onClick = onLogout, modifier = Modifier.testTag(UiTags.LOGOUT)) {
-                    BankIcon(BankIconKind.Logout, contentDescription = "退出登录")
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-    }
+internal fun BankChatTopBar(principal: String, onMenu: () -> Unit) {
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = onMenu, modifier = Modifier.testTag(UiTags.OPEN_DRAWER)) {
+                BankIcon(BankIconKind.Menu, contentDescription = "打开菜单")
+            }
+        },
+        title = { Text("安言", style = MaterialTheme.typography.titleLarge, maxLines = 1) },
+        actions = { AccountAvatar(principal, Modifier.padding(end = 12.dp), onClick = onMenu) },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+    )
 }
 
 private data class WelcomeAction(val label: String, val prompt: String, val icon: BankIconKind, val readOnly: Boolean)
 
+/** Gradient greeting and four starter cards, shown until the first message. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        BankHeroCard {
-            BankSticker("智能管家 · 随时待命")
-            Text("想办什么，直接说", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("先说明理解、步骤与风险，再按等级执行。", style = MaterialTheme.typography.bodySmall)
-            val actions = listOf(
-                WelcomeAction("查询余额", "查一下余额", BankIconKind.Wallet, true),
-                WelcomeAction("转一笔钱", "我想转账", BankIconKind.Transfer, false),
-                WelcomeAction("分析账单", "上月钱花哪儿了", BankIconKind.Chart, true),
-                WelcomeAction("查看订阅", "查看我的订阅", BankIconKind.Card, true),
+    val semantic = LocalBankSemanticColors.current
+    Column(Modifier.fillMaxWidth().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // The session carries a login ID, not a display name, so the greeting stays generic.
+            Text(
+                "你好，我是安言",
+                style = MaterialTheme.typography.displaySmall.copy(brush = Brush.linearGradient(semantic.brandGradientColors)),
             )
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val columns = if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.3f) 1 else 2
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    actions.chunked(columns).forEach { row ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            row.forEach { (label, prompt, icon, readOnly) ->
-                                Surface(onClick = { onSuggestion(prompt) }, shape = MaterialTheme.shapes.medium,
-                                    color = Color.White, contentColor = BankPalette.Ink,
-                                    border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink),
-                                    modifier = Modifier.weight(1f).bankHardShadow(MaterialTheme.shapes.medium, 2.dp)) {
-                                    Row(Modifier.heightIn(min = 48.dp).padding(10.dp), verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        val accent = if (readOnly) BankPalette.Green else BankPalette.Neutral
-                                        Box(Modifier.size(28.dp).clip(RoundedCornerShape(7.dp)).background(accent)
-                                            .border(BankPalette.borderWidth, BankPalette.Ink, RoundedCornerShape(7.dp)), contentAlignment = Alignment.Center) {
-                                            BankIcon(icon, Modifier.size(16.dp), tint = BankPalette.Ink)
-                                        }
-                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                            Text(label, style = MaterialTheme.typography.titleSmall)
-                                            Text(if (readOnly) "直接查询" else "补充信息后再确认", style = MaterialTheme.typography.labelMedium)
-                                        }
+            Text("今天想办点什么？", style = MaterialTheme.typography.displaySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f))
+        }
+        val actions = listOf(
+            WelcomeAction("查询余额", "查一下余额", BankIconKind.Wallet, true),
+            WelcomeAction("转一笔钱", "我想转账", BankIconKind.Transfer, false),
+            WelcomeAction("分析账单", "上月钱花哪儿了", BankIconKind.Chart, true),
+            WelcomeAction("查看订阅", "查看我的订阅", BankIconKind.Card, true),
+        )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val columns = if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.3f) 1 else 2
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                actions.chunked(columns).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        row.forEach { (label, prompt, icon, readOnly) ->
+                            Surface(onClick = { onSuggestion(prompt) }, shape = RoundedCornerShape(20.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.weight(1f)) {
+                                Column(Modifier.heightIn(min = 96.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Box(Modifier.size(32.dp).clip(CircleShape)
+                                        .background(if (readOnly) semantic.riskGreenContainer else MaterialTheme.colorScheme.primaryContainer),
+                                        contentAlignment = Alignment.Center) {
+                                        BankIcon(icon, Modifier.size(18.dp),
+                                            tint = if (readOnly) semantic.onRiskContainer else MaterialTheme.colorScheme.onPrimaryContainer)
                                     }
+                                    Text(label, style = MaterialTheme.typography.titleSmall)
+                                    Text(if (readOnly) "直接查询" else "补充信息后再确认", style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -468,18 +512,26 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
                 }
             }
         }
-        BankSectionCard {
-            BankSticker("每一步，清晰可见")
-            Text("查询直接回复，资金操作先确认。", style = MaterialTheme.typography.titleSmall)
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("查询直接回复，资金操作先确认。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 BankStatusChip("绿 · 只读", BankSemanticStatus.RiskGreen)
                 BankStatusChip("黄 · 需确认", BankSemanticStatus.RiskYellow)
                 BankStatusChip("红 · 强验证", BankSemanticStatus.RiskRed)
             }
-            Text("在卡包管理银行卡，在理财页查看产品；待办任务与设备管理可从右上角进入。",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+/** Slowly turning brand mark shown while a turn is being processed. */
+@Composable
+private fun ThinkingMark() {
+    val motion = com.aibanking.agent.ui.anim.LocalBankMotionEnabled.current
+    val angle = if (motion) {
+        val transition = rememberInfiniteTransition(label = "thinking")
+        transition.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "spin").value
+    } else 0f
+    BankGradientMark(Modifier.size(22.dp).rotate(angle))
 }
 
 @Composable
@@ -490,13 +542,12 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier, o
     }
     Column(modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = Alignment.End) {
         Surface(
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 6.dp, bottomStart = 16.dp),
-            border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline),
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.bankHardShadow(MaterialTheme.shapes.large, 2.dp).widthIn(max = 480.dp).fillMaxWidth(0.88f),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 6.dp, bottomEnd = 24.dp, bottomStart = 24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(0.82f).wrapContentWidth(Alignment.End),
         ) {
-            Text(message.text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onPrimary)
+            Text(message.text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -526,7 +577,7 @@ private fun ApprovalCard(
         } while (remainingSeconds > 0)
     }
     val riskColors = LocalBankSemanticColors.current
-    BankSectionCard(outlined = true, containerColor = if (isRed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
+    BankSectionCard(containerColor = if (isRed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
         Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
             BankStatusChip(if (isRed) "红 · 强验证" else "黄 · 需确认", if (isRed) BankSemanticStatus.RiskRed else BankSemanticStatus.RiskYellow)
             Row(
@@ -552,13 +603,14 @@ private fun ApprovalCard(
                 fontWeight = FontWeight.Medium,
             )
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                shape = CircleShape,
             ) {
                 Text(
                     text = if (remainingSeconds > 0) "请在 $remainingSeconds 秒内确认" else "已超时，请重新发起操作",
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
             if (isRed) {
@@ -644,9 +696,8 @@ private fun RiskQuizPanel(
                 Surface(
                     onClick = { onAnswer(question, option.key) },
                     enabled = !busy,
-                    shape = MaterialTheme.shapes.small,
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -684,25 +735,47 @@ private fun InputRow(
 ) {
     val focus = LocalFocusManager.current
     val send = { if (enabled) { focus.clearFocus(); onSend() } }
-    Surface(color = MaterialTheme.colorScheme.background, modifier = modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            VoiceInputButton(enabled = voiceEnabled, captureResult = captureVoiceResult,
-                cloudAvailable = cloudSpeechAvailable, transcribeCloud = transcribeCloud)
-            OutlinedTextField(
-                value = value, onValueChange = onValueChange,
-                placeholder = { Text("说说您想办的事…", style = MaterialTheme.typography.bodyMedium) },
-                shape = MaterialTheme.shapes.medium,
-                colors = bankTextFieldColors(),
-                modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT), maxLines = 4,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { send() }),
-            )
-            BankButton(onClick = send, enabled = enabled, contentPadding = PaddingValues(0.dp),
-                shape = MaterialTheme.shapes.medium, modifier = Modifier.size(56.dp).testTag(UiTags.CHAT_SEND)) {
-                BankIcon(BankIconKind.Send, contentDescription = "发送")
+    Column(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 8.dp)) {
+        // One rounded composer holding the text, the microphone and the send button.
+        Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextField(
+                    value = value, onValueChange = onValueChange,
+                    placeholder = { Text("问问安言", style = MaterialTheme.typography.bodyLarge) },
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                        cursorColor = LocalBankSemanticColors.current.inputFocus,
+                    ),
+                    modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT), maxLines = 5,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { send() }),
+                )
+                Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    VoiceInputButton(enabled = voiceEnabled, captureResult = captureVoiceResult,
+                        cloudAvailable = cloudSpeechAvailable, transcribeCloud = transcribeCloud)
+                    FilledIconButton(
+                        onClick = send, enabled = enabled,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        ),
+                        modifier = Modifier.size(48.dp).testTag(UiTags.CHAT_SEND),
+                    ) {
+                        BankIcon(BankIconKind.ArrowUp, Modifier.size(22.dp), contentDescription = "发送")
+                    }
+                }
             }
         }
+        Text("安言可能会出错；资金操作以确认卡和银行核心回执为准。", style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
     }
 }
 
@@ -724,7 +797,7 @@ private fun DevicePanel(
     // dispatcher and would finish the app instead of closing the panel.
     BackHandler(enabled = true) { onDismiss() }
     BankBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.background) {
+    ) {
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
             item {
@@ -816,7 +889,7 @@ private fun TaskPanel(
     // dispatcher and would finish the app instead of closing the panel.
     BackHandler(enabled = true) { onDismiss() }
     BankBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.background) {
+    ) {
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
             item { BankScreenHeading("待办任务", subtitle = "计划有序，生活从容", eyebrow = "任务安排") }

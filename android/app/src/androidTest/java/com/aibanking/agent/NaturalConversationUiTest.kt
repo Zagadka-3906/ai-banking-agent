@@ -152,7 +152,7 @@ class NaturalConversationUiTest {
                 ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty()
         }
         if (ui.onAllNodesWithTag(UiTags.LOGOUT).fetchSemanticsNodes().isNotEmpty()) {
-            ui.onNodeWithTag(UiTags.LOGOUT).performClick()
+            ui.openFromDrawer(UiTags.LOGOUT)
         }
         ui.waitUntil(15_000) { ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().isNotEmpty() }
         control(18810, "reset", JSONObject())

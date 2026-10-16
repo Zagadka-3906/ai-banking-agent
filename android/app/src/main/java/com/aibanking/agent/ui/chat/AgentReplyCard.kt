@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.aibanking.agent.ui.components.BankGradientMark
 import com.aibanking.agent.ui.components.BankIcon
 import com.aibanking.agent.ui.components.BankIconKind
 import com.aibanking.agent.ui.components.BankSticker
@@ -24,7 +25,6 @@ import com.aibanking.agent.ui.components.BankTextButton
 import com.aibanking.agent.ui.components.BankSecondaryButton
 import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
-import com.aibanking.agent.ui.components.bankHardShadow
 import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.UiTags
 
@@ -34,28 +34,28 @@ import com.aibanking.agent.ui.UiTags
 internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}, onOutcome: () -> Unit = {}) {
     var showDetails by rememberSaveable(message.id) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp).bankHardShadow(MaterialTheme.shapes.large).testTag("reply_card_${message.id}"),
-        shape = MaterialTheme.shapes.large,
-        color = colors.surface,
-        border = BorderStroke(BankPalette.borderWidth, colors.outline),
+    // Assistant turns sit directly on the canvas, led by the gradient brand mark.
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("reply_card_${message.id}"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ReplyIconTile(BankIconKind.Chat)
-                    BankSticker("安言 · 智能管家")
+        BankGradientMark(Modifier.padding(top = 2.dp).size(26.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val risk = when {
+                message.approvalPreview -> "待您确认" to BankSemanticStatus.RiskYellow
+                else -> when (message.riskLevel?.uppercase()) {
+                    "GREEN" -> "绿 · 只读" to BankSemanticStatus.RiskGreen
+                    "YELLOW" -> "黄 · 确认操作" to BankSemanticStatus.RiskYellow
+                    "RED" -> "红 · 强验证" to BankSemanticStatus.RiskRed
+                    else -> null
                 }
-                if (message.approvalPreview) {
-                    BankStatusChip("待您确认", BankSemanticStatus.RiskYellow)
-                } else when (message.riskLevel?.uppercase()) {
-                    "GREEN" -> BankStatusChip("绿 · 只读", BankSemanticStatus.RiskGreen)
-                    "YELLOW" -> BankStatusChip("黄 · 确认操作", BankSemanticStatus.RiskYellow)
-                    "RED" -> BankStatusChip("红 · 强验证", BankSemanticStatus.RiskRed)
-                }
-                message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
             }
-            ReplyDivider()
+            if (risk != null || message.businessStatus != null) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    risk?.let { (label, status) -> BankStatusChip(label, status) }
+                    message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
+                }
+            }
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     AgentMarkdown(message.text)

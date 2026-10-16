@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -20,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
@@ -41,7 +43,6 @@ import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import com.aibanking.agent.ui.components.*
-import com.aibanking.agent.ui.components.bankHardShadow
 import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
 import kotlinx.coroutines.launch
@@ -109,10 +110,10 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 onClick = { focus.clearFocus(); viewModel.openContactEditor() },
                 icon = { BankIcon(BankIconKind.Add) },
                 text = { Text("添加联系人") },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.bankHardShadow(RoundedCornerShape(12.dp)).border(BankPalette.borderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)).testTag(UiTags.CONTACT_OPEN_ADD),
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.testTag(UiTags.CONTACT_OPEN_ADD),
             )
         },
     ) { padding ->
@@ -311,8 +312,8 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.bankHardShadow(RoundedCornerShape(16.dp)),
-                    border = androidx.compose.foundation.BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
+                    modifier = Modifier,
+                    border = null) {
                     Column(
                         Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -468,11 +469,10 @@ private val RELATIONSHIP_OPTIONS = listOf("爱人", "兄弟", "儿子", "女儿"
 
 @Composable
 private fun ContactAvatar(name: String, size: Dp, textStyle: TextStyle = MaterialTheme.typography.titleMedium) {
-    val colors = listOf(BankPalette.Wisteria, BankPalette.GreenSoft, BankPalette.YellowSoft, BankPalette.RedSoft)
+    val colors = listOf(Color(0xFFD3E3FD), Color(0xFFE8DEF8), Color(0xFFC4EED0), Color(0xFFFFE0D2))
     val accent = colors[Math.floorMod(name.hashCode(), colors.size)]
-    Box(Modifier.size(size).clip(RoundedCornerShape(12.dp)).background(accent)
-        .border(BankPalette.borderWidth, BankPalette.Ink, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-        Text(name.trim().firstOrNull()?.toString() ?: "?", color = BankPalette.Ink, style = textStyle, fontWeight = FontWeight.Bold)
+    Box(Modifier.size(size).clip(CircleShape).background(accent), contentAlignment = Alignment.Center) {
+        Text(name.trim().firstOrNull()?.toString() ?: "?", color = BankPalette.Ink, style = textStyle, fontWeight = FontWeight.Medium)
     }
 }
 

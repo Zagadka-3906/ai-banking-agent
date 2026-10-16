@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 
 /** A small original vector family with consistent 24-unit geometry and rounded strokes. */
-enum class BankIconKind { Home, Chat, Card, Chart, People, ArrowBack, ArrowForward, Send, Add, Search, Shield, Check, Close, More, Logout, Refresh, Bank, Transfer, Wallet, Settings, Scan, Eye }
+enum class BankIconKind { Home, Chat, Card, Chart, People, ArrowBack, ArrowForward, Send, Add, Search, Shield, Check, Close, More, Logout, Refresh, Bank, Transfer, Wallet, Settings, Scan, Eye, Mic, Menu, Stop, ArrowUp, Task }
 
 @Composable
 fun BankIcon(kind: BankIconKind, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current, contentDescription: String? = null) {
@@ -43,6 +43,11 @@ fun BankIcon(kind: BankIconKind, modifier: Modifier = Modifier, tint: Color = Lo
             BankIconKind.Settings -> "M12 8 A4 4 0 1 1 12 16 A4 4 0 1 1 12 8 M9 3 H15 L16 6 L19 7 L22 11 V13 L19 17 L16 18 L15 21 H9 L8 18 L5 17 L2 13 V11 L5 7 L8 6 Z"
             BankIconKind.Scan -> "M3 8 V3 H8 M16 3 H21 V8 M21 16 V21 H16 M8 21 H3 V16 M3 12 H21 M8 8 V16 M12 8 V16 M16 8 V16"
             BankIconKind.Eye -> "M2 12 Q12 0 22 12 Q12 24 2 12 Z M12 8.5 A3.5 3.5 0 1 1 12 15.5 A3.5 3.5 0 1 1 12 8.5"
+            BankIconKind.Mic -> "M12 3 Q15 3 15 6 V12 Q15 15 12 15 Q9 15 9 12 V6 Q9 3 12 3 M5 11 Q5 18 12 18 Q19 18 19 11 M12 18 V21"
+            BankIconKind.Menu -> "M4 7 H20 M4 12 H20 M4 17 H14"
+            BankIconKind.Stop -> "M8 7 H16 Q17 7 17 8 V16 Q17 17 16 17 H8 Q7 17 7 16 V8 Q7 7 8 7"
+            BankIconKind.ArrowUp -> "M12 20 V4 M5 11 L12 4 L19 11"
+            BankIconKind.Task -> "M9 4 H15 V7 H9 Z M7 5 H5 V21 H19 V5 H17 M8 13 L11 16 L16 10"
         }
         ImageVector.Builder(kind.name, 24.dp, 24.dp, 24f, 24f).apply {
             addPath(pathData = PathParser().parsePathString(data).toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.75f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)

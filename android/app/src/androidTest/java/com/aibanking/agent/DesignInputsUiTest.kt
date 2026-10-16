@@ -70,17 +70,15 @@ class DesignInputsUiTest {
         screenshot("home-shortcuts-dark-large-font")
     }
 
-    @Test fun compact_toolbar_keeps_its_name_and_all_three_actions_reachable() {
+    @Test fun compact_toolbar_keeps_its_name_and_opens_the_drawer() {
         val called = mutableListOf<String>()
         render(dark = false) {
-            BankChatTopBar({ called += "tasks" }, { called += "devices" }, { called += "logout" })
+            BankChatTopBar(principal = "user_zhang", onMenu = { called += "menu" })
         }
         ui.onNodeWithText("安言").assertIsDisplayed()
         assertNoTextOverflow("安言")
-        listOf(UiTags.OPEN_TASKS, UiTags.OPEN_DEVICES, UiTags.LOGOUT).forEach { tag ->
-            ui.onNodeWithTag(tag).assertIsDisplayed().assertIsEnabled().performClick()
-        }
-        ui.runOnIdle { assertEquals(listOf("tasks", "devices", "logout"), called) }
+        ui.onNodeWithTag(UiTags.OPEN_DRAWER).assertIsDisplayed().assertIsEnabled().performClick()
+        ui.runOnIdle { assertEquals(listOf("menu"), called) }
         screenshot("home-toolbar-large-font")
     }
 

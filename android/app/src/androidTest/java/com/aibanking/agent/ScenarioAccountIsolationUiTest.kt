@@ -122,7 +122,7 @@ class ScenarioAccountIsolationUiTest {
     @Test fun old_http_401_from_a_panel_cannot_sign_out_the_new_account() {
         val id = "old-panel-401"
         hold(CORE, id, "/api/v1/tasks", "GET", "http_401")
-        ui.onNodeWithTag(UiTags.OPEN_TASKS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_TASKS)
         waitHeld(CORE, id)
         assertTrue(model.state.value.panelBusy)
         instrumentation.uiAutomation.executeShellCommand("input keyevent 4").close()
@@ -448,7 +448,7 @@ class ScenarioAccountIsolationUiTest {
     }
 
     private fun logout() {
-        ui.onNodeWithTag(UiTags.LOGOUT).performClick()
+        ui.openFromDrawer(UiTags.LOGOUT)
         ui.waitUntil(20_000) { !model.state.value.authenticated && !model.state.value.busy }
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().size == 1 }
     }

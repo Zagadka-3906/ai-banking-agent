@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -43,42 +44,36 @@ private fun ReplyBlocks(blocks: List<ReplyBlock>, modifier: Modifier = Modifier)
                 is ReplyBlock.Paragraph -> {
                     val title = block.inlines.any { it.text.isNotBlank() } && block.inlines.all { it.bold || it.text.isBlank() }
                     if (title) ReplyHeading(block.inlines)
-                    else Text(replyText(block.inlines), style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 24.sp))
+                    else Text(replyText(block.inlines), style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 26.sp))
                 }
                 is ReplyBlock.Heading -> ReplyHeading(block.inlines)
                 is ReplyBlock.ListBlock -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     block.items.forEachIndexed { index, item ->
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (block.ordered) {
-                                Surface(shape = RoundedCornerShape(6.dp), color = MaterialTheme.colorScheme.primaryContainer,
-                                    border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
-                                    Text("${block.startNumber + index}.", Modifier.widthIn(min = 24.dp).padding(horizontal = 5.dp, vertical = 2.dp),
-                                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        fontWeight = FontWeight.Bold)
-                                }
+                                Text("${block.startNumber + index}.", Modifier.widthIn(min = 20.dp),
+                                    style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
-                                Box(Modifier.width(14.dp).height(24.dp), contentAlignment = Alignment.Center) {
-                                    Box(Modifier.size(6.dp).rotate(45f).background(MaterialTheme.colorScheme.primary))
+                                Box(Modifier.width(14.dp).height(26.dp), contentAlignment = Alignment.Center) {
+                                    Box(Modifier.size(5.dp).background(MaterialTheme.colorScheme.onSurface, CircleShape))
                                 }
                             }
                             ReplyBlocks(item, Modifier.weight(1f))
                         }
                     }
                 }
-                is ReplyBlock.Quote -> Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer,
-                    border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
+                is ReplyBlock.Quote -> Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainer) {
                     Row(Modifier.height(IntrinsicSize.Min).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
                         ReplyBlocks(block.blocks, Modifier.weight(1f))
                     }
                 }
-                is ReplyBlock.CodeBlock -> Surface(shape = MaterialTheme.shapes.small, color = BankPalette.Ink,
-                    border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
+                is ReplyBlock.CodeBlock -> Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                     Text(
                         block.code,
                         fontFamily = FontFamily.Monospace,
                         style = MaterialTheme.typography.bodySmall.copy(lineHeight = 20.sp),
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(14.dp),
                     )
                 }
@@ -92,9 +87,8 @@ private fun ReplyBlocks(blocks: List<ReplyBlock>, modifier: Modifier = Modifier)
 private fun ReplyHeading(inlines: List<ReplyInline>) {
     Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.width(4.dp).height(20.dp).background(BankPalette.Wisteria, RoundedCornerShape(2.dp)))
         Text(replyText(inlines), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+            color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
     }
 }
 

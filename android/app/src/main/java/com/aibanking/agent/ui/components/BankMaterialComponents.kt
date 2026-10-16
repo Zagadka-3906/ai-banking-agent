@@ -2,7 +2,6 @@ package com.aibanking.agent.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,7 +39,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.SkeletonBlock
-import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 
@@ -55,7 +53,7 @@ fun bankTextFieldColors(): TextFieldColors {
         disabledContainerColor = colors.surface,
         errorContainerColor = colors.surface,
         focusedBorderColor = focus,
-        unfocusedBorderColor = colors.outline,
+        unfocusedBorderColor = colors.outlineVariant,
         focusedLabelColor = focus,
         cursorColor = focus,
         errorCursorColor = colors.error,
@@ -101,24 +99,24 @@ fun BankSectionHeader(title: String, modifier: Modifier = Modifier, subtitle: St
     }
 }
 
+/** Filled section on the grey container; `outlined` adds a hairline for emphasis. */
 @Composable
-fun BankSectionCard(modifier: Modifier = Modifier, outlined: Boolean = false, containerColor: Color = MaterialTheme.colorScheme.surface, content: @Composable () -> Unit) {
+fun BankSectionCard(modifier: Modifier = Modifier, outlined: Boolean = false, containerColor: Color = MaterialTheme.colorScheme.surfaceContainer, content: @Composable () -> Unit) {
     Surface(
-        modifier = modifier.fillMaxWidth().bankHardShadow(MaterialTheme.shapes.large),
+        modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         color = containerColor,
-        border = BorderStroke(if (outlined) 2.dp else BankPalette.borderWidth, MaterialTheme.colorScheme.outline),
-    ) { Column(Modifier.fillMaxWidth().padding(BankSpacing.md), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() } }
+        border = if (outlined) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+    ) { Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() } }
 }
 
-/** The reference home hero uses wisteria with ink text in both themes. */
+/** Soft blue-to-violet wash used for the few hero summaries. */
 @Composable
 fun BankHeroCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    CompositionLocalProvider(LocalContentColor provides BankPalette.Ink) {
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Column(
-            modifier.fillMaxWidth().bankHardShadow(MaterialTheme.shapes.large)
-                .clip(MaterialTheme.shapes.large).background(BankPalette.Wisteria)
-                .then(Modifier.border(BankPalette.borderWidth, BankPalette.Ink, MaterialTheme.shapes.large)).padding(20.dp),
+            modifier.fillMaxWidth().clip(MaterialTheme.shapes.large)
+                .background(LocalBankSemanticColors.current.primaryGradient).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
@@ -138,17 +136,18 @@ enum class BankSemanticStatus { Positive, Negative, Neutral, RiskGreen, RiskYell
 
 @Composable
 fun BankStatusChip(label: String, status: BankSemanticStatus, modifier: Modifier = Modifier, containerColor: Color? = null) {
+    val semantic = LocalBankSemanticColors.current
     val color = when (status) {
-        BankSemanticStatus.Positive -> BankPalette.RedSoft
-        BankSemanticStatus.Negative -> BankPalette.GreenSoft
-        BankSemanticStatus.Neutral -> BankPalette.Neutral
-        BankSemanticStatus.RiskGreen -> BankPalette.Green
-        BankSemanticStatus.RiskYellow -> BankPalette.Yellow
-        BankSemanticStatus.RiskRed -> BankPalette.Red
+        BankSemanticStatus.Positive -> semantic.riskRedContainer
+        BankSemanticStatus.Negative -> semantic.riskGreenContainer
+        BankSemanticStatus.Neutral -> MaterialTheme.colorScheme.surfaceContainerHighest
+        BankSemanticStatus.RiskGreen -> semantic.riskGreenContainer
+        BankSemanticStatus.RiskYellow -> semantic.riskYellowContainer
+        BankSemanticStatus.RiskRed -> semantic.riskRedContainer
     }
-    Surface(modifier, shape = RoundedCornerShape(6.dp), color = containerColor ?: color,
-        contentColor = BankPalette.Ink, border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink)) {
-        Text(label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
+    val content = if (containerColor != null || status == BankSemanticStatus.Neutral) MaterialTheme.colorScheme.onSurface else semantic.onRiskContainer
+    Surface(modifier, shape = CircleShape, color = containerColor ?: color, contentColor = content) {
+        Text(label, Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -160,7 +159,7 @@ fun BankPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Mo
         enabled = enabled && !loading,
         modifier = modifier.heightIn(min = 48.dp),
         interactionSource = interaction,
-        shape = RoundedCornerShape(12.dp),
+        shape = CircleShape,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 24.dp, vertical = 14.dp),
     ) {
         if (loading) {
@@ -177,7 +176,7 @@ fun BankSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = 
         onClick = onClick,
         enabled = enabled,
         modifier = modifier.heightIn(min = 48.dp),
-        shape = RoundedCornerShape(12.dp),
+        shape = CircleShape,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 14.dp),
     ) { Text(text, style = MaterialTheme.typography.labelLarge) }
 }
@@ -201,8 +200,8 @@ fun BankLoadingState(modifier: Modifier = Modifier, message: String = "正在加
 @Composable
 fun BankEmptyState(message: String, modifier: Modifier = Modifier, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
     Column(modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-            BankIcon(BankIconKind.Wallet, Modifier.padding(18.dp).size(28.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            BankIcon(BankIconKind.Wallet, Modifier.padding(18.dp).size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         if (actionLabel != null && onAction != null) BankSecondaryButton(actionLabel, onAction)

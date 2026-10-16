@@ -1,7 +1,7 @@
 package com.aibanking.agent.ui.chat
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -20,7 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.components.*
-import com.aibanking.agent.ui.theme.BankPalette
+import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,11 +37,12 @@ internal fun OperationOutcomeScreen(
 ) {
     BackHandler(onBack = onBack)
     var showReceipt by rememberSaveable(message?.id, problem?.message) { mutableStateOf(false) }
+    val semantic = LocalBankSemanticColors.current
     val accent = when (outcome.tone) {
-        OutcomeTone.SUCCESS -> BankPalette.Green
-        OutcomeTone.FAILURE -> BankPalette.Red
-        OutcomeTone.PENDING -> BankPalette.Yellow
-        OutcomeTone.NEUTRAL -> BankPalette.Wisteria
+        OutcomeTone.SUCCESS -> semantic.riskGreenContainer
+        OutcomeTone.FAILURE -> semantic.riskRedContainer
+        OutcomeTone.PENDING -> semantic.riskYellowContainer
+        OutcomeTone.NEUTRAL -> MaterialTheme.colorScheme.primaryContainer
     }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -61,9 +62,9 @@ internal fun OperationOutcomeScreen(
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
             .padding(20.dp).testTag(UiTags.OUTCOME_SCREEN),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Surface(shape = MaterialTheme.shapes.large, color = accent, contentColor = BankPalette.Ink,
-                border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink),
-                modifier = Modifier.size(84.dp).bankHardShadow(MaterialTheme.shapes.large)) {
+            Surface(shape = CircleShape, color = accent,
+                contentColor = if (outcome.tone == OutcomeTone.NEUTRAL) MaterialTheme.colorScheme.onPrimaryContainer else semantic.onRiskContainer,
+                modifier = Modifier.size(88.dp)) {
                 Box(contentAlignment = Alignment.Center) {
                     BankIcon(when (outcome.tone) { OutcomeTone.SUCCESS -> BankIconKind.Check
                         OutcomeTone.FAILURE -> BankIconKind.Close
@@ -71,7 +72,7 @@ internal fun OperationOutcomeScreen(
                         OutcomeTone.NEUTRAL -> BankIconKind.Shield }, Modifier.size(42.dp))
                 }
             }
-            Text(outcome.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold,
+            Text(outcome.title, style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.testTag(UiTags.OUTCOME_TITLE))
             BankStatusChip(outcome.label, when (outcome.tone) { OutcomeTone.SUCCESS -> BankSemanticStatus.RiskGreen
                 OutcomeTone.FAILURE -> BankSemanticStatus.RiskRed

@@ -114,7 +114,7 @@ class LoginAndChatUiTest {
                 ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty()
         }
         if (ui.onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty()) {
-            ui.onNodeWithTag(UiTags.LOGOUT).performClick()
+            ui.openFromDrawer(UiTags.LOGOUT)
             ui.waitUntil(timeoutMillis = LOGIN_TIMEOUT_MS) {
                 ui.onAllNodesWithTag(UiTags.LOGIN_BUTTON).fetchSemanticsNodes().size == 1
             }

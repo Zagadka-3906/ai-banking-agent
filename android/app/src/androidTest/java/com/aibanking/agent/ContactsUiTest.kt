@@ -19,21 +19,21 @@ class ContactsUiTest {
     fun wealth_and_cards_can_navigate_to_contacts() {
         ui.ensureLoggedIn("Bank@2026")
 
-        ui.onNodeWithTag(UiTags.OPEN_WEALTH).performClick()
+        ui.openFromDrawer(UiTags.OPEN_WEALTH)
         ui.waitUntil(10_000) {
             ui.onAllNodesWithTag(UiTags.WEALTH_LIST).fetchSemanticsNodes().isNotEmpty()
         }
-        ui.onNodeWithTag(UiTags.OPEN_CONTACTS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_CONTACTS)
         ui.waitUntil(10_000) {
             ui.onAllNodesWithTag(UiTags.CONTACT_SEARCH).fetchSemanticsNodes().isNotEmpty()
         }
         assertTrue(ui.onAllNodesWithTag(UiTags.CONTACT_SEARCH).fetchSemanticsNodes().isNotEmpty())
 
-        ui.onNodeWithTag(UiTags.OPEN_CARDS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_CARDS)
         ui.waitUntil(10_000) {
             ui.onAllNodesWithTag(UiTags.CARD_LIST).fetchSemanticsNodes().isNotEmpty()
         }
-        ui.onNodeWithTag(UiTags.OPEN_CONTACTS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_CONTACTS)
         ui.waitUntil(10_000) {
             ui.onAllNodesWithTag(UiTags.CONTACT_SEARCH).fetchSemanticsNodes().isNotEmpty()
         }

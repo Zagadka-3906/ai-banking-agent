@@ -193,7 +193,7 @@ class SecondRoundFixesUiTest {
         ui.waitUntil(timeoutMillis = LOGIN_TIMEOUT_MS) {
             ui.onAllNodesWithTag(UiTags.OPEN_TASKS).fetchSemanticsNodes().isNotEmpty()
         }
-        ui.onNodeWithTag(UiTags.OPEN_TASKS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_TASKS)
         awaitText("任务安排")
         assertFalse("待办任务页中英混排已修：不应再出现 YOUR PLANS", textVisible("YOUR PLANS"))
         assertFalse("待办里的计划时间不得是 UTC 原始串", textVisible("+00:00"))

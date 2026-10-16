@@ -14,6 +14,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.core.content.edit
@@ -142,7 +146,13 @@ internal fun VoiceInputButton(
     }
     LaunchedEffect(enabled) { if (!enabled) cancelAll() }
 
-    TextButton(enabled = enabled && !uploading, colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface), modifier = Modifier.testTag("voice_input"), onClick = {
+    val recording = listening || recorder != null
+    val voiceLabel = when { uploading -> "识别中"; recording -> "停止"; else -> "语音" }
+    androidx.compose.material3.IconButton(enabled = enabled && !uploading,
+        colors = androidx.compose.material3.IconButtonDefaults.iconButtonColors(
+            containerColor = if (recording) androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = if (recording) androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer else androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant),
+        modifier = Modifier.testTag("voice_input").semantics { contentDescription = voiceLabel }, onClick = {
         when {
             recorder != null -> finishCloudRecording()
             listening -> { recognizer?.stopListening(); listening = false }
@@ -155,7 +165,11 @@ internal fun VoiceInputButton(
                 }
             }
         }
-    }) { Text(when { uploading -> "识别中"; listening -> "停止"; else -> "语音" }) }
+    }) {
+        if (uploading) androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        else com.aibanking.agent.ui.components.BankIcon(
+            if (recording) com.aibanking.agent.ui.components.BankIconKind.Stop else com.aibanking.agent.ui.components.BankIconKind.Mic)
+    }
 
     if (askConsent) {
         androidx.compose.material3.AlertDialog(onDismissRequest = { askConsent = false },

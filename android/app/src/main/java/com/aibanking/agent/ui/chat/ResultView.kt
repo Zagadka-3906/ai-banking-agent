@@ -57,17 +57,17 @@ private fun RiskProfileCard(profile: Map<String, Any?>) {
     val typeName = profile.text("type").orEmpty()
     val traits = profile.text("traits").orEmpty()
     val levels = profile.text("matching_levels").orEmpty()
+    val semantic = LocalBankSemanticColors.current
     val accent = when (grade) {
-        "C1", "C2" -> BankPalette.Green
-        "C3" -> BankPalette.Yellow
-        "C4", "C5" -> BankPalette.Red
-        else -> BankPalette.Neutral
+        "C1", "C2" -> semantic.riskGreenContainer
+        "C3" -> semantic.riskYellowContainer
+        "C4", "C5" -> semantic.riskRedContainer
+        else -> MaterialTheme.colorScheme.surfaceContainerHighest
     }
     ReplyPanel {
         ResultCardTitle("您的风险测评", BankIconKind.Shield)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Surface(shape = MaterialTheme.shapes.medium, color = accent, contentColor = BankPalette.Ink,
-                border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink)) {
+            Surface(shape = CircleShape, color = accent, contentColor = semantic.onRiskContainer) {
                 Text(grade, Modifier.padding(16.dp), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -183,12 +183,11 @@ private fun BillFacts(facts: Map<String, Any?>) {
 
 @Composable
 private fun Metric(label: String, value: String, modifier: Modifier = Modifier) {
-    Surface(modifier, shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer,
-        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
+    Surface(modifier, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(value, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -222,10 +221,9 @@ private fun CategoryBars(facts: Map<String, Any?>) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Box(Modifier.fillMaxWidth().height(10.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(4.dp))
-                    .border(BankPalette.borderWidth, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))) {
-                    Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().padding(1.5.dp)
-                        .background(BankPalette.Wisteria, RoundedCornerShape(2.dp)))
+                Box(Modifier.fillMaxWidth().height(8.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape)) {
+                    Box(Modifier.fillMaxWidth(fraction).fillMaxHeight()
+                        .background(LocalBankSemanticColors.current.brandGradient, CircleShape))
                 }
             }
         }
@@ -237,8 +235,7 @@ private fun Anomalies(facts: Map<String, Any?>) {
     val rows = facts.children("anomalies")
     if (rows.isEmpty()) return
     val accent = LocalBankSemanticColors.current.riskYellow
-    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.tertiaryContainer,
-        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
+    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.tertiaryContainer) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 BankIcon(BankIconKind.Shield, Modifier.size(18.dp), tint = accent)

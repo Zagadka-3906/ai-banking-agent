@@ -107,7 +107,7 @@ class CardsUiTest {
         ui.onNodeWithTag(UiTags.CARD_TRANSFER).performScrollTo().performClick()
         check(ui.chatInputText()?.contains("CARD-001") == true)
         check(ui.chatInputText()?.contains("6222020000023082") != true)
-        ui.onNodeWithTag(UiTags.OPEN_CARDS).performClick()
+        ui.openFromDrawer(UiTags.OPEN_CARDS)
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithTag("${UiTags.CARD_DETAIL}:CARD-001").fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
         ui.onNodeWithTag(UiTags.CARD_WEALTH).performScrollTo().performClick()
@@ -155,7 +155,7 @@ class CardsUiTest {
         // (the class's first case logs in first and failed; the second, running
         // against an already-settled screen, passed on the same helper).
         repeat(2) {
-            ui.onNodeWithTag(UiTags.OPEN_CARDS).performClick()
+            ui.openFromDrawer(UiTags.OPEN_CARDS)
             if (runCatching { ui.waitUntil(timeoutMillis = CLICK_SETTLE_MS) { cardActionButtons().isNotEmpty() } }.isSuccess) return
         }
         // Out of retries: wait the full window so the failure names the real symptom.

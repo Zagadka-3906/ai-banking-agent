@@ -24,7 +24,7 @@ class WealthUiTest {
     @Test
     fun product_detail_shows_mock_data_and_risk_test_boundary() {
         ui.ensureLoggedIn("Bank@2026")
-        ui.onNodeWithTag(UiTags.OPEN_WEALTH).performClick()
+        ui.openFromDrawer(UiTags.OPEN_WEALTH)
         ui.waitUntil(45_000) {
             ui.onAllNodesWithTag(UiTags.WEALTH_LIST).fetchSemanticsNodes().isNotEmpty()
         }

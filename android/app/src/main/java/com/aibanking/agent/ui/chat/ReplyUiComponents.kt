@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -32,23 +33,21 @@ import com.aibanking.agent.ui.theme.BankPalette
 @Composable
 internal fun ReplyPanel(
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    color: Color = MaterialTheme.colorScheme.surfaceContainer,
     contentColor: Color = MaterialTheme.colorScheme.onSurface,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
-        color = color, contentColor = contentColor,
-        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+        color = color, contentColor = contentColor) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
 
 @Composable
-internal fun ReplyIconTile(icon: BankIconKind, modifier: Modifier = Modifier, accent: Color = BankPalette.Wisteria) {
-    Surface(modifier, shape = RoundedCornerShape(8.dp), color = accent,
-        border = BorderStroke(BankPalette.borderWidth, BankPalette.Ink)) {
-        Box(Modifier.size(30.dp), contentAlignment = Alignment.Center) {
-            BankIcon(icon, Modifier.size(18.dp), tint = BankPalette.Ink)
+internal fun ReplyIconTile(icon: BankIconKind, modifier: Modifier = Modifier, accent: Color = MaterialTheme.colorScheme.primaryContainer) {
+    Surface(modifier, shape = CircleShape, color = accent) {
+        Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+            BankIcon(icon, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
         }
     }
 }
@@ -57,18 +56,17 @@ internal fun ReplyIconTile(icon: BankIconKind, modifier: Modifier = Modifier, ac
 internal fun ReplyDivider(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.outlineVariant) {
     Canvas(modifier.fillMaxWidth().height(1.dp)) {
         drawLine(color, Offset(0f, size.height / 2), Offset(size.width, size.height / 2),
-            strokeWidth = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx())))
+            strokeWidth = 1.dp.toPx())
     }
 }
 
 @Composable
 internal fun ReplyValueHero(label: String, value: String) {
-    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = BankPalette.Ink,
-        border = BorderStroke(BankPalette.borderWidth, MaterialTheme.colorScheme.outline)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = BankPalette.Wisteria)
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
             Text(value, style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"),
-                fontWeight = FontWeight.Bold, color = Color.White)
+                fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
         }
     }
 }
