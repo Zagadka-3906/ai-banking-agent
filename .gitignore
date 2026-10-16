@@ -52,3 +52,6 @@ secrets/
 
 # 实测过程的临时录屏与中间帧
 test-shots/
+.coverage
+.coverage.*
+htmlcov/

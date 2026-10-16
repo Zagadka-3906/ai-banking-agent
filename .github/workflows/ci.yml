@@ -18,8 +18,10 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
       - name: Compile
         run: python -m compileall -q .
-      - name: Tests
-        run: python -m pytest -q
+      - name: Tests with coverage
+        # Branch coverage of the backend packages; the table is appended to the
+        # job summary and the run fails if coverage drops below fail_under.
+        run: python -m pytest -q --cov --cov-report=term:skip-covered --cov-report=markdown-append:"$GITHUB_STEP_SUMMARY"
       - name: Lint
         run: python -m ruff check . --ignore E402
       - name: Dependency audit (pip-audit)
