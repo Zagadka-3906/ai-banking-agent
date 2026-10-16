@@ -4,26 +4,17 @@ import android.app.Application
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.aibanking.agent.data.CardView
 import com.aibanking.agent.data.CardsRepository
 import com.aibanking.agent.data.AgentRepository
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.ContactRepository
-import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.data.DeviceRepository
-import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.GatewayException
 import com.aibanking.agent.data.LoginRepository
 import com.aibanking.agent.data.SessionCheck
 import com.aibanking.agent.data.SessionStore
-import com.aibanking.agent.data.HoldingView
-import com.aibanking.agent.data.ProductView
-import com.aibanking.agent.data.RiskProfileView
 import com.aibanking.agent.data.TaskRepository
-import com.aibanking.agent.data.TaskView
-import com.aibanking.agent.data.SplitRequestView
 import com.aibanking.agent.data.TurnEnvelope
-import com.aibanking.agent.data.ReplyResponse
 import com.aibanking.agent.data.StageProgress
 import com.aibanking.agent.data.WealthRepository
 import com.aibanking.agent.security.DeviceKeyManager
@@ -36,173 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.math.BigDecimal
-import java.security.MessageDigest
 import java.util.UUID
-
-enum class ChatRole { USER, ASSISTANT }
-
-/** 通讯录式联系人界面的三个页面：列表 → 详情 → 新增。 */
-enum class ContactsScreen { LIST, DETAIL, ADD }
-
-/** 理财页两个页面：产品超市 → 产品详情（申购预填回聊天）。 */
-enum class WealthScreen { LIST, DETAIL }
-
-internal data class DeviceApprovalCallbacks(
-    val onSuccess: () -> Unit,
-    val onFailure: (String) -> Unit,
-)
-
-private val DEFAULT_PREDICTED_SUGGESTIONS = listOf(
-    "查一下余额",
-    "查看本月账单",
-    "理财",
-    "查看我的订阅",
-)
-
-data class ChatMessage(
-    val id: String = UUID.randomUUID().toString(),
-    val role: ChatRole,
-    val text: String,
-    val riskLevel: String? = null,
-    /** Temporary summary shown only while its approval is still actionable. */
-    val approvalPreview: Boolean = false,
-    /**
-     * Structured result payload from the gateway (`chart_data`, `todo_card`,
-     * `plan`, `execution_result`), kept so the result view can render facts
-     * rather than only the prose summary.
-     */
-    val result: Map<String, Any>? = null,
-    /**
-     * The core's correlation id for this turn.  Shown to the user so a question
-     * about a specific answer ("what happened with my transfer?") can be traced
-     * through `/api/v1/security/audit/trace/{id}` instead of guessed at.
-     */
-    val traceId: String? = null,
-    val businessStatus: String? = null,
-    val response: ReplyResponse? = null,
-    val conversationId: String? = null,
-    val stages: List<StageProgress>? = null,
-    val reconciling: Boolean = false,
-    /** Failure to read a receipt does not mean the underlying operation failed. */
-    val reconciliationError: String? = null,
-)
-
-data class QuizOptionUi(val key: String, val label: String)
-
-data class QuizQuestionUi(val number: Int, val text: String, val options: List<QuizOptionUi>)
-
-/** 逐题作答的问卷组件状态：answers.size 即当前题号。 */
-data class RiskQuizUi(
-    val questions: List<QuizQuestionUi>,
-    val answers: Map<Int, String> = emptyMap(),
-) {
-    val answered: Int get() = answers.size
-    val currentQuestion: QuizQuestionUi? get() = questions.getOrNull(answered)
-}
-
-data class ChatUiState(
-    val principal: String = "",
-    val authenticated: Boolean = false,
-    /**
-     * True while the sealed session is being unsealed off the main thread.
-     *
-     * Reading the credential means Keystore work (see the constructor), so it
-     * cannot happen before the first frame.  The login form must not be shown
-     * during that window: a logged-in app would flash a password prompt on every
-     * launch.  MainActivity renders a plain loading screen instead.
-     */
-    val restoring: Boolean = false,
-    val messages: List<ChatMessage> = emptyList(),
-    val input: String = "",
-    val busy: Boolean = false,
-    val activeStages: List<StageProgress> = emptyList(),
-    /** Non-null while the conversation is waiting for a human decision. */
-    val pending: ApprovalView? = null,
-    val otp: String = "",
-    /** Revealed only once the server has actually asked for a login SMS code. */
-    val otpRequiredAtLogin: Boolean = false,
-    val error: String? = null,
-    val outcomeMessageId: String? = null,
-    val lastProblem: OperationProblem? = null,
-    val showProblem: Boolean = false,
-    val notice: String? = null,
-    /** Device-management panel visibility and its server-backed rows. */
-    val showDevices: Boolean = false,
-    val devices: List<DeviceView> = emptyList(),
-    val feishuBindingCode: String? = null,
-    val feishuCodeExpiresAtMillis: Long = 0,
-    val feishuBusy: Boolean = false,
-    /** Task-centre panel visibility and its server-backed rows. */
-    val showTasks: Boolean = false,
-    val tasks: List<TaskView> = emptyList(),
-    val splitRequests: List<SplitRequestView> = emptyList(),
-    /** 逐题风险测评组件（输入框上方）：非空即展示。 */
-    val quiz: RiskQuizUi? = null,
-    /** 测评完成后的档案结果（渲染彩色结果卡）。 */
-    val profileResult: Map<*, *>? = null,
-    /** Predicted next requests shown above the editor; tapping sends immediately. */
-    val suggestions: List<String> = DEFAULT_PREDICTED_SUGGESTIONS,
-    /** 银行卡管理页：卡片列表 + 添加表单。 */
-    val showCards: Boolean = false,
-    val cards: List<CardView> = emptyList(),
-    val cardType: String = "借记卡",
-    val cardLabel: String = "",
-    /** 理财页：银行风格产品超市 → 详情。 */
-    val showWealth: Boolean = false,
-    val wealthScreen: WealthScreen = WealthScreen.LIST,
-    val wealthProducts: List<ProductView> = emptyList(),
-    val wealthHoldings: List<HoldingView> = emptyList(),
-    val riskProfile: RiskProfileView? = null,
-    val selectedProductId: String? = null,
-    val buyAmount: String = "",
-    /** 联系人簿：全屏通讯录式界面（列表 → 详情 → 新增）。 */
-    val showContacts: Boolean = false,
-    val contactsScreen: ContactsScreen = ContactsScreen.LIST,
-    val contacts: List<ContactView> = emptyList(),
-    val contactSearch: String = "",
-    val selectedContactId: String? = null,
-    val contactName: String = "",
-    val contactPhone: String = "",
-    val contactRelationship: String = "朋友",
-    val contactBirthday: String = "",
-    val panelBusy: Boolean = false,
-    /**
-     * Why the last panel load failed, if it did.
-     *
-     * Without it an empty list is ambiguous: "the core says you own nothing" and
-     * "the core could not be reached" render identically, so a network failure
-     * was shown as an authoritative empty state.  The cards / contacts / wealth
-     * pages read it to offer a retry instead of "还没有…".
-     */
-    val panelError: String? = null,
-) {
-    // A pending approval still permits natural-language correction/cancellation.
-    // The gateway withdraws the previous authorization before issuing a revision.
-    val canSend: Boolean get() = authenticated && input.isNotBlank() && !busy
-
-    /** 当前打开的理财详情产品。 */
-    val selectedProduct: ProductView?
-        get() = wealthProducts.firstOrNull { it.productId == selectedProductId }
-
-    /** 金额合法且风险档案等级不低于产品风险时才允许发起申购。 */
-    val canBuySelected: Boolean
-        get() {
-            val product = selectedProduct ?: return false
-            // 与 startPurchase 用同一个解析器：按钮可点就等于提交一定成立，
-            // 不再让 "1.2.3" 这种文本靠 toDoubleOrNull 悄悄变成 null。
-            val amount = parseAmountInput(buyAmount) ?: return false
-            if (amount.signum() <= 0 || amount < BigDecimal.valueOf(product.minAmount)) return false
-            val profileRank = profileRank(riskProfile?.riskProfile) ?: return false
-            return profileRank >= productRank(product.riskLevel)
-        }
-
-    /** The add form is only complete when the server-mandated fields make sense. */
-    val canAddContact: Boolean
-        get() = contactName.isNotBlank() &&
-            contactPhone.filter(Char::isDigit).length in 5..20 &&
-            (contactBirthday.isBlank() || contactBirthday.matches(Regex("""\d{4}-\d{2}-\d{2}""")))
-}
 
 /**
  * Drives one conversation against the channel gateway.
@@ -215,25 +40,25 @@ data class ChatUiState(
  */
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val sessionStore = SessionStore(application)
-    private var deviceKeys: DeviceKeyManager? = null
-    private val agent = AgentRepository.create()
+    internal val sessionStore = SessionStore(application)
+    internal var deviceKeys: DeviceKeyManager? = null
+    internal val agent = AgentRepository.create()
     private val login = LoginRepository.create()
-    private val devices = DeviceRepository.create()
-    private val tasks = TaskRepository.create()
-    private val contacts = ContactRepository.create()
-    private val wealth = WealthRepository.create()
-    private val cardsRepo = CardsRepository.create()
-    private val gson = Gson()
+    internal val devices = DeviceRepository.create()
+    internal val tasks = TaskRepository.create()
+    internal val contacts = ContactRepository.create()
+    internal val wealth = WealthRepository.create()
+    internal val cardsRepo = CardsRepository.create()
+    internal val gson = Gson()
 
-    private val _state = MutableStateFlow(ChatUiState(restoring = true))
+    internal val _state = MutableStateFlow(ChatUiState(restoring = true))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
-    private val sessionWork = SessionWork(viewModelScope)
+    internal val sessionWork = SessionWork(viewModelScope)
 
     private var conversationId: String = UUID.randomUUID().toString().replace("-", "").take(20)
-    private var sessionToken: String? = null
-    private var deviceId: String? = null
+    internal var sessionToken: String? = null
+    internal var deviceId: String? = null
 
     /** 正在跑的滑动续期任务，以及核心给出的到期时刻（毫秒）。 */
     private var sessionRenewal: Job? = null
@@ -256,8 +81,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 失败后用户再点一次“确认添加”是同一次提交的重试，必须复用同一个幂等键；
      * 每次调用都新生成一个 UUID 等于把一次超时变成两张开出的卡。
      */
-    private var cardCreateAttempt: CreateAttempt? = null
-    private var contactCreateAttempt: CreateAttempt? = null
+    internal var cardCreateAttempt: CreateAttempt? = null
+    internal var contactCreateAttempt: CreateAttempt? = null
 
     /** Replaced even for the same user; token renewal keeps this generation. */
     private fun replaceSession() {
@@ -277,7 +102,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Resolve a renewed credential only while this request still owns the login. */
-    private fun SessionWork.Lease.credential(): String? {
+    internal fun SessionWork.Lease.credential(): String? {
         var token: String? = null
         if (!commit { token = sessionToken }) check()
         return token
@@ -470,7 +295,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 记录一次真实手势，作为“这台设备有人在用”的续期依据。 */
-    private fun markUserActivity() {
+    internal fun markUserActivity() {
         lastInteractionMillis = System.currentTimeMillis()
     }
 
@@ -696,585 +521,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // -- device management panel -------------------------------------------
-
-    fun openDevices() {
-        _state.update { it.copy(showDevices = true, showTasks = false, panelBusy = true, feishuBindingCode = null) }
-        refreshDevices()
-    }
-
-    fun issueFeishuBindingCode() {
-        val token = sessionToken ?: return
-        _state.update { it.copy(feishuBusy = true, feishuBindingCode = null, error = null) }
-        sessionWork.launch {
-            try {
-                val response = io { agent.issueFeishuBindingCode(token) }
-                _state.update { it.copy(feishuBusy = false, feishuBindingCode = response.bindingCode,
-                    feishuCodeExpiresAtMillis = System.currentTimeMillis() + response.expiresIn * 1000L) }
-                delay(response.expiresIn * 1000L)
-                _state.update { current ->
-                    if (current.feishuBindingCode == response.bindingCode) current.copy(feishuBindingCode = null) else current
-                }
-            } catch (failure: GatewayException) {
-                check()
-                _state.update { it.copy(feishuBusy = false, error = failure.message) }
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                _state.update { it.copy(feishuBusy = false, error = "无法获取飞书绑定码") }
-            }
-        }
-    }
-
-    fun unbindFeishu() {
-        val token = sessionToken ?: return
-        _state.update { it.copy(feishuBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                io { agent.unbindFeishu(token) }
-                _state.update { it.copy(feishuBusy = false, feishuBindingCode = null, notice = "飞书绑定已解除") }
-            } catch (failure: GatewayException) {
-                check()
-                _state.update { it.copy(feishuBusy = false, error = failure.message) }
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                _state.update { it.copy(feishuBusy = false, error = "飞书解绑失败") }
-            }
-        }
-    }
-
-    fun refreshDevices() {
-        val principal = _state.value.principal
-        sessionWork.launch {
-            try {
-                val rows = io { devices.list(principal, credential().orEmpty()) }
-                _state.update { it.copy(devices = rows, panelBusy = false) }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                // 解析异常（JsonSyntaxException）等非网关失败同样要收尾：逃出协程会让
-                // panelBusy 永远为 true，面板停在骨架屏上，连重试按钮都不出现。
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    fun revokeDevice(targetId: String) {
-        val principal = _state.value.principal
-        _state.update { it.copy(panelBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                io { devices.revoke(targetId, principal, credential().orEmpty()) }
-                val rows = io { devices.list(principal, credential().orEmpty()) }
-                _state.update {
-                    it.copy(
-                        devices = rows,
-                        panelBusy = false,
-                        notice = if (targetId == deviceId) "本机已解除注册：红色风险操作在本机不可用" else "设备已停用",
-                    )
-                }
-                if (targetId == deviceId) {
-                    // 本机被解除注册：内存与存储都要忘掉，否则重启后 init 会把它读回来，
-                    // 应用继续以为本机已注册（红色操作白走一次短信 + 生物识别）。
-                    deviceId = null
-                    deviceKeys = null
-                    sessionStore.clearDeviceId()
-                }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    // -- task centre panel ---------------------------------------------------
-
-    fun openTasks() {
-        _state.update { it.copy(showTasks = true, showDevices = false, panelBusy = true) }
-        refreshTasks()
-    }
-
-    fun refreshTasks() {
-        val principal = _state.value.principal
-        sessionWork.launch {
-            try {
-                val rows = io { tasks.list(principal, credential().orEmpty()) }
-                val splits = io { tasks.splitInbox(principal, credential().orEmpty()) }
-                _state.update { it.copy(tasks = rows, splitRequests = splits, panelBusy = false) }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    fun cancelTask(taskId: String) {
-        val principal = _state.value.principal
-        _state.update { it.copy(panelBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                io { tasks.cancel(taskId, principal, credential().orEmpty()) }
-                val rows = io { tasks.list(principal, credential().orEmpty()) }
-                _state.update { it.copy(tasks = rows, panelBusy = false, notice = "任务已取消") }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    fun takeoverTask(taskId: String, reason: String) {
-        if (_state.value.panelBusy || reason.isBlank() || reason.length > 300) return
-        if (_state.value.tasks.none { it.taskId == taskId && it.status in setOf("PENDING", "WAITING_USER", "FAILED") }) return
-        val principal = _state.value.principal
-        _state.update { it.copy(panelBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                io { tasks.takeover(taskId, reason.trim(), principal, credential().orEmpty()) }
-                val rows = io { tasks.list(principal, credential().orEmpty()) }
-                _state.update { it.copy(tasks = rows, panelBusy = false, notice = "已暂停关联任务，待人工处理；已完成操作及锁定资金请按回执核对") }
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    fun prepareSplitPayment(request: SplitRequestView) {
-        if (request.status != "PENDING" || request.share <= 0 || request.fromName.isBlank()) return
-        val amount = BigDecimal.valueOf(request.share).stripTrailingZeros().toPlainString()
-        _state.update { it.copy(showTasks = false, input = "给${request.fromName}转${amount}元，备注${request.paymentRemark}", notice = "请核对 AA 金额和收款人后发送，付款仍需您确认") }
-    }
-
-    fun declineSplit(splitId: String) {
-        val principal = _state.value.principal
-        _state.update { it.copy(panelBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                io { tasks.declineSplit(splitId, principal, credential().orEmpty()) }
-                val splits = io { tasks.splitInbox(principal, credential().orEmpty()) }
-                _state.update { it.copy(splitRequests = splits, panelBusy = false, notice = "已拒绝 AA 付款请求") }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    // -- contact book (通讯录式全屏界面) ---------------------------------------
-
-    fun openContacts() {
-        _state.update {
-            it.copy(
-                showContacts = true,
-                showCards = false,
-                showWealth = false,
-                showDevices = false,
-                showTasks = false,
-                contactsScreen = ContactsScreen.LIST,
-                panelBusy = true,
-            )
-        }
-        refreshContacts()
-    }
-
-    fun closeContacts() = _state.update { it.copy(showContacts = false) }
-
-    fun showContactDetail(contactId: String) =
-        _state.update { it.copy(contactsScreen = ContactsScreen.DETAIL, selectedContactId = contactId) }
-
-    fun openContactEditor() =
-        _state.update { it.copy(contactsScreen = ContactsScreen.ADD, error = null) }
-
-    fun backToContactList() =
-        _state.update { it.copy(contactsScreen = ContactsScreen.LIST, selectedContactId = null) }
-
-    fun onContactSearchChange(value: String) =
-        _state.update { it.copy(contactSearch = value.take(50)) }
-
-    /** Selected contact for the detail page, resolved from the loaded book. */
-    fun selectedContact(): ContactView? =
-        _state.value.contacts.firstOrNull { it.contactId == _state.value.selectedContactId }
-
-    /**
-     * 从联系人详情直接发起转账：把输入框预填成“给 <姓名> 转”，
-     * 金额留给用户填写——Agent 收到不完整请求会按规矩澄清，不编造金额。
-     */
-    fun startTransferTo(name: String) {
-        onInputChange("给${name}转")
-        closeContacts()
-    }
-
-    fun refreshContacts() {
-        val principal = _state.value.principal
-        sessionWork.launch {
-            try {
-                val rows = io { contacts.list(principal, credential().orEmpty()) }
-                _state.update { it.copy(contacts = rows, panelBusy = false, panelError = null) }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    fun onContactFormChange(name: String? = null, phone: String? = null, relationship: String? = null, birthday: String? = null) {
-        _state.update { current ->
-            current.copy(
-                contactName = name ?: current.contactName,
-                // The phone field keeps digits only, mirroring the server rule.
-                contactPhone = phone?.filter(Char::isDigit)?.take(20) ?: current.contactPhone,
-                contactRelationship = relationship ?: current.contactRelationship,
-                // Birthday is typed as YYYY-MM-DD digits with dashes preserved.
-                contactBirthday = birthday?.filter { it.isDigit() || it == '-' }?.take(10) ?: current.contactBirthday,
-            )
-        }
-    }
-
-    /**
-     * Save one contact (name, phone, relationship, birthday).
-     *
-     * The core validates everything again; whatever it returns, the local form
-     * is only cleared when the server actually accepted the row, so a refusal
-     * never silently eats what the user typed.
-     */
-    fun addContact() {
-        val principal = _state.value.principal
-        val form = _state.value
-        if (!form.canAddContact || form.panelBusy) return
-        // 同一次提交的所有重试共用一个幂等键（见 [CreateAttempt]）：核心据此回放
-        // 响应，读超时后的重发不会建出第二个联系人。
-        val attempt = CreateAttempt.of(
-            contactCreateAttempt,
-            listOf(form.contactName.trim(), form.contactPhone, form.contactRelationship, form.contactBirthday)
-                .joinToString("\u0000"),
-        )
-        contactCreateAttempt = attempt
-        _state.update { it.copy(panelBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                val created = io {
-                    contacts.add(
-                        principal = principal,
-                        sessionToken = credential().orEmpty(),
-                        name = form.contactName.trim(),
-                        phone = form.contactPhone,
-                        relationship = form.contactRelationship,
-                        birthday = form.contactBirthday.takeIf { it.isNotBlank() },
-                        idempotencyKey = attempt.value,
-                    )
-                }
-                // 已经建好：这次提交到此为止，下一次保存是新的意图、新的键。
-                contactCreateAttempt = null
-                _state.update {
-                    it.copy(
-                        panelBusy = false,
-                        contactsScreen = ContactsScreen.LIST,
-                        contactName = "",
-                        contactPhone = "",
-                        contactBirthday = "",
-                        notice = "联系人 ${created.name} 已添加，可以直接转账",
-                    )
-                }
-                refreshContacts()
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                // 与 refresh* 同样的收尾：异常逃出协程会把“保存中…”永远留在界面上，
-                // 连重试的机会都没有。
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    fun removeContact(contactId: String) {
-        val principal = _state.value.principal
-        _state.update { it.copy(panelBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                io { contacts.remove(contactId, principal, credential().orEmpty()) }
-                _state.update {
-                    it.copy(
-                        panelBusy = false,
-                        contactsScreen = ContactsScreen.LIST,
-                        selectedContactId = null,
-                        notice = "联系人已删除",
-                    )
-                }
-                refreshContacts()
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
     fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false, showCards = false, feishuBindingCode = null) }
-
-    // -- bank cards (银行卡管理) ----------------------------------------------
-
-    fun openCards() {
-        _state.update { it.copy(showCards = true, showWealth = false, showContacts = false, showDevices = false, showTasks = false, panelBusy = true) }
-        refreshCards()
-    }
-
-    fun closeCards() = _state.update { it.copy(showCards = false) }
-
-    fun refreshCards() {
-        val principal = _state.value.principal
-        sessionWork.launch {
-            try {
-                val rows = io { cardsRepo.list(principal, credential().orEmpty()) }
-                _state.update { it.copy(cards = rows, panelBusy = false, panelError = null) }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    fun onCardFormChange(cardType: String? = null, label: String? = null) {
-        _state.update { it.copy(cardType = cardType ?: it.cardType, cardLabel = label?.take(40) ?: it.cardLabel) }
-    }
-
-    /** 自行绑定银行卡：黄色操作，需用户明确确认并计入审计。 */
-    fun addCard(cardNumber: String, source: String) {
-        val principal = _state.value.principal
-        val form = _state.value
-        if (form.panelBusy) return
-        // 同一次提交的所有重试共用一个幂等键（见 [CreateAttempt]）：20 秒读超时后
-        // 重发不会开出第二张卡。表单内容变了才是另一次提交，那时必须换新键。
-        val digest = MessageDigest.getInstance("SHA-256").digest("${form.cardType}\u0000${form.cardLabel.trim()}\u0000$cardNumber".toByteArray()).joinToString("") { "%02x".format(it) }
-        val attempt = CreateAttempt.of(cardCreateAttempt, digest)
-        cardCreateAttempt = attempt
-        _state.update { it.copy(panelBusy = true, error = null) }
-        sessionWork.launch {
-            try {
-                val created = io {
-                    cardsRepo.add(principal, credential().orEmpty(), form.cardType, form.cardLabel, attempt.value, cardNumber, source)
-                }
-                // 卡已经开出：这次提交到此为止，下一次添加是新的意图、新的键。
-                cardCreateAttempt = null
-                _state.update {
-                    it.copy(
-                        panelBusy = false,
-                        cardLabel = "",
-                        // 核心已经把新卡返回来了，就立刻放进列表：添加表单据此判断
-                        // “真的开出来了”才收起，而后续的列表刷新即使失败，卡也不会
-                        // 从页面上消失（它确实已经存在）。
-                        cards = it.cards + created,
-                        notice = "银行卡尾号 ${created.last4.ifBlank { created.numberMasked.takeLast(4) }} 已添加",
-                    )
-                }
-                refreshCards()
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                // 失败必须收尾：panelBusy 留在 true 会让添加表单永远停在“开卡中…”。
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    /** PIN stays in the detail composable; this method never stores the reveal result. */
-    suspend fun revealCard(cardId: String, pin: String): com.aibanking.agent.data.CardRevealView {
-        val owner = sessionWork.capture()
-        val principal = _state.value.principal
-        return owner.io { cardsRepo.reveal(principal, owner.credential().orEmpty(), cardId, pin) }
-    }
-
-    fun prefillCardTransfer(card: CardView) {
-        onInputChange("使用卡片 ${card.cardId}（尾号${card.last4.ifBlank { card.numberMasked.takeLast(4) }}）转账")
-        closeCards()
-    }
-
-    /** 冻结/挂失/解挂等红色操作：预填话术回对话，走短信+设备签名审批。 */
-    fun startCardAction(action: String, card: CardView) {
-        val phrase = when (action) {
-            "freeze" -> "冻结卡片 ${card.cardId}"
-            "unfreeze" -> "解冻卡片 ${card.cardId}"
-            "report_lost" -> "挂失卡片 ${card.cardId}"
-            // 解挂是 LOST 的唯一出口（核心 CARD_TRANSITIONS: LOST → ACTIVE）；
-            // “解挂”也是 Agent 识别 CARD_UNREPORT_LOST 的关键词。
-            "unreport_lost" -> "解挂卡片 ${card.cardId}"
-            else -> return
-        }
-        onInputChange(phrase)
-        closeCards()
-    }
-
-    // -- wealth (银行风格理财页) ----------------------------------------------
-
-    fun openWealth() {
-        _state.update { it.copy(showWealth = true, showCards = false, showContacts = false, showDevices = false, showTasks = false, wealthScreen = WealthScreen.LIST, panelBusy = true) }
-        refreshWealth()
-    }
-
-    fun closeWealth() = _state.update { it.copy(showWealth = false) }
-
-    fun showProductDetail(productId: String) =
-        _state.update { it.copy(wealthScreen = WealthScreen.DETAIL, selectedProductId = productId, buyAmount = "") }
-
-    fun backToWealthList() =
-        _state.update { it.copy(wealthScreen = WealthScreen.LIST, selectedProductId = null, buyAmount = "") }
-
-    /**
-     * 申购金额只接受合法十进制文本：最多一个小数点、小数最多两位。
-     *
-     * 旧实现只过滤“非数字且非点”的字符，于是 `1.2.3` 也能进输入框，到
-     * [startPurchase] 里要么被 `toDoubleOrNull` 判成 null（点了没反应），
-     * 要么经 `Double.toString()` 变成科学计数法发给核心。非法编辑直接不采纳
-     * （保留上一次的合法文本），而不是先塞进状态再在提交时失败。
-     */
-    fun onBuyAmountChange(value: String) =
-        _state.update {
-            if (AMOUNT_INPUT.matches(value)) {
-                it.copy(buyAmount = value)
-            } else {
-                it
-            }
-        }
-
-    fun refreshWealth() {
-        val principal = _state.value.principal
-        sessionWork.launch {
-            try {
-                val products = io { wealth.products(principal, credential().orEmpty()) }
-                val holdings = io { wealth.holdings(principal, credential().orEmpty()) }
-                val profile = io { wealth.riskProfile(principal, credential().orEmpty()) }
-                _state.update { it.copy(wealthProducts = products, wealthHoldings = holdings, riskProfile = profile, panelBusy = false, panelError = null) }
-            } catch (failure: GatewayException) {
-                check()
-                applyPanelFailure(failure)
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                check()
-                applyPanelFailure(failure)
-            }
-        }
-    }
-
-    /**
-     * 申购不在页面里发生：预填聊天话术并回到对话，金额与产品代码由 Agent
-     * 重新解析、核心按红色风险流程（短信 + 设备签名）最终授权。客户端只是
-     * 把用户的意图送到那条安全链路的入口。
-     */
-    fun startPurchase(product: ProductView, amountText: String) {
-        val amount = parseAmountInput(amountText) ?: return
-        if (amount.signum() <= 0 || amount < BigDecimal.valueOf(product.minAmount)) return
-        // toPlainString：`Double.toString()` 会把大额写成 1.0E11 这种科学计数法，
-        // 那不是银行话术，也不是核心能解析的金额。
-        onInputChange("申购 ${product.productId} ${amount.toPlainString()} 元")
-        closeWealth()
-    }
 
     /** Exposed so the device panel can mark "this is this phone" honestly. */
     fun currentDeviceId(): String? = deviceId
-
-    /** 点选一个选项：记录并推进；答完第 8 题自动汇成一条消息提交。 */
-    fun onQuizAnswer(question: QuizQuestionUi, key: String) {
-        markUserActivity()
-        val quiz = _state.value.quiz ?: return
-        if (question.number != quiz.currentQuestion?.number) return
-        val answers = quiz.answers + (question.number to key)
-        if (answers.size < quiz.questions.size) {
-            _state.update { it.copy(quiz = quiz.copy(answers = answers)) }
-            persistQuiz(_state.value.quiz)
-            return
-        }
-        val combined = quiz.questions.mapNotNull { it.number.toString() + answers[it.number] }
-            .joinToString(" ")
-        _state.update { it.copy(quiz = null, input = "") }
-        persistQuiz(null)
-        // 答案只在后台存档：不显示作答消息，直接呈现测评结果。
-        sendInternal(combined, echoUser = false)
-    }
-
-    /** 放弃测评：把放弃意图发出去，让服务端把问卷状态一并关闭。 */
-    fun giveUpQuiz() {
-        if (_state.value.quiz == null) return
-        _state.update { it.copy(quiz = null) }
-        persistQuiz(null)
-        sendInternal("退出测评")
-    }
-
-    /**
-     * 问卷组件状态随手持久化：题目与已作答进度一起存，重装/重启后接着答，
-     * 不困在文字兜底里，也不会把答了 5/8 的用户退回第一题。
-     */
-    private fun persistQuiz(quiz: RiskQuizUi?) {
-        sessionWork.persist("quiz") {
-            if (quiz == null) {
-                sessionStore.clearQuiz()
-            } else {
-                runCatching { gson.toJson(quiz) }.getOrNull()?.let { sessionStore.saveQuiz(it) }
-            }
-        }
-    }
-
-    /**
-     * 从存档恢复未答完的问卷（题目 + 进度）。
-     *
-     * 旧版本只存题目数组：那种载荷按 [RiskQuizUi] 解析会失败，这里退回按题目
-     * 数组解析，进度从第一题重新开始——总好过把整个组件丢掉。
-     */
-    private fun parseStoredQuiz(json: String?): RiskQuizUi? {
-        if (json == null) return null
-        return runCatching {
-            val saved = runCatching { gson.fromJson(json, RiskQuizUi::class.java) }.getOrNull()
-                ?: RiskQuizUi(gson.fromJson(json, Array<QuizQuestionUi>::class.java).toList())
-            // Gson 直接写字段、不走构造器，缺字段时数据类的默认值并不生效，
-            // 所以这里按“可能是 null”处理，坏存档最多让组件不出现，不能崩启动。
-            val questions = saved.questions.orEmpty()
-            if (questions.size != 8) return@runCatching null
-            // 只保留仍然存在的问题号，且必须是未答满的：答满的问卷已提交并清除。
-            val numbers = questions.map { it.number }.toSet()
-            val answers = saved.answers.orEmpty().filterKeys { it in numbers }
-            if (answers.size >= questions.size) return@runCatching null
-            RiskQuizUi(questions, answers)
-        }.getOrNull()
-    }
-
-    private fun parseQuiz(result: Map<String, Any>?): RiskQuizUi? {
-        val payload = result?.get("risk_quiz") as? Map<*, *> ?: return null
-        if (payload["active"] != true) return null
-        val questions = (payload["questions"] as? List<*>)?.mapNotNull { q ->
-            val m = q as? Map<*, *> ?: return@mapNotNull null
-            val number = (m["number"] as? Number)?.toInt() ?: return@mapNotNull null
-            val text = m["text"]?.toString() ?: return@mapNotNull null
-            val options = (m["options"] as? List<*>)?.mapNotNull { option ->
-                val om = option as? Map<*, *> ?: return@mapNotNull null
-                val key = om["key"]?.toString() ?: return@mapNotNull null
-                QuizOptionUi(key, om["label"]?.toString() ?: "")
-            } ?: emptyList()
-            if (options.isEmpty()) null else QuizQuestionUi(number, text, options)
-        } ?: emptyList()
-        if (questions.size != 8) return null
-        return RiskQuizUi(questions)
-    }
 
     fun send() {
         val current = _state.value
@@ -1395,7 +645,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }) }
     }
 
-    private fun sendInternal(text: String, echoUser: Boolean = true) {
+    internal fun sendInternal(text: String, echoUser: Boolean = true) {
         markUserActivity()
         val current = _state.value
         val principal = current.principal
@@ -1640,7 +890,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * the snackbar is dismissed: an empty list plus a failure reason is "we could
      * not ask", which must not render as "you own nothing".
      */
-    private fun applyPanelFailure(failure: GatewayException) {
+    internal fun applyPanelFailure(failure: GatewayException) {
         if (failure.sessionExpired) {
             _state.value = expiredSessionState(_state.value)
             return
@@ -1657,7 +907,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 真正的失败与重试按钮，而不是把“没问到核心”渲染成“你没有卡片/联系人”。
      * 这类异常没有 HTTP 状态，所以不做会话失效判断。
      */
-    private fun applyPanelFailure(failure: Exception) {
+    internal fun applyPanelFailure(failure: Exception) {
         val message = "面板加载失败：${failure.message ?: failure::class.java.simpleName}"
         _state.update { it.copy(panelBusy = false, panelError = message, error = message) }
     }
@@ -1680,93 +930,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         /** 超过这个时长没有任何手势就视为空闲，不再续期。 */
         const val IDLE_RENEW_LIMIT_MILLIS = 15 * 60 * 1000L
     }
-}
-
-/** Also recognizes preview cards persisted before [ChatMessage.approvalPreview] existed. */
-private fun ChatMessage.isApprovalPreviewMessage(): Boolean =
-    approvalPreview || (role == ChatRole.ASSISTANT && text.trimStart().startsWith("您正准备进行："))
-
-/**
- * Follow-ups after a reservation completes. The first phrase is the rollback
- * request; the gateway parses it as UNDO_OPERATION of the same kind (pinned by
- * tests/test_undo_and_card_channel.py), and Core still asks for confirmation.
- */
-internal val UNDO_SUGGESTIONS: Map<String, List<String>> = mapOf(
-    "SCHEDULED_TRANSFER" to listOf("撤销这笔预约", "查看账户余额", "再转一笔"),
-    "SPLIT_BILL" to listOf("撤回这笔 AA 请求", "查看账户余额", "查询最近转账"),
-    "LOCK_SUCCESS" to listOf("取消生日锁定", "查看账户余额", "查看本月账单"),
-)
-
-/** Derive bounded, actionable next turns from the completed server turn. */
-internal fun predictedSuggestions(envelope: TurnEnvelope): List<String> {
-    // Approval controls always win. Graph state can retain suggestions from an
-    // earlier turn, and those must never displace the safe revision choices.
-    if (envelope.approval != null) {
-        return listOf("取消这次操作", "修改这次操作", "更换办理对象")
-    }
-
-    val serverSuggestions = (envelope.result?.get("suggestions") as? List<*>)
-        .orEmpty()
-        .mapNotNull { value ->
-            value?.toString()?.trim()?.takeIf { it.isNotEmpty() && it.length <= 80 }
-        }
-        .distinct()
-        .take(4)
-
-    val execution = envelope.result?.get("execution_result") as? Map<*, *>
-    val executionType = execution?.get("type")?.toString().orEmpty()
-    val context = (envelope.intent.orEmpty() + " " + executionType).uppercase()
-    // Server-authored choices belong to the just-completed risk assessment.
-    // In other flows they may be stale LangGraph state, so the current intent
-    // and verified execution result must determine the next actions instead.
-    val currentRiskAssessment =
-        envelope.result?.get("profile_result") != null || "WEALTH_RISK_ASSESSMENT" in context
-    if (currentRiskAssessment && serverSuggestions.isNotEmpty()) return serverSuggestions
-
-    // A reservation that has not moved money can be withdrawn; offer that first,
-    // keyed on the verified execution type so a failed attempt never shows it.
-    UNDO_SUGGESTIONS[executionType]?.let { return it }
-
-    return when {
-        "TRANSFER" in context || "SPLIT_BILL" in context ->
-            listOf("查看账户余额", "查询最近转账", "再转一笔")
-        "BALANCE" in context ->
-            listOf("查看本月账单", "分析本月消费", "给联系人转账")
-        "BILL" in context || "TRANSACTION" in context ->
-            listOf("分析本月消费", "查找异常交易", "查看账户余额")
-        "WEALTH" in context ->
-            listOf("查看理财产品", "比较理财产品", "查看我的持仓")
-        "CARD" in context ->
-            listOf("查看我的卡片", "调整卡片额度", "挂失银行卡")
-        "SUBSCRIPTION" in context -> {
-            val cancelSuggestion = activeSubscriptionCancelSuggestion(execution)
-            if (cancelSuggestion != null) {
-                listOf(cancelSuggestion, "查看下次扣费", "分析订阅支出")
-            } else {
-                listOf("查看我的订阅", "查看下次扣费", "分析订阅支出")
-            }
-        }
-        "CROSS_SCENE" in context || "LOCK_FUND" in context ->
-            listOf("查看账户余额", "查看本月账单", "查看我的订阅")
-        else -> serverSuggestions.ifEmpty { DEFAULT_PREDICTED_SUGGESTIONS }
-    }
-}
-
-/** Build a cancellation action only from an active subscription returned by the core. */
-private fun activeSubscriptionCancelSuggestion(execution: Map<*, *>?): String? {
-    if (execution?.get("type")?.toString() != "SUBSCRIPTION_QUERY") return null
-    val response = execution["data"] as? Map<*, *> ?: return null
-    val subscriptions = response["data"] as? List<*> ?: return null
-    val merchant = subscriptions.asSequence()
-        .mapNotNull { it as? Map<*, *> }
-        .firstOrNull { it["status"]?.toString() == "ACTIVE" }
-        ?.get("merchant")
-        ?.toString()
-        ?.trim()
-        ?.takeIf { it.isNotEmpty() && it.length <= 60 }
-        ?: return null
-    val subscriptionName = if (merchant.endsWith("订阅")) merchant else "$merchant 订阅"
-    return "取消 $subscriptionName"
 }
 
 /**
@@ -1792,7 +955,7 @@ private class StoredSession(
  * 超时后的重发就是第二次创建（多出一张卡或一个联系人）；而内容一变就必须换新
  * 键，否则核心会对同一个键的另一个载荷回 `IDEMPOTENCY_KEY_REUSE`(409)。
  */
-private class CreateAttempt(val fingerprint: String, val value: String) {
+internal class CreateAttempt(val fingerprint: String, val value: String) {
     companion object {
         fun of(previous: CreateAttempt?, fingerprint: String): CreateAttempt =
             if (previous != null && previous.fingerprint == fingerprint) {
@@ -1801,62 +964,4 @@ private class CreateAttempt(val fingerprint: String, val value: String) {
                 CreateAttempt(fingerprint, UUID.randomUUID().toString())
             }
     }
-}
-
-/**
- * 风险档案 → 可购买的最高产品等级，与服务端 `profile_rank` 保持一致。
- *
- * 服务端有两套词汇：老表单产出 CONSERVATIVE/BALANCED/AGGRESSIVE，8 题问卷产出
- * C1–C5。只认前者会把刚做完问卷的用户判成"未测评"——详情页一边显示"激进型"、
- * 一边说"不适合 R1"，购买入口永远不可用。
- */
-internal fun profileRank(profile: String?): Int? = when (profile) {
-    "CONSERVATIVE", "C1" -> 1
-    "BALANCED", "C2" -> 2
-    "C3" -> 3
-    "AGGRESSIVE", "C4" -> 4
-    "C5" -> 5
-    else -> null
-}
-
-internal fun productRank(riskLevel: String): Int = riskLevel.removePrefix("R").toIntOrNull() ?: 9
-
-/**
- * 申购金额的输入文法：最多一个小数点、小数最多两位、整数部分最多十位。
- *
- * 空串与孤立的 “.” 是输入过程中的中间态（用户先打小数点），匹配得上但不是
- * 金额，由 [parseAmountInput] 判掉。
- */
-private val AMOUNT_INPUT = Regex("""\d{0,10}(\.\d{0,2})?""")
-
-/**
- * 金额文本 → 金额；非法文本返回 null。
- *
- * 全程走 [BigDecimal]，不经过 Double：十进制文本→Double→字符串的往返会改写
- * 用户输入（0.1+0.2 类误差），大额还会变成科学计数法。
- */
-internal fun parseAmountInput(text: String): BigDecimal? {
-    val trimmed = text.trim()
-    if (!AMOUNT_INPUT.matches(trimmed)) return null
-    // "." 或 "" 能过文法但不是金额，BigDecimal 会直接抛，交给 runCatching。
-    return runCatching { BigDecimal(trimmed) }.getOrNull()
-}
-
-/**
- * 理财回复的产品清单以卡片渲染（见 ResultView），气泡文本里保留头行、
- * 风险提示等说明，去掉会重复的“- `代码` …”清单行。
- */
-private fun displayText(reply: String, result: Map<String, Any>?): String {
-    var lines = reply.lines()
-    val type = (result?.get("execution_result") as? Map<*, *>)?.get("type")?.toString()
-    if (type in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE")) {
-        lines = lines.filterNot { it.trimStart().startsWith("- `") }
-    }
-    // 测评结果的三行说明渲染成彩色结果卡，文本里不再重复。
-    if (result?.get("profile_result") != null) {
-        lines = lines.filterNot {
-            it.startsWith("✅ 风险测评完成") || it.startsWith("特点：") || it.startsWith("匹配理财产品级别：")
-        }
-    }
-    return lines.filter { it.isNotBlank() }.joinToString("\n")
 }
