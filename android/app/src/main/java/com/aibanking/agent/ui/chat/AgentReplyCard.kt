@@ -27,6 +27,7 @@ import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
 import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.riseIn
 
 /** A readable reply with financial facts kept separate from support metadata. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -52,7 +53,7 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier,
             }
             if (risk != null || message.businessStatus != null) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    risk?.let { (label, status) -> BankStatusChip(label, status) }
+                    risk?.let { (label, status) -> BankStatusChip(label, status, Modifier.riseIn(delayMillis = 200, rise = 0.dp, fromScale = 0.8f, durationMillis = 240)) }
                     message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
                 }
             }

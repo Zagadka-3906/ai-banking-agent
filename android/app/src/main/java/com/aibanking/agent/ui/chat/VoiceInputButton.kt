@@ -25,6 +25,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
+import com.aibanking.agent.ui.anim.pulseRings
 
 private const val VOICE_PREFS = "voice_input"
 private const val CLOUD_CONSENT_KEY = "cloud_asr_consent"
@@ -152,7 +153,8 @@ internal fun VoiceInputButton(
         colors = androidx.compose.material3.IconButtonDefaults.iconButtonColors(
             containerColor = if (recording) androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
             contentColor = if (recording) androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer else androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant),
-        modifier = Modifier.testTag("voice_input").semantics { contentDescription = voiceLabel }, onClick = {
+        modifier = Modifier.pulseRings(recording, androidx.compose.material3.MaterialTheme.colorScheme.primary)
+            .testTag("voice_input").semantics { contentDescription = voiceLabel }, onClick = {
         when {
             recorder != null -> finishCloudRecording()
             listening -> { recognizer?.stopListening(); listening = false }

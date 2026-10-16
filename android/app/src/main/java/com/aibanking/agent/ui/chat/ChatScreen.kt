@@ -56,6 +56,15 @@ import com.aibanking.agent.data.SplitRequestView
 import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
+import com.aibanking.agent.ui.anim.GradientRevealText
+import com.aibanking.agent.ui.anim.ShimmerGradientText
+import com.aibanking.agent.ui.anim.bankPressScale
+import com.aibanking.agent.ui.anim.breathe
+import com.aibanking.agent.ui.anim.popOnChange
+import com.aibanking.agent.ui.anim.rememberEntranceTracker
+import com.aibanking.agent.ui.anim.riseIn
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.verificationFrost
 import com.aibanking.agent.ui.components.*
@@ -128,6 +137,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         gesturesEnabled = page == AppPage.CHAT || drawerState.isOpen,
         drawerContent = {
             BankNavigationDrawer(
+                open = drawerState.targetValue == DrawerValue.Open,
                 currentPage = page,
                 principal = state.principal,
                 onChat = { closeDrawerThen(viewModel::dismissPanels) },
@@ -210,6 +220,7 @@ private data class DrawerEntry(val label: String, val icon: BankIconKind, val ta
 /** Side drawer in the manner of Gemini: brand header, destinations, account footer. */
 @Composable
 private fun BankNavigationDrawer(
+    open: Boolean,
     currentPage: AppPage,
     principal: String,
     onChat: () -> Unit,
@@ -242,10 +253,10 @@ private fun BankNavigationDrawer(
                 DrawerEntry("待办任务", BankIconKind.Task, UiTags.OPEN_TASKS, null, onTasks),
                 DrawerEntry("设备与飞书", BankIconKind.Shield, UiTags.OPEN_DEVICES, null, onDevices),
             )
-            main.forEach { DrawerItem(it, selected = it.page == currentPage) }
+            main.forEachIndexed { index, entry -> DrawerItem(entry, selected = entry.page == currentPage, open = open, index = index) }
             Text("服务", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
-            tools.forEach { DrawerItem(it, selected = false) }
+            tools.forEachIndexed { index, entry -> DrawerItem(entry, selected = false, open = open, index = main.size + index) }
             Spacer(Modifier.height(24.dp))
             HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
@@ -256,13 +267,16 @@ private fun BankNavigationDrawer(
                     Text("演示账户 · 本机模拟银行", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            DrawerItem(DrawerEntry("退出登录", BankIconKind.Logout, UiTags.LOGOUT, null, onLogout), selected = false)
+            DrawerItem(DrawerEntry("退出登录", BankIconKind.Logout, UiTags.LOGOUT, null, onLogout), selected = false,
+                open = open, index = main.size + tools.size)
         }
     }
 }
 
 @Composable
-private fun DrawerItem(entry: DrawerEntry, selected: Boolean) {
+private fun DrawerItem(entry: DrawerEntry, selected: Boolean, open: Boolean = false, index: Int = 0) {
+    // Re-keyed on every opening so the destinations cascade in from the left.
+    key(open) {
     NavigationDrawerItem(
         label = { Text(entry.label, style = MaterialTheme.typography.labelLarge) },
         icon = { BankIcon(entry.icon, Modifier.size(22.dp)) },
@@ -275,8 +289,10 @@ private fun DrawerItem(entry: DrawerEntry, selected: Boolean) {
             selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
             selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ),
-        modifier = Modifier.heightIn(min = 52.dp).testTag(entry.tag),
+        modifier = Modifier.heightIn(min = 52.dp).testTag(entry.tag)
+            .riseIn(animate = open, delayMillis = 40 + index * 35, durationMillis = 260, rise = 0.dp, fromX = (-16).dp),
     )
+    }
 }
 
 /** Initial-letter avatar on the brand gradient. */
@@ -307,6 +323,8 @@ private fun ChatHome(
     onMenu: () -> Unit,
 ) {
     val showWelcome = state.messages.none { it.role == ChatRole.USER }
+    // Messages restored from storage appear at once; new turns slide into place.
+    val entrance = rememberEntranceTracker(state.messages.map { it.id })
     // Keep the newest bubble in view.  A LazyColumn does not follow appended
     // items on its own, so without this the answer to a question scrolls in
     // below the fold and the user sees nothing happen.
@@ -348,12 +366,16 @@ private fun ChatHome(
                     item(key = "welcome") { ChatWelcome(onSuggestion = viewModel::onSuggestionClick) }
                 }
                 items(state.messages, key = { it.id }) { message ->
-                    MessageBubble(message, Modifier.animateItem().verificationFrost(redVerification),
+                    val fresh = remember(message.id) { entrance.isNew(message.id) }
+                    val arrive = if (message.role == ChatRole.USER) Modifier.riseIn(fresh, rise = 6.dp, fromX = 28.dp, durationMillis = 280)
+                        else Modifier.riseIn(fresh, delayMillis = 60, rise = 18.dp, durationMillis = 420)
+                    MessageBubble(message, Modifier.animateItem().then(arrive).verificationFrost(redVerification),
                         onReconcile = { viewModel.reconcileMessage(message.id) }, onOutcome = { viewModel.openOutcome(message.id) })
                 }
                 state.pending?.let { approval ->
                     item(key = "approval:${approval.approvalId}") {
                         ApprovalCard(
+                            modifier = Modifier.riseIn(delayMillis = 80, rise = 24.dp, fromScale = 0.96f, durationMillis = 380),
                             approval = approval,
                             deadlineMillis = requireNotNull(approvalDeadlineMillis),
                             otp = state.otp,
@@ -393,7 +415,8 @@ private fun ChatHome(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     ThinkingMark()
-                    Text("安言正在为您处理…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ShimmerGradientText("安言正在为您处理…", LocalBankSemanticColors.current.brandGradientColors,
+                        style = MaterialTheme.typography.bodyMedium)
                 }
             }
             state.lastProblem?.let {
@@ -420,7 +443,8 @@ private fun ChatHome(
                             SuggestionChip(
                                 onClick = { viewModel.onSuggestionClick(suggestion) },
                                 enabled = !state.busy,
-                                modifier = Modifier.testTag(UiTags.quickSuggestion(index)),
+                                modifier = Modifier.testTag(UiTags.quickSuggestion(index))
+                                    .riseIn(delayMillis = 120 + index * 60, rise = 10.dp, fromScale = 0.92f, durationMillis = 260),
                                 label = { Text(suggestion, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(vertical = 10.dp)) },
                                 shape = RoundedCornerShape(16.dp),
                                 border = null,
@@ -474,12 +498,10 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             // The session carries a login ID, not a display name, so the greeting stays generic.
-            Text(
-                "你好，我是安言",
-                style = MaterialTheme.typography.displaySmall.copy(brush = Brush.linearGradient(semantic.brandGradientColors)),
-            )
+            GradientRevealText("你好，我是安言", semantic.brandGradientColors, style = MaterialTheme.typography.displaySmall)
             Text("今天想办点什么？", style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f))
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                modifier = Modifier.riseIn(delayMillis = 450, rise = 10.dp, durationMillis = 500))
         }
         val actions = listOf(
             WelcomeAction("查询余额", "查一下余额", BankIconKind.Wallet, true),
@@ -490,11 +512,16 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val columns = if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.3f) 1 else 2
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                actions.chunked(columns).forEach { row ->
+                actions.chunked(columns).forEachIndexed { rowIndex, row ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        row.forEach { (label, prompt, icon, readOnly) ->
+                        row.forEachIndexed { columnIndex, (label, prompt, icon, readOnly) ->
+                            val order = rowIndex * columns + columnIndex
+                            val press = remember { MutableInteractionSource() }
                             Surface(onClick = { onSuggestion(prompt) }, shape = RoundedCornerShape(20.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.weight(1f)) {
+                                color = MaterialTheme.colorScheme.surfaceContainer, interactionSource = press,
+                                modifier = Modifier.weight(1f)
+                                    .riseIn(delayMillis = 600 + order * 80, rise = 20.dp, durationMillis = 420)
+                                    .bankPressScale(press)) {
                                 Column(Modifier.heightIn(min = 96.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Box(Modifier.size(32.dp).clip(CircleShape)
                                         .background(if (readOnly) semantic.riskGreenContainer else MaterialTheme.colorScheme.primaryContainer),
@@ -512,7 +539,7 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
                 }
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.riseIn(delayMillis = 950, rise = 8.dp, durationMillis = 400), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("查询直接回复，资金操作先确认。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 BankStatusChip("绿 · 只读", BankSemanticStatus.RiskGreen)
@@ -555,6 +582,7 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier, o
 @Composable
 private fun ApprovalCard(
     approval: ApprovalView,
+    modifier: Modifier = Modifier,
     deadlineMillis: Long,
     otp: String,
     busy: Boolean,
@@ -577,9 +605,10 @@ private fun ApprovalCard(
         } while (remainingSeconds > 0)
     }
     val riskColors = LocalBankSemanticColors.current
-    BankSectionCard(containerColor = if (isRed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
+    BankSectionCard(modifier = modifier, containerColor = if (isRed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
         Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
-            BankStatusChip(if (isRed) "红 · 强验证" else "黄 · 需确认", if (isRed) BankSemanticStatus.RiskRed else BankSemanticStatus.RiskYellow)
+            BankStatusChip(if (isRed) "红 · 强验证" else "黄 · 需确认", if (isRed) BankSemanticStatus.RiskRed else BankSemanticStatus.RiskYellow,
+                Modifier.breathe(active = remainingSeconds > 0, min = 0.6f))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -613,6 +642,16 @@ private fun ApprovalCard(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
+            // The remaining time drains smoothly and turns red in the last 15 seconds.
+            val total = approval.expiresIn.coerceAtLeast(1).toFloat()
+            val fraction by animateFloatAsState((remainingSeconds / total).coerceIn(0f, 1f), tween(450, easing = LinearEasing), label = "approvalTime")
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                color = if (remainingSeconds <= 15) riskColors.riskRed else MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                drawStopIndicator = {},
+            )
             if (isRed) {
                 OutlinedTextField(
                     colors = bankTextFieldColors(),
@@ -687,10 +726,14 @@ private fun RiskQuizPanel(
                 )
                 BankTextButton(onClick = onGiveUp, enabled = !busy) { Text("放弃") }
             }
+            val quizProgress by animateFloatAsState(quiz.answered.toFloat() / quiz.questions.size, tween(400), label = "quizProgress")
             LinearProgressIndicator(
-                progress = { quiz.answered.toFloat() / quiz.questions.size },
-                modifier = Modifier.fillMaxWidth(),
+                progress = { quizProgress },
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                drawStopIndicator = {},
             )
+            key(question.number) {
+            Column(Modifier.riseIn(fromX = 24.dp, rise = 0.dp, durationMillis = 300), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
             Text(question.text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
             question.options.forEach { option ->
                 Surface(
@@ -711,6 +754,8 @@ private fun RiskQuizPanel(
                         Text(option.label, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
+            }
+            }
             }
             Text(
                 "完成全部 8 题后自动提交，测评结果决定可申购的产品风险等级。",
@@ -766,7 +811,7 @@ private fun InputRow(
                             disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         ),
-                        modifier = Modifier.size(48.dp).testTag(UiTags.CHAT_SEND),
+                        modifier = Modifier.size(48.dp).popOnChange(enabled).testTag(UiTags.CHAT_SEND),
                     ) {
                         BankIcon(BankIconKind.ArrowUp, Modifier.size(22.dp), contentDescription = "发送")
                     }

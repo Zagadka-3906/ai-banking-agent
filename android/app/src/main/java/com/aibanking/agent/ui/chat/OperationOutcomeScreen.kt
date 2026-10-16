@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
+import com.aibanking.agent.ui.anim.riseIn
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,7 +65,7 @@ internal fun OperationOutcomeScreen(
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Surface(shape = CircleShape, color = accent,
                 contentColor = if (outcome.tone == OutcomeTone.NEUTRAL) MaterialTheme.colorScheme.onPrimaryContainer else semantic.onRiskContainer,
-                modifier = Modifier.size(88.dp)) {
+                modifier = Modifier.size(88.dp).riseIn(rise = 0.dp, fromScale = 0.4f, durationMillis = 520)) {
                 Box(contentAlignment = Alignment.Center) {
                     BankIcon(when (outcome.tone) { OutcomeTone.SUCCESS -> BankIconKind.Check
                         OutcomeTone.FAILURE -> BankIconKind.Close
@@ -73,7 +74,7 @@ internal fun OperationOutcomeScreen(
                 }
             }
             Text(outcome.title, style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.testTag(UiTags.OUTCOME_TITLE))
+                modifier = Modifier.riseIn(delayMillis = 160, rise = 12.dp).testTag(UiTags.OUTCOME_TITLE))
             BankStatusChip(outcome.label, when (outcome.tone) { OutcomeTone.SUCCESS -> BankSemanticStatus.RiskGreen
                 OutcomeTone.FAILURE -> BankSemanticStatus.RiskRed
                 OutcomeTone.PENDING -> BankSemanticStatus.RiskYellow

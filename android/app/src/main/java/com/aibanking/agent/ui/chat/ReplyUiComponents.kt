@@ -28,6 +28,7 @@ import com.aibanking.agent.ui.components.BankIconKind
 import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
 import com.aibanking.agent.ui.theme.BankPalette
+import com.aibanking.agent.ui.anim.CountUpText
 
 /** Reply facts use a quiet inset panel instead of another full page card. */
 @Composable
@@ -65,11 +66,20 @@ internal fun ReplyValueHero(label: String, value: String) {
     Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            Text(value, style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"),
-                fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            val amount = MONEY_TEXT.matchEntire(value)?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()
+            val style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum", fontWeight = FontWeight.Medium)
+            if (amount != null) {
+                // Money counts up once; the semantics keep the exact amount.
+                CountUpText(amount, { "¥" + String.format(java.util.Locale.CHINA, "%,.2f", it) },
+                    style = style, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            } else {
+                Text(value, style = style, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
         }
     }
 }
+
+private val MONEY_TEXT = Regex("""¥(\d{1,3}(?:,\d{3})*\.\d{2})""")
 
 /** Only explicit server statuses determine outcome color, never the reply prose or risk tier. */
 @Composable
