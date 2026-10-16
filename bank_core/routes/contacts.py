@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Header
+from pydantic import BaseModel
 
 from bank_core.access import (
     get_actor,
+    raise_security,
     record_failure_and_raise,
     server_request_id,
 )
@@ -36,6 +38,7 @@ from bank_core.ledger import (
 )
 from bank_core.payments import (
     ensure_account,
+    resolve_payee,
 )
 from bank_core.persistence import (
     persist_ledger,
@@ -48,6 +51,32 @@ from security import (
 )
 
 router = APIRouter()
+
+
+class PayeeCheckRequest(BaseModel):
+    user_id: str
+    target: str
+
+
+@router.post("/api/v1/payees/check")
+def check_payee(req: PayeeCheckRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Whether a payee name/phone resolves for the caller - no amount, no token.
+
+    The same resolution the transfer precheck performs, exposed so the
+    conversation can say "张三 is you" or "no such payee" before asking for an
+    amount. It names nothing the precheck would not, and only for the caller.
+    """
+
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(req.user_id, x_user_id, action="PAYEE_CHECK", request_id=request_id)
+    ensure_account(req.user_id)
+    try:
+        _, receiver = resolve_payee(req.target, from_user=actor)
+    except SecurityError as exc:
+        audit_event("PAYEE_CHECK", user_id=actor, risk_level="GREEN", decision="DENY", outcome="FAILURE", request_id=request_id, metadata={"code": exc.code})
+        raise_security(exc)
+    audit_event("PAYEE_CHECK", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id)
+    return {"code": 200, "data": {"target_name": receiver.get("name")}}
 
 
 @router.get("/api/v1/contacts/{user_id}")

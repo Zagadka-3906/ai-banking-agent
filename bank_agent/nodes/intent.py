@@ -43,6 +43,28 @@ def _payee_names(state: BankingAgentState) -> list[str]:
             if isinstance(name, str) and 0 < len(name.strip()) <= 20 and name.strip() not in names:
                 names.append(name.strip())
     return names[:5]
+
+
+_PAYEE_REFUSAL_CODES = {"TARGET_NOT_FOUND", "SELF_TRANSFER", "CONTACT_TARGET_AMBIGUOUS", "TARGET_INACTIVE"}
+
+
+def _payee_refusal(state: BankingAgentState, target: str) -> Optional[str]:
+    """Core's reason a named payee cannot be paid, or None (also when unsure)."""
+
+    user_id = state.get("user_id")
+    if not user_id or not target:
+        return None
+    try:
+        response = runtime._http("POST", "payees/check", state=state,
+                                 json_body={"user_id": user_id, "target": target}, headers={"X-User-Id": user_id})
+        if response.status_code < 400:
+            return None
+        detail = response.json().get("detail")
+    except Exception:
+        return None
+    if isinstance(detail, dict) and detail.get("code") in _PAYEE_REFUSAL_CODES:
+        return str(detail.get("message") or "").rstrip("。") or None
+    return None
 from bank_agent.runtime import (
     INJECTION_LOCKED_NOTICE,
     report_security_signal,
@@ -264,6 +286,14 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             response = "请补充希望设置的卡片额度（例如 5000 元）。"
         elif intent == Intent.SUBSCRIPTION_CANCEL.value and "target" in missing_fields:
             response = "请说明要取消哪个订阅（例如：取消 Apple 订阅）。查看现有订阅可以说“我有哪些订阅”。"
+        elif (intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value} and "amount" in missing_fields
+              and parsed.get("target") and (refusal := _payee_refusal(state, str(parsed["target"])))):
+            # Say "that is you" / "no such payee" now, not after the amount is given.
+            response = f"{refusal}。请告诉我要转给哪位（联系人姓名或手机号）。"
+            parsed["target"] = None
+            if pending_clarification is not None:
+                pending_clarification["payload"]["target"] = None
+                pending_clarification["missing"] = ["target"] + [item for item in missing_fields if item != "target"]
         elif "amount" in missing_fields and intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
             response = "请补充明确的金额（例如 300 元）。"
         if response is None:

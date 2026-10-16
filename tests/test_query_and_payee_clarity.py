@@ -75,3 +75,56 @@ def test_recent_transfers_lists_settled_transfers_only(gateway):  # noqa: F811
     assert history["approval"] is None
     assert "李四" in history["reply"] and "300" in history["reply"]
     assert "咖啡店" not in history["reply"]
+
+
+def _approval_for(reply):
+    assert reply["approval"] is not None, reply["reply"]
+    return reply["approval"]["summary"]
+
+
+def test_choosing_oneself_is_caught_before_the_amount_and_the_task_continues(gateway):  # noqa: F811
+    # The reported conversation: 给联系人转账 → 张三 (the caller) → 1000 → 李四.
+    client, _ = gateway
+    _send(client, "给联系人转账", conversation_id="self-payee")
+    self_pick = _send(client, "张三", conversation_id="self-payee")
+    assert self_pick["approval"] is None
+    assert "本人" in self_pick["reply"] and "转给哪位" in self_pick["reply"] and "金额" not in self_pick["reply"]
+    other = _send(client, "李四", conversation_id="self-payee")
+    assert "金额" in other["reply"]
+    summary = _approval_for(_send(client, "1000", conversation_id="self-payee"))
+    assert "李四" in summary and "1,000.00" in summary
+
+
+def test_a_refused_payee_keeps_the_amount_for_the_next_name(gateway):  # noqa: F811
+    client, _ = gateway
+    _send(client, "我要转账1000元", conversation_id="keep-amount")
+    refused = _send(client, "张三", conversation_id="keep-amount")
+    assert refused["approval"] is None and "本人" in refused["reply"]
+    summary = _approval_for(_send(client, "李四", conversation_id="keep-amount"))
+    assert "李四" in summary and "1,000.00" in summary
+
+
+def test_an_unknown_payee_with_an_amount_keeps_the_task_open(gateway):  # noqa: F811
+    client, _ = gateway
+    refused = _send(client, "给张大千转300元", conversation_id="unknown-keep")
+    assert refused["approval"] is None
+    assert "张大千" in refused["reply"] and "¥300.00会保留" in refused["reply"]
+    summary = _approval_for(_send(client, "李四", conversation_id="unknown-keep"))
+    assert "李四" in summary and "300.00" in summary
+    assert main.ACCOUNTS[PRINCIPAL]["balance"] == 15000.0
+
+
+def test_an_amount_refusal_keeps_the_payee_for_the_next_amount(gateway):  # noqa: F811
+    client, _ = gateway
+    refused = _send(client, "给李四转99999元", conversation_id="keep-payee")
+    assert refused["approval"] is None and "新的金额" in refused["reply"] and "李四" in refused["reply"]
+    summary = _approval_for(_send(client, "200元", conversation_id="keep-payee"))
+    assert "李四" in summary and "200.00" in summary
+
+
+def test_payee_check_resolves_without_issuing_anything(gateway):  # noqa: F811
+    _, core = gateway
+    ok = core.post("/api/v1/payees/check", json={"user_id": PRINCIPAL, "target": "李四"}, headers=_headers())
+    assert ok.status_code == 200 and ok.json()["data"]["target_name"] == "李四" and "auth_token" not in ok.json()
+    itself = core.post("/api/v1/payees/check", json={"user_id": PRINCIPAL, "target": "张三"}, headers=_headers())
+    assert itself.status_code == 400 and itself.json()["detail"]["code"] == "SELF_TRANSFER"

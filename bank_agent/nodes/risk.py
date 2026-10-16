@@ -72,6 +72,7 @@ def _pending_slot_clarification(
     missing: list[str],
     *,
     drop_target: bool = False,
+    drop_amount: bool = False,
 ) -> dict[str, Any]:
     """Ask for one more slot while keeping everything the user already gave.
 
@@ -87,13 +88,49 @@ def _pending_slot_clarification(
     if drop_target:
         payload["target"] = None
         context["target"] = None
+    if drop_amount:
+        payload["amount"] = None
+        context["amount"] = None
     context["pending_clarification"] = {"intent": intent, "missing": missing, "confidence": None, "payload": payload}
     return {
         "risk_level": "UNKNOWN", "clarification_required": True,
         "final_response": message, "auth_token": None,
         "action_requirements": [], "context": context,
         **({"target": None} if drop_target else {}),
+        **({"amount": None} if drop_amount else {}),
     }
+
+
+# Core refusals the user can fix by naming someone (something) else or another
+# amount. The task stays open with everything else kept, so "李四" after
+# "不允许向本人账户转账" continues the same transfer instead of starting over.
+_TARGET_RETRY_CODES = {"TARGET_NOT_FOUND", "SELF_TRANSFER", "CONTACT_TARGET_AMBIGUOUS", "TARGET_INACTIVE", "PRODUCT_NOT_FOUND", "HOLDING_NOT_FOUND"}
+_AMOUNT_RETRY_CODES = {"INSUFFICIENT_FUNDS", "AMOUNT_LIMIT_EXCEEDED", "INVALID_AMOUNT", "AMOUNT_NOT_ALLOWED", "MIN_AMOUNT_NOT_MET", "CARD_LIMIT_EXCEEDED"}
+_PAYEE_INTENTS = {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value}
+
+
+def _retry_after_refusal(state: BankingAgentState, intent: str, response: requests.Response) -> Optional[dict[str, Any]]:
+    # A step of a multi-step request stops the chain instead (see compound workflows).
+    if (state.get("context") or {}).get("compound_workflow"):
+        return None
+    detail = response_json(response).get("detail")
+    code = detail.get("code") if isinstance(detail, dict) else None
+    reason = error_message(response).rstrip("。")
+    amount = state.get("amount")
+    kept_amount = f"金额 ¥{float(amount):,.2f}" if isinstance(amount, (int, float)) and amount > 0 else None
+    if code in _TARGET_RETRY_CODES and state.get("target"):
+        if intent in _PAYEE_INTENTS:
+            ask = "请告诉我要转给哪位（联系人姓名或手机号）" + (f"，{kept_amount}会保留。" if kept_amount else "。")
+        elif intent.startswith("WEALTH_"):
+            ask = "请重新说明理财产品编号（例如 CJ01002）" + (f"，{kept_amount}会保留。" if kept_amount else "。")
+        else:
+            return None
+        return _pending_slot_clarification(state, intent, f"本次操作未发起，资金没有变动。{reason}。{ask}", ["target"], drop_target=True)
+    if code in _AMOUNT_RETRY_CODES and kept_amount:
+        target = state.get("target")
+        keep = f"，{'收款人' if intent in _PAYEE_INTENTS else '其他信息'}{' ' + str(target) if target and intent in _PAYEE_INTENTS else ''}会保留"
+        return _pending_slot_clarification(state, intent, f"本次操作未发起，资金没有变动。{reason}。请说一个新的金额{keep}。", ["amount"], drop_amount=True)
+    return None
 
 
 def _redeem_all_principal(state: BankingAgentState) -> tuple[Optional[float], Optional[str]]:
@@ -208,7 +245,10 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                             f"{error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
                             ["paying_card"],
                         )
-                return {"risk_level": "ERROR", "final_response": f"操作风控预检未通过：{error_message(response)}"}
+                retry = _retry_after_refusal(state, intent, response)
+                if retry is not None:
+                    return retry
+                return {"risk_level": "ERROR", "final_response": f"本次操作未发起，资金没有变动。原因：{error_message(response)}"}
             data = response_json(response)
             target = data.get("target") or state.get("target")
             if target == f"__{data.get('operation') or intent}__":
@@ -272,6 +312,9 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                         f"{error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
                         ["paying_card"],
                     )
+                retry = _retry_after_refusal(state, intent, response)
+                if retry is not None:
+                    return retry
                 return {"risk_level": "ERROR", "final_response": f"本次操作未发起，资金没有变动。原因：{error_message(response)}"}
             data = response_json(response)
             return {
