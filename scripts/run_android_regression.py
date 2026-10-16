@@ -70,7 +70,6 @@ def main():
     parser.add_argument("--gradle-init", type=Path)
     parser.add_argument("--minimum-tests", type=int, default=68)
     parser.add_argument("--test-class", help="Run a specific class instead of the regression annotation")
-    parser.add_argument("--record-demo", action="store_true")
     parser.add_argument("--case-manifest", type=Path, help="Synthetic multi-turn cases for NaturalConversationUiTest")
     parser.add_argument("--mode", choices=("offline", "live"), default="offline")
     args = parser.parse_args()
@@ -114,7 +113,6 @@ def main():
             raise RuntimeError("Dedicated emulator is still locked; unlock before testing")
     env = {**os.environ, "BANK_SCENARIO_CONTROL_TOKEN": secrets.token_hex(32), "BANK_MFA_DYNAMIC_OTP": "0"}
     children, streams = [], []
-    recording = None
     try:
         for service, port in (("core", 18800), ("gateway", 18810)):
             stream = (output / f"{service}.log").open("w", encoding="utf-8")
@@ -136,13 +134,6 @@ def main():
                 raise ValueError("Case manifests require the natural conversation recorder")
             subprocess.run([*adb_args, "push", str(args.case_manifest.resolve()), "/data/local/tmp/anyan-acceptance-cases.json"], check=True, capture_output=True)
             command.append("-Pandroid.testInstrumentationRunnerArguments.caseFile=/data/local/tmp/anyan-acceptance-cases.json")
-        if args.record_demo:
-            if args.test_class != "com.aibanking.agent.ContestDemoUiTest" or args.mode != "offline":
-                raise ValueError("This captioned demo requires the dedicated class in offline mode")
-            command.append("-Pandroid.testInstrumentationRunnerArguments.recordContestDemo=true")
-            (output / "recording-start.json").write_text(json.dumps({"at_ms": int(time.time() * 1000)}), encoding="utf-8")
-            recording = subprocess.Popen([*adb_args, "shell", "screenrecord", "--size", "720x1600", "--bit-rate", "2000000",
-                                          "--time-limit", "180", "/sdcard/anyan-contest-demo.mp4"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with (output / "gradle.log").open("w", encoding="utf-8") as stream:
             try:
                 result = subprocess.run(command, cwd=ROOT / "android", env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=1800)
@@ -153,13 +144,6 @@ def main():
         source = ROOT / "android/app/build/outputs/androidTest-results/connected/scenario"
         summary = verify_results(source, args.minimum_tests)
         verify_protobuf(source, summary["tests"])
-        if recording:
-            subprocess.run([*adb_args, "shell", "pkill", "-INT", "screenrecord"], capture_output=True)
-            recording.wait(timeout=10)
-            subprocess.run([*adb_args, "pull", "/sdcard/anyan-contest-demo.mp4", str(output / "raw-demo.mp4")], check=True, capture_output=True)
-            subprocess.run([*adb_args, "pull", "/data/local/tmp/anyan-demo-chapters.json", str(output / "chapters.json")], check=True, capture_output=True)
-            for name in ("balance", "bills", "approval", "receipt", "red-approval", "red-receipt", "tasks", "takeover-dialog", "takeover"):
-                subprocess.run([*adb_args, "pull", f"/data/local/tmp/anyan-demo-{name}.png", str(output / f"{name}.png")], check=True, capture_output=True)
         shutil.copytree(source, output / "device-results", dirs_exist_ok=True)
         if args.case_manifest:
             sys.path.insert(0, str(ROOT))
@@ -174,12 +158,6 @@ def main():
         if summary.get("business_passed") is False:
             raise RuntimeError("Business comparison contains mismatches; inspect evaluation.json, not just JUnit")
     finally:
-        if recording and recording.poll() is None:
-            subprocess.run([*adb_args, "shell", "pkill", "-INT", "screenrecord"], capture_output=True)
-            try:
-                recording.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                recording.terminate()
         for child in reversed(children):
             child.terminate()
             try:
