@@ -160,6 +160,11 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
             return resolved(date(today.year - 1, 1, 1), date(today.year - 1, 12, 31))
     except ValueError:
         return {"error": "DATE_RANGE_INVALID"}
-    if re.search(r"最近|过去|季度|半年|前年|半个月|(?:周|星期)[一二三四五六日天]|\d{1,2}月\d{1,2}|\d{4}[-/年]|\d+天|到.*(?:日|号)", source):
+    unresolved = r"过去|季度|半年|前年|半个月|(?:周|星期)[一二三四五六日天]|\d{1,2}月\d{1,2}|\d{4}[-/年]|\d+天|到.*(?:日|号)"
+    if re.search(r"最近|近期", source) and not re.search(unresolved, source):
+        # A plain "最近" ("recently") is a common, not an ambiguous, request:
+        # answer it for the last 30 days; the reply states the range used.
+        return resolved(today - timedelta(days=29), today)
+    if re.search(r"最近|" + unresolved, source):
         return {"error": "DATE_RANGE_UNRESOLVED"}
     return None

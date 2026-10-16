@@ -18,10 +18,31 @@ from planner import (
 )
 from security import InjectionError, audit_event, sanitize_text
 from intent_language import business_text, nonexecuting_action
+from bank_agent import runtime
 from bank_agent.state import (
     BankingAgentState,
     empty_state,
 )
+
+
+def _payee_names(state: BankingAgentState) -> list[str]:
+    """Up to five payee names the caller can use; best effort, empty on any failure."""
+
+    user_id = state.get("user_id")
+    if not user_id:
+        return []
+    names: list[str] = []
+    for path in (f"contacts/{user_id}/book", f"contacts/{user_id}"):
+        try:
+            response = runtime._http("GET", path, state=state, headers={"X-User-Id": user_id})
+            rows = response.json().get("data") if response.status_code < 400 else None
+        except Exception:
+            continue
+        for row in rows if isinstance(rows, list) else []:
+            name = (row.get("name") or row.get("display_name")) if isinstance(row, dict) else None
+            if isinstance(name, str) and 0 < len(name.strip()) <= 20 and name.strip() not in names:
+                names.append(name.strip())
+    return names[:5]
 from bank_agent.runtime import (
     INJECTION_LOCKED_NOTICE,
     report_security_signal,
@@ -233,7 +254,10 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             if missing_fields:
                 response = "风险评估需要您明确回答：" + "、".join(labels[item] for item in missing_fields) + "。我不会替您填写问卷。"
         elif intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value} and "target" in missing_fields:
-            response = "请告诉我收款人姓名或手机号，我不会替您猜测收款账户。"
+            # Ask who first - before the amount - and offer the real payees by name.
+            names = _payee_names(state)
+            examples = f"，例如：{'、'.join(names)}" if names else ""
+            response = f"要转给哪位收款人？请说出联系人姓名或手机号{examples}。我不会替您猜测收款账户。"
         elif intent in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value} and "target" in missing_fields:
             response = "请补充理财产品编号（例如 CJ01002），我不会猜测产品。"
         elif intent == Intent.CARD_LIMIT.value and "amount" in missing_fields:

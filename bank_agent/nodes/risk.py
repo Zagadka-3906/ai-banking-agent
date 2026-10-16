@@ -272,7 +272,7 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                         f"{error_message(response)}。可以直接说卡号，也可以用尾号指定（例如：用尾号3082的卡）。",
                         ["paying_card"],
                     )
-                return {"risk_level": "ERROR", "final_response": f"风控评估未通过：{error_message(response)}"}
+                return {"risk_level": "ERROR", "final_response": f"本次操作未发起，资金没有变动。原因：{error_message(response)}"}
             data = response_json(response)
             return {
                 "risk_level": data.get("risk_level", "ERROR"),

@@ -116,6 +116,14 @@ def amount_from_text(text: str) -> Optional[float]:
     return float(parsed) if parsed is not None and 0 < parsed <= 100_000_000 else None
 
 
+# Placeholders that name no one in particular ("给联系人转账"). Taking them as a
+# payee name skipped the "who?" question and ended in a vague not-found error.
+GENERIC_PAYEE_WORDS = frozenset({
+    "联系人", "收款人", "对方", "别人", "某人", "某个人", "一个人", "人", "谁", "他们", "她们",
+    "你", "您", "我", "自己", "账户", "某个联系人", "一位联系人", "我的联系人", "通讯录",
+})
+
+
 def target_from_text(text: str) -> Optional[str]:
     # Preserve the original alias; the core resolves it against a contact
     # allow-list.  Never default to a person when the user omitted one.
@@ -141,7 +149,8 @@ def target_from_text(text: str) -> Optional[str]:
     )
     if explicit:
         candidate = re.sub(r"再$", "", explicit.group(1))
-        if candidate not in {"他", "她", "它", "同一位", "同一个", "同一个收款人", "刚才那位", "刚才那个", "那个人", "那个", "上次那个"}:
+        if candidate not in {"他", "她", "它", "同一位", "同一个", "同一个收款人", "刚才那位", "刚才那个", "那个人", "那个", "上次那个"} \
+                and candidate not in GENERIC_PAYEE_WORDS:
             return candidate
     for alias in (
         "老婆", "爱人", "媳妇", "妻子", "丈夫", "老公", "夫人",

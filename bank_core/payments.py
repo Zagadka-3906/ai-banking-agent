@@ -74,11 +74,26 @@ def resolve_payee(value: Optional[str], *, from_user: Optional[str] = None) -> t
                 404,
                 "TARGET_NOT_FOUND",
             )
-        raise SecurityError("收款方账户不存在或未登记为联系人", 404, "TARGET_NOT_FOUND")
+        known: list[str] = []
+        with STATE_LOCK:
+            if from_user:
+                known.extend(str(row.get("name")) for row in USER_CONTACTS.get(from_user, []) if row.get("name"))
+            # Built-in payees resolve too, so they belong in the hint.
+            for account_id in dict.fromkeys(CONTACTS.values()):
+                name = (ACCOUNTS.get(account_id) or {}).get("name")
+                if name and account_id != from_user:
+                    known.append(str(name))
+        known = list(dict.fromkeys(known))[:5]
+        hint = f"可以转给：{'、'.join(known)}。" if known else "您还没有可用的收款人，可先在“联系人”页面添加。"
+        raise SecurityError(
+            f"没有找到收款人“{safe_value}”：它不是您的联系人姓名或手机号，也不是本行登记的收款账户。{hint}请说出准确的姓名或手机号",
+            404,
+            "TARGET_NOT_FOUND",
+        )
     if from_user and target_id == from_user:
         raise SecurityError("不允许向本人账户转账", 400, "SELF_TRANSFER")
     if receiver.get("status") != "ACTIVE":
-        raise SecurityError("收款方账户当前不可用", 409, "TARGET_INACTIVE")
+        raise SecurityError(f"收款人“{receiver.get('name') or safe_value}”的账户当前不可用（已冻结或停用），本次没有转账", 409, "TARGET_INACTIVE")
     return target_id, receiver
 
 

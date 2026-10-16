@@ -108,7 +108,18 @@ def parsed_payload(
 BILL_CATEGORY_ALIASES = {
     "餐饮": ("餐饮", "吃饭", "伙食"), "购物": ("购物",),
     "交通": ("交通", "打车", "通勤"), "退款": ("退款",),
+    "转账支出": ("转账记录", "转账明细", "转账流水", "转账历史", "转账支出", "转出记录"),
 }
+
+# "查询最近转账" / "看看转账记录" / "转给李四的钱" ask about transfers already
+# made. Without this they parsed as a new TRANSFER and the app asked who to pay.
+TRANSFER_HISTORY = re.compile(
+    r"(?:查询|查看|查一下|查查|查|看看|看一下|有哪些|列出|显示)(?:一下)?(?:我)?(?:的)?"
+    r"(?:最近|近期|本月|这个月|上月|上个月|今天|今年)?(?:的)?(?:几笔|那些|所有)?(?:转账|转出|汇款)(?!给)"
+    r"|(?:最近|近期)(?:的)?(?:几笔)?(?:转账|转出|汇款)(?:记录|明细|情况)?$"
+    r"|(?:转账|转出|汇款)(?:记录|明细|流水|历史|情况)"
+    r"|转给.{1,12}的(?:钱|款|记录)"
+)
 
 
 _UNDO_VERBS = re.compile(r"撤销|撤回|回退|退回|取消|作废|解除|释放|不要了")
@@ -241,7 +252,10 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         "境外" in text and any(x in text for x in ("怎么回事", "什么情况", "是什么消费", "是什么交易"))
     ):
         intent = Intent.BILL_ANALYSIS.value
-    elif any(x in text for x in ("账单", "流水", "消费记录", "交易记录")):
+    elif amount is None and TRANSFER_HISTORY.search(text):
+        intent = Intent.BILL_QUERY.value
+        slots["category"] = "转账支出"
+    elif any(x in text for x in ("账单", "流水", "消费记录", "交易记录", "收支明细", "收支记录")):
         intent = Intent.BILL_QUERY.value
     elif any(x in text for x in ("生日", "预留", "专款", "锁定资金", "锁定活期")) or ("锁定" in text and "卡" not in text and amount is not None):
         intent = Intent.CROSS_SCENE_LOCK.value
