@@ -109,6 +109,9 @@ data class SpeechStatusView(
 /** A transcript for the user to review in the input box; it is never sent by itself. */
 data class TranscriptView(val text: String = "", val seconds: Double = 0.0)
 
+/** Model-predicted next requests for the latest turn; empty in rules-only mode. */
+data class SuggestionsView(val suggestions: List<String> = emptyList(), val source: String = "none")
+
 /** A normalized gateway/transport failure, so the UI never shows a raw stack. */
 class GatewayException(
     val code: String?,
@@ -162,6 +165,10 @@ interface AgentApi {
     @POST("api/v1/agent/approvals/{approvalId}/stream")
     suspend fun resolveApprovalStream(@Path("approvalId") approvalId: String, @Body body: ApprovalRequest,
         @Header("X-User-Id") userId: String, @Header("X-Session-Token") sessionToken: String?): ResponseBody
+
+    @GET("api/v1/agent/conversations/{conversationId}/suggestions")
+    suspend fun suggestions(@Path("conversationId") conversationId: String,
+        @Header("X-User-Id") userId: String, @Header("X-Session-Token") sessionToken: String?): SuggestionsView
 
     @GET("api/v1/agent/conversations/{conversationId}/operations/{operationId}")
     suspend fun reconcileOperation(@Path("conversationId") conversationId: String, @Path("operationId") operationId: String,

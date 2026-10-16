@@ -367,6 +367,24 @@ class TurnsMixin:
                 return
             yield item
 
+    def suggest_followups(self, *, principal: str, conversation_id: str) -> dict[str, Any]:
+        """Model-predicted next requests for the latest turn of this caller's conversation.
+
+        Read-only: it never touches the graph. No chips while an approval or the
+        risk questionnaire is waiting - those have their own fixed controls.
+        """
+        from bank_agent.suggestions import model_suggestions
+
+        thread_id = conversation_thread_id(principal, conversation_id)
+        state = dict(self._graph().get_state(self._config(thread_id)).values or {})
+        waiting = self._pending_approval(thread_id) is not None or bool(state.get("risk_quiz"))
+        suggestions = [] if not state or waiting else model_suggestions(state)
+        source = "model" if suggestions else "none"
+        # Counts only: the suggested wording is user-facing text, not audit material.
+        audit_event("AGENT_SUGGEST", user_id=principal, decision="ALLOW", outcome="SUCCESS",
+                    metadata={"count": len(suggestions), "source": source})
+        return {"code": 200, "suggestions": suggestions, "source": source}
+
     def start_turn_stream(self, *, principal: str, conversation_id: str, message_id: str, text: str,
                           session_token: Optional[str] = None, request_id: Optional[str] = None,
                           client_request_id: Optional[str] = None) -> Iterator[dict[str, Any]]:

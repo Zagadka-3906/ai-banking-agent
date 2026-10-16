@@ -456,6 +456,17 @@ def get_operation_result(conversation_id: str, operation_id: str, request: Reque
         operation_id=sanitize_text(operation_id, field="操作编号", max_length=128), session_token=x_session_token)
 
 
+@app.get("/api/v1/agent/conversations/{conversation_id}/suggestions")
+def get_suggestions(conversation_id: str, request: Request,
+                    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+                    x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    """“猜你想问” for the latest turn, predicted by the model; empty in rules-only mode."""
+    principal = _request_principal(request, session_token=x_session_token, user_id=x_user_id, action="AGENT_SUGGEST")
+    _guard_rate_limit(principal)
+    return SERVICE.suggest_followups(principal=principal,
+        conversation_id=sanitize_text(conversation_id, field="会话编号", max_length=128))
+
+
 @app.post("/api/v1/agent/approvals/{approval_id}/stream")
 def post_approval_stream(approval_id: str, req: ApprovalRequest, request: Request,
                          x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),

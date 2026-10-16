@@ -593,6 +593,32 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         persistMessages()
         if (envelope.businessStatus == "PENDING_RECONCILIATION") reconcileMessage(messageId)
+        if (updateConversation && envelope.approval == null) refreshSuggestions()
+    }
+
+    /**
+     * Replace the rule-based chips with ones the model predicts from the
+     * conversation, once they arrive. The reply is never held for them; a newer
+     * turn, an approval or the quiz keeps the chips it already has.
+     */
+    private fun refreshSuggestions() {
+        val revision = interactionRevision
+        val principal = _state.value.principal
+        val conversation = conversationId
+        sessionWork.launch {
+            val predicted = try {
+                io { agent.suggestions(principal, credential(), conversation) }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                emptyList()
+            }
+            val chips = cleanSuggestions(predicted)
+            if (chips.isEmpty()) return@launch
+            _state.update { state ->
+                if (revision != interactionRevision || state.busy || state.pending != null || state.quiz != null) state
+                else state.copy(suggestions = chips)
+            }
+        }
     }
 
     /** Only reads a Core operation receipt. Never resubmits the operation. */

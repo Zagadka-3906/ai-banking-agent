@@ -2,6 +2,7 @@ package com.aibanking.agent
 
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.TurnEnvelope
+import com.aibanking.agent.ui.chat.cleanSuggestions
 import com.aibanking.agent.ui.chat.predictedSuggestions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -123,5 +124,11 @@ class PredictedSuggestionsTest {
         )
 
         assertTrue(suggestions.none { it.startsWith("取消 Apple") })
+    }
+
+    @Test
+    fun model_chips_are_trimmed_bounded_and_deduplicated() {
+        val chips = cleanSuggestions(listOf(" 查看本月账单 ", "查看本月账单", "好", "这是一条明显超过十六个字的推荐问题文字内容", "查询最近转账", "看看理财", "查余额"))
+        assertEquals(listOf("查看本月账单", "查询最近转账", "看看理财"), chips)
     }
 }

@@ -18,6 +18,10 @@ internal val UNDO_SUGGESTIONS: Map<String, List<String>> = mapOf(
     "LOCK_SUCCESS" to listOf("取消生日锁定", "查看账户余额", "查看本月账单"),
 )
 
+/** Bound model chips before they are shown: short, distinct, at most three. */
+internal fun cleanSuggestions(predicted: List<String>): List<String> =
+    predicted.map { it.trim() }.filter { it.length in 2..16 }.distinct().take(3)
+
 /** Derive bounded, actionable next turns from the completed server turn. */
 internal fun predictedSuggestions(envelope: TurnEnvelope): List<String> {
     // Approval controls always win. Graph state can retain suggestions from an

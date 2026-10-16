@@ -77,6 +77,10 @@ class AgentRepository(
         ), {}, onProgress)
     } }
 
+    suspend fun suggestions(principal: String, sessionToken: String?, conversationId: String): List<String> = normalizing {
+        api.suggestions(conversationId, principal, sessionToken).suggestions
+    }
+
     suspend fun reconcileOperation(principal: String, sessionToken: String?, conversationId: String, operationId: String): TurnEnvelope = normalizing {
         api.reconcileOperation(conversationId, operationId, principal, sessionToken)
     }
