@@ -11,6 +11,7 @@ from typing import Any, Optional
 from bank_core.access import (
     _record_failure_and_raise,
 )
+from bank_core.cards import CARD_CHANNELS
 from bank_core.contacts import (
     _aa_request_eligible,
 )
@@ -61,6 +62,8 @@ GENERIC_OPERATION_RISK: dict[str, str] = {
     # before Core releases them, and the confirmation is a single-use nonce.
     "SUBSCRIPTION_QUERY": "YELLOW",
     "SUBSCRIPTION_CANCEL": "YELLOW",
+    # Undo only withdraws reservations that have not moved money (bank_core.undo).
+    "UNDO_TASK": "YELLOW",
     "SCHEDULED_TRANSFER": "YELLOW",
     "SPLIT_BILL": "YELLOW",
     # Red: money investment, card security and limit changes require MFA.
@@ -73,6 +76,9 @@ GENERIC_OPERATION_RISK: dict[str, str] = {
     "CARD_UNREPORT_LOST": "RED",
     "PASSWORD_CHANGE": "RED",
     "FRAUD_PROTECT": "RED",
+    # Default for an unknown direction; switching a channel off is YELLOW
+    # (see ``_operation_risk_level``), switching one on stays RED.
+    "CARD_CHANNEL": "RED",
 }
 
 
@@ -217,6 +223,8 @@ def _operation_context(
     scheduled_at: Optional[str] = None,
     transaction_id: Optional[str] = None,
     transaction_snapshot_hash: Optional[str] = None,
+    card_channel: Optional[str] = None,
+    channel_enabled: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Normalize every field that can alter a generic operation's outcome."""
 
@@ -250,7 +258,7 @@ def _operation_context(
     # explicit and implicit forms carrying the same value remain equivalent.
     effective_new_limit = amount if operation == "CARD_LIMIT" and new_limit is None else new_limit
     normalized_new_limit = amount_to_cents(effective_new_limit) if effective_new_limit not in (None, 0) else None
-    return {
+    context = {
         "operation": operation,
         "target": target,
         "amount_cents": amount_to_cents(amount),
@@ -265,6 +273,25 @@ def _operation_context(
         "transaction_id": sanitize_text(transaction_id, field="交易编号", max_length=128) if transaction_id else None,
         "transaction_snapshot_hash": sanitize_text(transaction_snapshot_hash, field="交易快照摘要", max_length=128) if transaction_snapshot_hash else None,
     }
+    if card_channel is not None:
+        # Bound into the approval: a token for switching a channel off cannot
+        # be replayed to switch it (or another channel) on.
+        context["card_channel"] = card_channel
+        context["channel_enabled"] = bool(channel_enabled)
+    return context
+
+
+def _card_channel_args(operation: str, channel: Any, enable: Any) -> tuple[Optional[str], Optional[bool]]:
+    """Validate the CARD_CHANNEL switch; other operations must not carry one."""
+
+    if operation != "CARD_CHANNEL":
+        if channel is not None or enable is not None:
+            raise SecurityError("该操作不接受交易渠道参数", 400, "CHANNEL_NOT_ALLOWED")
+        return None, None
+    name = str(channel or "").strip().upper()
+    if name not in CARD_CHANNELS or not isinstance(enable, bool):
+        raise SecurityError("请说明要开通或关闭的交易渠道（网上支付或境外交易）", 400, "INVALID_CARD_CHANNEL")
+    return name, enable
 
 
 def _fraud_transaction(user_id: str, transaction_id: Optional[str] = None) -> dict[str, Any]:
@@ -321,13 +348,17 @@ def _validate_split_participants(user_id: str, participants: Optional[list[str]]
     return resolved
 
 
-def _operation_risk_level(user_id: str, operation: str, amount: float) -> str:
+def _operation_risk_level(user_id: str, operation: str, amount: float, *, channel_enabled: Optional[bool] = None) -> str:
     """Return the core-owned risk class for a generic operation.
 
     An AA request does not debit anyone. Each participant's eventual payment
     uses the ordinary transfer risk check on that participant's daily total.
     """
 
+    if operation == "CARD_CHANNEL":
+        # Closing a channel only reduces exposure; opening one is a security
+        # change that needs the red tier's strong verification.
+        return "RED" if channel_enabled else "YELLOW"
     if operation not in {"SCHEDULED_TRANSFER"}:
         return GENERIC_OPERATION_RISK[operation]
     with STATE_LOCK:

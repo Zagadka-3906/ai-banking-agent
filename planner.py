@@ -64,6 +64,10 @@ class Intent(str, Enum):
     CARD_REPORT_LOST = "CARD_REPORT_LOST"
     CARD_UNREPORT_LOST = "CARD_UNREPORT_LOST"
     PASSWORD_CHANGE = "PASSWORD_CHANGE"
+    # Switch a card payment channel (online / overseas) on or off.
+    CARD_CHANNEL = "CARD_CHANNEL"
+    # Withdraw a reservation that has not moved money (schedule, AA, fund lock).
+    UNDO_OPERATION = "UNDO_OPERATION"
     SUBSCRIPTION_QUERY = "SUBSCRIPTION_QUERY"
     SUBSCRIPTION_CANCEL = "SUBSCRIPTION_CANCEL"
     UNKNOWN = "UNKNOWN"
@@ -88,6 +92,7 @@ YELLOW_INTENTS = {
     Intent.SUBSCRIPTION_QUERY.value,
     Intent.SUBSCRIPTION_CANCEL.value,
     Intent.CARD_APPLY.value,
+    Intent.UNDO_OPERATION.value,
 }
 RED_INTENTS = {
     Intent.WEALTH_PURCHASE.value,
@@ -99,7 +104,12 @@ RED_INTENTS = {
     Intent.CARD_UNREPORT_LOST.value,
     Intent.PASSWORD_CHANGE.value,
     Intent.FRAUD_DISPUTE.value,
+    # Preview only: Core lowers switching a channel *off* to YELLOW.
+    Intent.CARD_CHANNEL.value,
 }
+CARD_CHANNEL_NAMES = {"ONLINE": "网上支付", "OVERSEAS": "境外交易"}
+UNDO_KINDS = {"SCHEDULED_TRANSFER": "预约转账", "SPLIT_BILL": "AA 收款请求", "FUND_RESERVATION": "资金锁定",
+              "LAST": "最近一笔可撤销的操作", "SETTLED_TRANSFER": "已完成的转账"}
 ALL_INTENTS = {item.value for item in Intent}
 
 
@@ -226,6 +236,19 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     else:
         safe_slots.pop("renewal_reminder", None)
         safe_slots.pop("days_before", None)
+    # Switch and undo slots are allow-listed values only; anything else is
+    # dropped so the request falls back to a clarification question.
+    channel = str(slots.get("card_channel") or "").upper()
+    if intent == Intent.CARD_CHANNEL.value and channel in CARD_CHANNEL_NAMES and isinstance(slots.get("channel_enabled"), bool):
+        safe_slots["card_channel"], safe_slots["channel_enabled"] = channel, slots["channel_enabled"]
+    else:
+        safe_slots.pop("card_channel", None)
+        safe_slots.pop("channel_enabled", None)
+    undo_kind = str(slots.get("undo_kind") or "").upper()
+    if intent == Intent.UNDO_OPERATION.value and undo_kind in UNDO_KINDS:
+        safe_slots["undo_kind"] = undo_kind
+    else:
+        safe_slots.pop("undo_kind", None)
     raw_participants = payload.get("participants")
     if not isinstance(raw_participants, list):
         raw_participants = []
@@ -342,6 +365,14 @@ def missing_slots(parsed: Mapping[str, Any]) -> list[str]:
         return missing
     if intent == Intent.SCHEDULED_TRANSFER.value and not parsed.get("scheduled_at"):
         missing.append("scheduled_at")
+    if intent == Intent.CARD_CHANNEL.value:
+        if "card_channel" not in slots:
+            missing.append("card_channel")
+        return missing
+    if intent == Intent.UNDO_OPERATION.value:
+        if "undo_kind" not in slots:
+            missing.append("undo_kind")
+        return missing
     if intent == Intent.WEALTH_COMPARE.value:
         product_ids = parsed.get("product_ids")
         if not isinstance(product_ids, list) or len(product_ids) < 2:
@@ -581,6 +612,8 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
         tasks = [Task("fetch_cards", "FETCH_CARDS", risk_level="GREEN", details=base)]
     elif intent == Intent.PASSWORD_CHANGE.value:
         tasks = [Task("password_change", "PASSWORD_CHANGE", risk_level="RED", details=base)]
+    elif intent == Intent.UNDO_OPERATION.value:
+        tasks = [Task("undo_operation", "UNDO_TASK", risk_level="YELLOW", details=base)]
     elif intent.startswith("CARD_"):
         level = risk_for_intent(intent)
         tasks = [Task("card_operation", intent, risk_level=level, details=base)]

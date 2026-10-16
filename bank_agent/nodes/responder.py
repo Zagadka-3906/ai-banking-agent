@@ -8,6 +8,7 @@ from typing import Any
 
 
 from planner import (
+    CARD_CHANNEL_NAMES,
     Intent,
     analyze_transactions,
     filter_transactions,
@@ -343,6 +344,8 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
         # Creating an AA request does not move money. Participants pay later.
         Intent.SPLIT_BILL.value: ("PENDING", "PARTIAL", "SETTLED"),
         Intent.PASSWORD_CHANGE.value: "PASSWORD_CHANGED",
+        Intent.CARD_CHANNEL.value: "CHANNEL_UPDATED",
+        Intent.UNDO_OPERATION.value: "UNDONE",
         Intent.FRAUD_DISPUTE.value: "CARD_PROTECTED",
     }.get(rtype)
     if rtype:
@@ -367,6 +370,8 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                 Intent.SPLIT_BILL.value: ("task_id", "split_id", "participants", "per_person"),
                 Intent.PASSWORD_CHANGE.value: ("credential_version",),
                 Intent.FRAUD_DISPUTE.value: ("card", "dispute_case", "transaction"),
+                Intent.CARD_CHANNEL.value: ("card", "channel", "enabled"),
+                Intent.UNDO_OPERATION.value: ("task", "kind"),
             }
             if any(key not in payload for key in required_by_type.get(rtype, ())):
                 return _response_validation_failure(state, "GENERIC_RESULT_FIELDS_INVALID")
@@ -378,6 +383,7 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                     Intent.CARD_APPLY.value: "ACTIVE", Intent.CARD_FREEZE.value: "FROZEN",
                     Intent.CARD_UNFREEZE.value: "ACTIVE", Intent.CARD_REPORT_LOST.value: "LOST",
                     Intent.CARD_UNREPORT_LOST.value: "ACTIVE", Intent.FRAUD_DISPUTE.value: "FROZEN",
+                    Intent.CARD_CHANNEL.value: "ACTIVE",
                 }.get(rtype)
                 if expected_card_status and card.get("status") != expected_card_status:
                     return _response_validation_failure(state, "CARD_STATUS_MISMATCH")
@@ -385,6 +391,12 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                     return _response_validation_failure(state, "CARD_TARGET_MISMATCH")
                 if rtype == Intent.CARD_LIMIT.value and not _amount_matches_expected(card.get("daily_limit"), state.get("amount")):
                     return _response_validation_failure(state, "CARD_LIMIT_RESULT_INVALID")
+                if rtype == Intent.CARD_CHANNEL.value:
+                    slots = state.get("slots") or {}
+                    channels = card.get("channels") if isinstance(card.get("channels"), dict) else {}
+                    if (payload.get("channel") != slots.get("card_channel") or payload.get("enabled") is not slots.get("channel_enabled")
+                            or channels.get(payload.get("channel")) is not slots.get("channel_enabled")):
+                        return _response_validation_failure(state, "CARD_CHANNEL_RESULT_INVALID")
                 if rtype == Intent.FRAUD_DISPUTE.value:
                     case, transaction = payload.get("dispute_case"), payload.get("transaction")
                     if (
@@ -401,6 +413,12 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
                             and state["transaction"]["tx_id"] != transaction["tx_id"])
                     ):
                         return _response_validation_failure(state, "DISPUTE_RESULT_INVALID")
+            elif rtype == Intent.UNDO_OPERATION.value:
+                task = payload.get("task")
+                if (not isinstance(task, dict) or task.get("task_id") != state.get("target")
+                        or payload.get("kind") not in {"SCHEDULED_TRANSFER", "SPLIT_BILL", "FUND_RESERVATION"}
+                        or (payload["kind"] != "FUND_RESERVATION" and task.get("status") != "CANCELLED")):
+                    return _response_validation_failure(state, "UNDO_RESULT_INVALID")
             elif rtype == Intent.SUBSCRIPTION_CANCEL.value:
                 subscription = payload.get("subscription")
                 if (not isinstance(subscription, dict)
@@ -472,6 +490,16 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
         Intent.SCHEDULED_TRANSFER.value: f"✅ 已登记预约转账，预约时间为 {scheduled_label}，到期后仍需您确认才会转出资金。",
         Intent.PASSWORD_CHANGE.value: "✅ 登录凭证版本已轮换（演示不保存明文密码）。",
     }
+    if rtype == Intent.CARD_CHANNEL.value:
+        name = CARD_CHANNEL_NAMES.get(str(inner.get("channel")), "交易渠道")
+        action = "开通" if inner.get("enabled") else "关闭"
+        return f"✅ 已{action}卡片 {card_id or ''} 的{name}。".replace("卡片  的", "卡片的") + ("" if inner.get("enabled") else "相关交易将被拒绝，需要时可说“开通" + name + "”。")
+    if rtype == Intent.UNDO_OPERATION.value:
+        kind = inner.get("kind")
+        undone = {"SCHEDULED_TRANSFER": "✅ 已撤销这笔预约转账，到期不会再执行。",
+                  "SPLIT_BILL": "✅ 已撤回这笔 AA 收款请求，参与人无需再付款。",
+                  "FUND_RESERVATION": "✅ 已解除资金锁定，资金恢复可用，关联的提醒和订单草稿已取消。"}.get(kind, "✅ 已撤销。")
+        return undone + "已完成的资金操作不受影响。"
     if rtype == Intent.CARD_LIMIT.value:
         limit = card.get("daily_limit")
         return f"✅ 卡片日限额已调整为 ¥{float(limit):,.2f}。" if _finite_number(limit, nonnegative=True) else "✅ 卡片日限额已调整。"

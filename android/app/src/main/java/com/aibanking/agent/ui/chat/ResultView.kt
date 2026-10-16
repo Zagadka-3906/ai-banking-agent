@@ -389,6 +389,8 @@ private fun executionTitle(type: String?): String = when (type) {
     "LOCK_SUCCESS" -> "资金安排"
     "CARD_QUERY" -> "银行卡信息"
     "CARD_APPLY" -> "银行卡申请"
+    "CARD_CHANNEL" -> "交易渠道"
+    "UNDO_OPERATION" -> "撤销操作"
     "CARD_LIMIT" -> "银行卡限额调整"
     "CARD_FREEZE" -> "银行卡冻结"
     "CARD_UNFREEZE" -> "银行卡解冻"

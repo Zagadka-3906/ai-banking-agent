@@ -27,6 +27,7 @@ private val completedOperationTitles = mapOf(
     "SPLIT_BILL" to "收款请求已创建", "LOCK_SUCCESS" to "资金已预留",
     "WEALTH_PURCHASE" to "申购成功", "WEALTH_REDEEM" to "赎回成功",
     "CARD_APPLY" to "虚拟卡已开立", "CARD_LIMIT" to "卡片日限额已调整",
+    "CARD_CHANNEL" to "交易渠道已更新", "UNDO_OPERATION" to "已撤销",
     "CARD_FREEZE" to "卡片已冻结", "CARD_UNFREEZE" to "卡片已解冻",
     "CARD_REPORT_LOST" to "卡片已挂失", "CARD_UNREPORT_LOST" to "挂失已解除",
     "SUBSCRIPTION_CANCEL" to "自动扣费已取消", "SUBSCRIPTION_REMINDER" to "续费提醒处理结果",

@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Header, Request
 
+from bank_core.undo import undo_candidate, undo_summary
 from bank_core.access import (
     _get_actor,
     _presented_session,
@@ -35,6 +36,7 @@ from bank_core.models import (
     UnlockPrecheckRequest,
 )
 from bank_core.operations import (
+    _card_channel_args,
     _birthday_times,
     _context_hash,
     _ensure_product_suitable,
@@ -203,6 +205,11 @@ def operation_precheck(
         _ensure_account(req.user_id)
         operation = _validate_operation_name(req.operation)
         target = _operation_target(req)
+        card_channel, channel_enabled = _card_channel_args(operation, req.channel, req.enable)
+        undo_preview = None
+        if operation == "UNDO_TASK":
+            undo = undo_candidate(req.user_id, sanitize_text(req.target or "", field="任务编号", max_length=100))
+            target, undo_preview = undo.task_id, {"task_type": undo.task_type, "summary": undo_summary(undo)}
         if operation == "FRAUD_PROTECT":
             fraud_tx = _fraud_transaction(req.user_id, req.transaction_id)
             target = str(fraud_tx["card_id"])
@@ -214,7 +221,7 @@ def operation_precheck(
         reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_QUERY", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_QUERY", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT", "CARD_CHANNEL", "UNDO_TASK"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation in {"SCHEDULED_TRANSFER", "SPLIT_BILL", "WEALTH_PURCHASE", "WEALTH_REDEEM", "CARD_LIMIT"} and (amount_input is None or float(amount_input) <= 0):
             raise SecurityError("该操作需要明确的正数金额", 400, "AMOUNT_REQUIRED")
@@ -299,7 +306,7 @@ def operation_precheck(
     # daily total and receiving yellow approvals that collectively exceed the
     # threshold.
     with STATE_LOCK:
-        risk_level = _operation_risk_level(req.user_id, operation, amount)
+        risk_level = _operation_risk_level(req.user_id, operation, amount, channel_enabled=channel_enabled)
         required = ["USER_CLICK_CONFIRM"] if risk_level == "YELLOW" else ["USER_CLICK_CONFIRM", "SMS_OTP", "FACE_RECOGNITION"]
         operation_context = _operation_context(
             operation=operation,
@@ -315,6 +322,8 @@ def operation_precheck(
             scheduled_at=normalized_scheduled_at,
             transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
             transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
+            card_channel=card_channel,
+            channel_enabled=channel_enabled,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -334,6 +343,8 @@ def operation_precheck(
             session_token=_presented_session(request),
         )
     response = {"code": 200, "risk_level": risk_level, "operation": operation, "auth_token": token, "token_type": "Bearer-Auth-Nonce", "expires_at": payload["exp"], "required_actions": required, "mfa_required": risk_level == "RED", "target": target, "context_hash": context_hash}
+    if undo_preview:
+        response["undo"] = undo_preview
     if fraud_tx:
         response["transaction"] = dict(fraud_tx)
         response["risk_reasons"] = ["境外交易", "交易类别标记为可疑交易", "用户明确否认该消费"]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class StrictModel(BaseModel):
@@ -120,6 +120,9 @@ class OperationPrecheckRequest(StrictModel):
     participants: Optional[list[str]] = None
     product_ids: Optional[list[str]] = None
     scheduled_at: Optional[str] = None
+    # CARD_CHANNEL only: which payment channel, and whether to switch it on.
+    channel: Optional[str] = None
+    enable: Optional[StrictBool] = None
     reason: Optional[str] = "智能银行操作"
 
 
@@ -137,6 +140,9 @@ class OperationExecuteRequest(StrictModel):
     participants: Optional[list[str]] = None
     product_ids: Optional[list[str]] = None
     scheduled_at: Optional[str] = None
+    # CARD_CHANNEL only: which payment channel, and whether to switch it on.
+    channel: Optional[str] = None
+    enable: Optional[StrictBool] = None
     reason: Optional[str] = "智能银行操作"
     # Only meaningful for PASSWORD_CHANGE, and deliberately not part of the
     # signed approval context: credential material must never travel inside a

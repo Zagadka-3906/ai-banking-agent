@@ -249,6 +249,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                 "loss_tolerance": "风险承受程度",
                 "experience": "投资经验",
                 "horizon_years": "投资期限",
+                "card_channel": "要开通或关闭的交易渠道（网上支付或境外交易）",
+                "undo_kind": "要撤销的操作（预约转账、AA 收款请求或资金锁定）",
             }
             missing_names = [labels.get(item, item) for item in missing_fields]
             response = ("请补充：" + "、".join(missing_names) + "。") if missing_names else "请确认这次要办理的具体业务和操作要求。"

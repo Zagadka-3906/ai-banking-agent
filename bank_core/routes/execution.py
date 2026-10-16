@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from bank_core.undo import release_locks, undo_candidate, undo_task
 from bank_core.access import (
     _get_actor,
     _presented_session,
@@ -16,6 +17,8 @@ from bank_core.access import (
     _request_id,
 )
 from bank_core.cards import (
+    _card_summary,
+    card_channels,
     CARD_MAX_DAILY_LIMIT,
     CARD_TRANSITIONS,
     _card_source_states,
@@ -47,6 +50,7 @@ from bank_core.models import (
     UnlockFundRequest,
 )
 from bank_core.operations import (
+    _card_channel_args,
     _BEHAVIOR_OPERATION_SIGNALS,
     GENERIC_OPERATION_RISK,
     _birthday_times,
@@ -268,27 +272,8 @@ def unlock_fund(req: UnlockFundRequest, request: Request = None, x_auth_token: O
             if not lock_id and sum(float(v.get("amount", 0)) for v in candidates) < requested_amount:
                 raise SecurityError("可解除的锁定金额不足", 400, "LOCK_NOT_FOUND")
             with authorize_execution(token, from_user=req.user_id, target_id=target, amount=req.amount, remark=reason, confirmation=False, mfa_proof=proof, operation="UNLOCK_FUND", presented_session=_presented_session(request), request_id=request_id) as (_payload, _record):
-                left = requested_amount
-                released_ids: list[str] = []
-                for row in candidates:
-                    if left <= 0:
-                        break
-                    release = min(left, float(row["amount"]))
-                    row["amount"] = round(float(row["amount"]) - release, 2)
-                    left = round(left - release, 2)
-                    released_ids.append(row["lock_id"])
-                    if row["amount"] <= 0:
-                        row["status"] = "RELEASED"
-                        row["released_at"] = datetime.now().isoformat()
-                account["locked_amount"] = round(max(0.0, float(account["locked_amount"]) - requested_amount), 2)
+                released_ids = release_locks(actor, req.user_id, candidates, requested_amount)
                 remaining = round(float(account["balance"]) - float(account["locked_amount"]), 2)
-                released_set = set(released_ids)
-                for queued in TASK_STORE.list(owner_id=actor):
-                    if queued.payload.get("lock_id") in released_set and queued.status in {TaskState.PENDING, TaskState.WAITING_USER}:
-                        try:
-                            TASK_STORE.transition(queued.task_id, TaskState.CANCELLED, owner_id=actor)
-                        except (KeyError, ValueError):
-                            pass
         record_security_success(actor)
     except SecurityError as exc:
         _idempotency_abort(actor, "unlock_fund", idempotency_key)
@@ -386,6 +371,9 @@ def execute_operation(
         operation = _validate_operation_name(req.operation)
         _ensure_account(req.user_id)
         target = _operation_target(req)
+        card_channel, channel_enabled = _card_channel_args(operation, req.channel, req.enable)
+        if operation == "UNDO_TASK":
+            target = undo_candidate(req.user_id, sanitize_text(req.target or "", field="任务编号", max_length=100)).task_id
         if operation == "FRAUD_PROTECT":
             fraud_tx = _fraud_transaction(req.user_id, req.transaction_id)
             target = str(fraud_tx["card_id"])
@@ -396,7 +384,7 @@ def execute_operation(
         amount_input = req.new_limit if operation == "CARD_LIMIT" and req.amount in (None, 0) and req.new_limit is not None else req.amount
         amount = _operation_amount(amount_input, operation=operation)
         reason = sanitize_text(req.reason or ("客户否认境外消费，申请反诈保护" if operation == "FRAUD_PROTECT" else "智能银行操作"), field="操作原因", max_length=300)
-        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_QUERY", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT"} and amount_input not in (None, 0):
+        if operation in {"CARD_APPLY", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST", "SUBSCRIPTION_QUERY", "SUBSCRIPTION_CANCEL", "PASSWORD_CHANGE", "FRAUD_PROTECT", "CARD_CHANNEL", "UNDO_TASK"} and amount_input not in (None, 0):
             raise SecurityError("该操作不接受金额字段", 400, "AMOUNT_NOT_ALLOWED")
         if operation == "CARD_LIMIT":
             effective_limit = req.new_limit if req.new_limit is not None else req.amount
@@ -437,6 +425,8 @@ def execute_operation(
             scheduled_at=_normalize_datetime(req.scheduled_at, field="计划时间", require_future=True) if operation == "SCHEDULED_TRANSFER" else req.scheduled_at,
             transaction_id=fraud_tx.get("tx_id") if fraud_tx else req.transaction_id,
             transaction_snapshot_hash=_context_hash(fraud_tx) if fraud_tx else req.transaction_snapshot_hash,
+            card_channel=card_channel,
+            channel_enabled=channel_enabled,
         )
         context_hash = _context_hash(operation_context)
         idem_payload = {"user_id": req.user_id, "operation": operation, "context": operation_context}
@@ -577,6 +567,12 @@ def execute_operation(
                             except (KeyError, ValueError):
                                 pass
                     result.update({"status": "CANCELLED", "subscription": selected})
+                elif operation == "CARD_CHANNEL":
+                    card = _select_card(req.user_id, req.card_id, allowed_states={"ACTIVE"})
+                    card["channels"] = {**card_channels(card), card_channel: bool(channel_enabled)}
+                    result.update({"status": "CHANNEL_UPDATED", "card": _card_summary(card), "channel": card_channel, "enabled": bool(channel_enabled)})
+                elif operation == "UNDO_TASK":
+                    result.update(undo_task(actor, target))
                 elif operation == "SUBSCRIPTION_QUERY":
                     result.update(_subscription_query_result(req.user_id))
                 elif operation == "SCHEDULED_TRANSFER":

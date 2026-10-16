@@ -10,6 +10,8 @@ from typing import Any, Optional
 import requests
 
 from planner import (
+    CARD_CHANNEL_NAMES,
+    UNDO_KINDS,
     GREEN_INTENTS,
     RED_INTENTS,
     YELLOW_INTENTS,
@@ -118,6 +120,29 @@ def _redeem_all_principal(state: BankingAgentState) -> tuple[Optional[float], Op
     return total, None
 
 
+def core_operation(intent: str) -> str:
+    """Core's operation name for a generic write intent."""
+
+    return {Intent.FRAUD_DISPUTE.value: "FRAUD_PROTECT", Intent.UNDO_OPERATION.value: "UNDO_TASK"}.get(intent, intent)
+
+
+def _resolve_undo_target(state: BankingAgentState) -> dict[str, Any]:
+    """Pick the reservation to undo from Core's own list of undoable tasks."""
+
+    kind = str((state.get("slots") or {}).get("undo_kind") or "")
+    if kind == "SETTLED_TRANSFER":
+        return {"risk_level": "UNKNOWN", "final_response": "已完成的转账无法撤销或退回，系统不会发起反向付款。如需追回，请联系收款人，或在任务页请求人工处理。仍未执行的预约转账、未付款的 AA 请求和资金锁定可以撤销。"}
+    response = runtime._http("GET", "tasks/undoable", state=state, headers={"X-User-Id": state["user_id"]})
+    if response.status_code >= 400:
+        raise RuntimeError(_error_message(response))
+    rows = [row for row in (_response_json(response).get("data") or []) if isinstance(row, dict)]
+    match = next((row for row in rows if kind == "LAST" or row.get("task_type") == kind), None)
+    if match is None:
+        label = UNDO_KINDS.get(kind, "操作")
+        return {"risk_level": "UNKNOWN", "final_response": f"当前没有可撤销的{label}。已执行的转账、申购等资金操作不能撤销；可在任务页查看全部安排。"}
+    return {"task_id": str(match["task_id"])}
+
+
 def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response") or state.get("clarification_required"):
         return {"risk_level": "UNKNOWN"}
@@ -139,6 +164,11 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
             def clarify_card(message: str) -> dict[str, Any]:
                 return _pending_slot_clarification(state, intent, message, ["target"], drop_target=True)
 
+            if intent == Intent.UNDO_OPERATION.value:
+                undo_target = _resolve_undo_target(state)
+                if "task_id" not in undo_target:
+                    return undo_target
+                state = {**state, "target": undo_target["task_id"]}
             slots = dict(state.get("slots") or {})
             amount = state.get("amount")
             spoken = str(state.get("user_input") or state.get("extra_info") or "")
@@ -165,7 +195,7 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                 amount, failure = _redeem_all_principal(state)
                 if failure:
                     return {"risk_level": "UNKNOWN", "final_response": failure}
-            response = runtime._http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "amount": amount or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else paying_card_id, "transaction_id": slots.get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": amount if intent == Intent.CARD_LIMIT.value else None, "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
+            response = runtime._http("POST", "risk/precheck/operation", state=state, json_body={"user_id": state["user_id"], "operation": core_operation(intent), "amount": amount or 0.0, "target": state.get("target"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else paying_card_id, "transaction_id": slots.get("transaction_id"), "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "new_limit": amount if intent == Intent.CARD_LIMIT.value else None, "channel": slots.get("card_channel") if intent == Intent.CARD_CHANNEL.value else None, "enable": slots.get("channel_enabled") if intent == Intent.CARD_CHANNEL.value else None, "reason": state.get("extra_info") or "智能银行操作"}, headers={"X-User-Id": state["user_id"]})
             if response.status_code >= 400:
                 detail = _response_json(response).get("detail")
                 code = detail.get("code") if isinstance(detail, dict) else None
@@ -186,6 +216,10 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
                 # Core derives it again at execution, so keep the user's slot.
                 target = state.get("target")
             resolved = {"risk_level": data.get("risk_level", "ERROR"), "auth_token": data.get("auth_token"), "action_requirements": data.get("required_actions", []), "target": target, "context": {**(state.get("context") or {}), "target": target}, "transaction": data.get("transaction"), "risk_reasons": data.get("risk_reasons")}
+            if isinstance(data.get("undo"), dict):
+                # Core describes the reservation from its own record; the
+                # approval card shows that, not the user's paraphrase.
+                resolved["context"]["undo_summary"] = str(data["undo"].get("summary") or "")[:200]
             if paying_card_id:
                 resolved["slots"] = slots
             if amount != state.get("amount"):
@@ -317,6 +351,12 @@ def _human_readable_action(state: BankingAgentState) -> str:
         return f"解除卡片 {target or ''} 的挂失".strip()
     if intent == Intent.CARD_APPLY.value:
         return "申请一张虚拟卡"
+    if intent == Intent.UNDO_OPERATION.value:
+        return (state.get("context") or {}).get("undo_summary") or "撤销一笔尚未执行的安排"
+    if intent == Intent.CARD_CHANNEL.value:
+        slots = state.get("slots") or {}
+        action = "开通" if slots.get("channel_enabled") else "关闭"
+        return f"{action}卡片 {target or ''} 的{CARD_CHANNEL_NAMES.get(str(slots.get('card_channel')), '交易渠道')}".replace("卡片  的", "卡片的")
     if intent == Intent.SUBSCRIPTION_QUERY.value:
         slots = state.get("slots") or {}
         if slots.get("renewal_reminder") is True:

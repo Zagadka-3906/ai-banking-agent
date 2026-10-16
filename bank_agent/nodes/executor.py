@@ -44,6 +44,7 @@ from bank_agent.settlement import (
 from bank_agent.dialogue import (
     _advance_multi_plan,
 )
+from bank_agent.nodes.risk import core_operation
 from bank_agent.nodes.responder import (
     responder_node,
 )
@@ -323,13 +324,13 @@ def executor_node(state: BankingAgentState) -> dict[str, Any]:
         # The remaining write scenarios use explicit mock endpoints.  If an
         # endpoint is not enabled, report a safe refusal rather than claiming
         # completion.
-        if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value, Intent.FRAUD_DISPUTE.value}:
+        if intent in {Intent.SCHEDULED_TRANSFER.value, Intent.SPLIT_BILL.value, Intent.SUBSCRIPTION_CANCEL.value, Intent.CARD_APPLY.value, Intent.CARD_LIMIT.value, Intent.CARD_FREEZE.value, Intent.CARD_UNFREEZE.value, Intent.CARD_REPORT_LOST.value, Intent.CARD_UNREPORT_LOST.value, Intent.PASSWORD_CHANGE.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value, Intent.FRAUD_DISPUTE.value, Intent.CARD_CHANNEL.value, Intent.UNDO_OPERATION.value}:
             try:
                 response = _settle_with_retry(
                     state,
                     method="POST",
                     path="operations/execute",
-                    json_body={"user_id": user_id, "operation": "FRAUD_PROTECT" if intent == Intent.FRAUD_DISPUTE.value else intent, "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else (state.get("slots") or {}).get("paying_card_id"), "transaction_id": (state.get("slots") or {}).get("transaction_id"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
+                    json_body={"user_id": user_id, "operation": core_operation(intent), "target": state.get("target"), "amount": state.get("amount"), "product_id": state.get("target") if intent.startswith("WEALTH_") else None, "card_id": state.get("target") if intent.startswith("CARD_") else (state.get("slots") or {}).get("paying_card_id"), "transaction_id": (state.get("slots") or {}).get("transaction_id"), "new_limit": state.get("amount") if intent == Intent.CARD_LIMIT.value else None, "merchant": state.get("target") if intent == Intent.SUBSCRIPTION_CANCEL.value else None, "participants": state.get("participants") or [], "product_ids": state.get("product_ids") or [], "scheduled_at": state.get("scheduled_at"), "channel": (state.get("slots") or {}).get("card_channel") if intent == Intent.CARD_CHANNEL.value else None, "enable": (state.get("slots") or {}).get("channel_enabled") if intent == Intent.CARD_CHANNEL.value else None, "auth_token": state.get("auth_token"), "mfa_proof": state.get("mfa_proof"), "user_confirmed": bool(state.get("user_confirmed")), "reason": state.get("extra_info") or "智能银行操作"},
                     headers={"X-User-Id": user_id, "X-Auth-Token": state.get("auth_token") or "", "X-MFA-Proof": state.get("mfa_proof") or "", "X-User-Confirmation": "true" if state.get("user_confirmed") else "false"},
                     idempotency_key=_settle_idempotency_key(state, intent),
                 )

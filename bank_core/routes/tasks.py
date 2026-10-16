@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from bank_core.undo import UNDOABLE_TASK_TYPES, cancel_task_branch, undo_candidate, undo_summary
 from bank_core.access import (
     _get_actor,
     _presented_session,
@@ -154,6 +155,32 @@ def list_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_req
     actor = _get_actor(x_user_id, x_user_id, action="TASK_QUERY", request_id=request_id)
     rows = [task.to_dict() for task in TASK_STORE.list(owner_id=actor)]
     audit_event("TASK_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
+    return {"code": 200, "data": rows}
+
+
+# Registered before ``/tasks/{task_id}`` so "undoable" is not read as a task id.
+@router.get("/api/v1/tasks/undoable")
+def list_undoable_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """The caller's reservations that can still be undone, newest first.
+
+    Uses the same rules as the ``UNDO_TASK`` precheck, so a channel never has to
+    guess which task (or which lock) is still reversible.
+    """
+
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
+    request_id = _request_id(x_request_id)
+    actor = _get_actor(x_user_id, x_user_id, action="TASK_UNDO_QUERY", request_id=request_id)
+    rows = []
+    for task in reversed(TASK_STORE.list(owner_id=actor)):
+        if task.task_type not in UNDOABLE_TASK_TYPES:
+            continue
+        try:
+            undo_candidate(actor, task.task_id)
+        except SecurityError:
+            continue
+        rows.append({"task_id": task.task_id, "task_type": task.task_type, "summary": undo_summary(task), "created_at": task.created_at})
+    audit_event("TASK_UNDO_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"count": len(rows)})
     return {"code": 200, "data": rows}
 
 
@@ -344,7 +371,8 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
                         raise SecurityError("预留预算不足以订购商品", 409, "ORDER_BUDGET_UNAVAILABLE")
                     if float(account["balance"]) < amount:
                         raise SecurityError("账户余额不足", 400, "INSUFFICIENT_FUNDS")
-                    paying_card = _charge_card_and_balance(actor, amount)
+                    # A merchant order is an online card payment.
+                    paying_card = _charge_card_and_balance(actor, amount, channel="ONLINE")
                     order = place_order(user_id=actor, task_id=safe_id, item=str(payload["item"]), amount_cents=amount_to_cents(amount))
                     account["balance"] = round(float(account["balance"]) - amount, 2)
                     account["locked_amount"] = round(float(account["locked_amount"]) - amount, 2)
@@ -412,37 +440,7 @@ def _task_action_locked(task_id: str, action: str, req: TaskActionRequest, x_use
         safe_id = sanitize_text(task_id, field="任务编号", max_length=100)
         reason = sanitize_text(req.reason, field="操作原因", max_length=300)
         if action == "TASK_CANCEL":
-            task = TASK_STORE.cancel(safe_id, owner_id=actor)
-            # Keep money-movement reservations in sync with the task state so
-            # a cancelled scheduled/AA request no longer contributes to the
-            # daily risk accumulator.  The task store remains the source of
-            # ownership authorization; this only updates the corresponding
-            # domain fixture after cancellation succeeds.
-            with STATE_LOCK:
-                schedule_id = task.payload.get("schedule_id")
-                split_id = task.payload.get("split_id")
-                if schedule_id:
-                    for row in SCHEDULED_TRANSFERS:
-                        if row.get("schedule_id") == schedule_id:
-                            row["status"] = "CANCELLED"
-                            row["cancelled_at"] = datetime.now().isoformat()
-                if split_id:
-                    for row in SPLIT_REQUESTS:
-                        if row.get("split_id") == split_id:
-                            row["status"] = "CANCELLED"
-                            row["cancelled_at"] = datetime.now().isoformat()
-                # A cancelled prerequisite must not leave dependent reminder
-                # or order-draft nodes runnable.  Cascade only to non-terminal
-                # tasks owned by the same principal; terminal records remain
-                # immutable for auditability.
-                cancelled_lock_id = task.payload.get("lock_id") if isinstance(task.payload, dict) and task.task_type in {"REMINDER", "FUND_RESERVATION"} else None
-                for dependent in TASK_STORE.list(owner_id=actor):
-                    same_reservation = bool(cancelled_lock_id and dependent.payload.get("lock_id") == cancelled_lock_id)
-                    if (safe_id in dependent.depends_on or same_reservation) and dependent.status in {TaskState.PENDING, TaskState.WAITING_USER, TaskState.FAILED}:
-                        try:
-                            TASK_STORE.transition(dependent.task_id, TaskState.CANCELLED, owner_id=actor)
-                        except (KeyError, ValueError):
-                            pass
+            task = cancel_task_branch(actor, safe_id)
         else:
             task = TASK_STORE.get(safe_id, owner_id=actor)
             if task is None:

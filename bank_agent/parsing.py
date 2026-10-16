@@ -111,6 +111,45 @@ BILL_CATEGORY_ALIASES = {
 }
 
 
+_UNDO_VERBS = re.compile(r"撤销|撤回|回退|退回|取消|作废|解除|释放|不要了")
+_UNDO_OBJECTS = (
+    ("SCHEDULED_TRANSFER", re.compile(r"预约|定时转账|计划转账")),
+    ("SPLIT_BILL", re.compile(r"AA|ＡＡ|分摊|均摊|收款请求")),
+    ("FUND_RESERVATION", re.compile(r"锁定|锁资|预留|生日.{0,6}(?:资金|钱|款)")),
+)
+_UNDO_LAST = re.compile(r"上一步|上一笔操作|上一个操作|刚才的操作|刚刚的操作|刚才那步")
+_UNDO_SETTLED = re.compile(r"(?:刚才|刚刚|上一笔|那笔|这笔)?的?转账")
+_CHANNEL_WORDS = (("ONLINE", re.compile(r"网上支付|网购|线上支付|在线支付|快捷支付|网络支付")),
+                  ("OVERSEAS", re.compile(r"境外|海外|国外|跨境")))
+_CHANNEL_ON = re.compile(r"开通|打开|开启|恢复|允许|启用")
+_CHANNEL_OFF = re.compile(r"关闭|关掉|禁止|禁用|暂停|不允许|停用|限制")
+
+
+def _undo_or_channel_rules(text: str) -> Optional[dict[str, Any]]:
+    """Rollback and card-channel requests, recognised before action keywords.
+
+    Without this, "取消明天给李四的预约转账" parsed as a *new* scheduled
+    transfer and "取消生日锁定" as a new fund lock.
+    """
+
+    if _UNDO_VERBS.search(text) and "订阅" not in text and "代扣" not in text:
+        kind = next((name for name, pattern in _UNDO_OBJECTS if pattern.search(text)), None)
+        if kind is None and _UNDO_LAST.search(text):
+            kind = "LAST"
+        if kind is None and _UNDO_SETTLED.search(text) and re.search(r"撤销|撤回|退回", text):
+            kind = "SETTLED_TRANSFER"
+        if kind is not None:
+            return _parsed_payload(Intent.UNDO_OPERATION.value, text=text, slots={"undo_kind": kind})
+    channel = next((name for name, pattern in _CHANNEL_WORDS if pattern.search(text)), None)
+    if channel and re.search(r"交易|支付|消费|刷卡|网购|使用", text):
+        enabled = bool(_CHANNEL_ON.search(text)) and not _CHANNEL_OFF.search(text)
+        disabled = bool(_CHANNEL_OFF.search(text)) and not _CHANNEL_ON.search(text)
+        if enabled or disabled:
+            return _parsed_payload(Intent.CARD_CHANNEL.value, text=text,
+                                   slots={"card_channel": channel, "channel_enabled": enabled})
+    return None
+
+
 def _local_parse_rules(text: str) -> dict[str, Any]:
     """Conservative offline intent parser used when the LLM is unavailable."""
 
@@ -136,6 +175,9 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
             product_ids=product_ids,
             scheduled_at=_scheduled_at_from_text(text),
         )
+    rollback_or_channel = _undo_or_channel_rules(text)
+    if rollback_or_channel is not None:
+        return rollback_or_channel
     if any(word in text for word in ("低风险", "低等风险", "保守", "稳健", "不能亏", "低损失")):
         slots["loss_tolerance"] = "LOW"
     elif any(word in text for word in ("高风险", "高等风险", "激进", "能承受亏损", "追求高收益")):

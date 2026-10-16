@@ -111,11 +111,23 @@ CARD_TRANSITIONS: dict[str, dict[str, str]] = {
 }
 
 
+# Payment channels a cardholder can switch off. Absent = enabled, so cards
+# stored before this field existed keep working.
+CARD_CHANNELS = {"ONLINE": "网上支付", "OVERSEAS": "境外交易"}
+
+
 def _card_source_states(operation: str) -> Optional[set[str]]:
     """States ``operation`` can act on, or None when it has no state restriction."""
 
+    if operation == "CARD_CHANNEL":
+        return {"ACTIVE"}
     transitions = CARD_TRANSITIONS.get(operation)
     return set(transitions) if transitions else None
+
+
+def card_channels(card: Mapping[str, Any]) -> dict[str, bool]:
+    stored = card.get("channels") if isinstance(card.get("channels"), dict) else {}
+    return {channel: stored.get(channel) is not False for channel in CARD_CHANNELS}
 
 
 def _mock_card_masked() -> str:
@@ -167,6 +179,7 @@ def _card_summary(card: Mapping[str, Any], *, available_balance: Optional[float]
     if "last4" not in result:
         masked = str(card.get("number_masked") or "")
         result["last4"] = re.sub(r"\D", "", masked)[-4:] if len(re.sub(r"\D", "", masked)) >= 4 else ""
+    result["channels"] = card_channels(card)
     if available_balance is not None:
         result["available_balance"] = available_balance
     return result

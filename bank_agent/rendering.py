@@ -103,6 +103,10 @@ def _render_cards(data: Mapping[str, Any]) -> str:
             line += f" ｜ 今日已用 ¥{float(item.get('daily_spent_today')):,.2f}"
         if _finite_number(item.get("daily_remaining"), nonnegative=True):
             line += f" ｜ 今日剩余 ¥{float(item.get('daily_remaining')):,.2f}"
+        channels = item.get("channels") if isinstance(item.get("channels"), dict) else {}
+        closed = [name for key, name in (("ONLINE", "网上支付"), ("OVERSEAS", "境外交易")) if channels.get(key) is False]
+        if closed:
+            line += " ｜ 已关闭 " + "、".join(closed)
         lines.append(line)
     if not rows:
         lines.append("- 当前没有绑定卡片。")

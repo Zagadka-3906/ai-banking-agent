@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Any, Optional
 
 from bank_core.cards import (
+    CARD_CHANNELS,
+    card_channels,
     CARD_DAILY_SPENT,
     CARD_DAILY_SPENT_DATE,
     _find_card,
@@ -256,16 +258,19 @@ def _record_card_spend(user_id: str, amount: float, *, card: Optional[dict[str, 
     CARD_DAILY_SPENT[card_id] = round(_card_daily_spent(card_id) + amount, 2)
 
 
-def _charge_card_and_balance(user_id: str, amount: float, *, card_id: Optional[str] = None) -> dict[str, Any]:
+def _charge_card_and_balance(user_id: str, amount: float, *, card_id: Optional[str] = None, channel: Optional[str] = None) -> dict[str, Any]:
     """Enforce the paying card's limit and record the spend, consistently.
 
     Used by every path that actually moves money out of the account (transfer,
     wealth purchase), so ``daily_limit`` cannot be enforced on one outflow and
-    silently ignored on another.
+    silently ignored on another. ``channel`` names a card payment channel the
+    cardholder can switch off (``ONLINE`` for merchant orders).
     """
 
     card = _payment_card(user_id, card_id)
     if card is None:
         raise SecurityError("付款卡片当前不可用于交易", 423, "CARD_BLOCKED")
+    if channel and not card_channels(card)[channel]:
+        raise SecurityError(f"该卡已关闭{CARD_CHANNELS[channel]}，请先开通或换用其他卡", 423, "CARD_CHANNEL_DISABLED")
     checked = _enforce_card_limit(user_id, amount, card=card)
     return checked or card
