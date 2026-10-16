@@ -582,7 +582,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (it.id == messageId) message else it.takeUnless { row -> stale(row) }
             } else kept + message
             // An approved operation that reached a result opens its result page at once.
-            val reveal = revealOutcome && envelope.approval == null && revealsOutcomeAfterApproval(message)
+            val reveal = revealOutcome && envelope.approval == null && isTaskOutcome(message)
             state.copy(busy = false, pending = envelope.approval, otp = "", activeStages = emptyList(),
                 outcomeMessageId = if (reveal) messageId else state.outcomeMessageId,
                 lastProblem = if (clearProblem) null else state.lastProblem,

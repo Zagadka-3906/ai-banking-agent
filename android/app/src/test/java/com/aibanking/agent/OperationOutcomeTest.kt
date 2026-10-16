@@ -8,7 +8,7 @@ import com.aibanking.agent.ui.chat.OperationProblem
 import com.aibanking.agent.ui.chat.OutcomeTone
 import com.aibanking.agent.ui.chat.hasReconciliationTarget
 import com.aibanking.agent.ui.chat.outcomeFor
-import com.aibanking.agent.ui.chat.revealsOutcomeAfterApproval
+import com.aibanking.agent.ui.chat.isTaskOutcome
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -171,12 +171,14 @@ class OperationOutcomeTest {
         }
     }
 
-    @Test fun an_approved_task_opens_its_result_page_but_an_approved_query_does_not() {
-        assertTrue(revealsOutcomeAfterApproval(completed(receipt("TRANSFER_SUCCESS"))))
-        assertTrue(revealsOutcomeAfterApproval(completed(receipt("CARD_CHANNEL"))))
-        // The subscription list needs confirmation before it is read; it stays in the conversation.
-        assertFalse(revealsOutcomeAfterApproval(completed(receipt("SUBSCRIPTION_QUERY"))))
-        assertTrue(revealsOutcomeAfterApproval(completed(receipt("TRANSFER_SUCCESS")).copy(businessStatus = "FAILED")))
-        assertFalse(revealsOutcomeAfterApproval(completed(receipt("TRANSFER_SUCCESS")).copy(approvalPreview = true)))
+    @Test fun tasks_have_a_result_page_but_queries_do_not() {
+        assertTrue(isTaskOutcome(completed(receipt("TRANSFER_SUCCESS"))))
+        assertTrue(isTaskOutcome(completed(receipt("CARD_CHANNEL"))))
+        // Queries - including the subscription list that needs confirmation first - stay in the conversation.
+        assertFalse(isTaskOutcome(completed(receipt("SUBSCRIPTION_QUERY"))))
+        assertFalse(isTaskOutcome(completed(receipt("BALANCE"))))
+        assertFalse(isTaskOutcome(completed(receipt("BILL_QUERY"))))
+        assertTrue(isTaskOutcome(completed(receipt("TRANSFER_SUCCESS")).copy(businessStatus = "FAILED")))
+        assertFalse(isTaskOutcome(completed(receipt("TRANSFER_SUCCESS")).copy(approvalPreview = true)))
     }
 }

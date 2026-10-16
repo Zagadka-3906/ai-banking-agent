@@ -40,11 +40,11 @@ private val queryTypes = setOf(
 )
 
 /**
- * Whether a finished approval should open its result page by itself: a task
- * that changed something (or failed / awaits reconciliation), not a query that
- * merely needed confirmation before it could be read (e.g. the subscription list).
+ * Whether a reply is a task with a result page: something was changed, failed or
+ * awaits reconciliation. A successful query (balance, bills, the subscription list
+ * that needed confirmation first) is answered in the conversation and has none.
  */
-internal fun revealsOutcomeAfterApproval(message: ChatMessage): Boolean {
+internal fun isTaskOutcome(message: ChatMessage): Boolean {
     val outcome = outcomeFor(message) ?: return false
     if (message.businessStatus != "SUCCEEDED") return true
     val types = receiptsOf(message).mapNotNull { it["type"] as? String }

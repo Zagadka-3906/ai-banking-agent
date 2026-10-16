@@ -14,6 +14,7 @@ import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.chat.ChatMessage
 import com.aibanking.agent.ui.chat.ChatUiState
 import com.aibanking.agent.ui.chat.ChatViewModel
+import com.aibanking.agent.ui.chat.isTaskOutcome
 import com.google.gson.JsonSyntaxException
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
@@ -321,6 +322,12 @@ class ScenarioOutcomeUiTest {
         // Approved operations already open their own result page.
         if (model.state.value.outcomeMessageId == id && ui.onAllNodesWithTag(UiTags.OUTCOME_SCREEN).fetchSemanticsNodes().isNotEmpty()) return
         ui.returnFromOutcome(settleMs = 500)
+        // Queries are answered in the conversation without a result button.
+        if (!isTaskOutcome(message(id))) {
+            ui.runOnIdle { model.openOutcome(id) }
+            ui.onNodeWithTag(UiTags.OUTCOME_SCREEN).assertIsDisplayed()
+            return
+        }
         ui.onNodeWithTag(UiTags.CHAT_LIST).performScrollToNode(hasTestTag(UiTags.outcomeEntry(id)))
         ui.onNodeWithTag(UiTags.outcomeEntry(id)).performClick()
         ui.onNodeWithTag(UiTags.OUTCOME_SCREEN).assertIsDisplayed()
