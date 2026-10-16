@@ -176,10 +176,20 @@ def settle_failure_response(state: BankingAgentState, intent: str, message: str,
     plan = advance_plan(state, intent, outcome="FAILURE", error=message)
     audit_event("EXECUTION", user_id=state.get("user_id"), decision="ERROR", outcome="FAILURE", reason=message[:200], request_id=state.get("request_id"))
     compensation_result = _run_compensation(state, compensation)
-    lines = [f"{intent} 未完成：{message}"]
+    reply = f"{_BUSINESS_NAMES.get(intent, '本次操作')}未完成：{str(message).rstrip('。')}。"
     if compensation_result:
-        lines.append(f"补偿动作 {compensation_result['action']}：{compensation_result['message']}")
-    return {"final_response": " ".join(lines), "plan": plan, "business_status": "FAILED"}
+        reply += f"处理情况：{compensation_result['message']}"
+    return {"final_response": reply, "plan": plan, "business_status": "FAILED"}
+
+
+_BUSINESS_NAMES = {
+    "TRANSFER": "转账", "SCHEDULED_TRANSFER": "预约转账", "SPLIT_BILL": "AA 收款",
+    "CROSS_SCENE_LOCK": "资金锁定", "WEALTH_PURCHASE": "理财申购", "WEALTH_REDEEM": "理财赎回",
+    "CARD_APPLY": "开卡", "CARD_LIMIT": "调整卡片限额", "CARD_FREEZE": "冻结卡片", "CARD_UNFREEZE": "解冻卡片",
+    "CARD_REPORT_LOST": "挂失卡片", "CARD_UNREPORT_LOST": "解除挂失", "CARD_CHANNEL": "调整交易渠道",
+    "SUBSCRIPTION_CANCEL": "取消订阅", "FRAUD_DISPUTE": "交易争议处理", "PASSWORD_CHANGE": "修改密码",
+    "UNDO_OPERATION": "撤销",
+}
 
 
 def settle_unknown_response(state: BankingAgentState) -> dict[str, Any]:

@@ -274,7 +274,9 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         intent = Intent.WEALTH_PURCHASE.value
     elif any(x in text for x in ("赎回", "卖出理财")):
         intent = Intent.WEALTH_REDEEM.value
-    elif any(x in text for x in ("风险评估", "风险测评", "测一下风险", "投资问卷")):
+    elif any(x in text for x in ("风险评估", "风险测评", "测一下风险", "投资问卷", "风险问卷")) or re.search(
+        r"(?:重新|重做|再做|再测|做|开始|去)\s*(?:一下|一次|一遍)?\s*(?:测评|评测|问卷)", text
+    ):
         intent = Intent.WEALTH_RISK_ASSESSMENT.value
     elif any(x in text for x in ("对比理财", "比较理财", "产品对比", "比较产品")) or (len(product_ids) >= 2 and any(x in text for x in ("对比", "比较"))):
         intent = Intent.WEALTH_COMPARE.value
@@ -332,7 +334,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     if intent == Intent.SPLIT_BILL.value:
         target = None
         participants = participants_from_text(text)
-    if intent == Intent.WEALTH_REDEEM.value and re.search(r"(?:全部|全额|所有|都)\s*(?:赎回|卖出|退掉|撤出)|清仓", text):
+    if intent == Intent.WEALTH_REDEEM.value and re.search(r"(?:全部|全额|所有|都)\s*(?:赎回|卖出|退掉|撤出)|(?:赎回|卖出|退掉|撤出).{0,16}(?:全部|全额|所有)|清仓", text):
         # "全部赎回" states the amount by reference to the holding, not by a
         # number.  The principal is read from the core before the precheck, so
         # the approval card shows a real figure rather than a guessed one.

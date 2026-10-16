@@ -259,6 +259,9 @@ def operation_precheck(
                 account = ensure_account(req.user_id)
                 if account["balance"] - account["locked_amount"] < amount:
                     raise SecurityError("可用余额不足以申购此金额", 400, "INSUFFICIENT_FUNDS")
+                # Settlement charges the paying card; refuse now rather than after the
+                # user has gone through SMS and device verification for nothing.
+                enforce_card_limit(req.user_id, amount, card=payment_card(req.user_id, req.card_id))
         if operation == "WEALTH_COMPARE":
             product_ids = list(req.product_ids or [])
             if len(product_ids) < 2:

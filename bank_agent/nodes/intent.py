@@ -45,7 +45,30 @@ def _payee_names(state: BankingAgentState) -> list[str]:
     return names[:5]
 
 
-_PAYEE_REFUSAL_CODES = {"TARGET_NOT_FOUND", "SELF_TRANSFER", "CONTACT_TARGET_AMBIGUOUS", "TARGET_INACTIVE"}
+_RISK_LEVEL_QUERY = re.compile(r"风险(?:等级|类型|档案|评级|承受能力)|测评结果|(?:我是|属于)(?:什么|哪种|哪类)(?:投资者|风险)")
+_RISK_QUIZ_START = re.compile(r"重新|重做|再做|再测|开始|我想做|做一下|测一下|去测评")
+
+
+def _risk_level_answer(state: BankingAgentState, prior_context: dict[str, Any]) -> dict[str, Any]:
+    """“我的风险等级是什么”: the stored level with its meaning, not a product list."""
+
+    profile = (fetch_risk_profile(state) or {}).get("data")
+    base = {"request_id": state.get("request_id") or f"gw_{uuid.uuid4().hex}", "context": prior_context,
+            "intent": Intent.WEALTH_QUERY.value, "risk_level": "GREEN"}
+    if isinstance(profile, dict) and profile.get("risk_profile"):
+        grade = str(profile["risk_profile"])
+        label = f"{grade} {profile.get('risk_type') or ''}".strip()
+        return {**empty_state(final_response=f"您当前的风险等级为 **{label}**，详情如下："), **base,
+                "business_status": "SUCCEEDED", "clarification_required": False,
+                "profile_result": {"grade": grade, "type": str(profile.get("risk_type") or ""),
+                                   "traits": str(profile.get("traits") or ""),
+                                   "matching_levels": str(profile.get("matching_levels") or "")},
+                "suggestions": ["推荐理财产品", "查看我的持仓", "重新做风险测评"]}
+    return {**empty_state(final_response="您还没有完成风险测评。说“我想做风险测评”即可开始（共 8 题）。"), **base,
+            "business_status": "SUCCEEDED", "clarification_required": False, "suggestions": ["我想做风险测评"]}
+
+
+_PAYEE_REFUSAL_CODES ={"TARGET_NOT_FOUND", "SELF_TRANSFER", "CONTACT_TARGET_AMBIGUOUS", "TARGET_INACTIVE"}
 
 
 def _payee_refusal(state: BankingAgentState, target: str) -> Optional[str]:
@@ -73,6 +96,8 @@ from bank_agent.risk_quiz import (
     RISK_QUIZ_INTENTS,
     fetch_risk_profile,
     handle_risk_quiz,
+    is_quiz_reply,
+    remind_risk_quiz,
     start_risk_quiz,
 )
 from bank_agent.parsing import (
@@ -138,6 +163,26 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                         "results": [], "summaries": []}
             text = parts[0]
     active_quiz = prior_context.get("risk_quiz") if isinstance(prior_context.get("risk_quiz"), dict) else None
+    if active_quiz is None and not compound and _RISK_LEVEL_QUERY.search(text) and not _RISK_QUIZ_START.search(text):
+        return _risk_level_answer(state, prior_context)
+    new_request =(local_parse(text).get("intent") if active_quiz is not None and not compound
+                   and not is_quiz_reply(text, active_quiz) else Intent.UNKNOWN.value)
+    if new_request in RISK_QUIZ_INTENTS:
+        # Buying, redeeming or a recommendation needs the finished questionnaire:
+        # keep the answers so far and say so, rather than restarting it.
+        answered = len((active_quiz or {}).get("answers") or {})
+        if new_request == Intent.WEALTH_RISK_ASSESSMENT.value:
+            return remind_risk_quiz(state, active_quiz or {}, f"风险测评正在进行（已记录 {answered}/8 题），请继续作答，或回复“退出测评”。")
+        return remind_risk_quiz(state, active_quiz or {}, f"风险测评还没完成（已记录 {answered}/8 题），完成后就能办理这项业务。请继续作答，或回复“退出测评”。")
+    if new_request != Intent.UNKNOWN.value:
+        # A clear new request ("我的持仓", "赎回…") leaves the questionnaire instead
+        # of being read as an answer; the user is never trapped in it.
+        audit_event("RISK_QUIZ", user_id=state.get("user_id"), decision="ALLOW", outcome="LEFT_FOR_REQUEST", request_id=state.get("request_id"))
+        left = intent_parser_node(cast(BankingAgentState, {**state, "context": {**prior_context, "risk_quiz": None}}))
+        left["risk_quiz"] = {"active": False}
+        if isinstance(left.get("final_response"), str) and left["final_response"]:
+            left["final_response"] = "已退出未完成的风险测评（本次答案未保存）。\n\n" + left["final_response"]
+        return left
     if active_quiz is not None:
         quiz_result = handle_risk_quiz(state, text, active_quiz)
         if compound and quiz_result.get("profile_result"):

@@ -130,6 +130,18 @@ def _parse_quiz_answers(text: str, answers: Mapping[str, Any]) -> tuple[dict[str
     return found, invalid
 
 
+QUIZ_EXIT_WORDS = ("退出测评", "取消测评", "暂不测评", "不测了")
+
+
+def is_quiz_reply(text: str, quiz: Mapping[str, Any]) -> bool:
+    """Whether a message answers (or leaves) the questionnaire, as opposed to a new request."""
+
+    if any(word in text for word in QUIZ_EXIT_WORDS):
+        return True
+    found, invalid = _parse_quiz_answers(text, quiz.get("answers") or {})
+    return bool(found or invalid)
+
+
 def fetch_risk_profile(state: BankingAgentState) -> Optional[dict[str, Any]]:
     """读取核心里该用户的风险档案与测评余量；读不到按未测评处理。"""
 
@@ -188,12 +200,18 @@ def start_risk_quiz(state: BankingAgentState, retake: bool = False) -> dict[str,
     return result
 
 
+def remind_risk_quiz(state: BankingAgentState, quiz: dict[str, Any], message: str) -> dict[str, Any]:
+    """Keep an unfinished questionnaire open (answers kept) and tell the user why."""
+
+    return _quiz_result(state, message, dict(quiz), quiz_payload=RISK_QUIZ_PAYLOAD)
+
+
 def handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any]) -> dict[str, Any]:
     user_id = state.get("user_id")
     request_id = state.get("request_id") or f"agent_{uuid.uuid4().hex}"
     state = {**state, "request_id": request_id}
     answers: dict[str, str] = {str(k): str(v).upper() for k, v in (quiz.get("answers") or {}).items()}
-    if any(word in text for word in ("退出测评", "取消测评", "暂不测评", "不测了")):
+    if any(word in text for word in QUIZ_EXIT_WORDS):
         audit_event("RISK_QUIZ", user_id=user_id, decision="ALLOW", outcome="CANCELLED", request_id=request_id)
         return _quiz_result(state, "已退出风险测评，本次未记录任何答案。需要时再说“我想做风险测评”即可。", None)
 
@@ -245,7 +263,10 @@ def handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any]) 
         "traits": str(graded.get("traits") or ""),
         "matching_levels": str(graded.get("matching_levels") or ""),
     }
-    suggestions = ["查看理财产品", "申购 CJ01002 500 元", "查看我的持仓"]
+    matched = [row for row in ((execution_result or {}).get("data") or {}).get("data") or [] if isinstance(row, dict) and row.get("product_id")]
+    first = matched[0] if matched else None
+    buy = f"申购 {first['product_id']} {max(float(first.get('min_amount') or 0), 500):g} 元" if first else None
+    suggestions = [item for item in ("查看理财产品", buy, "查看我的持仓") if item]
     reply = (
         f"✅ 风险测评完成，您的投资者风险类型为 **{grade} {graded.get('risk_type', '')}**。\n\n"
         f"特点：{graded.get('traits', '')}\n\n"

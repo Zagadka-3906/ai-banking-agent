@@ -259,7 +259,12 @@ def enforce_card_limit(user_id: str, amount: float, *, card: Optional[dict[str, 
         return resolved
     spent = card_daily_spent(str(resolved.get("card_id") or ""))
     if round(spent + amount, 2) > round(limit_value, 2):
-        raise SecurityError("超出卡片当日支付限额，请调整额度或明日再试", 400, "CARD_LIMIT_EXCEEDED")
+        remaining = max(limit_value - spent, 0.0)
+        raise SecurityError(
+            f"超出卡片 {resolved.get('card_id') or ''} 的当日支付限额：每日 ¥{limit_value:,.2f}，今日还可用 ¥{remaining:,.2f}。"
+            "可以降低金额，或先调整卡片限额（例如“把限额调到 20000”）",
+            400, "CARD_LIMIT_EXCEEDED",
+        )
     return resolved
 
 

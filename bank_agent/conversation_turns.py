@@ -101,6 +101,10 @@ class TurnsMixin:
             "reconciliation": None,
             "completed_workflow": None,
             "continue_workflow": False,
+            # The level card and its chips belong to the turn that finished the
+            # questionnaire; later answers (subscriptions, balance…) must not repeat them.
+            "profile_result": None,
+            "suggestions": None,
         }
 
     @staticmethod
@@ -143,7 +147,10 @@ class TurnsMixin:
         pending = self._pending_approval(thread_id)
         control = self._dialogue_control(text)
         if pending is not None and control is None:
-            return self._approval_envelope(pending), {}
+            # A new request does not silently replace the waiting one: say so.
+            return self._approval_envelope(pending, message=(
+                f"您还有一笔待确认的操作：{pending.summary.removeprefix('您正准备进行：')}。"
+                "请先在下方确认或取消，再办理新的请求。")), {}
         if control is None:
             return None, {}
 

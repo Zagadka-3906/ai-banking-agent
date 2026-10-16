@@ -77,6 +77,7 @@ import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import androidx.compose.foundation.gestures.animateScrollBy
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -350,6 +351,19 @@ private fun ChatHome(
         if (itemCount > 0 && (!showWelcome || state.pending != null)) {
             snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= itemCount }
             listState.animateScrollToItem(itemCount - 1)
+            if (state.quiz != null || state.pending != null) {
+                // The quiz/approval card must show down to its last option or button,
+                // also after a question of a different height slides in.
+                repeat(2) {
+                    delay(if (it == 0) 60L else 340L)
+                    val info = listState.layoutInfo
+                    val last = info.visibleItemsInfo.lastOrNull { item -> item.index == itemCount - 1 }
+                    if (last != null) {
+                        val overflow = last.offset + last.size - (info.viewportEndOffset - info.afterContentPadding)
+                        if (overflow > 0) listState.animateScrollBy(overflow.toFloat())
+                    }
+                }
+            }
         }
     }
 
@@ -726,50 +740,84 @@ private fun RiskQuizPanel(
     onGiveUp: () -> Unit,
 ) {
     val question = quiz.currentQuestion ?: return
-    BankSectionCard(modifier = Modifier.fillMaxWidth().padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xxs)) {
-        Column(Modifier.fillMaxWidth().animateContentSize(), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
+    val scope = rememberCoroutineScope()
+    val motion = com.aibanking.agent.ui.anim.LocalBankMotionEnabled.current
+    // The tapped option lights up briefly before the next question slides in.
+    var picked by remember(question.number) { mutableStateOf<String?>(null) }
+    BankSectionCard(modifier = Modifier.fillMaxWidth().padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xxs)
+        .riseIn(rise = 20.dp, durationMillis = 360)) {
+        Column(Modifier.fillMaxWidth().animateContentSize(tween(260)), verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "风险测评 ${quiz.answered + 1}/${quiz.questions.size}",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("风险测评 · 第 ", style = MaterialTheme.typography.titleSmall)
+                    AnimatedContent(
+                        targetState = quiz.answered + 1,
+                        transitionSpec = { (slideInVertically { it } + fadeIn()) togetherWith (slideOutVertically { -it } + fadeOut()) },
+                        label = "quizNumber",
+                    ) { number -> Text("$number", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold) }
+                    Text(" / ${quiz.questions.size} 题", style = MaterialTheme.typography.titleSmall)
+                }
                 BankTextButton(onClick = onGiveUp, enabled = !busy) { Text("放弃") }
             }
-            val quizProgress by animateFloatAsState(quiz.answered.toFloat() / quiz.questions.size, tween(400), label = "quizProgress")
+            val quizProgress by animateFloatAsState(quiz.answered.toFloat() / quiz.questions.size, tween(420), label = "quizProgress")
             LinearProgressIndicator(
                 progress = { quizProgress },
                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
                 drawStopIndicator = {},
             )
-            key(question.number) {
-            Column(Modifier.riseIn(fromX = 24.dp, rise = 0.dp, durationMillis = 300), verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
-            Text(question.text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-            question.options.forEach { option ->
-                Surface(
-                    onClick = { onAnswer(question, option.key) },
-                    enabled = !busy,
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            option.key,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.width(24.dp),
+            AnimatedContent(
+                targetState = question,
+                transitionSpec = {
+                    (slideInHorizontally(tween(320)) { it / 3 } + fadeIn(tween(320))) togetherWith
+                        (slideOutHorizontally(tween(220)) { -it / 4 } + fadeOut(tween(180)))
+                },
+                contentKey = { it.number },
+                label = "quizQuestion",
+            ) { shown ->
+                Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.xs)) {
+                    Text(shown.text, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    shown.options.forEachIndexed { index, option ->
+                        val chosen = picked == option.key && shown.number == question.number
+                        val container by animateColorAsState(
+                            if (chosen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                            tween(180), label = "optionColor",
                         )
-                        Text(option.label, style = MaterialTheme.typography.bodyMedium)
+                        Surface(
+                            onClick = {
+                                if (picked == null) {
+                                    picked = option.key
+                                    scope.launch {
+                                        if (motion) delay(240)
+                                        onAnswer(shown, option.key)
+                                    }
+                                }
+                            },
+                            enabled = !busy && picked == null,
+                            shape = RoundedCornerShape(16.dp),
+                            color = container,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                .riseIn(delayMillis = 60 + index * 40, rise = 8.dp, durationMillis = 240),
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    option.key,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.width(24.dp),
+                                )
+                                Text(option.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                AnimatedVisibility(chosen, enter = scaleIn() + fadeIn(), exit = fadeOut()) {
+                                    BankIcon(BankIconKind.Check, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                                }
+                            }
+                        }
                     }
                 }
-            }
-            }
             }
             Text(
                 "完成全部 8 题后自动提交，测评结果决定可申购的产品风险等级。",

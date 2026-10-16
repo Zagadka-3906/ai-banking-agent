@@ -45,10 +45,33 @@ internal fun parseAmountInput(text: String): BigDecimal? {
  * 理财回复的产品清单以卡片渲染（见 ResultView），气泡文本里保留头行、
  * 风险提示等说明，去掉会重复的“- `代码` …”清单行。
  */
+private val QUIZ_PROGRESS = Regex("""已记录 (\d+)/8 题""")
+
+private val CARD_LEADS = mapOf(
+    "BALANCE" to "已查询账户余额：",
+    "TRANSFER_SUCCESS" to "✅ 转账已完成，回执如下：",
+)
+
 internal fun displayText(reply: String, result: Map<String, Any>?): String {
+    // Finished questionnaire: the level card and the matched products follow.
+    // Structured replies arrive as "execution_results" (one per section); older ones as "execution_result".
+    val executions = (result?.get("execution_results") as? List<*>)?.filterIsInstance<Map<*, *>>()
+        ?: listOfNotNull(result?.get("execution_result") as? Map<*, *>)
+    val types = executions.mapNotNull { it["type"]?.toString() }
+    if (result?.get("profile_result") is Map<*, *> && "WEALTH_RECOMMEND" in types) {
+        return "✅ 风险测评完成，以下是您的风险等级和与之匹配的在售产品。"
+    }
+    // Questionnaire in progress: the questions are on the card below, not repeated as text.
+    if ((result?.get("risk_quiz") as? Map<*, *>)?.get("active") == true) {
+        QUIZ_PROGRESS.find(reply)?.let { return "已记录 ${it.groupValues[1]}/8 题，请在下方继续作答。" }
+    }
     var lines = reply.lines()
-    val type = (result?.get("execution_result") as? Map<*, *>)?.get("type")?.toString()
-    if (type in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE")) {
+    val execution = executions.singleOrNull()
+    // Receipts and balances are shown in full on their card; one introducing line is enough.
+    if (execution?.get("data") is Map<*, *>) {
+        CARD_LEADS[execution["type"]?.toString()]?.let { return it }
+    }
+    if (types.any { it in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE", "WEALTH_HOLDINGS") }) {
         lines = lines.filterNot { it.trimStart().startsWith("- `") }
     }
     // 测评结果的三行说明渲染成彩色结果卡，文本里不再重复。

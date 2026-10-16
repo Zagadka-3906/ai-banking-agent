@@ -417,7 +417,16 @@ def test_wealth_purchase_obeys_the_card_daily_limit(client: TestClient, monkeypa
     main.CARD_DAILY_SPENT_DATE.clear()
     balance_before = main.ACCOUNTS["user_zhang"]["balance"]
 
+    # Refused at precheck, before the user is asked for SMS and device verification.
+    early = client.post("/api/v1/risk/precheck/operation", headers=headers(),
+                        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 5000, "reason": "大额申购"})
+    assert early.status_code == 400 and early.json()["detail"]["code"] == "CARD_LIMIT_EXCEEDED"
+    assert "¥100.00" in early.json()["detail"]["message"]
+
+    # Settlement still enforces it if the limit is lowered after the precheck.
+    main.CARDS["user_zhang"][0]["daily_limit"] = 50000.0
     token, proof = approve_red(client, "WEALTH_PURCHASE", product_id="CJ01002", amount=5000, reason="大额申购")
+    main.CARDS["user_zhang"][0]["daily_limit"] = 100.0
     refused = client.post(
         "/api/v1/operations/execute",
         json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 5000, "reason": "大额申购", "auth_token": token},

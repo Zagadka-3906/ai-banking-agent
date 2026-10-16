@@ -34,10 +34,16 @@ fun ResultExtras(result: Map<String, Any?>?) {
         addAll(result.children("execution_results"))
     }.distinct()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        // The level comes before the products it qualifies.
+        result.child("profile_result")?.let { RiskProfileCard(it) }
         executions.forEach { execution ->
             val type = execution.text("type")
             if (type in WEALTH_PRODUCT_TYPES) {
-                execution.child("data")?.let { WealthProducts(it) }
+                execution.child("data")?.let { WealthProducts(it, type) }
+                return@forEach
+            }
+            if (type == "WEALTH_HOLDINGS") {
+                execution.child("data")?.let { WealthHoldings(it) }
                 return@forEach
             }
             execution.child("facts")?.let { BillFacts(it) }
@@ -46,7 +52,6 @@ fun ResultExtras(result: Map<String, Any?>?) {
                 else KeyValues(data, title = executionTitle(type))
             }
         }
-        result.child("profile_result")?.let { RiskProfileCard(it) }
         result.child("todo_card")?.let { TodoCard(it) }
     }
 }
@@ -89,15 +94,21 @@ private val WEALTH_PRODUCT_TYPES = setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WE
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun WealthProducts(data: Map<String, Any?>) {
+private fun WealthProducts(data: Map<String, Any?>, type: String?) {
     val products = data.children("data")
     if (products.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        ResultCardTitle("理财产品", BankIconKind.Chart)
+        ResultCardTitle(when (type) {
+            "WEALTH_RECOMMEND" -> "与您匹配的产品"
+            "WEALTH_COMPARE" -> "产品对比"
+            else -> "在售理财产品"
+        }, BankIconKind.Chart)
         products.forEach { product ->
             val name = product.text("name") ?: return@forEach
             ReplyPanel {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // The code is what "申购 CJ01002 500 元" needs, so the card shows it.
+                    product.text("product_id")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
                     product.text("category")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
                     RiskTag(product.text("risk_level") ?: "—")
                 }
@@ -115,6 +126,36 @@ private fun WealthProducts(data: Map<String, Any?>) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+    }
+}
+
+/** One panel per holding: product, code, principal and indicative value. */
+@Composable
+private fun WealthHoldings(data: Map<String, Any?>) {
+    val holdings = data.children("data")
+    if (holdings.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        ResultCardTitle("我的理财持仓", BankIconKind.Wallet)
+        holdings.mapNotNull { it.number("principal") }.takeIf { it.isNotEmpty() }?.let { principals ->
+            ReplyValueHero("本金合计", money(principals.sum()))
+        }
+        holdings.forEach { holding ->
+            ReplyPanel {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    holding.text("product_id")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
+                    holding.text("holding_id")?.let { BankStatusChip("持仓 $it", BankSemanticStatus.Neutral) }
+                }
+                Text(holding.text("product_name") ?: "理财产品", style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    holding.money("principal")?.let { Metric("本金", it, Modifier.weight(1f)) }
+                    holding.money("estimated_value")?.let { Metric("参考市值", it, Modifier.weight(1f)) }
+                }
+                holding.text("purchased_at")?.take(10)?.let {
+                    Text("申购于 $it · 市值为演示估算，以产品结算为准", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }

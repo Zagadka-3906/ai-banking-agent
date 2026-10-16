@@ -132,6 +132,9 @@ def get_risk_profile(x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     actor = get_actor(x_user_id, x_user_id, action="WEALTH_QUERY", request_id=request_id)
     ensure_account(actor)
     profile = risk_profile_view(WEALTH_RISK_PROFILES.get(actor))
+    if profile and profile.get("risk_profile") in RISK_GRADE_META:
+        type_name, traits, levels = RISK_GRADE_META[profile["risk_profile"]]
+        profile.update({"risk_type": type_name, "traits": traits, "matching_levels": levels})
     attempts = risk_assessment_attempts(actor)
     audit_event("WEALTH_QUERY", user_id=actor, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"source": "risk_profile", "present": profile is not None})
     return {"code": 200, "data": profile, "attempts": {"allowed": attempts["allowed"], "message": attempts["message"], "today": attempts["counts"].get("今日", 0), "month": attempts["counts"].get("近 1 个月", 0), "year": attempts["counts"].get("近 1 年", 0)}}

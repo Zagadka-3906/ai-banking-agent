@@ -148,7 +148,7 @@ def test_failed_lock_settle_triggers_compensation_verification(wired, monkeypatc
     plan_tasks = {task["task_id"]: task for task in result["plan"]["tasks"]}
     assert plan_tasks["reserve_funds"]["status"] == "FAILED"
     assert plan_tasks["reserve_funds"]["details"]["compensation_action"] == "UNLOCK_FUND"
-    assert "补偿动作 UNLOCK_FUND" in result["final_response"]
+    assert "资金锁定未完成" in result["final_response"] and "UNLOCK_FUND" not in result["final_response"]
     assert "无需反向解锁" in result["final_response"]  # balance check confirms no mutation
     assert main.ACCOUNTS["user_zhang"]["balance"] == 15000.0
     assert main.ACCOUNTS["user_zhang"]["locked_amount"] == 0.0
