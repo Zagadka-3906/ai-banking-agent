@@ -67,6 +67,7 @@ import com.aibanking.agent.ui.anim.RiskSignal
 import com.aibanking.agent.ui.anim.RiskTier
 import com.aibanking.agent.ui.anim.riskEdgeGlow
 import com.aibanking.agent.ui.anim.riskTierOf
+import com.aibanking.agent.ui.anim.glowColor
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import com.aibanking.agent.ui.anim.pageSlideSpec
@@ -557,13 +558,24 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
             }
         }
         Column(Modifier.riseIn(delayMillis = 950, rise = 8.dp, durationMillis = 400), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("查询直接回复，资金操作先确认。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                BankStatusChip("绿 · 只读", BankSemanticStatus.RiskGreen)
-                BankStatusChip("黄 · 需确认", BankSemanticStatus.RiskYellow)
-                BankStatusChip("红 · 强验证", BankSemanticStatus.RiskRed)
+            Text("查询直接回复，资金操作先确认。办理时屏幕边缘的光圈表示风险等级：",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RiskLegend(RiskTier.GREEN, "绿 · 只读")
+                RiskLegend(RiskTier.YELLOW, "黄 · 需确认")
+                RiskLegend(RiskTier.RED, "红 · 强验证")
             }
         }
+    }
+}
+
+/** One entry of the edge-glow legend: a glowing dot in the tier colour and its label. */
+@Composable
+private fun RiskLegend(tier: RiskTier, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        val color = tier.glowColor()
+        Box(Modifier.size(14.dp).background(Brush.radialGradient(listOf(color, color.copy(alpha = 0.35f), Color.Transparent)), CircleShape))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -621,10 +633,9 @@ private fun ApprovalCard(
             if (remainingSeconds > 0) delay(250)
         } while (remainingSeconds > 0)
     }
-    val riskColors = LocalBankSemanticColors.current
-    BankSectionCard(modifier = modifier, containerColor = if (isRed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer) {
+    BankSectionCard(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
-            BankStatusChip(if (isRed) "红 · 强验证" else "黄 · 需确认", if (isRed) BankSemanticStatus.RiskRed else BankSemanticStatus.RiskYellow,
+            BankStatusChip(if (isRed) "红 · 强验证" else "黄 · 需确认", BankSemanticStatus.Neutral,
                 Modifier.breathe(active = remainingSeconds > 0, min = 0.6f))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -633,7 +644,7 @@ private fun ApprovalCard(
                 Icon(
                     if (isRed) Icons.Default.Warning else Icons.Default.Info,
                     contentDescription = null,
-                    tint = if (isRed) riskColors.riskRed else riskColors.riskYellow,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(22.dp),
                 )
                 Text(
@@ -665,7 +676,7 @@ private fun ApprovalCard(
             LinearProgressIndicator(
                 progress = { fraction },
                 modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
-                color = if (remainingSeconds <= 15) riskColors.riskRed else MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
                 drawStopIndicator = {},
             )

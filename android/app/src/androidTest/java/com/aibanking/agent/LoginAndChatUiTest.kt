@@ -257,6 +257,8 @@ class LoginAndChatUiTest {
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()
         }
+        // A settled transfer opens its result page; the conversation is checked behind it.
+        ui.returnFromOutcome(settleMs = TURN_TIMEOUT_MS)
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { moneyIsVisible() }
         ui.runOnIdle {
             val currentState = ViewModelProvider(ui.activity)[ChatViewModel::class.java].state.value
@@ -336,6 +338,7 @@ class RedTierUiTest {
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()
         }
+        ui.returnFromOutcome(settleMs = TURN_TIMEOUT_MS)
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithText("¥", substring = true).fetchSemanticsNodes().isNotEmpty()
         }

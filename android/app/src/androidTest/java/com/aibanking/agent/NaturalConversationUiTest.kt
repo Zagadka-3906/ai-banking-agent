@@ -59,6 +59,7 @@ class NaturalConversationUiTest {
                         val expectHttpError = turn.optJSONObject("expect")?.let { it.has("http_error") || it.has("stream_error") } == true
                         val priorRecordCount = if (expectHttpError) control(18810, "records").getJSONArray("records").length() else 0
                         val action = turn.optString("action")
+                        ui.returnFromOutcome(settleMs = 500)
                         if (action.isNotEmpty()) {
                             observation.put("action", action)
                             act(action)

@@ -43,6 +43,7 @@ class AntiFraudUiTest {
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()
         }
+        ui.returnFromOutcome(settleMs = TURN_TIMEOUT_MS)
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             val frozen = ui.onAllNodesWithText("冻结", substring = true).fetchSemanticsNodes().isNotEmpty()
             val human = ui.onAllNodesWithText("人工审核", substring = true).fetchSemanticsNodes().isNotEmpty()

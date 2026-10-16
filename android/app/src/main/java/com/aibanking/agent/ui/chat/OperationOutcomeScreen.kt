@@ -46,6 +46,8 @@ internal fun OperationOutcomeScreen(
         OutcomeTone.NEUTRAL -> MaterialTheme.colorScheme.primaryContainer
     }
     Scaffold(
+        // The page rises into view, as the result of an approval appears on its own.
+        modifier = Modifier.riseIn(rise = 48.dp, durationMillis = 380),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = { TopAppBar(title = { Text("办理结果") }, navigationIcon = {
             IconButton(onClick = onBack, modifier = Modifier.testTag(UiTags.OUTCOME_BACK)) {

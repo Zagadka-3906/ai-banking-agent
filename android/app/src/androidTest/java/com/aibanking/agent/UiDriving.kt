@@ -68,6 +68,7 @@ internal fun ComposeContentTestRule.submitLoginForm() {
  * card never appeared", which points at the wrong thing entirely.
  */
 internal fun ComposeContentTestRule.sendChatMessage(text: String) {
+    returnFromOutcome(settleMs = 200)
     waitForIdle()
     repeat(3) {
         val typed = runCatching {
@@ -99,6 +100,18 @@ private fun ComposeContentTestRule.inputCleared(): Boolean {
 internal fun ComposeContentTestRule.chatInputText(): String? =
     onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().firstOrNull()
         ?.config?.getOrNull(SemanticsProperties.EditableText)?.text
+
+/**
+ * A completed approval opens the result page on its own; go back to the
+ * conversation if it is showing. Waits briefly so a page about to open is not missed.
+ */
+internal fun ComposeContentTestRule.returnFromOutcome(settleMs: Long = 1_500) {
+    runCatching { waitUntil(settleMs) { onAllNodesWithTag(UiTags.OUTCOME_RETURN).fetchSemanticsNodes().isNotEmpty() } }
+    if (onAllNodesWithTag(UiTags.OUTCOME_RETURN).fetchSemanticsNodes().isNotEmpty()) {
+        onNodeWithTag(UiTags.OUTCOME_RETURN).performClick()
+        waitUntil(10_000) { onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().isNotEmpty() }
+    }
+}
 
 /**
  * Open a destination from the side drawer (cards, wealth, contacts, tasks,

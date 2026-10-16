@@ -557,6 +557,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         messageId: String = UUID.randomUUID().toString(),
         updateConversation: Boolean = true,
         clearProblem: Boolean = true,
+        revealOutcome: Boolean = false,
     ) {
         if (updateConversation) conversationId = envelope.conversationId.ifBlank { conversationId }
         _state.update { state ->
@@ -580,7 +581,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val messages = if (previous != null) state.messages.mapNotNull {
                 if (it.id == messageId) message else it.takeUnless { row -> stale(row) }
             } else kept + message
+            // An approved operation that reached a result opens its result page at once.
+            val reveal = revealOutcome && envelope.approval == null && revealsOutcomeAfterApproval(message)
             state.copy(busy = false, pending = envelope.approval, otp = "", activeStages = emptyList(),
+                outcomeMessageId = if (reveal) messageId else state.outcomeMessageId,
                 lastProblem = if (clearProblem) null else state.lastProblem,
                 showProblem = if (clearProblem) false else state.showProblem,
                 messages = messages, quiz = parseQuiz(envelope.displayResult),
@@ -782,7 +786,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     faceAttestation = envelope,
                     onProgress = { progress -> commit { recordStage(progress) } },
                 ) }
-                applyEnvelope(resolved)
+                applyEnvelope(resolved, revealOutcome = true)
             } catch (failure: GatewayException) {
                 check()
                 applyFailure(failure)
@@ -837,7 +841,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     decision = decision,
                     onProgress = { progress -> commit { recordStage(progress) } },
                 ) }
-                applyEnvelope(envelope)
+                applyEnvelope(envelope, revealOutcome = decision == "approve")
             } catch (failure: GatewayException) {
                 check()
                 applyFailure(failure)

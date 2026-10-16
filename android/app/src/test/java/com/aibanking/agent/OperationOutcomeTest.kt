@@ -8,6 +8,7 @@ import com.aibanking.agent.ui.chat.OperationProblem
 import com.aibanking.agent.ui.chat.OutcomeTone
 import com.aibanking.agent.ui.chat.hasReconciliationTarget
 import com.aibanking.agent.ui.chat.outcomeFor
+import com.aibanking.agent.ui.chat.revealsOutcomeAfterApproval
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -168,5 +169,14 @@ class OperationOutcomeTest {
             assertFalse(pending.copy(conversationId = missing).hasReconciliationTarget())
             assertFalse(pending.copy(response = ReplyResponse(version = 1, operationId = missing)).hasReconciliationTarget())
         }
+    }
+
+    @Test fun an_approved_task_opens_its_result_page_but_an_approved_query_does_not() {
+        assertTrue(revealsOutcomeAfterApproval(completed(receipt("TRANSFER_SUCCESS"))))
+        assertTrue(revealsOutcomeAfterApproval(completed(receipt("CARD_CHANNEL"))))
+        // The subscription list needs confirmation before it is read; it stays in the conversation.
+        assertFalse(revealsOutcomeAfterApproval(completed(receipt("SUBSCRIPTION_QUERY"))))
+        assertTrue(revealsOutcomeAfterApproval(completed(receipt("TRANSFER_SUCCESS")).copy(businessStatus = "FAILED")))
+        assertFalse(revealsOutcomeAfterApproval(completed(receipt("TRANSFER_SUCCESS")).copy(approvalPreview = true)))
     }
 }

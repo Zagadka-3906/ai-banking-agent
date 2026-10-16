@@ -89,7 +89,8 @@ internal fun ReplyStatusChip(status: String, label: String, modifier: Modifier =
         "ISSUED", "LIMIT_UPDATED", "PURCHASED", "REDEEMED", "LOCKED", "PASSWORD_CHANGED" -> BankSemanticStatus.RiskGreen
         "FAILED", "FAILURE", "ERROR", "BLOCKED", "DENIED", "REJECTED" -> BankSemanticStatus.RiskRed
         "PENDING", "WAITING_USER", "PENDING_REVIEW", "PENDING_COLLECTION", "PARTIALLY_COLLECTED", "PARTIAL",
-        "NEEDS_INPUT", "WAITING_APPROVAL", "PENDING_RECONCILIATION", "PARTIAL_SUCCESS" -> BankSemanticStatus.RiskYellow
+        // Waiting states stay neutral: the screen-edge glow already says a decision is pending.
+        "NEEDS_INPUT", "WAITING_APPROVAL", "PENDING_RECONCILIATION", "PARTIAL_SUCCESS" -> BankSemanticStatus.Neutral
         else -> BankSemanticStatus.Neutral
     }
     BankStatusChip(label, semantic, modifier)

@@ -39,9 +39,33 @@ private val queryTypes = setOf(
     "WEALTH_RECOMMEND", "WEALTH_COMPARE", "SUBSCRIPTION_QUERY", "CARD_QUERY",
 )
 
-private fun successfulOutcome(message: ChatMessage): OperationOutcome {
+/**
+ * Whether a finished approval should open its result page by itself: a task
+ * that changed something (or failed / awaits reconciliation), not a query that
+ * merely needed confirmation before it could be read (e.g. the subscription list).
+ */
+internal fun revealsOutcomeAfterApproval(message: ChatMessage): Boolean {
+    val outcome = outcomeFor(message) ?: return false
+    if (message.businessStatus != "SUCCEEDED") return true
+    val types = receiptsOf(message).mapNotNull { it["type"] as? String }
+    return !(types.isNotEmpty() && types.all { it in queryTypes }) || outcome.tone != OutcomeTone.SUCCESS
+}
+
+private fun receiptsOf(message: ChatMessage): List<Map<*, *>> =
     // Versioned sections are authoritative, even when empty. Never resurrect a
     // legacy receipt from an earlier operation merely to give this page a title.
+    if (message.response?.version == 1) {
+        message.response.sections.orEmpty().filter { it.status == "SUCCEEDED" }.map { section ->
+            section.data + ("type" to section.type)
+        }
+    } else {
+        buildList<Map<*, *>> {
+            (message.result?.get("execution_result") as? Map<*, *>)?.let(::add)
+            (message.result?.get("execution_results") as? List<*>)?.filterIsInstance<Map<*, *>>()?.let(::addAll)
+        }
+    }
+
+private fun successfulOutcome(message: ChatMessage): OperationOutcome {
     val receipts: List<Map<*, *>> = if (message.response?.version == 1) {
         message.response.sections.orEmpty().filter { it.status == "SUCCEEDED" }.map { section ->
             section.data + ("type" to section.type)

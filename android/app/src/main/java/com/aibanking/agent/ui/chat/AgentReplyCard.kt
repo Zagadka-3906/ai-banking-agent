@@ -53,7 +53,8 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier,
             }
             if (risk != null || message.businessStatus != null) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    risk?.let { (label, status) -> BankStatusChip(label, status, Modifier.riseIn(delayMillis = 200, rise = 0.dp, fromScale = 0.8f, durationMillis = 240)) }
+                    // Risk tier is told by the screen-edge glow; the tag itself stays neutral.
+                    risk?.let { (label, _) -> BankStatusChip(label, BankSemanticStatus.Neutral, Modifier.riseIn(delayMillis = 200, rise = 0.dp, fromScale = 0.8f, durationMillis = 240)) }
                     message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
                 }
             }

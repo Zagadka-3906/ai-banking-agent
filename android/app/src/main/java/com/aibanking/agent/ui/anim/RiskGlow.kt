@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
@@ -51,51 +52,84 @@ fun riskTierOf(level: String?): RiskTier? = when (level?.uppercase()) {
 data class RiskSignal(val key: String, val tier: RiskTier, val sustained: Boolean)
 
 /**
- * Draws a soft glow around the screen edges in the colour of the latest risk
- * tier: it lights up when a tier is determined, then fades; while an approval
- * is waiting it keeps breathing gently. Drawing only - it never takes touches.
- * With system animations off the ring is shown without movement.
+ * A luminous ring in the colour of the latest risk tier. It never pops in: a
+ * soft wave of light spreads from the centre of the screen outwards and comes
+ * to rest as a glow along the edges. A green reply then fades away; while a
+ * yellow or red approval waits, the edge glow keeps breathing until decided.
+ * Drawing only - it never takes touches. With system animations off the edge
+ * glow simply appears and disappears.
  */
 fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
     val motion = LocalBankMotionEnabled.current
     val intensity = remember { Animatable(0f) }
+    val spread = remember { Animatable(1f) }
     // Events already on screen when composed (a restored conversation) or already
     // shown once never flash again.
     val shown = remember { mutableSetOf<String>().apply { signal?.key?.let(::add) } }
     LaunchedEffect(signal) {
         val fresh = signal != null && (signal.sustained || shown.add(signal.key))
         if (signal == null || !fresh) {
-            if (motion) intensity.animateTo(0f, tween(500)) else intensity.snapTo(0f)
+            if (motion) intensity.animateTo(0f, tween(700, easing = FastOutSlowInEasing)) else intensity.snapTo(0f)
             return@LaunchedEffect
         }
-        if (motion) intensity.animateTo(1f, tween(280, easing = FastOutSlowInEasing)) else intensity.snapTo(1f)
+        if (motion) {
+            spread.snapTo(0f)
+            intensity.snapTo(1f)
+            spread.animateTo(1f, tween(1100, easing = FastOutSlowInEasing))
+        } else {
+            spread.snapTo(1f)
+            intensity.snapTo(1f)
+        }
         if (signal.sustained) {
             if (motion) {
-                intensity.animateTo(0.45f, infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing), RepeatMode.Reverse))
+                intensity.animateTo(0.5f, infiniteRepeatable(tween(1500, easing = FastOutSlowInEasing), RepeatMode.Reverse))
             }
         } else {
-            delay(if (motion) 1400L else 1800L)
-            if (motion) intensity.animateTo(0f, tween(900, easing = LinearEasing)) else intensity.snapTo(0f)
+            delay(if (motion) 1200L else 1800L)
+            if (motion) intensity.animateTo(0f, tween(1100, easing = LinearEasing)) else intensity.snapTo(0f)
         }
     }
     val color = signal?.tier?.glowColor() ?: Color.Transparent
     drawWithContent {
         drawContent()
         val a = intensity.value
+        val p = spread.value
         if (a <= 0.01f) return@drawWithContent
-        // Concentric strokes fading inward approximate a blurred light band.
-        val layers = 40
-        val step = 0.8.dp.toPx()
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val reach = kotlin.math.hypot(size.width / 2f, size.height / 2f)
+        // 1. The wave: a wide, soft band of light travelling outwards, dimming as it goes.
+        if (p < 1f) {
+            val front = (p * 1.05f).coerceIn(0.002f, 1f)
+            val tail = (front - 0.45f).coerceAtLeast(0f)
+            val waveAlpha = a * 0.42f * (1f - p * 0.7f)
+            drawRect(
+                Brush.radialGradient(
+                    0f to Color.Transparent,
+                    tail to Color.Transparent,
+                    ((tail + front) / 2f).coerceIn(tail + 0.0005f, front) to color.copy(alpha = waveAlpha * 0.45f),
+                    front to color.copy(alpha = waveAlpha),
+                    (front + 0.06f).coerceAtMost(1f).coerceAtLeast(front) to Color.Transparent,
+                    1f to Color.Transparent,
+                    center = center, radius = reach,
+                ),
+            )
+        }
+        // 2. The edge glow fades in as the wave arrives at the borders.
+        val arrival = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
+        val edge = a * arrival * arrival * (3f - 2f * arrival)
+        if (edge <= 0.01f) return@drawWithContent
+        val layers = 44
+        val step = 0.9.dp.toPx()
         val corner = 36.dp.toPx()
         for (i in 0 until layers) {
             val t = i / layers.toFloat()
             val inset = step * i + step / 2f
             drawRoundRect(
-                color = color.copy(alpha = a * 0.55f * Math.pow((1.0 - t), 2.2).toFloat()),
+                color = color.copy(alpha = edge * 0.5f * Math.pow((1.0 - t), 2.4).toFloat()),
                 topLeft = Offset(inset, inset),
                 size = Size(size.width - inset * 2, size.height - inset * 2),
                 cornerRadius = CornerRadius((corner - inset).coerceAtLeast(0f)),
-                style = Stroke(width = step * 2.5f),
+                style = Stroke(width = step * 2.6f),
             )
         }
     }

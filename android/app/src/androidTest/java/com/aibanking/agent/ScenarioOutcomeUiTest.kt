@@ -318,6 +318,9 @@ class ScenarioOutcomeUiTest {
     }
 
     private fun openOutcome(id: String) {
+        // Approved operations already open their own result page.
+        if (model.state.value.outcomeMessageId == id && ui.onAllNodesWithTag(UiTags.OUTCOME_SCREEN).fetchSemanticsNodes().isNotEmpty()) return
+        ui.returnFromOutcome(settleMs = 500)
         ui.onNodeWithTag(UiTags.CHAT_LIST).performScrollToNode(hasTestTag(UiTags.outcomeEntry(id)))
         ui.onNodeWithTag(UiTags.outcomeEntry(id)).performClick()
         ui.onNodeWithTag(UiTags.OUTCOME_SCREEN).assertIsDisplayed()
