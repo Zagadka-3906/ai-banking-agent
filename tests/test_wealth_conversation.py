@@ -43,7 +43,7 @@ def test_a_request_that_needs_the_quiz_keeps_its_answers_and_asks_to_finish(gate
     client, _ = gateway
     _send(client, "我想做风险测评", conversation_id="keep-quiz")
     _send(client, "1B 2C", conversation_id="keep-quiz")
-    buy = _send(client, "申购CJ01002 500元", conversation_id="keep-quiz")
+    buy = _send(client, "申购LX00118 500元", conversation_id="keep-quiz")
     assert buy["approval"] is None and "已记录 2/8 题" in buy["reply"]
     again = _send(client, "重新做风险测评", conversation_id="keep-quiz")
     assert "正在进行" in again["reply"] and "已记录 2/8 题" in again["reply"]
@@ -64,15 +64,15 @@ def test_asking_for_the_level_shows_the_level_not_products(gateway):  # noqa: F8
 def test_a_purchase_over_the_card_limit_is_refused_before_any_verification(gateway):  # noqa: F811
     client, _ = gateway
     _finish_quiz(client, "limit")
-    refused = _send(client, "申购ZY18031 10000元", conversation_id="limit")
+    refused = _send(client, "申购SG20270 10000元", conversation_id="limit")
     assert refused["approval"] is None
     assert "当日支付限额" in refused["reply"] and "今日还可用" in refused["reply"]
     assert main.WEALTH_HOLDINGS.get("user_zhang", []) == []
 
 
 def test_redeem_everything_can_be_said_after_the_product():
-    assert local_parse("赎回ZY18031 全部")["slots"].get("redeem_all") is True
-    assert local_parse("全部赎回CJ01002")["slots"].get("redeem_all") is True
+    assert local_parse("赎回SG20270 全部")["slots"].get("redeem_all") is True
+    assert local_parse("全部赎回LX00118")["slots"].get("redeem_all") is True
 
 
 def test_a_new_request_while_an_approval_waits_is_told_why_nothing_happened(gateway):  # noqa: F811

@@ -141,20 +141,20 @@ def test_overseas_question_is_a_read_only_analysis_without_a_fraud_claim(gateway
 def test_product_comparison_accepts_ids_next_to_chinese_text(gateway):
     client, _ = gateway
     cid = "human-adjacent-product-ids"
-    response = _ask(client, "帮我比较CJ01002和AY90204", cid)
+    response = _ask(client, "帮我比较LX00118和HQ30060", cid)
     assert response["approval"] is None, response
     assert response["intent"] == "WEALTH_COMPARE", response
-    assert _state(cid)["product_ids"] == ["CJ01002", "AY90204"]
+    assert _state(cid)["product_ids"] == ["LX00118", "HQ30060"]
     assert response["result"]["execution_result"]["type"] == "WEALTH_COMPARE"
 
 
 @pytest.mark.parametrize("text", [
-    "比较CJ010020和AY90204", "比较XCJ01002和AY90204", "比较CJ01002A和AY90204",
+    "比较LX001180和HQ30060", "比较XLX00118和HQ30060", "比较LX00118A和HQ30060",
 ])
 def test_known_product_id_is_not_extracted_from_a_longer_identifier(text):
     parsed = agent.local_parse(text)
-    assert parsed["product_ids"] == ["AY90204"]
-    assert parsed["target"] != "CJ01002"
+    assert parsed["product_ids"] == ["HQ30060"]
+    assert parsed["target"] != "LX00118"
 
 
 def test_missing_recipient_can_be_answered_with_only_phone(gateway):
@@ -442,7 +442,7 @@ def test_identifier_negative_or_imprecise_values_cannot_be_money(text):
 
 @pytest.mark.parametrize(("text", "intent", "amount"), [
     ("银行卡尾号3082限额改为5000元", "CARD_LIMIT", 5000),
-    ("买点日日盈，投200块", "WEALTH_PURCHASE", 200),
+    ("买点活钱管家，投200块", "WEALTH_PURCHASE", 200),
 ])
 def test_shared_money_parser_preserves_explicit_card_and_product_actions(text, intent, amount):
     parsed = agent.local_parse(text)

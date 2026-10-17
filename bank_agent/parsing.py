@@ -27,6 +27,8 @@ from bank_agent.runtime import (
     SystemMessage,
 )
 from bank_agent.extraction import (
+    PRODUCT_ID_PATTERN,
+    PRODUCT_IDS,
     amount_from_text,
     chinese_number,
     participants_from_text,
@@ -167,10 +169,10 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     amount = amount_from_text(text)
     target = target_from_text(text)
     product_ids = []
-    for product_id in re.findall(r"(?<![A-Za-z0-9])(?:CJ01002|AY90204|ZY18031|QK36509)(?![A-Za-z0-9])", text.upper()):
+    for product_id in re.findall(PRODUCT_ID_PATTERN, text.upper()):
         if product_id not in product_ids:
             product_ids.append(product_id)
-    if target in {"CJ01002", "AY90204", "ZY18031", "QK36509"} and target in text.upper() and target not in product_ids:
+    if target in PRODUCT_IDS and target in text.upper() and target not in product_ids:
         # The general alias matcher must not promote a substring of an unknown
         # longer product code into the target of a purchase or redemption.
         target = None
@@ -268,7 +270,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     elif any(x in text for x in ("aa", "AA", "平摊", "分摊")) and not re.search(r"(?:备注|附言)\s*[:：为是]?\s*AA:SPL[A-Za-z0-9]+", text, re.IGNORECASE):
         intent = Intent.SPLIT_BILL.value
     elif any(x in text for x in ("申购", "买理财", "购买理财")) or (
-        target in {"CJ01002", "AY90204", "ZY18031", "QK36509"}
+        target in PRODUCT_IDS
         and any(x in text for x in ("买点", "买一些", "买入", "买", "投"))
     ):
         intent = Intent.WEALTH_PURCHASE.value

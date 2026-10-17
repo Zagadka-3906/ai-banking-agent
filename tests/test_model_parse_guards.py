@@ -125,8 +125,8 @@ def test_model_cannot_change_risk_assessment_answers(model):
 def test_model_cannot_replace_aa_participants_or_add_unmentioned_products(model):
     split = model("和李四、王美 AA 300 元", intent="SPLIT_BILL", amount=300, participants=["张三", "王美"])
     assert split["participants"] == ["李四", "王美"]
-    comparison = model("比较理财 CJ01002 和 AY90204", intent="WEALTH_COMPARE", product_ids=["CJ01002", "QK36509"])
-    assert comparison["product_ids"] == ["CJ01002", "AY90204"]
+    comparison = model("比较理财 LX00118 和 HQ30060", intent="WEALTH_COMPARE", product_ids=["LX00118", "YH50365"])
+    assert comparison["product_ids"] == ["LX00118", "HQ30060"]
 
 
 def test_model_still_recognizes_new_phrasing_and_explicit_new_contact(model):
@@ -158,11 +158,11 @@ def test_model_recognized_transfer_paraphrase_still_respects_scheduling(model, q
 
 
 def test_model_can_compare_explicit_product_aliases_but_not_invent_another(model):
-    text = "日日盈和季季丰各有什么优点"
+    text = "活钱管家和恒泉各有什么优点"
     assert agent.local_parse(text)["intent"] == "UNKNOWN"
-    parsed = model(text, intent="WEALTH_COMPARE", product_ids=["CJ01002", "AY90204", "QK36509"])
+    parsed = model(text, intent="WEALTH_COMPARE", product_ids=["LX00118", "HQ30060", "YH50365"])
     assert parsed["intent"] == "WEALTH_COMPARE"
-    assert parsed["product_ids"] == ["CJ01002", "AY90204"]
+    assert parsed["product_ids"] == ["LX00118", "HQ30060"]
     assert missing_slots(parsed) == []
 
 

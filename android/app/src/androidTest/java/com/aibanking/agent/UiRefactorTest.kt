@@ -115,8 +115,8 @@ class UiRefactorSmokeTest {
         ui.openFromDrawer(UiTags.OPEN_WEALTH)
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.WEALTH_LIST).fetchSemanticsNodes().isNotEmpty() }
         screenshot("04-wealth")
-        ui.onNodeWithTag(UiTags.WEALTH_LIST).performScrollToNode(hasTestTag(UiTags.wealthProduct("ZY18031")))
-        ui.onNodeWithTag(UiTags.wealthProduct("ZY18031")).performClick()
+        ui.onNodeWithTag(UiTags.WEALTH_LIST).performScrollToNode(hasTestTag(UiTags.wealthProduct("SG20270")))
+        ui.onNodeWithTag(UiTags.wealthProduct("SG20270")).performClick()
         ui.onNodeWithTag(UiTags.WEALTH_DETAIL).assertExists()
         screenshot("05-wealth-detail")
         ui.openFromDrawer(UiTags.OPEN_CONTACTS)

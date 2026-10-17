@@ -28,8 +28,8 @@ class WealthUiTest {
         ui.waitUntil(45_000) {
             ui.onAllNodesWithTag(UiTags.WEALTH_LIST).fetchSemanticsNodes().isNotEmpty()
         }
-        ui.onNodeWithTag(UiTags.WEALTH_LIST).performScrollToNode(hasTestTag(UiTags.wealthProduct("ZY18031")))
-        ui.onNodeWithTag(UiTags.wealthProduct("ZY18031")).performClick()
+        ui.onNodeWithTag(UiTags.WEALTH_LIST).performScrollToNode(hasTestTag(UiTags.wealthProduct("SG20270")))
+        ui.onNodeWithTag(UiTags.wealthProduct("SG20270")).performClick()
         listOf(UiTags.WEALTH_DETAIL, UiTags.WEALTH_SUMMARY, UiTags.WEALTH_CHART, UiTags.WEALTH_HISTORY, UiTags.WEALTH_PROFILE, UiTags.WEALTH_MANAGER, UiTags.WEALTH_ALLOCATION, UiTags.WEALTH_DISCLOSURE, UiTags.WEALTH_RULES, UiTags.WEALTH_DISCLAIMER, UiTags.WEALTH_BOTTOM_BAR).forEach { tag ->
             assertTrue("缺少 UI 标签 $tag", ui.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty())
         }

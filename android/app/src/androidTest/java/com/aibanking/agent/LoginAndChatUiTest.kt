@@ -158,7 +158,7 @@ class LoginAndChatUiTest {
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithText("在售理财产品共 4 款", substring = true, useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty() &&
-                ui.onAllNodesWithText("稳健添利·日日盈", substring = true, useUnmergedTree = true)
+                ui.onAllNodesWithText("零星宝·活钱管家", substring = true, useUnmergedTree = true)
                     .fetchSemanticsNodes().isNotEmpty()
         }
         assertTrue(

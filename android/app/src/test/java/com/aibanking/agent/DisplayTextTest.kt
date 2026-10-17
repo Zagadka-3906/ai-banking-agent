@@ -11,7 +11,7 @@ class DisplayTextTest {
     @Test
     fun finished_quiz_introduces_the_level_and_products_once() {
         val text = displayText(
-            "✅ 风险测评完成……\n- `CJ01002` 稳健添利",
+            "✅ 风险测评完成……\n- `LX00118` 零星宝",
             mapOf("profile_result" to mapOf("grade" to "C4"), "execution_result" to mapOf("type" to "WEALTH_RECOMMEND", "data" to mapOf("data" to emptyList<Any>()))),
         )
         assertEquals("✅ 风险测评完成，以下是您的风险等级和与之匹配的在售产品。", text)
@@ -20,9 +20,9 @@ class DisplayTextTest {
     @Test
     fun structured_replies_with_sections_are_shortened_too() {
         val sections = listOf(mapOf("type" to "WEALTH_RECOMMEND", "data" to mapOf("data" to emptyList<Any>())))
-        val finished = displayText("📈 按风险偏好匹配到 1 款产品：\n- `CJ01002` 稳健添利", mapOf("profile_result" to mapOf("grade" to "C4"), "execution_results" to sections))
+        val finished = displayText("📈 按风险偏好匹配到 1 款产品：\n- `LX00118` 零星宝", mapOf("profile_result" to mapOf("grade" to "C4"), "execution_results" to sections))
         assertEquals("✅ 风险测评完成，以下是您的风险等级和与之匹配的在售产品。", finished)
-        val listed = displayText("📈 为您匹配到 1 款产品：\n- `CJ01002` 稳健添利", mapOf("execution_results" to sections))
+        val listed = displayText("📈 为您匹配到 1 款产品：\n- `LX00118` 零星宝", mapOf("execution_results" to sections))
         assertEquals("📈 为您匹配到 1 款产品：", listed)
     }
 
@@ -42,7 +42,7 @@ class DisplayTextTest {
     fun balance_and_transfer_receipts_are_not_repeated_above_their_card() {
         val balance = displayText("查询成功：账户总余额 ¥15,000.00……", mapOf("execution_result" to mapOf("type" to "BALANCE", "data" to mapOf("balance" to 15000.0))))
         assertEquals("已查询账户余额：", balance)
-        val holdings = displayText("📊 您持有 1 笔理财：\n- `HLD1` 稳健添利", mapOf("execution_result" to mapOf("type" to "WEALTH_HOLDINGS")))
+        val holdings = displayText("📊 您持有 1 笔理财：\n- `HLD1` 零星宝", mapOf("execution_result" to mapOf("type" to "WEALTH_HOLDINGS")))
         assertTrue(holdings.startsWith("📊"))
         assertFalse(holdings.contains("HLD1"))
     }

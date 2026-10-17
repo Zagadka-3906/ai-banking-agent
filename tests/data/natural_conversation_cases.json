@@ -587,7 +587,7 @@
         }
       },
       {
-        "input": "帮我比较CJ01002和AY90204",
+        "input": "帮我比较LX00118和HQ30060",
         "expect": {
           "parsed": {
             "intent": "WEALTH_COMPARE"
@@ -618,7 +618,7 @@
         }
       },
       {
-        "input": "CJ01002和AY90204",
+        "input": "LX00118和HQ30060",
         "expect": {
           "parsed": {
             "intent": "WEALTH_COMPARE"
@@ -711,7 +711,7 @@
     "risk_profile": true,
     "turns": [
       {
-        "input": "申购CJ01002",
+        "input": "申购LX00118",
         "expect": {
           "approval": false,
           "reply_any": [
@@ -725,7 +725,7 @@
         "expect": {
           "approval": true,
           "parsed": {
-            "target": "CJ01002",
+            "target": "LX00118",
             "amount": 100
           },
           "unchanged": true
@@ -739,7 +739,7 @@
     "risk_profile": true,
     "turns": [
       {
-        "input": "申购CJ01002 100元",
+        "input": "申购LX00118 100元",
         "expect": {
           "approval": true
         }
@@ -757,7 +757,7 @@
           "state": {
             "holdings": [
               {
-                "product_id": "CJ01002",
+                "product_id": "LX00118",
                 "principal": 100
               }
             ]
@@ -769,7 +769,7 @@
         "expect": {
           "approval": true,
           "parsed": {
-            "target": "CJ01002",
+            "target": "LX00118",
             "amount": 50
           }
         }
@@ -781,7 +781,7 @@
           "state": {
             "holdings": [
               {
-                "product_id": "CJ01002",
+                "product_id": "LX00118",
                 "principal": 50
               }
             ]
@@ -796,7 +796,7 @@
     "risk_profile": true,
     "turns": [
       {
-        "input": "申购CJ01002 100元",
+        "input": "申购LX00118 100元",
         "expect": {
           "approval": true
         }
@@ -812,7 +812,7 @@
         "expect": {
           "approval": true,
           "parsed": {
-            "target": "CJ01002",
+            "target": "LX00118",
             "amount": 20
           },
           "unchanged": true
@@ -826,7 +826,7 @@
     "risk_profile": true,
     "turns": [
       {
-        "input": "申购AY90204 10元",
+        "input": "申购HQ30060 10元",
         "expect": {
           "approval": false,
           "reply_any": [
@@ -839,7 +839,7 @@
         }
       },
       {
-        "input": "赎回CJ01002 999999元",
+        "input": "赎回LX00118 999999元",
         "expect": {
           "approval": false,
           "reply_any": [
@@ -1803,7 +1803,7 @@
     "direction": "理财操作",
     "turns": [
       {
-        "input": "比较理财CJ01002",
+        "input": "比较理财LX00118",
         "expect": {
           "approval": false,
           "reply_all": [
@@ -1817,19 +1817,19 @@
         }
       },
       {
-        "input": "AY90204",
+        "input": "HQ30060",
         "expect": {
           "approval": false,
           "parsed": {
             "intent": "WEALTH_COMPARE",
             "product_ids": [
-              "CJ01002",
-              "AY90204"
+              "LX00118",
+              "HQ30060"
             ]
           },
           "reply_all": [
-            "CJ01002",
-            "AY90204"
+            "LX00118",
+            "HQ30060"
           ],
           "unchanged": true
         }

@@ -315,7 +315,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             if parsed.get("product_ids"):
                 response = "请再提供一个用于比较的理财产品编号。"
             else:
-                response = "请至少提供两个理财产品编号（例如：比较 CJ01002 和 AY90204）。"
+                response = "请至少提供两个理财产品编号（例如：比较 LX00118 和 HQ30060）。"
         elif intent == Intent.WEALTH_RISK_ASSESSMENT.value:
             labels = {"loss_tolerance": "风险承受程度（低/中/高）", "experience": "投资经验（新手/基础/专业）", "horizon_years": "预计投资期限（几年）"}
             if missing_fields:
@@ -326,7 +326,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             examples = f"，例如：{'、'.join(names)}" if names else ""
             response = f"要转给哪位收款人？请说出联系人姓名或手机号{examples}。我不会替您猜测收款账户。"
         elif intent in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value} and "target" in missing_fields:
-            response = "请补充理财产品编号（例如 CJ01002），我不会猜测产品。"
+            response = "请补充理财产品编号（例如 LX00118），我不会猜测产品。"
         elif intent == Intent.CARD_LIMIT.value and "amount" in missing_fields:
             response = "请补充希望设置的卡片额度（例如 5000 元）。"
         elif intent == Intent.SUBSCRIPTION_CANCEL.value and "target" in missing_fields:

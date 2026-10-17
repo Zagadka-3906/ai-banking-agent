@@ -293,7 +293,7 @@
     "risk_profile": true,
     "turns": [
       {
-        "input": "我有100万理财，赎回CJ01002 500元",
+        "input": "我有100万理财，赎回LX00118 500元",
         "expect": {
           "approval": false,
           "no_claim": [

@@ -116,6 +116,18 @@ def amount_from_text(text: str) -> Optional[float]:
     return float(parsed) if parsed is not None and 0 < parsed <= 100_000_000 else None
 
 
+# The demo bank's product shelf as users name it; mirrors bank_core/wealth_data.py.
+PRODUCT_IDS = ("LX00118", "HQ30060", "SG20270", "YH50365", "XH70730")
+PRODUCT_ALIASES = {
+    "零星宝": "LX00118", "活钱管家": "LX00118",
+    "恒泉稳利": "HQ30060", "恒泉": "HQ30060",
+    "双桂平衡": "SG20270", "双桂": "SG20270",
+    "远航智造": "YH50365", "远航": "YH50365",
+    "星汉": "XH70730", "全球多策略": "XH70730",
+}
+PRODUCT_ID_PATTERN = r"(?<![A-Za-z0-9])(?:" + "|".join(PRODUCT_IDS) + r")(?![A-Za-z0-9])"
+
+
 # Placeholders that name no one in particular ("给联系人转账"). Taking them as a
 # payee name skipped the "who?" question and ended in a vague not-found error.
 GENERIC_PAYEE_WORDS = frozenset({
@@ -157,17 +169,10 @@ def target_from_text(text: str) -> Optional[str]:
         "儿子", "女儿", "闺女", "兄弟", "兄妹", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",
         "爸爸", "妈妈", "父亲", "母亲", "父母",
         "王美", "李四", "张三", "Apple", "苹果", "视频会员",
-        "稳健添利", "日日盈", "季季丰", "安逸安享", "成长平衡", "智远创赢", "产业智选", "乾坤进取",
-        "CJ01002", "AY90204", "ZY18031", "QK36509",
+        *PRODUCT_ALIASES, *PRODUCT_IDS,
     ):
         if alias in text:
-            return {
-                "苹果": "Apple",
-                "稳健添利": "CJ01002", "日日盈": "CJ01002",
-                "季季丰": "AY90204", "安逸安享": "AY90204",
-                "成长平衡": "ZY18031", "智远创赢": "ZY18031",
-                "产业智选": "QK36509", "乾坤进取": "QK36509",
-            }.get(alias, alias)
+            return {"苹果": "Apple", **PRODUCT_ALIASES}.get(alias, alias)
     phone = re.search(r"(?<!\d)(1\d{10})(?!\d)", text)
     return phone.group(1) if phone else None
 

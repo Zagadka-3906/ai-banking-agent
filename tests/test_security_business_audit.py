@@ -32,8 +32,8 @@ def receipt(kind, payload, **state):
     receipt("CARD_LIMIT", {"status": "LIMIT_UPDATED", "card": {"card_id": "CARD-001", "status": "ACTIVE", "daily_limit": 9000}}, target="CARD-001", amount=1000),
     receipt("SUBSCRIPTION_CANCEL", {"status": "CANCELLED", "subscription": {"subscription_id": "SUB-APPLE", "merchant": "Apple", "status": "ACTIVE"}}, target="Apple"),
     receipt("SUBSCRIPTION_CANCEL", {"status": "CANCELLED", "subscription": {"subscription_id": "SUB-VIDEO", "merchant": "视频会员", "status": "CANCELLED"}}, target="Apple"),
-    receipt("WEALTH_PURCHASE", {"status": "PURCHASED", "product": {"product_id": "AY90204", "name": "Other product"}, "holding": {"holding_id": "H1", "product_id": "AY90204", "principal": 1000}}, target="CJ01002", amount=1000),
-    receipt("WEALTH_REDEEM", {"status": "REDEEMED", "product": {"product_id": "AY90204"}, "redeemed_amount": 1000}, target="CJ01002", amount=1000),
+    receipt("WEALTH_PURCHASE", {"status": "PURCHASED", "product": {"product_id": "HQ30060", "name": "Other product"}, "holding": {"holding_id": "H1", "product_id": "HQ30060", "principal": 1000}}, target="LX00118", amount=1000),
+    receipt("WEALTH_REDEEM", {"status": "REDEEMED", "product": {"product_id": "HQ30060"}, "redeemed_amount": 1000}, target="LX00118", amount=1000),
     receipt("SCHEDULED_TRANSFER", {"status": "SCHEDULED", "task_id": "TSK1", "schedule_id": "SCH1", "scheduled_at": "2099-10-03T01:00:00+00:00", "target": "李四", "amount": 50}, target="李四", amount=50, scheduled_at="2099-10-04T09:00:00+08:00"),
     receipt("SPLIT_BILL", {"status": "SETTLED", "task_id": "TSK1", "split_id": "AA1", "participants": ["李四", "王美"], "amount": 300, "per_person": 100, "initiator_share": 100, "collected_amount": 500, "outstanding_amount": 0}, amount=300, participants=["李四", "王美"]),
 ])

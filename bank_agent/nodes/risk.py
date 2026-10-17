@@ -122,7 +122,7 @@ def _retry_after_refusal(state: BankingAgentState, intent: str, response: reques
         if intent in _PAYEE_INTENTS:
             ask = "请告诉我要转给哪位（联系人姓名或手机号）" + (f"，{kept_amount}会保留。" if kept_amount else "。")
         elif intent.startswith("WEALTH_"):
-            ask = "请重新说明理财产品编号（例如 CJ01002）" + (f"，{kept_amount}会保留。" if kept_amount else "。")
+            ask = "请重新说明理财产品编号（例如 LX00118）" + (f"，{kept_amount}会保留。" if kept_amount else "。")
         else:
             return None
         return _pending_slot_clarification(state, intent, f"本次操作未发起，资金没有变动。{reason}。{ask}", ["target"], drop_target=True)

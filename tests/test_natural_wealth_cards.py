@@ -154,17 +154,17 @@ def dialogue(monkeypatch, tmp_path, request):
 def test_browse_then_compare_real_products(dialogue):
     dialogue.say("现在有哪些在售理财？")
     dialogue.completed("WEALTH_QUERY")
-    assert "CJ01002" in dialogue.last["reply"] and "QK36509" in dialogue.last["reply"]
-    dialogue.say("帮我比较 CJ01002 和 AY90204")
+    assert "LX00118" in dialogue.last["reply"] and "YH50365" in dialogue.last["reply"]
+    dialogue.say("帮我比较 LX00118 和 HQ30060")
     dialogue.completed("WEALTH_COMPARE")
-    assert "CJ01002" in dialogue.last["reply"] and "AY90204" in dialogue.last["reply"]
+    assert "LX00118" in dialogue.last["reply"] and "HQ30060" in dialogue.last["reply"]
     assert not main.WEALTH_RISK_PROFILES
 
 
 def test_bare_wealth_entry_lists_products(dialogue):
     response = dialogue.say("理财")
     dialogue.completed("WEALTH_QUERY")
-    assert response["reply"] and "CJ01002" in response["reply"] and "QK36509" in response["reply"]
+    assert response["reply"] and "LX00118" in response["reply"] and "YH50365" in response["reply"]
     assert (response.get("result") or {}).get("execution_result", {}).get("type") == "WEALTH_QUERY"
     assert not response.get("approval") and not main.WEALTH_RISK_PROFILES
 
@@ -191,15 +191,15 @@ def test_bare_wealth_recovers_stale_clarification(dialogue):
 
     response = dialogue.say("理财")
     dialogue.completed("WEALTH_QUERY")
-    assert "CJ01002" in response["reply"] and "QK36509" in response["reply"]
+    assert "LX00118" in response["reply"] and "YH50365" in response["reply"]
     assert dialogue.state["clarification_required"] is False
 
 
 def test_compare_accepts_bare_product_pair_after_clarification(dialogue):
     assert "两个" in dialogue.say("比较理财")["reply"]
-    dialogue.say("CJ01002 和 AY90204")
+    dialogue.say("LX00118 和 HQ30060")
     dialogue.completed("WEALTH_COMPARE")
-    assert dialogue.state["product_ids"] == ["CJ01002", "AY90204"]
+    assert dialogue.state["product_ids"] == ["LX00118", "HQ30060"]
 
 
 def test_recommendation_quiz_and_profile_persist_across_turns(dialogue):
@@ -208,11 +208,11 @@ def test_recommendation_quiz_and_profile_persist_across_turns(dialogue):
     dialogue.say("再推荐适合我的理财")
     dialogue.completed("WEALTH_RECOMMEND")
     assert not ((dialogue.last.get("result") or {}).get("risk_quiz") or {}).get("active")
-    assert "CJ01002" in dialogue.last["reply"]
+    assert "LX00118" in dialogue.last["reply"]
     # The B answers produce C2: subsequent turns must use that saved profile,
     # rather than silently reverting to the core endpoint's conservative default.
     assert main.WEALTH_RISK_PROFILES[USER]["risk_profile"] == "C2"
-    assert "AY90204" in dialogue.last["reply"], dialogue.last
+    assert "HQ30060" in dialogue.last["reply"], dialogue.last
 
 
 def test_invalid_quiz_answer_can_be_corrected_or_cancelled(dialogue):
@@ -228,10 +228,10 @@ def test_invalid_quiz_answer_can_be_corrected_or_cancelled(dialogue):
 
 def test_purchase_missing_amount_does_not_use_product_digits(dialogue):
     dialogue.assessed()
-    assert "金额" in dialogue.say("申购 CJ01002")["reply"]
+    assert "金额" in dialogue.say("申购 LX00118")["reply"]
     assert not dialogue.last.get("approval")
     dialogue.say("100元")
-    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=100)
+    dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=100)
     assert main.ACCOUNTS[USER]["balance"] == 15000
     dialogue.decide("reject")
     assert not main.WEALTH_HOLDINGS[USER]
@@ -240,14 +240,14 @@ def test_purchase_missing_amount_does_not_use_product_digits(dialogue):
 def test_purchase_then_redeem_update_the_same_holding(dialogue):
     dialogue.assessed()
     for _ in range(2):
-        dialogue.say("申购 CJ01002 100元")
-        dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=100)
+        dialogue.say("申购 LX00118 100元")
+        dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=100)
         dialogue.decide()
     assert main.ACCOUNTS[USER]["balance"] == 14800
     assert len(main.WEALTH_HOLDINGS[USER]) == 2
     second_holding_id = main.WEALTH_HOLDINGS[USER][1]["holding_id"]
-    dialogue.say("赎回 CJ01002 150元")
-    dialogue.pending("WEALTH_REDEEM", target="CJ01002", amount=150)
+    dialogue.say("赎回 LX00118 150元")
+    dialogue.pending("WEALTH_REDEEM", target="LX00118", amount=150)
     dialogue.decide()
     assert main.ACCOUNTS[USER]["balance"] == 14950
     assert sum(item["principal"] for item in main.WEALTH_HOLDINGS[USER]) == 50
@@ -269,18 +269,18 @@ def test_purchase_then_redeem_update_the_same_holding(dialogue):
 
 def test_same_product_reference_preserves_target_and_new_amount(dialogue):
     dialogue.assessed()
-    dialogue.say("申购 CJ01002 100元")
-    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=100)
+    dialogue.say("申购 LX00118 100元")
+    dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=100)
     dialogue.decide()
     dialogue.say("那个产品再申购20元")
-    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=20)
+    dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=20)
     dialogue.decide("reject")
     assert main.ACCOUNTS[USER]["balance"] == 14900
 
 
 def test_below_minimum_purchase_never_claims_success(dialogue):
     dialogue.assessed()
-    dialogue.say("申购 AY90204 10元")
+    dialogue.say("申购 HQ30060 10元")
     assert not dialogue.last.get("approval"), dialogue.last
     assert "起购" in dialogue.last["reply"] or "最低" in dialogue.last["reply"], dialogue.last
     assert main.ACCOUNTS[USER]["balance"] == 15000
@@ -290,7 +290,7 @@ def test_below_minimum_purchase_never_claims_success(dialogue):
 def test_risk_mismatch_does_not_offer_a_purchase_approval(dialogue):
     dialogue.assessed()
     assert main.WEALTH_RISK_PROFILES[USER]["risk_profile"] == "C2"
-    dialogue.say("申购 ZY18031 10000元")
+    dialogue.say("申购 SG20270 10000元")
     assert not dialogue.last.get("approval"), dialogue.last
     assert "风险" in dialogue.last["reply"], dialogue.last
     assert main.ACCOUNTS[USER]["balance"] == 15000
@@ -299,10 +299,10 @@ def test_risk_mismatch_does_not_offer_a_purchase_approval(dialogue):
 
 def test_redeeming_more_than_holding_preserves_principal(dialogue):
     dialogue.assessed()
-    dialogue.say("申购 CJ01002 100元")
-    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=100)
+    dialogue.say("申购 LX00118 100元")
+    dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=100)
     dialogue.decide()
-    dialogue.say("赎回 CJ01002 150元")
+    dialogue.say("赎回 LX00118 150元")
     assert not dialogue.last.get("approval"), dialogue.last
     assert any(phrase in dialogue.last["reply"] for phrase in ("不足", "没有足够")), dialogue.last
     assert main.ACCOUNTS[USER]["balance"] == 14900
@@ -404,8 +404,8 @@ def test_holdings_query_shows_positions_not_the_product_shelf(dialogue):
     assert "在售理财产品" not in dialogue.last["reply"]
 
     dialogue.assessed()
-    dialogue.say("申购 CJ01002 2000元")
-    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=2000)
+    dialogue.say("申购 LX00118 2000元")
+    dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=2000)
     dialogue.decide()
     holding = main.WEALTH_HOLDINGS[USER][0]
 
@@ -420,13 +420,13 @@ def test_holdings_query_shows_positions_not_the_product_shelf(dialogue):
 
 def test_redeem_all_uses_the_real_holding_principal(dialogue):
     dialogue.assessed()
-    dialogue.say("申购 CJ01002 2000元")
-    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=2000)
+    dialogue.say("申购 LX00118 2000元")
+    dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=2000)
     dialogue.decide()
     assert main.ACCOUNTS[USER]["balance"] == 13000
 
-    dialogue.say("把CJ01002全部赎回")
-    dialogue.pending("WEALTH_REDEEM", target="CJ01002", amount=2000)
+    dialogue.say("把LX00118全部赎回")
+    dialogue.pending("WEALTH_REDEEM", target="LX00118", amount=2000)
     dialogue.decide()
     assert main.ACCOUNTS[USER]["balance"] == 15000
     assert not main.WEALTH_HOLDINGS[USER]
@@ -434,7 +434,7 @@ def test_redeem_all_uses_the_real_holding_principal(dialogue):
 
 def test_redeem_all_without_a_holding_says_so(dialogue):
     dialogue.assessed()
-    dialogue.say("把CJ01002全部赎回")
+    dialogue.say("把LX00118全部赎回")
     assert not dialogue.last.get("approval"), dialogue.last
     assert "持仓" in dialogue.last["reply"], dialogue.last
     assert main.ACCOUNTS[USER]["balance"] == 15000
@@ -454,8 +454,8 @@ def test_purchase_with_two_cards_settles_on_the_named_card(dialogue):
         **main.CARDS[USER][0], "card_id": "CARD-002",
         "last4": "1111", "number_masked": "**** **** **** 1111",
     })
-    dialogue.say("用尾号1111的卡申购 CJ01002 100元")
-    dialogue.pending("WEALTH_PURCHASE", target="CJ01002", amount=100)
+    dialogue.say("用尾号1111的卡申购 LX00118 100元")
+    dialogue.pending("WEALTH_PURCHASE", target="LX00118", amount=100)
     dialogue.decide()
     assert main.ACCOUNTS[USER]["balance"] == 14900
     assert main.CARD_DAILY_SPENT.get("CARD-002") == 100

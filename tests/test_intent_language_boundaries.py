@@ -191,12 +191,12 @@ def test_custom_filter_requires_valid_bounds_instead_of_widening_query():
 
 
 def test_contact_lists_product_pairs_and_thousand_separators_are_not_tasks():
-    for text in ("和李四、王美AA300元", "比较CJ01002和AY90204", "给李四转1,000元", "给李四，转100元"):
+    for text in ("和李四、王美AA300元", "比较LX00118和HQ30060", "给李四转1,000元", "给李四，转100元"):
         assert len(split_tasks(text)) == 1
     assert len(split_tasks("卡找到了，取消挂失CARD-001")) == 1
 
 
-@pytest.mark.parametrize("text", ["冻结CARD-001和CARD-002", "申购CJ01002或AY90204 1000元"])
+@pytest.mark.parametrize("text", ["冻结CARD-001和CARD-002", "申购LX00118或HQ30060 1000元"])
 def test_multiple_business_objects_require_a_choice(gateway, text):
     client, _ = gateway
     result = _send(client, text, conversation_id="object-choice")
@@ -207,7 +207,7 @@ def test_multiple_business_objects_require_a_choice(gateway, text):
 
 @pytest.mark.parametrize("text,intent,target", [
     ("用CARD-001给李四转100元", "TRANSFER", "李四"),
-    ("用CARD-001申购CJ01002 500元", "WEALTH_PURCHASE", "CJ01002"),
+    ("用CARD-001申购LX00118 500元", "WEALTH_PURCHASE", "LX00118"),
 ])
 def test_paying_card_is_not_the_recipient_or_product(text, intent, target):
     parsed = agent.local_parse(text)

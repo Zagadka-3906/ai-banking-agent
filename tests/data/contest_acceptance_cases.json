@@ -125,7 +125,7 @@
         }
       },
       {
-        "input": "帮我比较CJ01002和AY90204",
+        "input": "帮我比较LX00118和HQ30060",
         "expect": {
           "parsed": {
             "intent": "WEALTH_COMPARE"

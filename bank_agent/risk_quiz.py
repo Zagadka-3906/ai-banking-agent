@@ -271,7 +271,7 @@ def handle_risk_quiz(state: BankingAgentState, text: str, quiz: dict[str, Any]) 
         f"✅ 风险测评完成，您的投资者风险类型为 **{grade} {graded.get('risk_type', '')}**。\n\n"
         f"特点：{graded.get('traits', '')}\n\n"
         f"匹配理财产品级别：{graded.get('matching_levels', '')}。以下是与您风险等级匹配的在售产品："
-        f"{product_text}\n\n现在可以直接说出需求（例如“查看理财产品”或“申购 CJ01002 500 元”）。"
+        f"{product_text}\n\n现在可以直接说出需求（例如“查看理财产品”或“申购 LX00118 500 元”）。"
     )
     result = _quiz_result(state, reply, None, execution_result=execution_result)
     # 档案结果卡片与快捷输入建议随信封下发，由客户端渲染。

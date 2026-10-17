@@ -45,7 +45,7 @@ def _state(cid):
     ("转账300元", {"target"}, ("收款人",), ("金额", "日期")),
     ("给李四转账", {"amount"}, ("金额",), ("收款人", "日期")),
     ("预约给李四转账300元", {"scheduled_at"}, ("日期",), ("金额", "收款人")),
-    ("比较理财 CJ01002", {"product_ids"}, ("再", "一个", "产品编号"), ("两个", "CJ01002")),
+    ("比较理财 LX00118", {"product_ids"}, ("再", "一个", "产品编号"), ("两个", "LX00118")),
     ("把 CARD-001 的额度调整一下", {"amount"}, ("额度",), ("卡片编号", "日期")),
     ("取消订阅", {"target"}, ("哪个订阅",), ("金额", "日期")),
 ])
@@ -97,12 +97,12 @@ def test_gateway_lists_all_missing_fields_when_none_were_supplied(channel, text,
 
 
 @pytest.mark.parametrize("answer,expected_ids", [
-    ("AY90204", ["CJ01002", "AY90204"]),
-    ("比较 AY90204 和 ZY18031", ["AY90204", "ZY18031"]),
+    ("HQ30060", ["LX00118", "HQ30060"]),
+    ("比较 HQ30060 和 SG20270", ["HQ30060", "SG20270"]),
 ])
 def test_gateway_one_more_product_completes_comparison_but_full_request_replaces_it(channel, answer, expected_ids):
     cid = "complete-product-pair"
-    first = _send(channel, "比较 CJ01002", conversation_id=cid)
+    first = _send(channel, "比较 LX00118", conversation_id=cid)
     assert "再提供一个" in first["reply"]
     response = _send(channel, answer, conversation_id=cid)
     assert response["status"] == "COMPLETED" and response["approval"] is None, response
@@ -115,14 +115,14 @@ def test_gateway_one_more_product_completes_comparison_but_full_request_replaces
     assert main.WEALTH_HOLDINGS.get("user_zhang", []) == []
 
 
-@pytest.mark.parametrize("answer", ["CJ01002", "CARD-001", "TXN-123456"])
+@pytest.mark.parametrize("answer", ["LX00118", "CARD-001", "TXN-123456"])
 def test_gateway_duplicate_or_unrelated_id_does_not_fill_the_second_product(channel, answer):
     cid = "product-pair-still-missing"
-    _send(channel, "比较 CJ01002", conversation_id=cid)
+    _send(channel, "比较 LX00118", conversation_id=cid)
     response = _send(channel, answer, conversation_id=cid)
     state = _state(cid)
     assert state["clarification_required"] is True, response
-    assert state["product_ids"] == ["CJ01002"]
+    assert state["product_ids"] == ["LX00118"]
     assert response["approval"] is None
     assert not (response.get("result") or {}).get("execution_result")
     assert "再提供一个" in response["reply"]

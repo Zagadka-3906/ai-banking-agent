@@ -542,7 +542,7 @@
     "direction": "理财操作",
     "turns": [
       {
-        "input": "申购CJ01002 100元",
+        "input": "申购LX00118 100元",
         "expect": {
           "approval": true,
           "unchanged": true,
@@ -566,7 +566,7 @@
         "input": "查看我的持仓",
         "expect": {
           "reply_all": [
-            "CJ01002",
+            "LX00118",
             "100"
           ],
           "approval": false,
@@ -581,7 +581,7 @@
           "unchanged": true,
           "parsed": {
             "intent": "WEALTH_REDEEM",
-            "target": "CJ01002",
+            "target": "LX00118",
             "amount": 100
           },
           "response": {
@@ -618,11 +618,11 @@
     "direction": "理财操作",
     "turns": [
       {
-        "input": "比较CJ01002和AY90204",
+        "input": "比较LX00118和HQ30060",
         "expect": {
           "reply_all": [
-            "CJ01002",
-            "AY90204"
+            "LX00118",
+            "HQ30060"
           ],
           "approval": false,
           "unchanged": true
@@ -636,7 +636,7 @@
           "unchanged": true,
           "parsed": {
             "intent": "WEALTH_PURCHASE",
-            "target": "CJ01002",
+            "target": "LX00118",
             "amount": 50
           },
           "response": {
@@ -660,7 +660,7 @@
     "direction": "理财操作",
     "turns": [
       {
-        "input": "申购CJ01002 20000元",
+        "input": "申购LX00118 20000元",
         "expect": {
           "reply_any": [
             "余额不足",
@@ -692,7 +692,7 @@
         "screenshot": true
       },
       {
-        "input": "不要买，先看看CJ01002的风险",
+        "input": "不要买，先看看LX00118的风险",
         "expect": {
           "approval": false,
           "unchanged": true
@@ -706,7 +706,7 @@
     "direction": "理财操作",
     "turns": [
       {
-        "input": "先风险测评，再申购CJ01002 100元",
+        "input": "先风险测评，再申购LX00118 100元",
         "expect": {
           "approval": false,
           "balance_delta": 0,

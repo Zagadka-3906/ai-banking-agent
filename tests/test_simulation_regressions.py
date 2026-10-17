@@ -45,10 +45,10 @@ def test_category_only_followups_preserve_custom_date_range(bills):
 
 def test_comparison_ordinal_uses_the_literal_comparison_order(dialogue):
     main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C3", "loss_tolerance": "MEDIUM", "horizon_years": 3, "experience": "BASIC"}
-    dialogue.say("比较CJ01002和AY90204")
+    dialogue.say("比较LX00118和HQ30060")
     response = dialogue.say("那买前一个50元")
     assert response["approval"] is not None, dialogue.diagnostic()
-    assert dialogue.state["target"] == "CJ01002"
+    assert dialogue.state["target"] == "LX00118"
     assert dialogue.state["amount"] == 50
     assert main.ACCOUNTS["user_zhang"]["balance"] == 15000
 
@@ -56,35 +56,35 @@ def test_comparison_ordinal_uses_the_literal_comparison_order(dialogue):
 def test_singular_holding_reference_is_resolved_but_multiple_holdings_are_not():
     parsed = agent.local_parse("把这个产品全部赎回")
     prior = {"intent": "WEALTH_HOLDINGS", "product_ids": []}
-    result = {"type": "WEALTH_HOLDINGS", "data": {"data": [{"product_id": "CJ01002", "principal": 100}]}}
+    result = {"type": "WEALTH_HOLDINGS", "data": {"data": [{"product_id": "LX00118", "principal": 100}]}}
     resolved = agent.resolve_ellipsis(parsed, prior, "把这个产品全部赎回", result)
-    assert resolved["target"] == "CJ01002"
+    assert resolved["target"] == "LX00118"
     assert resolved["slots"]["redeem_all"] is True
-    result["data"]["data"].append({"product_id": "AY90204", "principal": 1000})
+    result["data"]["data"].append({"product_id": "HQ30060", "principal": 1000})
     assert agent.resolve_ellipsis(parsed, prior, "把这个产品全部赎回", result)["target"] is None
 
 
 def test_holding_reference_survives_the_gateway_new_turn_reset(dialogue):
     main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C3", "loss_tolerance": "MEDIUM", "horizon_years": 3, "experience": "BASIC"}
-    main.WEALTH_HOLDINGS["user_zhang"] = [{"holding_id": "HLD-SIM", "product_id": "CJ01002", "product_name": "稳健添利·日日盈", "principal": 100, "estimated_value": 100, "purchased_at": datetime.now().isoformat()}]
+    main.WEALTH_HOLDINGS["user_zhang"] = [{"holding_id": "HLD-SIM", "product_id": "LX00118", "product_name": "零星宝·活钱管家", "principal": 100, "estimated_value": 100, "purchased_at": datetime.now().isoformat()}]
     dialogue.say("查看我的持仓")
-    assert dialogue.state["context"]["verified_product_ids"] == ["CJ01002"]
+    assert dialogue.state["context"]["verified_product_ids"] == ["LX00118"]
     response = dialogue.say("把这个产品全部赎回")
     assert response["approval"] is not None, dialogue.diagnostic()
-    assert dialogue.state["target"] == "CJ01002"
+    assert dialogue.state["target"] == "LX00118"
     assert dialogue.state["amount"] == 100
 
 
 def test_literal_ordinal_overrides_only_model_confidence_not_product_facts():
     parsed = {**agent.local_parse("那买前一个50元"), "confidence": 0.4}
-    prior = {"intent": "WEALTH_COMPARE", "product_ids": ["CJ01002", "AY90204"]}
+    prior = {"intent": "WEALTH_COMPARE", "product_ids": ["LX00118", "HQ30060"]}
     result = agent.resolve_ellipsis(parsed, prior, "那买前一个50元")
-    assert result["target"] == "CJ01002" and result["confidence"] is None
+    assert result["target"] == "LX00118" and result["confidence"] is None
 
 
 def test_purchase_over_available_balance_is_refused_before_approval(dialogue):
     main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C3", "loss_tolerance": "MEDIUM", "horizon_years": 3, "experience": "BASIC"}
-    response = dialogue.say("申购CJ01002 20000元")
+    response = dialogue.say("申购LX00118 20000元")
     assert response["approval"] is None
     assert "余额不足" in response["reply"]
     assert main.ACCOUNTS["user_zhang"]["balance"] == 15000

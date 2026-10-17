@@ -16,7 +16,7 @@
 <button id="save" disabled>保存本项并继续</button><button id="export">导出记录 JSON</button>
 <p id="error" role="alert"></p><output id="summary"></output>
 <script>
-const tasks=[['BALANCE','查询当前可用余额','金额必须与隔离 Core 一致。'],['TRANSFER','给李四转 300 元','检查收款人、金额并确认，主持人核对唯一回执。'],['BILL','分析本月餐饮支出','检查日期、分类及统计金额。'],['WEALTH','比较 CJ01002 和 AY90204','核对两款产品及风险信息。'],['CARD','查看银行卡与交易限额','只查询，避免改变后续测试条件。'],['BIRTHDAY','为爱人 2099-10-03 的生日锁定 1000 元，提醒订鲜花和蛋糕','核对锁资与任务；不得把待执行订单当作已履约。']];
+const tasks=[['BALANCE','查询当前可用余额','金额必须与隔离 Core 一致。'],['TRANSFER','给李四转 300 元','检查收款人、金额并确认，主持人核对唯一回执。'],['BILL','分析本月餐饮支出','检查日期、分类及统计金额。'],['WEALTH','比较 LX00118 和 HQ30060','核对两款产品及风险信息。'],['CARD','查看银行卡与交易限额','只查询，避免改变后续测试条件。'],['BIRTHDAY','为爱人 2099-10-03 的生日锁定 1000 元，提醒订鲜花和蛋糕','核对锁资与任务；不得把待执行订单当作已履约。']];
 const $=id=>document.getElementById(id);let rows=[],index=0,started=null,elapsed=null,interval=null;
 function show(){const task=tasks[Math.floor(index/2)];if(!task){$('title').textContent='本轮已完成，请导出';$('start').disabled=true;return}const modes=$('order').value.split(',');$('title').textContent=task[1];$('prompt').textContent=task[2];$('mode').textContent='本项入口：'+(modes[index%2]==='agent'?'安言对话入口':'指定对照流程');$('summary').textContent='已记录 '+rows.length+' 项';}
 $('order').onchange=()=>{if(rows.length||started!==null){$('error').textContent='开始后不可更改次序';$('order').disabled=true}show()};

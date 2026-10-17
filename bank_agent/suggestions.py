@@ -19,7 +19,7 @@ from bank_agent import runtime
 
 MAX_SUGGESTIONS = 3
 _MIN_CHARS, _MAX_CHARS = 2, 16
-# Example wording the reply itself offers ("可以说“有哪些理财产品”", "例如：比较 CJ01002 和 AY90204").
+# Example wording the reply itself offers ("可以说“有哪些理财产品”", "例如：比较 LX00118 和 HQ30060").
 _EXAMPLE_MAX_CHARS = 20
 _QUOTED_EXAMPLES = re.compile(r"(?:说|例如|比如|试试|回复|输入|发送)[：:\s]*((?:“[^”\n]+”\s*(?:或|、|，|,|和|以及)?\s*)+)")
 _PLAIN_EXAMPLES = re.compile(r"(?:例如|比如)[：:]?\s*(?!“)([^（）()“”。；;，,\n]{2,40}?)\s*(?=[）)。；;，,]|$)")

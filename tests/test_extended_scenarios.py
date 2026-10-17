@@ -126,20 +126,20 @@ def test_wealth_purchase_requires_server_mfa(client: TestClient):
     assert assessed.status_code == 200, assessed.text
     pre = client.post(
         "/api/v1/risk/precheck/operation",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄"},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "LX00118", "amount": 1000, "reason": "长期储蓄"},
         headers=headers(),
     )
     assert pre.status_code == 200 and pre.json()["risk_level"] == "RED"
     token = pre.json()["auth_token"]
     client.post("/api/v1/auth/confirm", json={}, headers=headers(token))
-    blocked = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄", "auth_token": token}, headers=headers(token))
+    blocked = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "LX00118", "amount": 1000, "reason": "长期储蓄", "auth_token": token}, headers=headers(token))
     assert blocked.status_code in {403, 428}
     # The Android/IM contract has no client-asserted biometric boolean.
     boolean_only = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_verified": True}, headers=headers(token))
     assert boolean_only.status_code == 403
     mfa = client.post("/api/v1/auth/mfa/verify", json={"otp": "888888", "face_attestation": face_attest(client, token)}, headers=headers(token))
     assert mfa.status_code == 200
-    completed = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "长期储蓄", "auth_token": token, "mfa_proof": mfa.json()["mfa_proof"]}, headers={**headers(token), "X-MFA-Proof": mfa.json()["mfa_proof"]})
+    completed = client.post("/api/v1/operations/execute", json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "LX00118", "amount": 1000, "reason": "长期储蓄", "auth_token": token, "mfa_proof": mfa.json()["mfa_proof"]}, headers={**headers(token), "X-MFA-Proof": mfa.json()["mfa_proof"]})
     assert completed.status_code == 200, completed.text
 
 
@@ -154,18 +154,18 @@ def test_risk_assessment_is_available_to_agent_and_compare_is_source_bound(clien
     assert main.WEALTH_RISK_PROFILES["user_zhang"]["risk_profile"] == "BALANCED"
 
     comparison = client.get(
-        "/api/v1/wealth/compare?product_ids=CJ01002,AY90204",
+        "/api/v1/wealth/compare?product_ids=LX00118,HQ30060",
         headers=headers(),
     )
     assert comparison.status_code == 200, comparison.text
-    assert [item["product_id"] for item in comparison.json()["data"]] == ["CJ01002", "AY90204"]
+    assert [item["product_id"] for item in comparison.json()["data"]] == ["LX00118", "HQ30060"]
 
 
 def test_purchase_requires_a_recorded_risk_assessment(client: TestClient):
     main.WEALTH_RISK_PROFILES.pop("user_zhang", None)
     blocked = client.post(
         "/api/v1/risk/precheck/operation",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 100},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "LX00118", "amount": 100},
         headers=headers(),
     )
     assert blocked.status_code == 428
@@ -223,7 +223,7 @@ def test_a_questionnaire_grade_can_actually_buy(client: TestClient):
     # An R4 product is within a C5 file's reach; the precheck must not answer 428.
     allowed = client.post(
         "/api/v1/risk/precheck/operation",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "QK36509", "amount": 100},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "YH50365", "amount": 100},
         headers=headers(),
     )
     assert allowed.status_code != 428, allowed.text
@@ -232,7 +232,7 @@ def test_a_questionnaire_grade_can_actually_buy(client: TestClient):
     main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C1", "source": "QUESTIONNAIRE"}
     refused = client.post(
         "/api/v1/risk/precheck/operation",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "QK36509", "amount": 100},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "YH50365", "amount": 100},
         headers=headers(),
     )
     assert refused.status_code == 403, refused.text
@@ -242,7 +242,7 @@ def test_a_questionnaire_grade_can_actually_buy(client: TestClient):
     main.WEALTH_RISK_PROFILES.pop("user_zhang", None)
     missing = client.post(
         "/api/v1/risk/precheck/operation",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "QK36509", "amount": 100},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "YH50365", "amount": 100},
         headers=headers(),
     )
     assert missing.status_code == 428, missing.text
@@ -419,17 +419,17 @@ def test_wealth_purchase_obeys_the_card_daily_limit(client: TestClient, monkeypa
 
     # Refused at precheck, before the user is asked for SMS and device verification.
     early = client.post("/api/v1/risk/precheck/operation", headers=headers(),
-                        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 5000, "reason": "大额申购"})
+                        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "LX00118", "amount": 5000, "reason": "大额申购"})
     assert early.status_code == 400 and early.json()["detail"]["code"] == "CARD_LIMIT_EXCEEDED"
     assert "¥100.00" in early.json()["detail"]["message"]
 
     # Settlement still enforces it if the limit is lowered after the precheck.
     main.CARDS["user_zhang"][0]["daily_limit"] = 50000.0
-    token, proof = approve_red(client, "WEALTH_PURCHASE", product_id="CJ01002", amount=5000, reason="大额申购")
+    token, proof = approve_red(client, "WEALTH_PURCHASE", product_id="LX00118", amount=5000, reason="大额申购")
     main.CARDS["user_zhang"][0]["daily_limit"] = 100.0
     refused = client.post(
         "/api/v1/operations/execute",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 5000, "reason": "大额申购", "auth_token": token},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "LX00118", "amount": 5000, "reason": "大额申购", "auth_token": token},
         headers={**headers(token), "X-MFA-Proof": proof},
     )
 
@@ -452,10 +452,10 @@ def test_wealth_purchase_records_the_card_spend_when_it_settles(client: TestClie
     main.CARD_DAILY_SPENT_DATE.clear()
     balance_before = main.ACCOUNTS["user_zhang"]["balance"]
 
-    token, proof = approve_red(client, "WEALTH_PURCHASE", product_id="CJ01002", amount=1000, reason="申购")
+    token, proof = approve_red(client, "WEALTH_PURCHASE", product_id="LX00118", amount=1000, reason="申购")
     settled = client.post(
         "/api/v1/operations/execute",
-        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "CJ01002", "amount": 1000, "reason": "申购", "auth_token": token},
+        json={"user_id": "user_zhang", "operation": "WEALTH_PURCHASE", "product_id": "LX00118", "amount": 1000, "reason": "申购", "auth_token": token},
         headers={**headers(token), "X-MFA-Proof": proof},
     )
 

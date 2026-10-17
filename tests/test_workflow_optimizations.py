@@ -219,7 +219,7 @@ def test_failed_compound_step_stops_future_writes_and_new_turn_starts_fresh(gate
 
 def test_compound_wealth_quiz_resumes_original_step_without_bypassing_approval(gateway):
     client, _ = gateway
-    quiz = _send(client, "查一下余额，然后申购CJ01002 500元，然后给李四转20元", conversation_id="quiz-flow")
+    quiz = _send(client, "查一下余额，然后申购LX00118 500元，然后给李四转20元", conversation_id="quiz-flow")
     assert quiz["business_status"] == "NEEDS_INPUT"
     assert quiz["result"]["risk_quiz"]
     answered = _send(client, "1A 2A 3B 4A 5B 6B 7A 8A", conversation_id="quiz-flow")

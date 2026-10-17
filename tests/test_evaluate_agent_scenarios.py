@@ -265,10 +265,10 @@ def test_new_approval_requires_known_different_previous_id():
 
 def test_state_recursively_checks_card_status_and_optional_holdings():
     spec = {"input": "核对结果", "expect": {"state": {"cards": [{"card_id": "CARD-001", "status": "FROZEN"}],
-                                                        "holdings": {"CJ01002": {"amount": 100}}}}}
+                                                        "holdings": {"LX00118": {"amount": 100}}}}}
     row = recorded(spec)
     row["after"].update({"cards": [{"card_id": "CARD-001", "status": "FROZEN", "last4": "3082"}],
-                         "holdings": {"CJ01002": {"amount": 100, "name": "产品"}}})
+                         "holdings": {"LX00118": {"amount": 100, "name": "产品"}}})
     assert evaluate_cases(*matrix([spec], [row]))["passed"]
     row["after"]["cards"][0]["status"] = "ACTIVE"
     assert "state" in failed_names(evaluate_cases(*matrix([spec], [row])))

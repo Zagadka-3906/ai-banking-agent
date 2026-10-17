@@ -204,8 +204,8 @@ def test_incomplete_transfer_is_clarification(wired):
 
 
 def test_product_id_is_not_parsed_as_amount():
-    parsed = agent.local_parse("申购 CJ01002 1000 元")
-    assert parsed["target"] == "CJ01002"
+    parsed = agent.local_parse("申购 LX00118 1000 元")
+    assert parsed["target"] == "LX00118"
     assert parsed["amount"] == 1000.0
 
 
@@ -449,9 +449,9 @@ def test_read_collections_are_rendered_readably(wired):
     # 推荐按风险档案过滤：先给 user_zhang 建档，避免被“首次咨询触发测评”拦截。
     main.WEALTH_RISK_PROFILES["user_zhang"] = {"risk_profile": "C3", "source": "TEST"}
     cases = [
-        ("推荐稳健理财产品", "WEALTH_RECOMMEND", ("CJ01002", "稳健添利", "风险 R1", "2.20%", "不构成投资建议")),
-        ("查看理财产品", "WEALTH_QUERY", ("CJ01002", "AY90204", "ZY18031", "QK36509", "在售理财产品")),
-        ("比较 CJ01002 和 AY90204", "WEALTH_COMPARE", ("产品对比", "CJ01002", "AY90204")),
+        ("推荐稳健理财产品", "WEALTH_RECOMMEND", ("LX00118", "零星宝", "风险 R1", "2.05%", "不构成投资建议")),
+        ("查看理财产品", "WEALTH_QUERY", ("LX00118", "HQ30060", "SG20270", "YH50365", "在售理财产品")),
+        ("比较 LX00118 和 HQ30060", "WEALTH_COMPARE", ("产品对比", "LX00118", "HQ30060")),
         ("我有哪些订阅", "SUBSCRIPTION_QUERY", ("Apple 订阅", "视频会员", "下次扣款")),
         ("我的卡片", "CARD_QUERY", ("CARD-001", "日限额", "状态 ACTIVE")),
     ]
@@ -478,7 +478,7 @@ def test_read_collections_are_rendered_readably(wired):
     ("text", "intent"),
     [
         ("帮我做风险评估，我是新手，低风险", "WEALTH_RISK_ASSESSMENT"),
-        ("比较 CJ01002 和 AY90204", "WEALTH_COMPARE"),
+        ("比较 LX00118 和 HQ30060", "WEALTH_COMPARE"),
         ("修改我的登录密码", "PASSWORD_CHANGE"),
     ],
 )
@@ -676,13 +676,13 @@ def test_quiz_collects_answers_and_recommends_matching_products(wired):
     values = _turn(wired, "1B 2B 3C 4D 5C 6C 7C 8C", "quiz-complete")
     # 档案结果与快捷输入建议随信封下发
     assert values["profile_result"]["grade"] == "C3"
-    assert values["suggestions"] == ["查看理财产品", "申购 CJ01002 500 元", "查看我的持仓"]
+    assert values["suggestions"] == ["查看理财产品", "申购 LX00118 500 元", "查看我的持仓"]
     # 4+3+4+4+3+3+3+3 = 27 → C3 平衡型
     assert "C3 平衡型" in values["final_response"]
     assert "追求收益与风险平衡" in values["final_response"]
     assert "R1 ~ R3" in values["final_response"]
-    assert "稳健添利" in values["final_response"]  # R1 匹配
-    assert "乾坤进取" not in values["final_response"]  # R4 超出匹配级别
+    assert "零星宝" in values["final_response"]  # R1 匹配
+    assert "远航智造" not in values["final_response"]  # R4 超出匹配级别
     assert "得分" not in values["final_response"]  # 分数不对用户展示
     stored = main.WEALTH_RISK_PROFILES["user_zhang"]
     assert stored["risk_profile"] == "C3"
@@ -692,7 +692,7 @@ def test_quiz_collects_answers_and_recommends_matching_products(wired):
     assert values["execution_result"]["type"] == "WEALTH_RECOMMEND"
     assert values["risk_quiz"]["active"] is False  # 完成后载荷关闭
     ids = {item["product_id"] for item in values["execution_result"]["data"]["data"]}
-    assert ids == {"CJ01002", "AY90204", "ZY18031"}
+    assert ids == {"LX00118", "HQ30060", "SG20270"}
 
 
 def test_quiz_supports_partial_answers_then_completion(wired):

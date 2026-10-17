@@ -107,7 +107,7 @@ private fun WealthProducts(data: Map<String, Any?>, type: String?) {
             val name = product.text("name") ?: return@forEach
             ReplyPanel {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // The code is what "申购 CJ01002 500 元" needs, so the card shows it.
+                    // The code is what "申购 LX00118 500 元" needs, so the card shows it.
                     product.text("product_id")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
                     product.text("category")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
                     RiskTag(product.text("risk_level") ?: "—")

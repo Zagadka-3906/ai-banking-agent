@@ -20,9 +20,9 @@ class PredictedSuggestionsTest {
     @Test
     fun examples_offered_by_the_reply_are_shown_at_once() {
         val suggestions = predictedSuggestions(
-            TurnEnvelope(intent = "WEALTH_COMPARE", result = mapOf("suggestions" to listOf("比较 CJ01002 和 AY90204"))),
+            TurnEnvelope(intent = "WEALTH_COMPARE", result = mapOf("suggestions" to listOf("比较 LX00118 和 HQ30060"))),
         )
-        assertEquals(listOf("比较 CJ01002 和 AY90204"), suggestions)
+        assertEquals(listOf("比较 LX00118 和 HQ30060"), suggestions)
     }
 
     @Test
@@ -39,7 +39,7 @@ class PredictedSuggestionsTest {
             TurnEnvelope(
                 intent = "TRANSFER",
                 approval = ApprovalView(approvalId = "approval-1"),
-                result = mapOf("suggestions" to listOf("申购 CJ01002 500 元")),
+                result = mapOf("suggestions" to listOf("申购 LX00118 500 元")),
             ),
         )
 

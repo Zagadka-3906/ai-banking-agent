@@ -346,6 +346,11 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
         # not invent approvals or replay merchant/reminder actions whose prior
         # task state was never saved.
         TASK_STORE.restore(TASK_STORE.decode_records(state.get("TASK_STORE", [])))
+        # The product shelf is configuration, not account data: a snapshot saved
+        # before the catalogue changed must not bring retired products back.
+        from bank_core.wealth_data import WEALTH_CATALOGUE
+
+        LEDGER_COLLECTIONS["WEALTH_PRODUCTS"][:] = deepcopy(WEALTH_CATALOGUE)
     _LEDGER_STORE_LOAD_SUMMARY = {
         "loaded_state": True,
         "path": target,
