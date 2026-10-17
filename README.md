@@ -148,6 +148,7 @@ cd android
 ├─ scripts/              端到端探针、场景评测、设备回归、交付打包
 ├─ tools/usability/      可用性测试记录页
 ├─ tests/                后端测试
+├─ deploy/               云服务器部署：安装脚本、systemd、Nginx、部署命令
 ├─ docs/                 参赛文档；docs/过程记录/ 为历次检查与升级记录
 └─ start-emulator.bat    一键启动
 ```
@@ -163,6 +164,7 @@ cd android
 | 答辩 PPT 与演示视频大纲 | [答辩提纲](docs/答辩提纲.md) · [演示视频](docs/演示视频.md) |
 | 赛题覆盖与验收 | [参赛完善与验收](docs/参赛完善与验收-2026-10-15.md) |
 | 飞书机器人接入 | [飞书接入说明](docs/飞书IM接入.md) |
+| 部署到云服务器 | [云服务器部署](deploy/README.md) |
 | 工具链升级、回归测试等历史记录 | [docs/过程记录](docs/过程记录/) |
 
 ## 限制

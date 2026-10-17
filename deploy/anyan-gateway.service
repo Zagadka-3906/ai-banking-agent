@@ -1,0 +1,23 @@
+[Unit]
+Description=安言 Agent Gateway (conversation, approvals, SSE)
+After=network-online.target anyan-core.service
+Wants=network-online.target anyan-core.service
+
+[Service]
+User=anyan
+Group=anyan
+WorkingDirectory=/opt/anyan/app
+EnvironmentFile=/etc/anyan/anyan.env
+# One worker: pending approvals and the optional Feishu long connection are per process.
+ExecStart=/opt/anyan/venv/bin/uvicorn agent_api:app --host 127.0.0.1 --port 8100 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+MemoryMax=900M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/anyan
+
+[Install]
+WantedBy=multi-user.target

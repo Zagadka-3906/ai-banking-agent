@@ -1,0 +1,23 @@
+[Unit]
+Description=安言 Mock Core (ledger, authorization, risk)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=anyan
+Group=anyan
+WorkingDirectory=/opt/anyan/app
+EnvironmentFile=/etc/anyan/anyan.env
+# One worker: the ledger and its locks live in this process.
+ExecStart=/opt/anyan/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+MemoryMax=700M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/anyan
+
+[Install]
+WantedBy=multi-user.target
