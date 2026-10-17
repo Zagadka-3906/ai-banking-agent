@@ -50,6 +50,23 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
 
 **恢复演示数据**：停服务，删掉 `/var/lib/anyan/ledger.json` 和 `devices.json`，再启动。
 
+## 网页管理面板（Cockpit）
+
+服务器装了 Ubuntu 官方的 Cockpit，可以在网页里查看服务、启停服务、看日志、用终端。它只监听服务器本机的 9090 端口，公网访问不到，要通过 SSH 隧道打开：
+
+1. **只需做一次：** 在 Workbench 里以 root 登录，执行 `passwd panel`，为面板用户 `panel` 设置密码（输入两次，屏幕上不显示）。`panel` 有 sudo 权限，面板里可以切换到管理员模式。
+2. **每次使用：** 在部署这台电脑的 PowerShell 里执行下面这条命令，窗口保持打开：
+
+   ```powershell
+   ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 9090:127.0.0.1:9090 root@47.107.49.125
+   ```
+
+   在 Git Bash 里也可以用 `deploy/deploy.sh panel 47.107.49.125`。
+3. 浏览器打开 `https://localhost:9090`。证书是面板自签的，浏览器提示不安全时，选“高级 → 继续访问”。用户名填 `panel`，密码填第 1 步设置的密码。
+4. 用完关掉命令窗口，或按 Ctrl+C。
+
+面板里的「服务」页找 `anyan-core`、`anyan-gateway`、`nginx`，「日志」页可以按服务筛选。
+
 ## 注意
 
 - 演示账号口令 `Bank@2026` 在仓库里是公开的，拿到 App 的人都能登录，看到的都是虚构数据。所以只把 APK 发给需要演示的人。
