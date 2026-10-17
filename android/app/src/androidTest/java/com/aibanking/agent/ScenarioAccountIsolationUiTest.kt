@@ -362,7 +362,14 @@ class ScenarioAccountIsolationUiTest {
                 // require the actual successful authentication callback.
                 instrumentation.uiAutomation.waitForIdle(300, 5_000)
                 assertTrue(systemPromptVisible())
-                pin.forEach { digit -> injectKey(KeyEvent.KEYCODE_0 + digit.digitToInt()) }
+                // The window can be shown before it takes key input; a lost first
+                // digit leaves a wrong PIN and the prompt open. Let it settle and
+                // type at a human pace.
+                SystemClock.sleep(800)
+                pin.forEach { digit ->
+                    injectKey(KeyEvent.KEYCODE_0 + digit.digitToInt())
+                    SystemClock.sleep(80)
+                }
             } else {
                 // A visible system window may appear before its EditText owns
                 // input focus, which can otherwise lose the first digit.

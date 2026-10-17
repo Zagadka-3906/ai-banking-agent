@@ -110,7 +110,7 @@ private fun WealthProducts(data: Map<String, Any?>, type: String?) {
                     // The code is what "申购 LX00118 500 元" needs, so the card shows it.
                     product.text("product_id")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
                     product.text("category")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
-                    RiskTag(product.text("risk_level") ?: "—")
+                    RiskBadge(product.text("risk_level") ?: "—")
                 }
                 Text(name, style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -159,17 +159,6 @@ private fun WealthHoldings(data: Map<String, Any?>) {
             }
         }
     }
-}
-
-@Composable
-private fun RiskTag(level: String) {
-    val status = when (level) {
-        "R1", "R2" -> BankSemanticStatus.RiskGreen
-        "R3" -> BankSemanticStatus.RiskYellow
-        "R4", "R5" -> BankSemanticStatus.RiskRed
-        else -> BankSemanticStatus.Neutral
-    }
-    BankStatusChip(level, status)
 }
 
 @Composable

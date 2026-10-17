@@ -131,12 +131,15 @@ class ScenarioTaskLifecycleUiTest {
         ui.waitUntil(30_000) { !model.state.value.busy && model.state.value.pending == null }
         assertEquals(null, model.state.value.error)
         assertTrue(control(18800, "state").getJSONArray("tasks").length() > 0)
+        // An approved reservation opens its result page; go back to the chat as a user would.
+        ui.returnFromOutcome()
     }
 
     private fun openTasks() {
         ui.openFromDrawer(UiTags.OPEN_TASKS)
         ui.waitUntil(20_000) { model.state.value.showTasks && !model.state.value.panelBusy && model.state.value.tasks.isNotEmpty() }
-        ui.onNodeWithText("待办任务").assertIsDisplayed()
+        // The drawer keeps its "待办任务" entry composed after closing; check the page's own subtitle.
+        ui.onNodeWithText("计划有序，生活从容").assertIsDisplayed()
     }
 
     private fun cancelFirst() {

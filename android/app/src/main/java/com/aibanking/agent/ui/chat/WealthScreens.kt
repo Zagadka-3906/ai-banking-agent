@@ -333,13 +333,14 @@ internal fun CategoryChip(text: String) {
     }
 }
 
+/** Product risk level, coloured the same on the wealth page and in chat cards. */
 @Composable
 internal fun RiskBadge(level: String) {
     val status = when (level) {
-        "R1" -> BankSemanticStatus.RiskGreen
-        "R2" -> BankSemanticStatus.Neutral
+        "R1", "R2" -> BankSemanticStatus.RiskGreen
         "R3" -> BankSemanticStatus.RiskYellow
-        else -> BankSemanticStatus.RiskRed
+        "R4", "R5" -> BankSemanticStatus.RiskRed
+        else -> BankSemanticStatus.Neutral
     }
     BankStatusChip(level, status)
 }

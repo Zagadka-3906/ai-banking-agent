@@ -35,7 +35,7 @@ class WealthUiTest {
         }
         assertTrue(ui.onAllNodesWithText("Mock", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(ui.onAllNodesWithText("2026-09-15", substring = true).fetchSemanticsNodes().isNotEmpty())
-        assertTrue(ui.onAllNodesWithText("19.46%", substring = true).fetchSemanticsNodes().isNotEmpty())
+        assertTrue(ui.onAllNodesWithText("7.85%", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(ui.onAllNodesWithText("10,000元起购", substring = true).fetchSemanticsNodes().isNotEmpty())
 
         listOf("近1月", "近3月", "近6月", "近1年", "成立以来").forEach { ui.onNodeWithTag(UiTags.wealthRange(it)).assertExists() }

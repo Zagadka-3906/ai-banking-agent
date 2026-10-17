@@ -318,7 +318,9 @@ def run() -> None:
     if args.service == "core":
         # Only this runner knows the reset route; it authenticates separately
         # with the isolated control token, before any demo session exists.
-        module._SESSION_BOOTSTRAP_PATHS = {*module._SESSION_BOOTSTRAP_PATHS, "/__scenario/reset"}
+        from bank_core import http_edge
+
+        http_edge._SESSION_BOOTSTRAP_PATHS.add("/__scenario/reset")
     from fastapi import Header, HTTPException
     records: list[dict] = []
     model_calls: list[dict] = []
@@ -529,10 +531,12 @@ def run() -> None:
         if args.service != "core":
             raise HTTPException(404, "Core-only scenario control")
         from datetime import timezone
+        from bank_core.routes.tasks import run_due_tasks
+
         original_ready = module.TASK_STORE.ready
         module.TASK_STORE.ready = lambda: original_ready(now=datetime(2100, 1, 1, tzinfo=timezone.utc))
         try:
-            return module.run_due_tasks(x_admin_token=token, x_request_id="scenario-advance-due")
+            return run_due_tasks(x_admin_token=token, x_request_id="scenario-advance-due")
         finally:
             module.TASK_STORE.ready = original_ready
 
