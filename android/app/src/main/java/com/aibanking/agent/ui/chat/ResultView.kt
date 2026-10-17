@@ -448,6 +448,7 @@ private val FIELD_LABELS = mapOf(
     "merchant" to "商户", "subscription_id" to "订阅编号", "target" to "收款对象",
     "schedule_id" to "预约编号", "split_id" to "分摊编号", "participants_total" to "参与人数",
     "created_at" to "创建时间", "collected_at" to "收款时间", "risk_level" to "风险等级",
+    "user_name" to "户名", "card_no" to "卡号", "phone" to "手机号",
 )
 private val MONEY_FIELDS = setOf(
     "total_balance", "available_balance", "locked_amount", "remaining_available", "sender_balance",
