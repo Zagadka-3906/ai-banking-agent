@@ -31,6 +31,7 @@
 ```bash
 deploy/deploy.sh server 47.107.49.125   # 上传已提交的代码，安装或更新
 deploy/deploy.sh keys   47.107.49.125   # 把本机 .env 里的 DeepSeek、百炼密钥写到服务器（可选）
+deploy/deploy.sh feishu 47.107.49.125   # 把本机 .env 里的飞书应用 ID 和密钥写到服务器并启用飞书机器人（可选）
 deploy/deploy.sh app    47.107.49.125   # 打包连接服务器的 APK：build/deploy/anyan-47.107.49.125.apk
 deploy/deploy.sh status 47.107.49.125   # 查看服务状态
 ```
@@ -39,6 +40,8 @@ deploy/deploy.sh status 47.107.49.125   # 查看服务状态
 - `keys` 只传 `DEEPSEEK_API_KEY` 和 `DASHSCOPE_API_KEY` 两项，通过 SSH 标准输入传输，不出现在命令行参数里。不运行它，服务器就只用规则解析，也能完整演示。
 - 更新代码：提交后再运行一次 `server`。密钥、证书和数据保留不变。
 - APK 是 debug 签名的演示包，直接发给用户安装即可。服务器地址或证书变了，需要重新打包。
+
+**飞书机器人**：服务器启用后，由服务器上的网关与飞书保持长连接。同一个飞书应用不要同时在本机开着启用飞书的网关，否则两个连接会争抢消息。飞书绑定依附于 App 的登录会话：退出登录、会话过期或服务器重启后，需要在 App 里重新获取绑定码再绑定。
 
 ## 服务器上的常用操作
 
