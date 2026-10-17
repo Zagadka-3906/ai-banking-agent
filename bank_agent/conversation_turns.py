@@ -58,6 +58,12 @@ class TurnsMixin:
                 result[key] = value
         status = business_status(state)
         summary = state.get("final_response") or "本次请求没有产生可核验的结果。"
+        if "suggestions" not in result:
+            # Wording the reply offers ("可以说“…”") is shown as chips at once, without waiting for the model.
+            from bank_agent.suggestions import reply_examples
+
+            if examples := reply_examples(str(state.get("final_response") or "")):
+                result["suggestions"] = examples
         if workflow_plan(state):
             result["workflow_plan"] = workflow_plan(state)
         return {
@@ -380,13 +386,12 @@ class TurnsMixin:
         Read-only: it never touches the graph. No chips while an approval or the
         risk questionnaire is waiting - those have their own fixed controls.
         """
-        from bank_agent.suggestions import model_suggestions
+        from bank_agent.suggestions import followup_suggestions
 
         thread_id = conversation_thread_id(principal, conversation_id)
         state = dict(self._graph().get_state(self._config(thread_id)).values or {})
         waiting = self._pending_approval(thread_id) is not None or bool(state.get("risk_quiz"))
-        suggestions = [] if not state or waiting else model_suggestions(state)
-        source = "model" if suggestions else "none"
+        suggestions, source = ([], "none") if not state or waiting else followup_suggestions(state)
         # Counts only: the suggested wording is user-facing text, not audit material.
         audit_event("AGENT_SUGGEST", user_id=principal, decision="ALLOW", outcome="SUCCESS",
                     metadata={"count": len(suggestions), "source": source})

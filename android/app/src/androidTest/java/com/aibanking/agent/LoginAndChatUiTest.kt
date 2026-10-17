@@ -266,7 +266,8 @@ class LoginAndChatUiTest {
                 "settled transfers must not retain their approval preview",
                 currentState.messages.none { it.approvalPreview || it.text.trimStart().startsWith("您正准备进行：") },
             )
-            assertTrue("transfer follow-up suggestions missing", currentState.suggestions.contains("查看账户余额"))
+            // No rule-based guesses after a settled turn; only model chips may follow.
+            assertTrue("rule-based follow-ups must not appear", "查看账户余额" !in currentState.suggestions)
         }
         assertTrue(
             ui.onAllNodesWithText("您正准备进行", substring = true, useUnmergedTree = true)

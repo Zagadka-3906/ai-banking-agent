@@ -164,7 +164,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }.orEmpty().filterNot { it.isApprovalPreviewMessage() }
         val restoredSuggestions = restored.asReversed()
             .firstOrNull { it.role == ChatRole.ASSISTANT }
-            ?.let { predictedSuggestions(TurnEnvelope(result = it.result)) }
+            ?.let { replySuggestions(it.result) }
             ?: DEFAULT_PREDICTED_SUGGESTIONS
         _state.update {
             it.copy(
@@ -597,9 +597,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Replace the rule-based chips with ones the model predicts from the
-     * conversation, once they arrive. The reply is never held for them; a newer
-     * turn, an approval or the quiz keeps the chips it already has.
+     * Show the chips the model predicts from the conversation (led by any wording
+     * the reply itself offers) once they arrive. The reply is never held for
+     * them; a newer turn, an approval or the quiz keeps the chips it already has.
      */
     private fun refreshSuggestions() {
         val revision = interactionRevision
