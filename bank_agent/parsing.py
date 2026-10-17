@@ -12,7 +12,6 @@ from planner import (
     ALL_INTENTS,
     GREEN_INTENTS,
     Intent,
-    READ_ONLY_INTENTS,
     needs_clarification,
     validate_intent_payload,
 )
@@ -452,28 +451,19 @@ def model_parse(text: str) -> dict[str, Any]:
         parsed = extract_json(content)
         if not isinstance(parsed, Mapping):
             return local
-        # Local facts win even when the model supplies a different non-null
-        # value.  In particular, a date-free reservation stays a reservation,
-        # and the model cannot turn a read into a money-moving operation.
+        # The model decides what the user wants ("我的卡好像找不到了" is a lost
+        # card, "钱都花哪了" an analysis). The facts stay with the rules: amounts
+        # and dates come only from the text, and any change still needs the
+        # user's confirmation (and for RED, OTP plus device signature).
         merged = dict(local)
         model_intent = str(parsed.get("intent") or "").upper().strip()
         local_intent = local["intent"]
-        model_meta = {**local["parse_meta"], "source": "model", "resolution": "model_classified", "fast_path_eligible": False}
-        if model_intent in ALL_INTENTS and model_intent not in {Intent.UNKNOWN.value, local_intent}:
-            transfers = {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value}
-            if local_intent == Intent.UNKNOWN.value or (model_intent in READ_ONLY_INTENTS and local_intent in READ_ONLY_INTENTS):
-                # The model decides what the user means: new phrasing, and which
-                # of two reads fits better ("钱都花哪了" is an analysis, not a list).
-                merged["intent"] = model_intent
-                merged["confidence"] = parsed.get("confidence")
-                merged["parse_meta"] = model_meta
-            elif not (model_intent in transfers and local_intent in transfers):
-                # Rules and model disagree and one reading would change something:
-                # ask, never pick one silently. (Now vs scheduled is settled below.)
-                merged["parse_meta"] = {**model_meta, "resolution": "conflict", "intent_choices": [local_intent, model_intent]}
-        elif model_intent == local_intent and local_intent != Intent.UNKNOWN.value:
+        if model_intent in ALL_INTENTS and model_intent != Intent.UNKNOWN.value:
+            merged["intent"] = model_intent
             merged["confidence"] = parsed.get("confidence")
-            merged["parse_meta"] = {**model_meta, "resolution": "model_confirmed"}
+            resolution = ("model_confirmed" if model_intent == local_intent
+                          else "model_classified" if local_intent == Intent.UNKNOWN.value else "model_override")
+            merged["parse_meta"] = {**local["parse_meta"], "source": "model", "resolution": resolution, "fast_path_eligible": False}
         source = re.split(r"备注|附言", text, maxsplit=1)[0]
         if merged["intent"] == Intent.TRANSFER.value and (
             local.get("scheduled_at") or re.search(r"预约|定时|明天|后天|下周|下星期|下个月|20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}", source)

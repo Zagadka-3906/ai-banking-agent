@@ -50,21 +50,25 @@ def test_amounts_and_payees_still_come_from_what_was_said(model):
     assert (parsed["target"], parsed["amount"]) == ("李四", 100)
 
 
-def test_a_disagreement_about_changing_something_is_asked_not_guessed(gateway, model):  # noqa: F811
+def test_when_rules_and_model_disagree_the_model_decides(gateway, model):  # noqa: F811
     client, _ = gateway
-    model("CARD_QUERY")
-    reply = _send(client, "我的卡丢了", conversation_id="conflict")
-    assert reply["approval"] is None
-    assert "挂失卡片" in reply["reply"] and "查看我的卡片" in reply["reply"] and "还没有发起任何操作" in reply["reply"]
-    assert reply["result"]["suggestions"] == ["挂失卡片", "查看我的卡片"]
+    text = "我的卡好像找不到了"
+    assert agent.local_parse(text)["intent"] == "CARD_QUERY"
+    model("CARD_REPORT_LOST")
+    parsed = agent.model_parse(text)
+    assert parsed["intent"] == "CARD_REPORT_LOST" and parsed["parse_meta"]["resolution"] == "model_override"
+    reply = _send(client, text, conversation_id="lost-card")
+    # Reporting the loss is RED: nothing changes before the user verifies it.
+    assert "挂失卡片" in reply["approval"]["summary"]
     assert all(card["status"] == "ACTIVE" for card in main.CARDS["user_zhang"])
 
 
-def test_the_model_cannot_turn_a_read_into_a_payment(gateway, model):  # noqa: F811
+def test_a_model_misreading_cannot_supply_a_payee_or_amount(gateway, model):  # noqa: F811
     client, _ = gateway
     model("TRANSFER", target="李四", amount=500)
-    reply = _send(client, "查一下余额", conversation_id="no-escalation")
-    assert reply["approval"] is None and "转账" in reply["reply"]
+    reply = _send(client, "查一下余额", conversation_id="no-invented-payment")
+    # The transfer reading has no payee or amount in what was said, so it only asks.
+    assert reply["approval"] is None and "转给哪位" in reply["reply"]
 
 
 def test_the_fast_path_can_still_be_switched_on(model, monkeypatch):

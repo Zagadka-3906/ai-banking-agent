@@ -89,20 +89,6 @@ RED_INTENTS = {
     # Preview only: Core lowers switching a channel *off* to YELLOW.
     Intent.CARD_CHANNEL.value,
 }
-# Requests that change nothing; the model may choose freely between these.
-READ_ONLY_INTENTS = GREEN_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}
-# How each request is named to the user, phrased so it can be said back as a request.
-INTENT_LABELS = {
-    Intent.BALANCE_QUERY.value: "查询余额", Intent.BILL_QUERY.value: "查看账单", Intent.BILL_ANALYSIS.value: "分析消费",
-    Intent.TRANSFER.value: "转账", Intent.SCHEDULED_TRANSFER.value: "预约转账", Intent.SPLIT_BILL.value: "发起 AA 收款",
-    Intent.CROSS_SCENE_LOCK.value: "锁定资金", Intent.WEALTH_QUERY.value: "查看理财产品", Intent.WEALTH_HOLDINGS.value: "查看我的持仓",
-    Intent.WEALTH_RECOMMEND.value: "推荐理财", Intent.WEALTH_RISK_ASSESSMENT.value: "做风险测评", Intent.WEALTH_COMPARE.value: "比较理财产品",
-    Intent.WEALTH_PURCHASE.value: "申购理财", Intent.WEALTH_REDEEM.value: "赎回理财", Intent.CARD_APPLY.value: "申请新卡",
-    Intent.CARD_QUERY.value: "查看我的卡片", Intent.CARD_LIMIT.value: "调整卡片限额", Intent.CARD_FREEZE.value: "冻结卡片",
-    Intent.FRAUD_DISPUTE.value: "交易争议", Intent.CARD_UNFREEZE.value: "解冻卡片", Intent.CARD_REPORT_LOST.value: "挂失卡片",
-    Intent.CARD_UNREPORT_LOST.value: "解除挂失", Intent.PASSWORD_CHANGE.value: "修改密码", Intent.CARD_CHANNEL.value: "调整交易渠道",
-    Intent.UNDO_OPERATION.value: "撤销预约", Intent.SUBSCRIPTION_QUERY.value: "查看我的订阅", Intent.SUBSCRIPTION_CANCEL.value: "取消订阅",
-}
 CARD_CHANNEL_NAMES = {"ONLINE": "网上支付", "OVERSEAS": "境外交易"}
 UNDO_KINDS = {"SCHEDULED_TRANSFER": "预约转账", "SPLIT_BILL": "AA 收款请求", "FUND_RESERVATION": "资金锁定",
               "LAST": "最近一笔可撤销的操作", "SETTLED_TRANSFER": "已完成的转账"}
@@ -220,9 +206,6 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                       "resolution": str(meta.get("resolution") or "unknown")[:32],
                       "reason_codes": [str(value)[:64] for value in (meta.get("reason_codes") or [])[:8] if isinstance(value, str)],
                       "fast_path_eligible": meta.get("fast_path_eligible") is True}
-        choices = [str(value) for value in (meta.get("intent_choices") or [])[:2] if str(value) in ALL_INTENTS]
-        if len(choices) == 2:
-            parse_meta["intent_choices"] = choices
     # Renewal scheduling is opt-in and only meaningful for subscription reads.
     # Never let truthy strings or unrestricted day offsets create reminders.
     if intent == Intent.SUBSCRIPTION_QUERY.value and slots.get("renewal_reminder") is True:

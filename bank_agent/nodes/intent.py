@@ -10,7 +10,6 @@ from typing import Any, Optional, cast
 
 from planner import (
     GREEN_INTENTS,
-    INTENT_LABELS,
     Intent,
     build_task_plan,
     missing_slots,
@@ -204,14 +203,6 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     except Exception as exc:
         audit_event("INTENT_PARSE", user_id=state.get("user_id"), request_id=state["request_id"], decision="BLOCK", outcome="FAILURE", reason="INVALID_MODEL_OUTPUT", metadata={"error_type": type(exc).__name__})
         return {**empty_state(final_response="暂时无法安全解析这条指令，请补充业务类型、收款人或金额后重试。"), "request_id": state["request_id"]}
-    choices = (parsed.get("parse_meta") or {}).get("intent_choices")
-    if choices:
-        # Rules and model read a request that would change something differently.
-        first, second = (INTENT_LABELS.get(choice, choice) for choice in choices)
-        audit_event("INTENT_PARSE", user_id=state.get("user_id"), request_id=state["request_id"], decision="CLARIFY",
-                    outcome="INTENT_CONFLICT", metadata={"intent_choices": choices})
-        return {**empty_state(final_response=f"我不确定您是想{first}还是{second}，还没有发起任何操作。可以说“{first}”或“{second}”，并补充对象和金额。"),
-                "context": prior_context, "request_id": state["request_id"]}
     # A comparison with one explicit product has a known business intent; only
     # its second product is missing, even without the word "理财".
     product_ids = list(parsed.get("product_ids") or [])
