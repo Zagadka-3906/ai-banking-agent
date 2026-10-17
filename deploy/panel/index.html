@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安言运维台</title>
+<style>
+:root {
+  --bg: #f6f7fb; --panel: #ffffff; --line: #e4e6ef; --text: #1b1d2a; --muted: #6b6f85;
+  --accent: #5b5bd6; --accent-soft: #ecebfd; --good: #1f9d55; --good-soft: #e3f5ea;
+  --warn: #b7791f; --warn-soft: #fdf3dd; --bad: #d64545; --bad-soft: #fde8e8;
+  --grad: linear-gradient(120deg, #4f7cf7, #8b5cf6 55%, #d96aa7);
+  --radius: 14px; --shadow: 0 1px 2px rgba(20, 22, 40, .06), 0 4px 16px rgba(20, 22, 40, .04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12131a; --panel: #1b1d27; --line: #2c2f3d; --text: #e9eaf2; --muted: #9a9db3;
+    --accent: #a5a4ff; --accent-soft: #2a2950; --good: #4ade80; --good-soft: #163524;
+    --warn: #f6c453; --warn-soft: #3a2f12; --bad: #f87171; --bad-soft: #3d1a1a;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; background: var(--panel);
+  border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+.logo { width: 30px; height: 30px; border-radius: 9px; background: var(--grad); }
+h1 { font-size: 17px; margin: 0; }
+header .meta { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
+nav { display: flex; gap: 4px; padding: 10px 24px 0; overflow-x: auto; }
+nav button { border: 0; background: none; color: var(--muted); padding: 8px 14px; border-radius: 999px; cursor: pointer;
+  font: inherit; white-space: nowrap; }
+nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+main { padding: 16px 24px 40px; max-width: 1280px; margin: 0 auto; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
+.card h2 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0 0 10px; }
+.big { font-size: 26px; font-weight: 700; letter-spacing: -.5px; }
+.sub { color: var(--muted); font-size: 12px; }
+.section { margin-top: 22px; }
+.section > h3 { font-size: 15px; margin: 0 0 10px; }
+.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.ok { background: var(--good-soft); color: var(--good); }
+.warn { background: var(--warn-soft); color: var(--warn); }
+.bad { background: var(--bad-soft); color: var(--bad); }
+.muted { color: var(--muted); }
+.bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin-top: 8px; }
+.bar > i { display: block; height: 100%; background: var(--grad); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-wrap { overflow-x: auto; }
+.svc { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.svc:last-child { border-bottom: 0; }
+.btn { border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 6px 12px; border-radius: 9px;
+  cursor: pointer; font: inherit; font-size: 13px; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.danger { color: var(--bad); }
+.btn.danger:hover { border-color: var(--bad); }
+.btn:disabled { opacity: .5; cursor: wait; }
+.chart { display: flex; align-items: flex-end; gap: 3px; height: 120px; padding-top: 6px; }
+.chart > div { flex: 1; background: var(--accent); opacity: .8; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
+.chart-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 4px; }
+pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow: auto; max-height: 560px;
+  font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+select, input[type=password] { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--panel); color: var(--text); }
+.login { max-width: 380px; margin: 12vh auto; text-align: center; }
+.login .logo { width: 52px; height: 52px; border-radius: 16px; margin: 0 auto 14px; }
+.login input { width: 100%; margin: 14px 0 10px; }
+.error { color: var(--bad); min-height: 20px; font-size: 13px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
+.kv span:nth-child(odd) { color: var(--muted); }
+.hidden { display: none !important; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 10px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 90vw; }
+@media (max-width: 640px) { header, nav, main { padding-left: 16px; padding-right: 16px; } .big { font-size: 22px; } }
+</style>
+</head>
+<body>
+
+<section id="login" class="login hidden">
+  <div class="logo"></div>
+  <h1>安言运维台</h1>
+  <p class="sub">输入访问令牌。令牌在服务器的 /etc/anyan/panel.token 中，<br>部署电脑上运行 <code>deploy/deploy.sh panel</code> 时会显示。</p>
+  <input id="token" type="password" placeholder="访问令牌" autocomplete="current-password">
+  <div class="error" id="loginError"></div>
+  <button class="btn primary" id="loginBtn" style="width:100%">登录</button>
+</section>
+
+<div id="app" class="hidden">
+  <header>
+    <div class="logo"></div>
+    <div><h1>安言运维台</h1><div class="sub" id="host"></div></div>
+    <div class="meta"><div id="updated">—</div><button class="btn" id="logout" style="margin-top:4px">退出</button></div>
+  </header>
+  <nav id="tabs">
+    <button data-tab="overview" class="on">总览</button>
+    <button data-tab="business">业务数据</button>
+    <button data-tab="traffic">访问与流量</button>
+    <button data-tab="audit">审计事件</button>
+    <button data-tab="logs">服务日志</button>
+    <button data-tab="ops">运维操作</button>
+  </nav>
+  <main>
+    <div id="tab-overview"></div>
+    <div id="tab-business" class="hidden"></div>
+    <div id="tab-traffic" class="hidden"></div>
+    <div id="tab-audit" class="hidden">
+      <div class="row"><label><input type="checkbox" id="onlyIssues"> 只看拦截与失败</label>
+        <button class="btn" id="reloadAudit">刷新</button></div>
+      <div class="card table-wrap"><table id="auditTable"></table></div>
+    </div>
+    <div id="tab-logs" class="hidden">
+      <div class="row">
+        <select id="logUnit"><option value="anyan-gateway">anyan-gateway（对话网关）</option>
+          <option value="anyan-core">anyan-core（核心）</option><option value="nginx">nginx</option></select>
+        <select id="logLines"><option>150</option><option>500</option><option>1000</option></select>
+        <label><input type="checkbox" id="logIssues"> 只看警告和错误</label>
+        <button class="btn" id="reloadLogs">刷新</button>
+      </div>
+      <pre id="logText">加载中…</pre>
+    </div>
+    <div id="tab-ops" class="hidden"></div>
+  </main>
+</div>
+<div id="toast" class="toast hidden"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? "—").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const mb = (b) => b == null ? "—" : b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GB" : (b / 1048576).toFixed(1) + " MB";
+const money = (v) => typeof v === "number" ? "¥" + v.toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2}) : "—";
+const when = (iso) => iso ? new Date(iso).toLocaleString("zh-CN", {hour12: false}) : "—";
+let current = "overview", timer = null;
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {credentials: "same-origin", ...options,
+    headers: {"Content-Type": "application/json", ...(options.method === "POST" ? {"X-Requested-By": "anyan-panel"} : {}), ...(options.headers || {})}});
+  if (response.status === 401 && !path.endsWith("/login")) { showLogin(); throw new Error("未登录"); }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || response.statusText);
+  return body;
+}
+function toast(text) { const t = $("#toast"); t.textContent = text; t.classList.remove("hidden"); setTimeout(() => t.classList.add("hidden"), 4000); }
+function showLogin() { $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); clearInterval(timer); $("#token").focus(); }
+function showApp() { $("#login").classList.add("hidden"); $("#app").classList.remove("hidden"); open(current); }
+
+$("#loginBtn").onclick = async () => {
+  $("#loginError").textContent = "";
+  try { await api("/api/login", {method: "POST", body: JSON.stringify({token: $("#token").value})}); $("#token").value = ""; showApp(); }
+  catch (e) { $("#loginError").textContent = e.message; }
+};
+$("#token").onkeydown = (e) => { if (e.key === "Enter") $("#loginBtn").click(); };
+$("#logout").onclick = async () => { await api("/api/logout", {method: "POST"}).catch(() => {}); showLogin(); };
+document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => open(b.dataset.tab));
+
+function open(tab) {
+  current = tab;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  document.querySelectorAll("main > div").forEach((d) => d.classList.toggle("hidden", d.id !== "tab-" + tab));
+  clearInterval(timer);
+  const load = {overview: loadOverview, business: loadBusiness, traffic: loadOverview, audit: loadAudit, logs: loadLogs, ops: loadOps}[tab];
+  load().catch((e) => toast(e.message));
+  if (tab === "overview" || tab === "traffic") timer = setInterval(() => load().catch(() => {}), 15000);
+}
+
+function stateBadge(active) {
+  const cls = active === "active" ? "ok" : active === "activating" || active === "reloading" ? "warn" : "bad";
+  const text = {active: "运行中", inactive: "已停止", failed: "故障", activating: "启动中"}[active] || active;
+  return `<span class="pill ${cls}">${esc(text)}</span>`;
+}
+
+async function loadOverview() {
+  const d = await api("/api/overview");
+  $("#host").textContent = d.system.hostname || "";
+  $("#updated").textContent = "更新于 " + when(d.now);
+  const s = d.system, mem = s.memory, a = d.activity, t = d.traffic, sec = d.health.security || {};
+  const memUsed = mem.total && mem.available != null ? mem.total - mem.available : null;
+  const tx = Object.values(s.network || {}).reduce((n, i) => n + i.tx, 0);
+  const rx = Object.values(s.network || {}).reduce((n, i) => n + i.rx, 0);
+  const allUp = d.services.every((x) => x.active === "active") && d.health.core && d.health.gateway;
+  $("#tab-overview").innerHTML = `
+    <div class="grid">
+      <div class="card"><h2>整体状态</h2><div class="big">${allUp ? "正常" : "需要处理"}</div>
+        <div class="sub">${allUp ? "核心、网关与 Nginx 都在运行，健康检查通过" : "有服务未运行或健康检查失败，见下方"}</div></div>
+      <div class="card"><h2>今日登录（24 小时）</h2><div class="big">${a.logins}</div><div class="sub">${a.active_users} 个账户 · 失败 ${a.login_failures} 次</div></div>
+      <div class="card"><h2>对话轮数（24 小时）</h2><div class="big">${a.turns}</div><div class="sub">模型调用 ${a.model_calls} 次 · 资金操作 ${a.money_moves} 笔</div></div>
+      <div class="card"><h2>安全拦截（24 小时）</h2><div class="big">${a.blocked}</div><div class="sub">注入拦截 ${a.injections} 次 · 限流 ${t.rate_limited} 次</div></div>
+    </div>
+    <div class="grid section">
+      <div class="card"><h2>服务</h2>${d.services.map((x) => `<div class="svc"><div><b>${esc(x.unit)}</b>
+        <div class="sub">${x.since ? "启动于 " + esc(x.since) : ""}${x.memory_mb != null ? " · 内存 " + x.memory_mb + " MB" : ""}${x.restarts ? " · 自动重启 " + esc(x.restarts) + " 次" : ""}</div></div>${stateBadge(x.active)}</div>`).join("")}
+        <div class="svc"><div><b>健康检查</b><div class="sub">核心 ${d.health.core ? "通过" : "失败"} · 网关 ${d.health.gateway ? "通过" : "失败"}</div></div>
+          <span class="pill ${d.health.core && d.health.gateway ? "ok" : "bad"}">${d.health.core && d.health.gateway ? "通过" : "失败"}</span></div></div>
+      <div class="card"><h2>服务器资源</h2>
+        <div class="kv"><span>CPU</span><span>${s.cpus} 核 · 负载 ${(s.load || []).join(" / ")}</span>
+          <span>运行时长</span><span>${s.uptime_hours} 小时</span></div>
+        <div class="sub" style="margin-top:12px">内存 ${mb(memUsed)} / ${mb(mem.total)}</div>
+        <div class="bar"><i style="width:${memUsed && mem.total ? Math.round(memUsed / mem.total * 100) : 0}%"></i></div>
+        <div class="sub" style="margin-top:10px">磁盘 ${mb(s.disk.used)} / ${mb(s.disk.total)} · 业务数据 ${mb(s.data_bytes)}</div>
+        <div class="bar"><i style="width:${Math.round(s.disk.used / s.disk.total * 100)}%"></i></div>
+        <div class="sub" style="margin-top:10px">开机以来网络：出 ${mb(tx)} · 入 ${mb(rx)}（按流量计费看“出”）</div></div>
+      <div class="card"><h2>安全与配置</h2><div class="kv">
+        <span>活跃会话</span><span>${esc(sec.active_sessions)}</span>
+        <span>已登记设备</span><span>${esc((sec.devices || {}).enrolled)}</span>
+        <span>锁定账户</span><span>${esc((sec.behavior_risk || {}).locked_principals)}</span>
+        <span>熔断中</span><span>${esc(sec.open_circuits)}</span>
+        <span>待确认审批</span><span>${esc(((d.health.gateway || {}).conversation || {}).pending_approvals)}</span>
+        ${Object.entries(d.config.secrets).map(([k, v]) => `<span>${esc(k)}</span><span><span class="pill ${v ? "ok" : "warn"}">${v ? "已配置" : "未配置"}</span></span>`).join("")}
+        ${Object.entries(d.config.settings).map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v || "默认")}</span>`).join("")}
+      </div></div>
+    </div>`;
+  renderTraffic(t);
+}
+
+function renderTraffic(t) {
+  const max = Math.max(1, ...t.hourly.map((h) => h.requests));
+  const total = Math.max(1, t.requests);
+  $("#tab-traffic").innerHTML = `
+    <div class="grid">
+      <div class="card"><h2>请求数（${t.hours} 小时）</h2><div class="big">${t.requests}</div><div class="sub">来自 ${t.visitors} 个 IP</div></div>
+      <div class="card"><h2>响应流量（${t.hours} 小时）</h2><div class="big">${mb(t.bytes_out)}</div><div class="sub">Nginx 发给客户端的字节数</div></div>
+      <div class="card"><h2>被限流</h2><div class="big">${t.rate_limited}</div><div class="sub">返回 429 的请求</div></div>
+      <div class="card"><h2>服务端错误</h2><div class="big">${t.server_errors}</div><div class="sub">5xx 响应</div></div>
+    </div>
+    <div class="card section"><h2>每小时请求（最近 24 小时）</h2>
+      <div class="chart">${t.hourly.map((h) => `<div title="${h.hour}：${h.requests} 次" style="height:${Math.round(h.requests / max * 100)}%"></div>`).join("")}</div>
+      <div class="chart-labels"><span>${esc(t.hourly[0]?.hour)}</span><span>${esc(t.hourly[t.hourly.length - 1]?.hour)}</span></div></div>
+    <div class="grid section">
+      <div class="card"><h2>按功能</h2><table>${Object.entries(t.areas).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v}</td></tr>`).join("") || "<tr><td class='muted'>暂无</td></tr>"}</table></div>
+      <div class="card"><h2>按状态码</h2><table>${Object.entries(t.status).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v}（${Math.round(v / total * 100)}%）</td></tr>`).join("") || "<tr><td class='muted'>暂无</td></tr>"}</table></div>
+      <div class="card"><h2>访问最多的 IP</h2><table>${t.top_visitors.map(([ip, n]) => `<tr><td>${esc(ip)}</td><td class="num">${n}</td></tr>`).join("") || "<tr><td class='muted'>暂无</td></tr>"}</table></div>
+    </div>`;
+}
+
+async function loadBusiness() {
+  const d = await api("/api/business");
+  const note = d.persisted ? `账本快照更新于 ${when(d.updated_at)}` : "还没有发生过资金或数据变更，账户为初始演示数据（账本文件在第一次变更后生成）。";
+  $("#tab-business").innerHTML = `
+    <p class="sub">${esc(note)} 所有账户和交易都是虚构数据。</p>
+    ${d.persisted ? `<div class="grid">${Object.entries(d.counts).map(([k, v]) => `<div class="card"><h2>${esc(k)}</h2><div class="big">${v}</div></div>`).join("")}</div>
+    <div class="card section table-wrap"><h2>账户</h2><table><tr><th>账户</th><th>户名</th><th>状态</th><th class="num">余额</th><th class="num">锁定资金</th></tr>
+      ${d.accounts.map((x) => `<tr><td>${esc(x.user_id)}</td><td>${esc(x.name)}</td><td>${esc(x.status)}</td><td class="num">${money(x.balance)}</td><td class="num">${money(x.locked)}</td></tr>`).join("")}</table></div>` : ""}`;
+}
+
+async function loadAudit() {
+  const d = await api(`/api/audit?limit=200&only_issues=${$("#onlyIssues").checked}`);
+  $("#auditTable").innerHTML = `<tr><th>时间</th><th>服务</th><th>事件</th><th>账户</th><th>决定</th><th>结果</th><th>原因</th></tr>` +
+    (d.events.map((e) => `<tr><td>${when(e.timestamp)}</td><td>${e.service === "core" ? "核心" : "网关"}</td><td>${esc(e.action)}</td><td>${esc(e.user_id)}</td>
+      <td>${e.decision === "BLOCK" ? '<span class="pill bad">拦截</span>' : esc(e.decision)}</td><td>${esc(e.outcome)}</td><td class="muted">${esc(e.reason)}</td></tr>`).join("")
+      || `<tr><td colspan="7" class="muted">暂无事件</td></tr>`);
+}
+$("#onlyIssues").onchange = () => loadAudit().catch((e) => toast(e.message));
+$("#reloadAudit").onclick = () => loadAudit().catch((e) => toast(e.message));
+
+async function loadLogs() {
+  $("#logText").textContent = "加载中…";
+  const d = await api(`/api/logs?unit=${$("#logUnit").value}&lines=${$("#logLines").value}&issues=${$("#logIssues").checked}`);
+  $("#logText").textContent = d.text || "（没有日志）";
+  $("#logText").scrollTop = $("#logText").scrollHeight;
+}
+["#logUnit", "#logLines", "#logIssues"].forEach((s) => $(s).onchange = () => loadLogs().catch((e) => toast(e.message)));
+$("#reloadLogs").onclick = () => loadLogs().catch((e) => toast(e.message));
+
+async function loadOps() {
+  const d = await api("/api/actions");
+  $("#tab-ops").innerHTML = `
+    <div class="grid">
+      <div class="card"><h2>重启服务</h2><p class="sub">服务异常或修改配置后使用。重启期间几秒内 App 请求会失败。</p>
+        <div class="row">${["anyan-core", "anyan-gateway", "nginx"].map((u) => `<button class="btn" data-restart="${u}">重启 ${u}</button>`).join("")}</div></div>
+      <div class="card"><h2>恢复演示数据</h2><p class="sub">余额、交易、设备登记和对话回到初始演示状态，所有人需要重新登录。旧数据移到备份目录，不会删除；审计记录保留。</p>
+        <button class="btn danger" id="resetDemo">恢复演示数据</button></div>
+    </div>
+    <div class="card section table-wrap"><h2>操作记录</h2><table><tr><th>时间</th><th>操作</th><th>结果</th></tr>
+      ${d.actions.map((x) => `<tr><td>${when(x.at)}</td><td>${esc(x.action)}</td><td>${esc(x.result)}</td></tr>`).join("") || "<tr><td colspan='3' class='muted'>暂无</td></tr>"}</table></div>`;
+  document.querySelectorAll("[data-restart]").forEach((b) => b.onclick = async () => {
+    if (!confirm(`确定重启 ${b.dataset.restart}？`)) return;
+    b.disabled = true;
+    try { const r = await api(`/api/restart/${b.dataset.restart}`, {method: "POST"}); toast(`${b.dataset.restart}：${r.result}`); }
+    catch (e) { toast(e.message); }
+    loadOps().catch(() => {});
+  });
+  $("#resetDemo").onclick = async () => {
+    if (!confirm("确定恢复演示数据？所有账户余额、交易和对话会回到初始状态，旧数据会移到备份目录。")) return;
+    $("#resetDemo").disabled = true;
+    try { const r = await api("/api/reset-demo", {method: "POST"}); toast(r.result); }
+    catch (e) { toast(e.message); }
+    loadOps().catch(() => {});
+  };
+}
+
+api("/api/actions").then(showApp).catch(() => showLogin());
+</script>
+</body>
+</html>

@@ -5,15 +5,16 @@
 #   deploy/deploy.sh keys   <host>   copy DEEPSEEK_API_KEY / DASHSCOPE_API_KEY from ./.env
 #   deploy/deploy.sh app    <host>   build an APK that talks to https://<host>/
 #   deploy/deploy.sh status <host>   service state and health
-#   deploy/deploy.sh panel  <host>   open Cockpit at https://localhost:9090 through SSH (Ctrl+C closes)
+#   deploy/deploy.sh panel  <host>   open 安言运维台 at http://localhost:9100 through SSH (Ctrl+C closes)
+#   deploy/deploy.sh cockpit <host>  open Cockpit at https://localhost:9090 through SSH (Ctrl+C closes)
 #
 # SSH uses ~/.ssh/id_anyan_deploy as root (override with ANYAN_SSH_KEY / ANYAN_SSH_USER).
 # Only committed files are uploaded; .env, logs and build output never leave this machine,
 # except the two model keys when "keys" is run explicitly. Keys never appear in arguments.
 set -euo pipefail
 
-ACTION="${1:?usage: deploy.sh server|keys|app|status|panel <host>}"
-HOST="${2:?usage: deploy.sh server|keys|app|status|panel <host>}"
+ACTION="${1:?usage: deploy.sh server|keys|app|status|panel|cockpit <host>}"
+HOST="${2:?usage: deploy.sh server|keys|app|status|panel|cockpit <host>}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/deploy"
 KEY="${ANYAN_SSH_KEY:-$HOME/.ssh/id_anyan_deploy}"
@@ -54,6 +55,13 @@ print(\"updated:\", \", \".join(sorted(keys)) or \"nothing\")
     "${SSH[@]}" 'systemctl --no-pager --lines=0 status anyan-core anyan-gateway nginx | grep -E "●|Active:"; curl -fsS http://127.0.0.1:8000/healthz; echo; curl -fsS http://127.0.0.1:8100/healthz; echo'
     ;;
   panel)
+    # The back office listens on the server's 127.0.0.1 only; this tunnel is the way in.
+    echo "安言运维台: open http://localhost:9100 and paste this access token:"
+    "${SSH[@]}" 'cat /etc/anyan/panel.token'
+    echo "Ctrl+C closes the tunnel."
+    ssh -i "$KEY" -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -N -L 9100:127.0.0.1:9100 "$TARGET"
+    ;;
+  cockpit)
     # Cockpit listens on the server's 127.0.0.1 only; this tunnel is the way in.
     echo "Cockpit: open https://localhost:9090 (user: panel). Ctrl+C closes the tunnel."
     ssh -i "$KEY" -o IdentitiesOnly=yes -o ExitOnForwardFailure=yes -N -L 9090:127.0.0.1:9090 "$TARGET"

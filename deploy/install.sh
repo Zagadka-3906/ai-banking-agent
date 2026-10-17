@@ -104,6 +104,14 @@ systemctl restart cockpit.socket
 # Root may not log in to Cockpit; "panel" (sudo) gets its password from `passwd panel`.
 id panel >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo panel
 
+echo "== 安言运维台 (127.0.0.1:9100, SSH tunnel + access token)"
+[ -s "$CONF_DIR/panel.token" ] || (umask 077 && openssl rand -hex 32 > "$CONF_DIR/panel.token")
+chmod 600 "$CONF_DIR/panel.token"
+install -m 644 "$APP_DIR/app/deploy/anyan-panel.service" /etc/systemd/system/anyan-panel.service
+systemctl daemon-reload
+systemctl enable -q anyan-panel
+systemctl restart anyan-panel
+
 echo "== health"
 for i in $(seq 1 30); do
   curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1 && curl -fsS http://127.0.0.1:8100/healthz >/dev/null 2>&1 && break

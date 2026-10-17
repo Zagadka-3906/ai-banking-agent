@@ -1,0 +1,16 @@
+[Unit]
+Description=安言运维台 (server back office, 127.0.0.1:9100 via SSH tunnel)
+After=network-online.target
+
+[Service]
+# Root: it restarts services and reads the journal, Nginx logs and service data.
+# It listens on loopback only and asks for /etc/anyan/panel.token on top.
+ExecStart=/opt/anyan/venv/bin/uvicorn server:app --app-dir /opt/anyan/app/deploy/panel --host 127.0.0.1 --port 9100 --workers 1
+Restart=on-failure
+RestartSec=3
+MemoryMax=200M
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
