@@ -1,64 +1,66 @@
-# 安言：本机银行智能体演示系统
+# 安言 · 言出即办的银行智能体
 
-**GitHub 仓库：** [Zagadka-3906/ai-banking-agent](https://github.com/Zagadka-3906/ai-banking-agent)
+> 用一句话办银行业务：查余额、看账单、转账、理财、管卡片和订阅。
+> **模型理解需求，核心决定执行。** 所有账户与交易均为本机虚构数据，不连接真实银行、不发生真实支付。
 
-安言让用户在 Android 模拟器里用自然语言查询余额、分析账单、办理模拟转账、管理卡片与理财；可选飞书机器人私聊渠道提供只读查询。电脑运行两个本地 Python 服务：Mock Core 持有虚构账本和授权策略，Agent Gateway 处理对话、审批和飞书长连接。模拟器通过 `10.0.2.2` 访问电脑的 `127.0.0.1`。项目不连接真实银行或执行真实支付。
+安言由三部分组成：
 
-Agent 回执使用 `response.version=1` 协议，分别提供 `turn_status` 与 `business_status`。业务状态包括已核验、未完成、未通过核验、待补充、待确认、部分完成、待核对与已取消；旧 `status`、`reply`、`result` 字段保持兼容。普通请求及审批后的执行均支持 SSE，阶段事件包含 `phase`（started/completed/failed/waiting）、步骤编号与耗时。
+- **Android 客户端**（Kotlin + Jetpack Compose）：Gemini 风格对话界面，支持端侧语音输入。
+- **Agent Gateway**（`:8100`）：LangGraph 编排对话、多轮澄清、审批和流式进度。
+- **Mock Core**（`:8000`）：持有虚构账本，独立执行授权、风控、设备签名与审计。
 
-明确且完整的请求先用本地规则解析，未识别的表达再调用模型；默认模型等待预算为 12 秒、重试为 0 次，可通过 `.env.example` 中的 `BANK_MODEL_*` 调整。本地解析通过 `parse_meta` 记录来源、歧义原因和快路径资格，不给规则匹配伪造概率。多个金额、收款人或业务对象，以及“一百五”等省略位数的金额先追问；模型不能替用户消除这些冲突。备注与附言保留为数据，不参与业务、对象、金额或日期识别。
+另外可选接入飞书机器人私聊，仅支持只读查询。
 
-最多拆分 8 项请求：支持“然后/同时”、逗号分隔的完整业务和“余额和账单”等自然连接；联系人列表、产品比较和金额千位分隔符保留原义。独立只读查询最多 4 项并行，明确“然后/再”的请求按顺序执行，失败项不会掩盖其他已核验结果。包含变更或风险测评的复合任务按原文顺序推进，例如“查询余额，然后给李四转 10 元，然后给王美转 20 元”；每笔变更分别预检、审批、验证，不复用上一笔授权。测评结束后恢复剩余任务；取消或失败停止后续步骤，已完成的账务保留。未识别的子任务会要求澄清。
+## 功能一览
 
-账单支持最近 N 天/周、上周、昨天、指定月份及明确起止日期。自定义范围用 `date_scope=CUSTOM` 和 `date_range={start,end}` 表示，开始日和结束日均包含在内，按业务时区筛选 UTC 或本地时间记录。分类追问沿用当前范围，新的日期请求覆盖原范围；无效、倒置或尚不支持的时间表达要求补充起止日期，不退化为全部历史记录。
+| 场景 | 说一句话 | 安全要求 |
+| --- | --- | --- |
+| 余额、账单、消费分析 | “查余额”“上个月钱花哪儿了”“最近转给谁了” | 🟢 登录即可 |
+| 转账、预约转账、AA 收款 | “给李四转 300 元”“明天给王美转 50” | 🟡 确认；当日累计超 1000 元升为 🔴 |
+| 理财：风险测评、推荐、申购、赎回、持仓 | “推荐理财”“申购 CJ01002 500 元”“我的持仓” | 测评、推荐、持仓 🟢；申购赎回 🔴（验证码 + 设备签名） |
+| 卡片：开卡、限额、冻结、挂失、交易渠道 | “把限额调到 20000”“关闭境外交易” | 开卡、关闭渠道 🟡；限额、冻结、挂失、开通渠道 🔴 |
+| 订阅识别与取消、生日资金锁定 | “我有哪些订阅”“锁定 1000 元给老婆过生日” | 🟡 确认 |
+| 撤销未执行的安排 | “撤销刚才那笔预约”“撤回 AA 请求” | 🟡；已完成的转账不能撤销 |
+| 复合请求 | “查余额，然后给李四转 10 元，再给王美转 20 元” | 每一步单独预检、审批 |
 
-资金操作丢失回执时返回操作编号，Android 自动进行最多 10 次只读核对，之后可点“核对结果”。Gateway 根据会话所有者向 Core 的 `/api/v1/operations/{operation_id}` 查询原幂等记录，通过原回执验证后才推进任务；查询不会再次提交资金操作。操作回执随账本持久化，保留期默认 24 小时；无法找到有效回执时继续显示待核对，不推断失败或回滚。
+界面和交互特点：
 
-设计原则是**模型理解需求，Core 决定能否执行**。服务端对意图、金额、对象、会话和风险等级再次校验；黄区要求明确确认，红区还要求演示 OTP 与已登记 Android Keystore 设备签名。审批卡可获取绑定本次授权、最长 60 秒的一次性本机演示码，推荐设置 `BANK_MFA_DYNAMIC_OTP=1`；不发送真实短信。没有模型密钥时使用确定性规则解析，仍可本地演示。
+- 黄区、红区操作出现屏幕边缘光效，光效从屏幕两侧中部向上下延伸、交汇。
+- 办理完成后自动弹出结果页，带对勾和波纹动画；查询类回复不弹出。
+- 回复文字只做简短说明，余额、回执、产品、持仓、风险等级等细节放在卡片里，不重复。
+- 风险测评卡片逐题切换，答完 8 题后依次显示风险等级和匹配产品。
+- 输入框上方的“猜你想问”由模型根据上下文生成；没有模型时退回规则推荐。
+- 收款人或金额被拒后，任务保留，换人或改金额即可继续。
 
-Android 语音入口优先使用端侧识别（API 31+ 且有端侧识别服务），音频不出手机；没有端侧识别时，若 Gateway 配置了 `DASHSCOPE_API_KEY`，用户首次同意后可录制最长 20 秒语音，经 Gateway 转发阿里云百炼识别。默认 `qwen-audio-3.0-asr-flash` 走百炼原生接口，用户联系人姓名与业务词作为热词；该模型总会把数字写成阿拉伯数字（“一百五”→“150”），用户在输入框和确认卡上核对金额。改用 `qwen3-asr-flash` 时走 OpenAI 兼容接口并关闭数字规整，“一百五”会原样交给解析器追问。两种方式都只把文字填入输入框，由用户核对后发送，不自动发送、不能代替确认。任务页展示依赖、状态与原因，可请求人工处理并暂停关联待执行步骤；已完成操作和锁资保留，没有在线客服。完整变更、模型对比、飞书平台限制及真人测试入口见[参赛完善与验收](docs/参赛完善与验收-2026-10-15.md)。
-
-## 交付材料
-
-| 内容 | 文件 |
-| --- | --- |
-| 200 字内作品简介 | [作品简介](docs/作品简介.md) |
-| 系统架构图、核心算法、安全设计 | [技术文档](docs/技术文档.md) |
-| 10 分钟内答辩 PPT 大纲（版式、动效、逐页讲稿） | [答辩 PPT 大纲](docs/答辩提纲.md) |
-| 5 分钟内演示视频大纲（界面、动效、分镜、旁白） | [演示视频大纲](docs/演示视频.md) |
-| 权限分级与已知风险 | [安全自评报告](docs/安全自评报告.md) |
-| 可复现测试步骤 | [测试用例](docs/测试用例.md) |
-| 已执行验证结果与限制 | [验证记录](docs/验证记录.md) |
-| 赛题逐项覆盖、评测与验收工具 | [参赛完善与验收](docs/参赛完善与验收-2026-10-15.md) |
-| 项目检查、修复与后续项 | [项目检查与完善（2026-10-14）](docs/项目检查与完善-2026-10-14.md) |
-| 飞书机器人创建、配置与接入状态 | [接入说明](docs/飞书IM接入.md) |
-
-仓库保留本机 Core/Gateway、Android 模拟器客户端、可选飞书机器人及测试和运行脚本。旧独立 APK、Docker/Compose、FCM 推送和过时的成片与截图已移除。AA 请求由发起人创建，各参与人须登录自己的账户并确认付款；待付款项在应用任务页展示。飞书自建应用已经发布，私聊文本查询已由用户实测收到回复；余额、账单、理财与卡片查询使用飞书原生只读消息卡片；订阅查询属于黄区，飞书无法确认，会提示回 App 查询，详见[接入说明](docs/飞书IM接入.md)。
-
-## 系统架构
+## 工作原理
 
 ```mermaid
 flowchart LR
-    U[用户] --> A[Android 模拟器<br/>Kotlin + Compose]
-    A -->|10.0.2.2:8100<br/>会话 + SSE| G[Agent Gateway<br/>对话 / 审批]
-    A -->|10.0.2.2:8000<br/>登录 / 设备 / 查询| C[Mock Core<br/>授权 / 风控 / 账本]
-    F[飞书机器人私聊] <-->|官方 SDK 长连接<br/>只读查询| G
-    G --> P[LangGraph 编排<br/>模型解析或规则回退]
+    U[用户] --> A[Android 客户端<br/>Compose]
+    A -->|10.0.2.2:8100 · SSE| G[Agent Gateway]
+    A -->|10.0.2.2:8000 · 登录/设备| C[Mock Core]
+    F[飞书私聊<br/>只读] <--> G
+    G --> P[LangGraph<br/>意图 → 风险 → 审批 → 执行 → 回复]
     P -->|本机 HTTP| C
-    C --> L[(虚构账本 / 审计 / 设备公钥)]
+    C --> L[(虚构账本 / 审计链 / 设备公钥)]
 ```
 
-## 本机部署
+1. **意图识别**：明确完整的请求先用本地规则解析（快、确定）；规则无法识别时调用 DeepSeek，输出受约束的意图 JSON，再经规则校验。没有模型密钥时全程使用规则，仍可完整演示。
+2. **风险分级**：Core 对意图、金额、对象重新校验并定级。绿区直接执行，黄区要求确认，红区还要求一次性验证码和 Android Keystore 设备签名。
+3. **一次性授权**：预检签发单次使用的凭证，执行时 Core 重新核对主体、金额、对象、余额与风险等级，防止重放和篡改。
+4. **回执与核对**：回执使用 `response.version=1` 协议，区分对话状态与业务状态。资金操作丢失回执时，按操作编号只读核对，不会重复提交。
 
-### 环境与安装
+详细设计见[技术文档](docs/技术文档.md)，安全边界见[安全自评报告](docs/安全自评报告.md)。
 
-Windows 电脑需 Python 3.10–3.12、JDK 17 或 21、Android SDK API 37（平台包 `platforms;android-37.0`、Build Tools 36.0.0）与 Android Emulator。首次可运行 `android/tools/install-android-toolchain.ps1` 安装构建工具链，再通过 Android Studio 安装 Emulator 和系统镜像、创建名为 `bankagent` 的 AVD。
+## 快速开始（Windows）
 
-Android 项目使用 AGP 9.4.1、Gradle Wrapper 9.8.1；保留 AGP 内置 Kotlin 集成，通过官方支持的 runtime dependency 将 Kotlin / Compose 编译器同步升级至 2.4.21。`compileSdk` / `targetSdk` 为 37，最低运行版本仍为 Android 8.0（API 26）；构建使用仓库中的 `gradlew.bat`，无需手动切换全局 Gradle。Compose 界面测试使用 v2 Rule，迁移记录见 [测试 Rule 迁移与 Gradle 兼容检查](docs/Android测试Rule迁移与Gradle兼容检查-2026-10-15.md)；剩余 AGP 弃用警告的稳定方案评估见 [AGP 上游警告审计](docs/AGP上游警告稳定方案审计-2026-10-15.md)。
+**环境要求：**
 
-安装脚本与 CI 使用 Android Command-line Tools 23.0（构建号 `16111833`）以识别 SDK 37.0 的包信息；本机脚本将它安装到独立的 `cmdline-tools/23.0` 目录并优先加入 PATH，保留已有旧版本。
+- Python 3.10–3.12
+- JDK 17 或 21
+- Android SDK API 37（Build Tools 36.0.0）与 Android Emulator，并建立名为 `bankagent` 的 AVD
 
-脚本通过新版 `android sdk install` 安装并核对平台、Build Tools 的实际文件和版本；CLI 包路径使用 `platforms/android-37.0`、`build-tools/36.0.0`，避免 Windows 兼容版 `sdkmanager.bat` 错误拆分旧分号参数。
+首次可运行 `android/tools/install-android-toolchain.ps1` 安装构建工具链。
 
 ```powershell
 py -3.12 -m venv .venv
@@ -66,89 +68,98 @@ py -3.12 -m venv .venv
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-`.env` 是本机配置，已被 Git 忽略。默认 `BANK_DEMO_MODE=1`、`BANK_REQUIRE_SESSION=1`。可选填入 `DEEPSEEK_API_KEY` 调用在线模型；留空时使用规则解析。建议把 `BANK_AUTH_SECRET` 换成本机随机长密钥。账本和设备路径可分别通过 `BANK_LEDGER_STORE_PATH`、`BANK_DEVICE_STORE_PATH` 设置为仓库外的绝对路径。审计默认写入仓库外的 `%LOCALAPPDATA%\bank-agent\audit\core-audit.jsonl` 与 `gateway-audit.jsonl`，Core 和 Gateway 各自一条哈希链、启动时回放校验；可用 `BANK_AUDIT_LOG_DIR` 改目录，设为 `off` 只保留内存。完整变量见 [`.env.example`](.env.example)。
+`.env` 只在本机使用，不入库。可选填写：
 
-配置账本持久化后，任务队列及其依赖、取消／接管状态、任务结算回执也随账本恢复。旧快照仍可加载，但此前未保存的任务无法自动找回；需要人工核对原有预约与锁资记录。
+- `DEEPSEEK_API_KEY`：启用模型解析与“猜你想问”。
+- `DASHSCOPE_API_KEY`：没有端侧识别时，经百炼转写语音。
 
-启用飞书时另安装 `requirements-feishu.txt`，创建企业自建应用并在 `.env` 设置 `BANK_FEISHU_ENABLED=1`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`；完整配置见[飞书接入说明](docs/飞书IM接入.md)。Android 登录后在设备管理面板获取一次性绑定码，于机器人私聊发送 `/绑定 <绑定码>`。飞书仅支持查询，不能用于转账、确认或强验证。
+建议把 `BANK_AUTH_SECRET` 换成随机长密钥。全部变量见 [`.env.example`](.env.example)。
 
-### 一键启动
-
-在仓库根目录执行：
+**一键启动**会启动 Core 与 Gateway，构建并安装 Debug APK，再打开模拟器：
 
 ```powershell
 .\start-emulator.bat
 ```
 
-脚本检查并启动本机 Core `:8000` 与 Gateway `:8100`，构建最新 Debug APK，启动或复用 `bankagent` 模拟器，安装并打开应用。服务只监听电脑 `127.0.0.1`。已有 Gradle 缓存时可用 `.\start-emulator.bat -Offline`。日志在 `build/quick-start/`，APK 在 `android/app/build/outputs/apk/debug/app-debug.apk`。
-
-也可在两个 PowerShell 窗口分别运行：
+也可以分别启动两个服务（只监听 `127.0.0.1`）：
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 .\.venv\Scripts\python.exe -m uvicorn agent_api:app --host 127.0.0.1 --port 8100
 ```
 
-健康检查：`http://127.0.0.1:8000/healthz`、`http://127.0.0.1:8100/healthz`。模拟器经 Android 宿主机映射 `10.0.2.2` 连接服务，无需暴露到局域网。修改端口时同步设置 Gradle 参数 `-PbankCoreUrl=...` 与 `-PbankGatewayUrl=...`。
+健康检查：`http://127.0.0.1:8000/healthz`、`http://127.0.0.1:8100/healthz`。模拟器通过 `10.0.2.2` 访问电脑。
 
-Android 17 起，连接本地服务前会按配置地址请求附近设备权限；仅访问公网或 `127.0.0.1` / `localhost` 时不请求。如果 HTTPS 域名由内网 DNS 解析到局域网地址，构建时补充 `-PbankLocalNetwork=true`。默认按私有 IP、链路本地 IP、`.local` 或单段主机名判断，不发起 DNS 查询；该参数不会在 Android 16 及更早系统请求新权限。
+**演示账户**（仅限虚构数据）：
 
-### 演示账户
-
-| 项目 | 值 |
+| 用户 | 登录口令 |
 | --- | --- |
-| 用户 | `user_zhang`、`user_li`、`user_wife` |
-| 登录口令 | `Bank@2026` |
-| 红区演示 OTP | 审批卡获取一次性演示码；旧测试兼容码为 `888888`，动态模式禁用固定码回退 |
+| `user_zhang`（张三）、`user_li`（李四）、`user_wife` | `Bank@2026` |
 
-红区还需要模拟器设置屏幕锁或生物识别，并让应用登记 Keystore 公钥。以上凭据仅用于虚构账户。
+红区操作还需要：
 
-## 功能与权限
+- 模拟器设置屏幕锁，应用会登记设备公钥。
+- 一次性演示验证码，在审批卡上获取。
 
-| 功能 | 典型输入 | 要求 |
-| --- | --- | --- |
-| 余额、账单、理财查询 | “查余额”“上月钱花哪儿了” | 登录会话，GREEN |
-| 模拟转账、AA、预约 | “给李四转 300 元” | 转账预检 + 确认；AA 先发请求，各参与人独立授权付款；当日转账累计超过 1000 元升 RED |
-| 理财申赎、卡片敏感变更 | “申购 200 元”“挂失卡片” | RED，OTP + 设备签名 |
-| 撤销未执行的安排 | “撤销刚才那笔预约”“取消生日锁定”“撤回 AA 请求” | YELLOW；只撤销尚未动用资金的预约、无人付款的 AA 与资金锁定；已完成的转账不能撤销 |
-| 卡片交易渠道 | “关闭境外交易”“开通网上支付” | 关闭为 YELLOW，开通为 RED（OTP + 设备签名）；关闭网上支付后商户订单被拒 |
-| 订阅查询与识别、取消、生日锁资 | “我有哪些订阅”“识别周期扣费”“取消订阅”“锁定 1000 元” | 订阅查询（含识别与续费提醒）、取消已登记代扣与锁资均为 YELLOW，确认后 Core 才返回或变更；检测只产生待核实候选；模拟商户下单到期后再次确认 |
-
-模型只输出受约束的意图 JSON；`planner.py` 校验意图和槽位。Core 以短期、单次凭证重新核对主体、金额、对象、余额与风险等级。审批仅向 Android 返回不透明句柄。完整调用链见[技术文档](docs/技术文档.md)。
+飞书接入步骤见[飞书接入说明](docs/飞书IM接入.md)。
 
 ## 测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q --cov          # 分支覆盖率，低于 82% 失败
+.\.venv\Scripts\python.exe -m pytest -q --cov        # 后端全量，分支覆盖率低于 82% 失败
 .\.venv\Scripts\python.exe -m ruff check . --ignore E402
-.\.venv\Scripts\python.exe -m mypy                    # 范围见 pyproject.toml 的 [tool.mypy]
+.\.venv\Scripts\python.exe -m mypy
 cd android
-.\gradlew.bat --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest
-# 启动本机服务和模拟器后；Android 17 首次需先打开应用并允许附近设备：
-.\gradlew.bat --no-daemon :app:connectedDebugAndroidTest
+.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+.\gradlew.bat :app:connectedDebugAndroidTest           # 需先启动服务与模拟器
 ```
 
-默认 Debug 端点 `10.0.2.2` 属于本地网络，因此 API 37 首次运行会先显示授权入口；普通 `connectedDebugAndroidTest` 应在完成该授权后执行。专门验证系统拒绝与允许的 `LocalNetworkPermissionSystemTest` 则要求专用模拟器从未授权状态启动，以 `networkPermissionTest=true` 显式启用，并将 Debug 的 Core/Gateway 端点分别设为 `10.0.2.2:18800` / `10.0.2.2:18810`，连接隔离测试服务。
+当前结果为后端 1021 项测试通过、Android JVM 102 项通过。
 
-隔离环境的 68 项主要回归使用 `BankingRegression` 标记：选择 `-PbankScenarioTests=true` 和 `-Pandroid.testInstrumentationRunnerArguments.annotation=com.aibanking.agent.BankingRegression`，运行 `connectedScenarioAndroidTest`。同时传入本轮隔离服务的 `controlToken` 和专用模拟器的 `devicePin`；核对报告中实际执行 68 项，且没有失败或跳过。系统权限测试单独运行。可使用 `scripts/run_android_regression.py` 自动创建隔离服务、检查专用模拟器和核对 XML / protobuf 结果；手动及每周设备 CI 见 `.github/workflows/android-regression.yml`。
+68 项设备回归用 `scripts/run_android_regression.py` 运行：它会创建隔离服务，并核对实际执行数量。
 
-Python 测试覆盖账本持久化、会话边界、授权防重放、并发幂等、自然语言场景；Android JVM 测试覆盖解析与建议，插桩测试覆盖登录、对话、卡片等 UI。步骤与预期结果见[测试用例](docs/测试用例.md)。端到端授权探针：`python scripts/agent_gateway_e2e.py`；健康探针：`python scripts/smoke_test.py`。
+可复现步骤见[测试用例](docs/测试用例.md)，历次结果见[验证记录](docs/验证记录.md)。
 
-健康探针会先登录、查询本人余额，再退出本次探针会话，支持默认严格会话模式。可通过环境变量 `BANK_DEMO_USER_ID`、`BANK_DEMO_PASSWORD` 指定演示账户；启用登录短信验证时，另设置 `BANK_LOGIN_OTP`。这些变量由探针进程环境读取，请勿把真实凭据写进命令参数或提交到仓库。
+## 目录结构
 
-## 源码索引
+```text
+├─ android/              Android 客户端（app/src/main）与 JVM、插桩测试
+├─ bank_agent/           Gateway：LangGraph 节点、意图解析、多轮对话、风险测评、回执渲染
+├─ bank_core/            Core：账本、卡片、理财、支付风控、幂等、routes/ 接口
+├─ bank_security/        共用安全边界：输入清洗、审计哈希链、熔断、授权、会话、设备
+├─ bank_planning/        意图白名单、风险分级、任务计划、账单分析
+├─ main.py               Core 应用入口
+├─ agent_api.py          Gateway 应用入口（会话、SSE、审批、语音转写）
+├─ agent.py · conversation.py · planner.py · security.py   编排与兼容入口
+├─ feishu_*.py           飞书只读私聊、消息卡片、访问诊断
+├─ scheduler.py · sandbox*.py · subscription_detector.py · mock_merchant.py · …   任务队列、只读分析沙箱等
+├─ scripts/              端到端探针、场景评测、设备回归、交付打包
+├─ tools/usability/      可用性测试记录页
+├─ tests/                后端测试
+├─ docs/                 参赛文档；docs/过程记录/ 为历次检查与升级记录
+└─ start-emulator.bat    一键启动
+```
 
-| 路径 | 作用 |
+## 文档
+
+| 内容 | 文件 |
 | --- | --- |
-| `main.py`（装配应用）、`bank_core/` | Core：`ledger`/`cards`/`wealth_data`/`contacts` 等领域状态与规则，`undo` 可撤销规则，`payments`/`operations` 风控与授权上下文，`access`/`idempotency`/`persistence`/`http_edge` 横切守卫，`routes/` 按绿区读取、预检确认、执行、任务等分组的接口 |
-| `security.py`（重新导出）、`bank_security/` | Core 与 Gateway 共用的安全边界：`sanitize` 输入清洗与注入检测，`audit` 审计哈希链与分服务文件，`circuit` 熔断与行为风控，`authorization`/`mfa` 授权凭证、确认与强验证，`sessions`/`passwords` 会话与口令，`devices` 设备信任根与设备库 |
-| `mock_merchant.py`、`subscription_detector.py` | 虚构商户，周期扣费候选识别 |
-| `agent_api.py`、`conversation.py`、`feishu_im.py`、`speech_asr.py` | Android 对话网关、SSE、审批句柄（会话轮次与审批处理在 `bank_agent/conversation_*`、`approval_store`）、飞书只读私聊接入、云端语音识别转发 |
-| `agent.py`（构建默认图）、`bank_agent/` | LangGraph 编排：`runtime`（配置、模型客户端、Core 传输）、`extraction`/`parsing`/`dialogue` 意图与多轮上下文、`nodes/` 五个图节点、`verification`/`rendering` 回执核验与文案 |
-| `planner.py`（重新导出）、`bank_planning/`、`sandbox.py` | `intents` 意图白名单、风险分级与校验，`plans` 任务计划，`bill_analysis` 账单分析；只读分析沙箱 |
-| `scheduler.py`、`notification_outbox.py` | 本机任务状态与 AA 事件记录 |
-| `android/app/src/main/` | Android 客户端 |
-| `tests/`、`android/app/src/test/`、`android/app/src/androidTest/` | 后端、JVM 与模拟器 UI 测试 |
-| `.github/workflows/ci.yml` | Python 与 Android 构建检查 |
+| 作品简介（200 字） | [作品简介](docs/作品简介.md) |
+| 架构、核心算法、安全设计 | [技术文档](docs/技术文档.md) |
+| 权限分级与已知风险 | [安全自评报告](docs/安全自评报告.md) |
+| 测试步骤与验证结果 | [测试用例](docs/测试用例.md) · [验证记录](docs/验证记录.md) |
+| 答辩 PPT 与演示视频大纲 | [答辩提纲](docs/答辩提纲.md) · [演示视频](docs/演示视频.md) |
+| 赛题覆盖与验收 | [参赛完善与验收](docs/参赛完善与验收-2026-10-15.md) |
+| 飞书机器人接入 | [飞书接入说明](docs/飞书IM接入.md) |
+| 工具链升级、回归测试等历史记录 | [docs/过程记录](docs/过程记录/) |
 
-这是单机 Mock 演示。进程内状态与本地文件不具备跨机器事务能力；未开启 `BANK_MFA_DYNAMIC_OTP=1` 时演示 OTP 为固定值；审计链不等于外部不可抵赖存储；可选在线模型会把输入发送给模型服务。详见[安全自评报告](docs/安全自评报告.md)。
+## 限制
+
+- 这是单机演示，状态保存在进程内存和本地文件中，不具备跨机器事务能力。
+- 不发送真实短信。未开启 `BANK_MFA_DYNAMIC_OTP=1` 时，演示验证码是固定值。
+- 审计哈希链不等于外部不可抵赖存储。
+- 启用在线模型时，输入会发送给模型服务。
+
+## 许可证
+
+[MIT](LICENSE)
