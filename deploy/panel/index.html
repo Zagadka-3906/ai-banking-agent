@@ -40,7 +40,7 @@ main { padding: 16px 24px 40px; max-width: 1280px; margin: 0 auto; }
 .sub { color: var(--muted); font-size: 12px; }
 .section { margin-top: 22px; }
 .section > h3 { font-size: 15px; margin: 0 0 10px; }
-.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill { display: inline-block; white-space: nowrap; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .ok { background: var(--good-soft); color: var(--good); }
 .warn { background: var(--warn-soft); color: var(--warn); }
 .bad { background: var(--bad-soft); color: var(--bad); }
@@ -133,7 +133,30 @@ select, input[type=password] { font: inherit; padding: 7px 10px; border: 1px sol
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? "—").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const mb = (b) => b == null ? "—" : b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GB" : (b / 1048576).toFixed(1) + " MB";
+const mb = (b) => b == null ? "—" : b >= 1073741824 ? (b / 1073741824).toFixed(2) + " GB" : b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(1) + " KB";
+const CONFIG_LABELS = {
+  DEEPSEEK_API_KEY: "DeepSeek 密钥", DASHSCOPE_API_KEY: "百炼语音密钥", BANK_AUTH_SECRET: "授权签名密钥",
+  BANK_ADMIN_AUDIT_TOKEN: "审计管理员令牌", FEISHU_APP_SECRET: "飞书应用密钥", BANK_LLM_MODEL: "对话模型",
+  BANK_MODEL_FAST_PATH: "规则快速路径", BANK_MFA_DYNAMIC_OTP: "动态演示验证码", BANK_REQUIRE_SESSION: "强制会话",
+  BANK_DEMO_MODE: "演示模式", BANK_RATE_LIMIT_PER_MINUTE: "核心限流（次/分钟）", BANK_AGENT_RATE_LIMIT_PER_MINUTE: "网关限流（次/分钟）",
+  BANK_ASR_ENABLED: "云端语音识别", BANK_FEISHU_ENABLED: "飞书机器人",
+};
+const EVENT_LABELS = {
+  LOGIN: "登录", SESSION_ISSUED: "签发会话", SESSION_RENEWED: "续期会话", DEVICE_ENROLLED: "登记设备", DEVICE_SEEN: "设备已登记",
+  BALANCE_QUERY: "查询余额", TRANSACTION_QUERY: "查询流水", BILL_ANALYSIS: "账单分析", CARD_QUERY: "查询卡片", CONTACT_QUERY: "查询联系人",
+  WEALTH_QUERY: "查询理财", WEALTH_RECOMMEND: "理财推荐", WEALTH_COMPARE: "理财对比", WEALTH_HOLDINGS_QUERY: "查询持仓",
+  WEALTH_RISK_ASSESSMENT: "风险测评", RISK_QUIZ: "风险问卷", RISK_PRECHECK: "风险预检", OPERATION_PRECHECK: "操作预检",
+  OPERATION_EXECUTE: "执行操作", TRANSFER_EXECUTE: "执行转账", TASK_EXECUTE: "执行任务", LOCK_FUND: "锁定资金", UNLOCK_FUND: "释放资金",
+  DEMO_OTP_ISSUED: "发放演示验证码", PAYEE_CHECK: "核对收款人", AGENT_REQUEST_REJECTED: "拒绝请求", AGENT_RESPONSE: "对话回复",
+  AGENT_SUGGEST: "猜你想问", INTENT_PARSE: "意图识别", INTENT_WITHHELD: "暂不执行", POLICY_DECISION: "风控决定",
+  WORKFLOW_STAGE: "流程阶段", PROMPT_INJECTION_BLOCKED: "拦截注入", RATE_LIMITED: "限流", SECURITY_SIGNAL: "安全信号",
+  SPEECH_TRANSCRIBE: "语音转写", AGENT_STREAM_FAILED: "流式回复失败",
+};
+const DECISION_LABELS = {ALLOW: "允许", BLOCK: "拦截", OBSERVE: "记录", CLARIFY: "追问", REVIEW: "待确认"};
+const OUTCOME_LABELS = {SUCCESS: "成功", SUCCEEDED: "成功", FAILURE: "失败", FAILED: "失败", STARTED: "开始", COMPLETED: "完成",
+  PARSED: "已识别", AUTO_EXECUTE: "直接执行", ALREADY_ENROLLED: "已登记", CLARIFICATION: "追问"};
+const label = (map, v) => `<span title="${esc(v)}">${esc(map[v] || v)}</span>`;
+const settingText = (v) => v === "1" ? "开启" : v === "0" ? "关闭" : (v || "默认");
 const money = (v) => typeof v === "number" ? "¥" + v.toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2}) : "—";
 const when = (iso) => iso ? new Date(iso).toLocaleString("zh-CN", {hour12: false}) : "—";
 let current = "overview", timer = null;
@@ -211,8 +234,8 @@ async function loadOverview() {
         <span>锁定账户</span><span>${esc((sec.behavior_risk || {}).locked_principals)}</span>
         <span>熔断中</span><span>${esc(sec.open_circuits)}</span>
         <span>待确认审批</span><span>${esc(((d.health.gateway || {}).conversation || {}).pending_approvals)}</span>
-        ${Object.entries(d.config.secrets).map(([k, v]) => `<span>${esc(k)}</span><span><span class="pill ${v ? "ok" : "warn"}">${v ? "已配置" : "未配置"}</span></span>`).join("")}
-        ${Object.entries(d.config.settings).map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v || "默认")}</span>`).join("")}
+        ${Object.entries(d.config.secrets).map(([k, v]) => `<span title="${esc(k)}">${esc(CONFIG_LABELS[k] || k)}</span><span><span class="pill ${v ? "ok" : "warn"}">${v ? "已配置" : "未配置"}</span></span>`).join("")}
+        ${Object.entries(d.config.settings).map(([k, v]) => `<span title="${esc(k)}">${esc(CONFIG_LABELS[k] || k)}</span><span>${esc(settingText(v))}</span>`).join("")}
       </div></div>
     </div>`;
   renderTraffic(t);
@@ -251,8 +274,8 @@ async function loadBusiness() {
 async function loadAudit() {
   const d = await api(`/api/audit?limit=200&only_issues=${$("#onlyIssues").checked}`);
   $("#auditTable").innerHTML = `<tr><th>时间</th><th>服务</th><th>事件</th><th>账户</th><th>决定</th><th>结果</th><th>原因</th></tr>` +
-    (d.events.map((e) => `<tr><td>${when(e.timestamp)}</td><td>${e.service === "core" ? "核心" : "网关"}</td><td>${esc(e.action)}</td><td>${esc(e.user_id)}</td>
-      <td>${e.decision === "BLOCK" ? '<span class="pill bad">拦截</span>' : esc(e.decision)}</td><td>${esc(e.outcome)}</td><td class="muted">${esc(e.reason)}</td></tr>`).join("")
+    (d.events.map((e) => `<tr><td>${when(e.timestamp)}</td><td>${e.service === "core" ? "核心" : "网关"}</td><td>${label(EVENT_LABELS, e.action)}</td><td>${esc(e.user_id)}</td>
+      <td>${e.decision === "BLOCK" ? '<span class="pill bad">拦截</span>' : label(DECISION_LABELS, e.decision)}</td><td>${label(OUTCOME_LABELS, e.outcome)}</td><td class="muted">${esc(e.reason)}</td></tr>`).join("")
       || `<tr><td colspan="7" class="muted">暂无事件</td></tr>`);
 }
 $("#onlyIssues").onchange = () => loadAudit().catch((e) => toast(e.message));

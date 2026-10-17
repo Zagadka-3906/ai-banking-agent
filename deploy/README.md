@@ -50,6 +50,29 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
 
 **恢复演示数据**：停服务，删掉 `/var/lib/anyan/ledger.json` 和 `devices.json`，再启动。
 
+## 安言运维台（自制后台）
+
+专门为这套部署做的后台，分六页：
+
+- **总览**：整体状态，24 小时内的登录、对话、模型调用、资金操作和安全拦截次数；三个服务的运行状态、内存和自动重启次数；服务器 CPU、内存、磁盘和网络流量；各项配置是否已设置（密钥只显示“已配置”，不显示内容）。
+- **业务数据**：账户余额与锁定资金，以及交易流水、预约、AA、理财持仓等记录数（只读）。
+- **访问与流量**：24 小时请求数、访问 IP 数、响应流量、被限流和服务端错误次数、每小时请求图，以及按功能、状态码、IP 的分布。
+- **审计事件**：核心和网关的审计记录（中文事件名），可以只看拦截与失败。
+- **服务日志**：查看三个服务最近的日志，可以只看警告和错误。
+- **运维操作**：重启服务、恢复演示数据，以及操作记录。恢复演示数据时，旧数据移到 `/var/lib/anyan/backup/<时间>/`，不会删除；审计记录保留。
+
+它只监听服务器本机的 9100 端口，公网访问不到；打开时还要输入访问令牌（`/etc/anyan/panel.token`，部署时随机生成）。使用方法：
+
+1. 在部署这台电脑的 Git Bash 里运行下面这条命令。它会先显示访问令牌，再建立隧道；窗口保持打开。
+
+   ```bash
+   deploy/deploy.sh panel 47.107.49.125
+   ```
+
+   用 PowerShell 也可以：先用 `ssh -i $HOME\.ssh\id_anyan_deploy root@47.107.49.125 cat /etc/anyan/panel.token` 查看令牌，再运行 `ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 9100:127.0.0.1:9100 root@47.107.49.125`。
+2. 浏览器打开 `http://localhost:9100`，粘贴令牌，登录。登录状态保持 12 小时。
+3. 用完关掉命令窗口，或按 Ctrl+C。
+
 ## 网页管理面板（Cockpit）
 
 服务器装了 Ubuntu 官方的 Cockpit，可以在网页里查看服务、启停服务、看日志、用终端。它只监听服务器本机的 9090 端口，公网访问不到，要通过 SSH 隧道打开：
@@ -61,7 +84,7 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
    ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 9090:127.0.0.1:9090 root@47.107.49.125
    ```
 
-   在 Git Bash 里也可以用 `deploy/deploy.sh panel 47.107.49.125`。
+   在 Git Bash 里也可以用 `deploy/deploy.sh cockpit 47.107.49.125`。
 3. 浏览器打开 `https://localhost:9090`。证书是面板自签的，浏览器提示不安全时，选“高级 → 继续访问”。用户名填 `panel`，密码填第 1 步设置的密码。
 4. 用完关掉命令窗口，或按 Ctrl+C。
 

@@ -148,7 +148,7 @@ cd android
 ├─ scripts/              端到端探针、场景评测、设备回归、交付打包
 ├─ tools/usability/      可用性测试记录页
 ├─ tests/                后端测试
-├─ deploy/               云服务器部署：安装脚本、systemd、Nginx、部署命令
+├─ deploy/               云服务器部署：安装脚本、systemd、Nginx、部署命令、安言运维台（deploy/panel）
 ├─ docs/                 参赛文档；docs/过程记录/ 为历次检查与升级记录
 └─ start-emulator.bat    一键启动
 ```
