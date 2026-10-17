@@ -97,10 +97,7 @@ echo "== cockpit panel (server-local only; reached through an SSH tunnel)"
 # --no-install-recommends: the recommended set pulls in NetworkManager/PackageKit.
 apt-get install -y -q --no-install-recommends cockpit-ws cockpit-system cockpit-bridge
 install -d /etc/systemd/system/cockpit.socket.d
-printf "[Socket]
-ListenStream=
-ListenStream=127.0.0.1:9090
-" > /etc/systemd/system/cockpit.socket.d/listen.conf
+printf '[Socket]\nListenStream=\nListenStream=127.0.0.1:9090\n' > /etc/systemd/system/cockpit.socket.d/listen.conf
 systemctl daemon-reload
 systemctl enable -q --now cockpit.socket
 systemctl restart cockpit.socket
