@@ -112,9 +112,9 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
                 intensity.snapTo(1f)
             }
             if (signal.sustained) {
-                if (motion) intensity.animateTo(0.62f, infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse))
+                if (motion) intensity.animateTo(0.8f, infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse))
             } else {
-                delay(if (motion) 1400L else 1800L)
+                delay(if (motion) 2200L else 2600L)
                 if (motion) intensity.animateTo(0f, tween(1200, easing = FastOutSlowInEasing)) else intensity.snapTo(0f)
                 spin?.cancel()
             }
@@ -122,9 +122,12 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
     }
     val layers = remember {
         listOf(
-            GlowLayer(strokeDp = 34f, blurDp = 38f, alpha = 0.50f), // wide bloom
-            GlowLayer(strokeDp = 12f, blurDp = 14f, alpha = 0.80f), // glow
-            GlowLayer(strokeDp = 3f, blurDp = 3f, alpha = 0.95f), // bright core
+            // Sized for real phones: the stroke is centred on the screen edge, so
+            // only half of each layer is visible, and bright surroundings wash out
+            // a faint light. Wider layers reach further into the screen.
+            GlowLayer(strokeDp = 64f, blurDp = 52f, alpha = 0.72f), // wide bloom
+            GlowLayer(strokeDp = 28f, blurDp = 20f, alpha = 0.95f), // glow
+            GlowLayer(strokeDp = 6f, blurDp = 4f, alpha = 1.00f), // bright core
         )
     }
     val matrix = remember { Matrix() }

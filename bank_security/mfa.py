@@ -308,7 +308,7 @@ def verify_mfa(
                 request_id=request_id,
                 metadata={"jti": payload.get("jti"), "failed_factors": failed, "attestation_present": bool(face_attestation), "attempt": record["mfa_attempts"]},
             )
-            raise SecurityError("多因子验证未通过：短信验证码或人脸票据无效", 403, "MFA_FAILED")
+            raise SecurityError(_mfa_failure_message(failed), 403, "MFA_FAILED")
 
         record["mfa_verified"] = True
         record["mfa_verified_at"] = int(time.time())
@@ -328,3 +328,13 @@ def verify_mfa(
             metadata={"jti": payload.get("jti"), "proof_hash": credential_fingerprint(proof), "factors": factors},
         )
         return {"verified": True, "mfa_proof": proof, "expires_at": min(payload["exp"], int(time.time()) + MFA_TTL_SECONDS), "factors": factors}
+
+
+def _mfa_failure_message(failed: list[str]) -> str:
+    """Say which factor failed, so the user knows what to redo."""
+
+    if failed == ["SMS_OTP"]:
+        return "短信验证码不正确或已过期，请重新获取验证码后再试；设备验证已通过"
+    if failed == ["FACE_RECOGNITION"]:
+        return "设备验证未通过，请重新进行指纹或面容验证"
+    return "短信验证码和设备验证都未通过，请重新获取验证码并完成设备验证"

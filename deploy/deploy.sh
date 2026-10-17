@@ -3,6 +3,7 @@
 #
 #   deploy/deploy.sh server <host>   upload the committed HEAD and install/update it
 #   deploy/deploy.sh keys   <host>   copy DEEPSEEK_API_KEY / DASHSCOPE_API_KEY from ./.env
+#   deploy/deploy.sh feishu <host>   copy FEISHU_APP_ID / FEISHU_APP_SECRET from ./.env and enable the bot
 #   deploy/deploy.sh app    <host>   build an APK that talks to https://<host>/
 #   deploy/deploy.sh status <host>   service state and health
 #   deploy/deploy.sh panel  <host>   open 安言运维台 at http://localhost:9100 through SSH (Ctrl+C closes)
@@ -13,8 +14,8 @@
 # except the two model keys when "keys" is run explicitly. Keys never appear in arguments.
 set -euo pipefail
 
-ACTION="${1:?usage: deploy.sh server|keys|app|status|panel|cockpit <host>}"
-HOST="${2:?usage: deploy.sh server|keys|app|status|panel|cockpit <host>}"
+ACTION="${1:?usage: deploy.sh server|keys|feishu|app|status|panel|cockpit <host>}"
+HOST="${2:?usage: deploy.sh server|keys|feishu|app|status|panel|cockpit <host>}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/build/deploy"
 KEY="${ANYAN_SSH_KEY:-$HOME/.ssh/id_anyan_deploy}"
@@ -31,9 +32,10 @@ case "$ACTION" in
     "${SSH[@]}" 'cat /etc/anyan/tls/ca.pem' > "$OUT/anyan-ca.pem"
     echo "CA saved to build/deploy/anyan-ca.pem (needed by: deploy.sh app $HOST)"
     ;;
-  keys)
+  keys|feishu)
     [ -f "$ROOT/.env" ] || { echo "no .env in $ROOT" >&2; exit 1; }
-    grep -E '^(DEEPSEEK_API_KEY|DASHSCOPE_API_KEY)=.+' "$ROOT/.env" | tr -d '\r' | "${SSH[@]}" "python3 -c '
+    if [ "$ACTION" = keys ]; then PATTERN='^(DEEPSEEK_API_KEY|DASHSCOPE_API_KEY)=.+'; else PATTERN='^(FEISHU_APP_ID|FEISHU_APP_SECRET)=.+'; fi
+    { grep -E "$PATTERN" "$ROOT/.env"; if [ "$ACTION" = feishu ]; then echo 'BANK_FEISHU_ENABLED=1'; fi; } | tr -d '\r' | "${SSH[@]}" "python3 -c '
 import re, sys
 keys = dict(line.rstrip(\"\\n\").split(\"=\", 1) for line in sys.stdin if \"=\" in line)
 path = \"/etc/anyan/anyan.env\"

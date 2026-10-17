@@ -49,13 +49,15 @@ def raise_security(exc: SecurityError) -> NoReturn:
 def record_failure_and_raise(exc: SecurityError, *, user_id: Optional[str], action: str, request_id: str) -> NoReturn:
     security_codes = {
         "TOKEN_REQUIRED", "INVALID_TOKEN", "INVALID_TOKEN_SIGNATURE", "TOKEN_NOT_FOUND", "TOKEN_REPLAY", "TOKEN_EXPIRED",
-        "TOKEN_BINDING_MISMATCH", "TOKEN_CONTEXT_MISMATCH", "TOKEN_INVALID", "TOKEN_OPERATION_MISMATCH", "MFA_FAILED", "MFA_PROOF_INVALID",
+        "TOKEN_BINDING_MISMATCH", "TOKEN_CONTEXT_MISMATCH", "TOKEN_INVALID", "TOKEN_OPERATION_MISMATCH", "MFA_PROOF_INVALID",
         "MFA_PROOF_REPLAY", "MFA_PROOF_MISMATCH", "MFA_PROOF_EXPIRED", "MFA_REQUIRED", "MFA_PROOF_REQUIRED",
         "IDENTITY_MISMATCH", "PROMPT_INJECTION_BLOCKED", "CIRCUIT_OPEN",
         # Online password guessing counts towards the same per-account breaker as
         # a faulty nonce: the point of the breaker is to stop repetition.
         "INVALID_CREDENTIALS", "INVALID_LOGIN_OTP",
     }
+    # MFA_FAILED is deliberately absent: the MFA check records its failed factor
+    # itself, and counting it again here tripped the breaker after three attempts.
     if exc.code in security_codes:
         record_security_failure(user_id, exc.code, request_id=request_id)
     audit_event(action, user_id=user_id, decision="BLOCK", outcome="FAILURE", reason=exc.code, request_id=request_id, metadata={"message": exc.detail})

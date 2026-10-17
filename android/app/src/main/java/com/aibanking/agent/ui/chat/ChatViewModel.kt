@@ -841,7 +841,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (_state.value.pending?.approvalId == approval.approvalId && result.approvalId == approval.approvalId) {
                     val code = result.demoCode?.takeIf { it.matches(Regex("[0-9]{6}")) }
                         ?: throw GatewayException("CORE_PROTOCOL_ERROR", "未返回有效演示验证码", 502)
-                    _state.update { it.copy(busy = false, notice = "本机演示验证码：$code，有效 ${result.expiresIn} 秒；未发送短信") }
+                    // Filled in like an SMS autofill, so the red flow is: get code, verify, fingerprint.
+                    _state.update { it.copy(busy = false, otp = code, notice = "已填入本机演示验证码 $code，有效 ${result.expiresIn} 秒；未发送短信") }
                 } else _state.update { it.copy(busy = false) }
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure

@@ -679,3 +679,22 @@ def test_an_approval_from_a_session_survives_while_that_session_lives(client: Te
 
     assert settled.status_code == 200, settled.text
     assert settled.json()["status"] == "SUCCESS"
+
+
+def test_a_wrong_code_with_a_valid_device_signature_counts_once_and_says_why(client: TestClient):
+    """Real-device report: the fingerprint passed, only the code was wrong, and the
+    breaker opened after three tries because each one was counted twice."""
+
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 2000},
+        headers=auth(),
+    )
+    token = precheck.json()["auth_token"]
+    challenge = client.post("/api/v1/auth/mfa/face/challenge", json={"auth_token": token, "user_id": "user_zhang"}, headers=auth(token))
+    attestation = sign_face_attestation(challenge.json()["challenge_id"], user_id="user_zhang", token_jti=challenge.json()["auth_token_jti"])
+    wrong = client.post("/api/v1/auth/mfa/verify", json={"otp": "123456", "face_attestation": attestation}, headers=auth(token))
+    assert wrong.status_code == 403
+    message = wrong.json()["detail"]["message"]
+    assert "短信验证码不正确" in message and "设备验证已通过" in message
+    assert security.circuit_status("user_zhang")["failure_count"] == 1

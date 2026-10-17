@@ -491,12 +491,11 @@ class ScenarioAccountIsolationUiTest {
         val label = "获取本机一次性演示验证码"
         ui.onNodeWithTag(UiTags.CHAT_LIST).performScrollToNode(hasText(label))
         ui.onNodeWithText(label).performScrollTo().performClick()
-        val matcher = hasText("本机演示验证码：", substring = true)
+        val matcher = hasText("本机演示验证码", substring = true)
         ui.waitUntil(10_000) { ui.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty() }
         val text = ui.onNode(matcher).fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString("") { it.text }
         val code = checkNotNull(Regex("[0-9]{6}").find(text)).value
-        ui.onNodeWithTag(UiTags.CHAT_LIST).performScrollToNode(hasTestTag(UiTags.APPROVAL_OTP))
-        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextReplacement(code)
+        // The fetched code is filled in, as an SMS autofill would.
         assertEquals(code, model.state.value.otp)
     }
 
