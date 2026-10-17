@@ -93,6 +93,20 @@ nginx -t -q
 systemctl enable -q nginx
 systemctl reload nginx || systemctl restart nginx
 
+echo "== cockpit panel (server-local only; reached through an SSH tunnel)"
+# --no-install-recommends: the recommended set pulls in NetworkManager/PackageKit.
+apt-get install -y -q --no-install-recommends cockpit-ws cockpit-system cockpit-bridge
+install -d /etc/systemd/system/cockpit.socket.d
+printf "[Socket]
+ListenStream=
+ListenStream=127.0.0.1:9090
+" > /etc/systemd/system/cockpit.socket.d/listen.conf
+systemctl daemon-reload
+systemctl enable -q --now cockpit.socket
+systemctl restart cockpit.socket
+# Root may not log in to Cockpit; "panel" (sudo) gets its password from `passwd panel`.
+id panel >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo panel
+
 echo "== health"
 for i in $(seq 1 30); do
   curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1 && curl -fsS http://127.0.0.1:8100/healthz >/dev/null 2>&1 && break
