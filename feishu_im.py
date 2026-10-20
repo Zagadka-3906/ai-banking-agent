@@ -40,6 +40,63 @@ _BOT_STATE = "disabled"
 _BOT_STATE_SINCE = time.time()
 _BOT_LAST_FAILURE: dict[str, Any] | None = None
 _RETRY_SECONDS = 30
+# A binding holds a session from the same login as the app.  Sessions are short
+# (BANK_SESSION_TTL_SECONDS, 15 minutes by default), so without renewal the bot
+# answered "binding expired" a quarter of an hour after pairing.  The binding is
+# renewed before it lapses; logging out of the app revokes the whole login, and
+# with it the binding's credential.
+_RENEW_MARGIN_SECONDS = 300
+_REFRESH_INTERVAL_SECONDS = 60
+
+
+def _renew_binding_session(record: dict[str, Any], *, request_id: str) -> bool:
+    """Swap ``record``'s session for a successor; False when the login is gone."""
+
+    try:
+        renewed = BankClient(user_id=record["principal"]).renew_session(record["session_token"], request_id=request_id)
+    except BankAPIError:
+        return False
+    token = renewed.get("session_token") if isinstance(renewed, dict) else None
+    if not token or renewed.get("user_id") != record["principal"]:
+        return False
+    record["session_token"] = token
+    record["session_expires_at"] = float(renewed.get("expires_at") or 0)
+    return True
+
+
+def _fresh_binding(sender_id: str, *, request_id: str) -> dict[str, Any]:
+    """The sender's binding, renewed first when its session is about to lapse."""
+
+    with _LOCK:
+        record = _BINDINGS.get(sender_id)
+        if not record:
+            return {}
+        if float(record.get("session_expires_at") or 0) - time.time() > _RENEW_MARGIN_SECONDS:
+            return dict(record)
+        working = dict(record)
+    if _renew_binding_session(working, request_id=request_id):
+        with _LOCK:
+            if _BINDINGS.get(sender_id) is record:
+                _BINDINGS[sender_id] = working
+        audit_event("FEISHU_BINDING_RENEWED", user_id=working["principal"], outcome="SUCCESS", request_id=request_id)
+    # A failed renewal leaves the old credential: if it is still valid the
+    # query works, otherwise the caller reports the binding as expired.
+    return working
+
+
+def refresh_bindings() -> int:
+    """Renew every binding close to expiry; returns how many were renewed."""
+
+    with _LOCK:
+        due = [sender for sender, record in _BINDINGS.items()
+               if float(record.get("session_expires_at") or 0) - time.time() <= _RENEW_MARGIN_SECONDS]
+    renewed = 0
+    for sender in due:
+        before = dict(_BINDINGS.get(sender) or {})
+        after = _fresh_binding(sender, request_id=f"feishu-refresh-{secrets.token_hex(4)}")
+        if after and after.get("session_expires_at") != before.get("session_expires_at"):
+            renewed += 1
+    return renewed
 
 
 def _set_state(state: str) -> None:
@@ -244,6 +301,11 @@ def process_message(event: Any) -> tuple[str, str | FeishuReply] | None:
             return chat_id, binding_card("expired")
         if current != record["principal"]:
             return chat_id, binding_card("changed")
+        # The binding gets its own successor credential with a known expiry, so
+        # it can be renewed independently of the app's token.
+        record = dict(record)
+        if not _renew_binding_session(record, request_id=request_id):
+            return chat_id, binding_card("expired")
         with _LOCK:
             if sender_id not in _BINDINGS and len(_BINDINGS) >= _MAX_BINDINGS:
                 return chat_id, binding_card("capacity")
@@ -256,8 +318,7 @@ def process_message(event: Any) -> tuple[str, str | FeishuReply] | None:
         if record:
             audit_event("FEISHU_UNBOUND", user_id=record["principal"], outcome="SUCCESS", request_id=request_id)
         return chat_id, binding_card("unbound")
-    with _LOCK:
-        binding = dict(_BINDINGS.get(sender_id) or {})
+    binding = _fresh_binding(sender_id, request_id=request_id)
     if not binding:
         return chat_id, binding_card("required")
     from agent_api import _guard_rate_limit, principal_for
@@ -445,6 +506,16 @@ def start_bot() -> None:
                             request_id=str(getattr(getattr(event, "header", None), "event_id", "")))
 
         threading.Thread(target=replies, name="feishu-replies", daemon=True).start()
+
+        def refresher() -> None:
+            while True:
+                time.sleep(_REFRESH_INTERVAL_SECONDS)
+                try:
+                    refresh_bindings()
+                except Exception:
+                    audit_event("FEISHU_BINDING_RENEWED", outcome="FAILED")
+
+        threading.Thread(target=refresher, name="feishu-binding-refresh", daemon=True).start()
 
         handler = (lark.EventDispatcherHandler.builder("", "")
                    .register_p2_im_message_receive_v1(on_message).build())

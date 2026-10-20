@@ -72,7 +72,7 @@ def test_reveal_never_discloses_unknown_cross_user_lost_or_virtual_cards(client:
     ):
         denied = client.post(path, json={"pin": "24681012"}, headers=session)
         assert denied.status_code in {401, 403}
-        assert all(value not in denied.text for value in ("6222020000023082", "张三", "招商银行"))
+        assert all(value not in denied.text for value in ("6222020000023082", "张三", "安言演示银行"))
 
     main.CARDS["user_zhang"][0]["status"] = "LOST"
     lost = client.post("/api/v1/cards/user_zhang/CARD-001/reveal", json={"pin": "24681012"}, headers=session)

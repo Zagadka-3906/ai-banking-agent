@@ -38,6 +38,8 @@ from security import (
     STATE_LOCK,
     SecurityError,
     amount_to_cents,
+    audit_event,
+    behavior_step_up,
     ensure_circuit_closed,
     inspect_auth_token,
     sanitize_text,
@@ -363,7 +365,27 @@ def operation_risk_level(user_id: str, operation: str, amount: float, *, channel
         return GENERIC_OPERATION_RISK[operation]
     with STATE_LOCK:
         accumulated_after = round(daily_spent(user_id) + pending_transfer_amount(user_id) + float(amount), 2)
-    return "YELLOW" if accumulated_after <= 1000.0 else "RED"
+    return transfer_risk_level(user_id, accumulated_after)
+
+
+def transfer_risk_level(user_id: str, accumulated_after: float, *, request_id: Optional[str] = None) -> str:
+    """Daily-total tier for money leaving the account, plus behaviour step-up.
+
+    ``<= 1000`` yuan accumulated today is YELLOW and anything above is RED.  A
+    recent card-limit change (see ``BEHAVIOR_STEP_UP_RULES``) raises a YELLOW
+    payment to RED instead of locking the account afterwards.
+    """
+
+    level = "YELLOW" if accumulated_after <= 1000.0 else "RED"
+    if level == "RED":
+        return level
+    step_up = behavior_step_up(user_id)
+    if step_up is None:
+        return level
+    audit_event("BEHAVIOR_STEP_UP", user_id=user_id, risk_level="RED", decision="CHALLENGE", outcome="ESCALATED",
+                reason=step_up["rule_id"], request_id=request_id,
+                metadata={"description": step_up["description"], "accumulated_after_cents": int(round(accumulated_after * 100))})
+    return "RED"
 
 
 def fund_lock_risk_level(amount: Any) -> str:

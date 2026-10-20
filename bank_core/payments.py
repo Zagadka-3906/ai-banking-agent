@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime
 from typing import Any, Optional
 
@@ -95,6 +96,28 @@ def resolve_payee(value: Optional[str], *, from_user: Optional[str] = None) -> t
     if receiver.get("status") != "ACTIVE":
         raise SecurityError(f"收款人“{receiver.get('name') or safe_value}”的账户当前不可用（已冻结或停用），本次没有转账", 409, "TARGET_INACTIVE")
     return target_id, receiver
+
+
+def inbound_transaction(*, account_id: str, payer_name: str, amount: float, remark: str = "",
+                        category: str = "转账收入", merchant: Optional[str] = None) -> dict[str, Any]:
+    """The payee-side statement row for money received.
+
+    Before this, a transfer changed the payee's balance with no row in their
+    statement, so a bill query could not explain where the money came from.
+    ``direction = "IN"`` marks a credit: bill totals and the analysis sandbox
+    leave it out of spending.
+    """
+
+    return {
+        "tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}",
+        "account_id": account_id,
+        "merchant": merchant or f"来自 {payer_name} 的转账",
+        "category": category,
+        "amount": amount,
+        "direction": "IN",
+        "remark": remark,
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
 
 
 def ensure_account(user_id: str) -> dict[str, Any]:

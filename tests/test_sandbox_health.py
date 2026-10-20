@@ -205,3 +205,76 @@ def test_process_spawn_failure_is_closed_by_default(monkeypatch):
     assert health["fallbacks"] == 0
     assert health["thread_fallback_enabled"] is False
     assert health["failures"] == 1
+
+
+class _CountingPool:
+    created = 0
+
+    def __init__(self, max_workers=1, mp_context=None):
+        del max_workers, mp_context
+        type(self).created += 1
+        self.submitted = 0
+
+    def submit(self, fn, expression, data):
+        del fn
+        self.submitted += 1
+        return _ImmediateFuture(sandbox._evaluate_worker(expression, data))
+
+    def shutdown(self, **kwargs):
+        del kwargs
+
+
+def test_warm_worker_is_reused_and_recycled(monkeypatch):
+    _reset_telemetry()
+    sandbox.shutdown_sandbox_worker()
+    _CountingPool.created = 0
+    monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _CountingPool)
+    monkeypatch.setenv("BANK_SANDBOX_WORKER_MAX_TASKS", "2")
+    for _ in range(3):
+        assert sandbox.evaluate_expression("len(data)", [1]) == 1
+    # Two calls share one worker, the third gets a fresh one.
+    assert _CountingPool.created == 2
+    sandbox.shutdown_sandbox_worker()
+
+
+class _DyingPool(_CountingPool):
+    def submit(self, fn, expression, data):
+        if type(self).created == 1:
+            return _ErrorFuture(sandbox.BrokenProcessPool("worker died between calls"))
+        return super().submit(fn, expression, data)
+
+
+def test_a_dead_warm_worker_is_replaced_once(monkeypatch):
+    _reset_telemetry()
+    sandbox.shutdown_sandbox_worker()
+    monkeypatch.delenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", raising=False)
+    _DyingPool.created = 0
+    monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _DyingPool)
+    # Warm the pool first so the failing call runs on a reused worker.
+    with sandbox._POOL_LOCK:
+        sandbox._process_pool()
+    assert sandbox.evaluate_expression("len(data)", [1, 2]) == 2
+    assert _DyingPool.created == 2
+    assert sandbox.sandbox_health()["failures"] == 0
+    sandbox.shutdown_sandbox_worker()
+
+
+class _SlowPool(_CountingPool):
+    def submit(self, fn, expression, data):
+        del fn, expression, data
+        return _ErrorFuture(sandbox.FutureTimeoutError())
+
+
+def test_timeout_discards_the_warm_worker(monkeypatch):
+    _reset_telemetry()
+    sandbox.shutdown_sandbox_worker()
+    monkeypatch.setattr(sandbox, "ProcessPoolExecutor", _SlowPool)
+    monkeypatch.setattr(sandbox, "_terminate_process_workers", lambda executor: None)
+    try:
+        sandbox.evaluate_expression("len(data)", [1], timeout_seconds=0.1)
+    except sandbox.SandboxError as exc:
+        assert str(exc) == "沙箱执行超时"
+    else:
+        raise AssertionError("expected sandbox timeout")
+    assert sandbox._POOL is None
+    assert sandbox.sandbox_health()["timeouts"] == 1

@@ -175,6 +175,17 @@ def test_health_reports_the_login_configuration(client):
     assert health["login"]["session_required_for_writes"] is False
 
 
+def test_health_reports_the_secure_session_default_when_unset(monkeypatch):
+    # The middleware enforces sessions when the variable is absent; the health
+    # report must describe the same default instead of claiming the opposite.
+    from bank_core.http_edge import _strict_session_required
+    from bank_security.health import security_health
+
+    monkeypatch.delenv("BANK_REQUIRE_SESSION", raising=False)
+    assert _strict_session_required() is True
+    assert security_health()["login"]["session_required_for_writes"] is True
+
+
 # ---------------------------------------------------------------------------
 # logout: server-side revocation of the presented session
 # ---------------------------------------------------------------------------

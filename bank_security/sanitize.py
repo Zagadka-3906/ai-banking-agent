@@ -18,7 +18,16 @@ from bank_security.errors import InjectionError
 _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions?", re.I),
     re.compile(r"忽略(?:之前|上面|此前).{0,12}(?:指令|规则|提示|要求)"),
-    re.compile(r"(?:绕过|跳过|解除|取消).{0,12}(?:权限|风控|验证|安全)"),
+    # "Bypass the checks" stays blocked, but only inside one clause: an
+    # ordinary request such as "帮我解除卡片冻结，这样安全吗" or "取消境外交易，
+    # 保证资金安全" names a business action and asks about safety in a separate
+    # clause.  The old 12-character window joined the two, blocked the request
+    # and charged the user's circuit breaker for it.
+    re.compile(r"(?:绕过|跳过|绕开|规避)[^，,。；;！!？?\s]{0,6}(?:权限|风控|验证|安全|审批|确认|校验|MFA|OTP)", re.I),
+    re.compile(
+        r"(?:解除|取消|关闭|禁用|停用|去掉)[^，,。；;！!？?\s]{0,4}"
+        r"(?:风控|权限(?:校验|控制|限制|检查)|安全(?:校验|检查|限制|策略|验证|机制)|(?:二次|多因子|身份)(?:验证|认证|确认))"
+    ),
     re.compile(r"(?:system|developer|assistant)\s*(?:prompt|message|指令)", re.I),
     re.compile(r"(?:reveal|show|print|泄露|输出).{0,20}(?:prompt|系统提示|密钥|token|凭证)", re.I),
     re.compile(r"(?:jailbreak|dan\s+mode|developer\s+mode|越狱|开发者模式)", re.I),

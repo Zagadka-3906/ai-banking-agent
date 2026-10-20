@@ -195,6 +195,12 @@ def _aggregate_bill_amounts_sandboxed(rows: list[dict[str, Any]], *, user_id: Op
         return _aggregate_bill_amounts(rows), "sandbox_fallback"
 
 
+def is_income(row: Mapping[str, Any]) -> bool:
+    """Whether a statement row is money received rather than spent."""
+
+    return str(row.get("direction") or "").upper() == "IN"
+
+
 def analyze_transactions(records: Iterable[Mapping[str, Any]], *, user_id: Optional[str] = None,
                          request_id: Optional[str] = None) -> dict[str, Any]:
     """Compute auditable bill facts and conservative anomaly flags.
@@ -212,12 +218,16 @@ def analyze_transactions(records: Iterable[Mapping[str, Any]], *, user_id: Optio
     """
 
     rows = [dict(r) for r in records]
-    aggregation, engine = _aggregate_bill_amounts_sandboxed(rows, user_id=user_id, request_id=request_id)
+    # Money received (``direction == "IN"``) is listed but never counted as
+    # spending, refunds or an anomaly.
+    spending_rows = [row for row in rows if not is_income(row)]
+    income_total = round(sum(max(_row_amount(row.get("amount")), 0.0) for row in rows if is_income(row)), 2)
+    aggregation, engine = _aggregate_bill_amounts_sandboxed(spending_rows, user_id=user_id, request_id=request_id)
     spent = aggregation["spent"]
     refunds = aggregation["refunds"]
     by_category = aggregation["categories"]
     anomalies: list[dict[str, Any]] = []
-    for row in rows:
+    for row in spending_rows:
         amount = _row_amount(row.get("amount"))
         if amount <= 0:
             continue  # refunds/stornos are reported separately, not as anomalies
@@ -243,6 +253,7 @@ def analyze_transactions(records: Iterable[Mapping[str, Any]], *, user_id: Optio
         "total_spent": round(spent, 2),
         "refund_total": round(refunds, 2),
         "net_spent": round(spent - refunds, 2),
+        "income_total": income_total,
         "analysis_engine": engine,
         "category_breakdown": category_breakdown,
         "anomalies": anomalies,
@@ -260,6 +271,9 @@ def safe_analysis_text(facts: Mapping[str, Any]) -> str:
     if refunds > 0:
         net = float(facts.get("net_spent") or (total - refunds))
         lines.append(f"其中退款 ¥{refunds:,.2f}，净支出 ¥{net:,.2f}。")
+    income = float(facts.get("income_total") or 0)
+    if income > 0:
+        lines.append(f"同期入账 ¥{income:,.2f}，不计入支出。")
     breakdown = facts.get("category_breakdown") or []
     if breakdown:
         items = "、".join(f"{x['category']} ¥{float(x['amount']):,.2f}（{float(x['share'])*100:.1f}%）" for x in breakdown)

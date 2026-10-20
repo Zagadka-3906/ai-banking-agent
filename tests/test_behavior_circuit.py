@@ -200,3 +200,37 @@ def test_security_health_reports_behavior_config(client: TestClient):
     assert health["window_seconds"] >= 60
     assert "LOST_AFTER_LARGE_TRANSFER" in health["rules"]
     assert "BURST_LARGE_TRANSFERS" in health["rules"]
+
+
+def test_transfer_after_limit_change_steps_up_instead_of_locking(client: TestClient, monkeypatch):
+    # The card's "limit exceeded" message tells the user to raise the limit
+    # first.  Doing so must not lock the genuine owner after the next payment;
+    # it raises that payment to the RED tier instead.
+    monkeypatch.setenv("BANK_BEHAVIOR_LARGE_AMOUNT_CENTS", "100")  # every transfer is "large"
+    raised = red_operation(client, "CARD_LIMIT", new_limit=20000, card_id="CARD-001")
+    assert raised.status_code == 200, raised.text
+
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10},
+        headers=auth(),
+    )
+    assert precheck.status_code == 200, precheck.text
+    assert precheck.json()["risk_level"] == "RED"
+    assert "FACE_RECOGNITION" in precheck.json()["required_actions"]
+
+    status = behavior(client)
+    assert status["locked"] is False
+    assert "LARGE_TRANSFER_AFTER_LIMIT_CHANGE" not in status["fired_rules"]
+    events = client.get("/api/v1/security/audit", headers=auth()).json()["data"]
+    assert any(event["action"] == "BEHAVIOR_STEP_UP" and event["reason"] == "TRANSFER_AFTER_LIMIT_CHANGE" for event in events)
+
+
+def test_small_transfer_without_limit_change_stays_yellow(client: TestClient):
+    precheck = client.post(
+        "/api/v1/risk/precheck",
+        json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 10},
+        headers=auth(),
+    )
+    assert precheck.json()["risk_level"] == "YELLOW"
+    assert security.behavior_step_up("user_zhang") is None

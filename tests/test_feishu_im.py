@@ -196,13 +196,75 @@ def test_supervisor_rebuilds_client_after_listener_failure_and_audits_once(monke
     assert status["state"] == "disabled" and status["last_failure"] == failure
 
 
+def _core_double(*, renew_ok: bool = True, ttl: float = 900):
+    """Core reads answer a balance; renewals answer a successor session."""
+
+    renewals = [0]
+
+    def respond(method, path, **_):
+        response = Mock()
+        if path == "auth/session/renew":
+            renewals[0] += 1
+            if not renew_ok:
+                from bank_tools import BankAPIError
+                raise BankAPIError("会话已失效", status_code=401)
+            response.json.return_value = {"session_token": "session-renewed", "user_id": "user_zhang",
+                                          "expires_at": time.time() + ttl + renewals[0]}
+        else:
+            response.json.return_value = {"code": 200, "available_balance": 500.0,
+                                          "total_balance": 600.0, "locked_amount": 100.0}
+        return response
+
+    return Mock(side_effect=respond)
+
+
+def _bind(monkeypatch, client, double):
+    monkeypatch.setattr(feishu_im.BankClient, "_request", double)
+    monkeypatch.setenv("BANK_FEISHU_ENABLED", "1")
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
+    code = client.post("/api/v1/im/feishu/binding-code", headers={"X-Session-Token": "session"}).json()["binding_code"]
+    return feishu_im.process_message(event(f"/绑定 {code}", event_id=f"evt-bind-{time.time_ns()}"))[1]
+
+
+def test_binding_is_renewed_before_its_session_lapses(monkeypatch):
+    feishu_im.reset_state()
+    monkeypatch.setattr(agent_api, "principal_for", lambda **_: "user_zhang")
+    with TestClient(agent_api.app) as client:
+        assert card_body(_bind(monkeypatch, client, _core_double(ttl=60)))  # bound, expires soon
+        binding = feishu_im._BINDINGS["ou-person"]
+        assert binding["session_expires_at"] - time.time() < feishu_im._RENEW_MARGIN_SECONDS
+        assert feishu_im.refresh_bindings() == 1
+        assert feishu_im._BINDINGS["ou-person"]["session_expires_at"] > time.time()
+        # A binding far from expiry is left alone.
+        feishu_im._BINDINGS["ou-person"]["session_expires_at"] = time.time() + 3600
+        assert feishu_im.refresh_bindings() == 0
+    feishu_im.reset_state()
+
+
+def test_binding_expires_with_the_app_login(monkeypatch):
+    feishu_im.reset_state()
+    monkeypatch.setattr(agent_api, "principal_for", lambda **_: "user_zhang")
+    with TestClient(agent_api.app) as client:
+        _bind(monkeypatch, client, _core_double(ttl=60))
+        # The user logged out of the app: renewal is refused, and the next
+        # query reports the binding as expired rather than reading anything.
+        monkeypatch.setattr(feishu_im.BankClient, "_request", _core_double(renew_ok=False))
+
+        def revoked(**_):
+            raise ConversationError("会话失效", 401, "INVALID_SESSION")
+
+        monkeypatch.setattr(agent_api, "principal_for", revoked)
+        reply = feishu_im.process_message(event("查余额", event_id="evt-after-logout"))[1]
+        assert "失效" in card_body(reply) or "绑定" in card_body(reply)
+        assert "ou-person" not in feishu_im._BINDINGS
+    feishu_im.reset_state()
+
+
 def test_binding_read_only_replay_and_unbind(monkeypatch):
     feishu_im.reset_state()
     monkeypatch.setenv("BANK_FEISHU_ENABLED", "0")
     monkeypatch.setattr(agent_api, "principal_for", lambda **_: "user_zhang")
-    read = Mock()
-    read.return_value.json.return_value = {"code": 200, "available_balance": 500.0,
-                                           "total_balance": 600.0, "locked_amount": 100.0}
+    read = _core_double()
     monkeypatch.setattr(feishu_im.BankClient, "_request", read)
     with TestClient(agent_api.app) as client:
         assert client.post("/api/v1/im/feishu/binding-code", headers={"X-Session-Token": "session"}).status_code == 503
@@ -218,14 +280,17 @@ def test_binding_read_only_replay_and_unbind(monkeypatch):
         assert result[1].msg_type == "interactive"
         assert "¥500.00" in json.dumps(result[1].content, ensure_ascii=False)
         assert read.call_args.args == ("GET", "accounts/user_zhang/balance")
+        # The binding holds its own renewed credential, not the app's token.
+        assert feishu_im._BINDINGS["ou-person"]["session_token"] == "session-renewed"
         assert feishu_im.process_message(event("查余额", event_id="evt-3")) is None
         handoff = feishu_im.process_message(event("转账 300 元", event_id="evt-4"))[1]
         assert isinstance(handoff, FeishuReply)
         assert handoff.content["header"]["title"]["content"] == "请在安言 App 办理"
         assert "尚未提交" in card_body(handoff)
         assert not any(item.get("tag") == "action" for item in handoff.content["elements"])
-        assert read.call_count == 1
-        assert all(call.args[0] == "GET" for call in read.call_args_list)
+        reads = [call for call in read.call_args_list if call.args[1] != "auth/session/renew"]
+        assert len(reads) == 1
+        assert all(call.args[0] == "GET" for call in reads)
         assert client.delete("/api/v1/im/feishu/binding", headers={"X-Session-Token": "session"}).json()["removed"] == 1
         assert "绑定码" in card_body(feishu_im.process_message(event("查余额", event_id="evt-5"))[1])
     feishu_im.reset_state()

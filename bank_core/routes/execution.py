@@ -67,6 +67,7 @@ from bank_core.operations import (
 )
 from bank_core.payments import (
     charge_card_and_balance,
+    inbound_transaction,
     daily_spent,
     ensure_account,
     prepare_split_shares,
@@ -151,9 +152,15 @@ def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_aut
                 txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
                 TRANSACTIONS.append({"tx_id": txn_id, "account_id": req.from_user, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": remark, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                 split_id = split_id_from_remark(remark)
+                # The payee's statement records the credit too; ``direction``
+                # keeps it out of spending totals (bank_planning.bill_analysis).
+                TRANSACTIONS.append(inbound_transaction(
+                    account_id=target_id, payer_name=sender["name"], amount=amount, remark=remark,
+                    category="AA 收款" if split_id else "转账收入",
+                    merchant=f"AA 收款 - {sender['name']}" if split_id else None,
+                ))
                 if split_id:
                     record_split_payment(split_id=split_id, payer_id=req.from_user, recipient_id=target_id, amount=amount, transaction_id=txn_id)
-                    TRANSACTIONS.append({"tx_id": f"TXN{uuid.uuid4().hex[:12].upper()}", "account_id": target_id, "merchant": f"AA 收款 - {sender['name']}", "category": "AA 收款", "amount": amount, "remark": remark, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                     enqueue_notification(f"AA_PAID:{split_id}:{req.from_user}", owner_id=target_id, recipient_id=req.from_user, split_id=split_id, amount=amount, outcome="COLLECTED", message=f"AA 份额已支付 {amount:.2f} 元")
                 risk_level = payload.get("risk_level")
         record_security_success(actor)

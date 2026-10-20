@@ -40,5 +40,6 @@ from bank_planning.bill_analysis import (  # noqa: F401
     analyze_transactions,
     date_bounds,
     filter_transactions,
+    is_income,
     safe_analysis_text,
 )

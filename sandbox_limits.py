@@ -4,12 +4,25 @@ from __future__ import annotations
 import sys
 
 _job_handle = None
+_applied: str | None = None
 MEMORY_BYTES = 512 * 1024 * 1024
 CPU_SECONDS = 3
 
 
 def apply_worker_limits() -> str:
-    """Fail closed if the requested limits cannot be installed."""
+    """Fail closed if the requested limits cannot be installed.
+
+    Idempotent per process: the sandbox reuses a warm worker, and the limits
+    installed for its first task already cover every later one.
+    """
+    global _applied
+    if _applied is not None:
+        return _applied
+    _applied = _install_limits()
+    return _applied
+
+
+def _install_limits() -> str:
     if sys.platform != "win32":
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (MEMORY_BYTES, MEMORY_BYTES))

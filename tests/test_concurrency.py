@@ -90,7 +90,9 @@ def test_concurrent_idempotent_settle_debits_once(client: TestClient):
 
     assert main.ACCOUNTS["user_zhang"]["balance"] == 15000.0 - 12.0
     assert main.ACCOUNTS["user_li"]["balance"] == 2000.0 + 12.0
-    assert len([row for row in main.TRANSACTIONS if row.get("amount") == 12.0]) == 1
+    # One debit for the payer and one credit for the payee - never two of either.
+    assert len([row for row in main.TRANSACTIONS if row.get("amount") == 12.0 and row["account_id"] == "user_zhang"]) == 1
+    assert len([row for row in main.TRANSACTIONS if row.get("amount") == 12.0 and row["account_id"] == "user_li"]) == 1
 
 
 def test_concurrent_same_nonce_settles_once(client: TestClient):
@@ -110,7 +112,8 @@ def test_concurrent_same_nonce_settles_once(client: TestClient):
     loser = codes[0] if codes[1] == 200 else codes[1]
     assert loser in {401, 403, 409, 422}, [response.text for response in responses]
     assert main.ACCOUNTS["user_zhang"]["balance"] == 15000.0 - 7.0
-    assert len([row for row in main.TRANSACTIONS if row.get("amount") == 7.0]) == 1
+    assert len([row for row in main.TRANSACTIONS if row.get("amount") == 7.0 and row["account_id"] == "user_zhang"]) == 1
+    assert len([row for row in main.TRANSACTIONS if row.get("amount") == 7.0 and row["account_id"] == "user_li"]) == 1
 
 
 def test_concurrent_lock_fund_reserves_once(client: TestClient):

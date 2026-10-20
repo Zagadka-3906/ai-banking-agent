@@ -92,3 +92,27 @@ def test_a_tampered_registry_is_refused_and_writes_frozen(clean_state):
     before = clean_state.read_text(encoding="utf-8")
     _register(successor)
     assert clean_state.read_text(encoding="utf-8") == before
+
+
+def test_a_failed_write_is_retried_on_the_next_change(clean_state, monkeypatch):
+    from bank_agent import approval_store
+
+    real_replace = approval_store.os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(source, target):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise PermissionError("file locked")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(approval_store.os, "replace", flaky_replace)
+    service = conversation.ConversationService()
+    first = _register(service)
+    status = conversation.approval_store_status()
+    assert status["writes_frozen"] is False and status["last_write_failed"] is True
+
+    second = _register(service)
+    assert conversation.approval_store_status()["last_write_failed"] is False
+    stored = json.loads(clean_state.read_text(encoding="utf-8"))["approvals"]
+    assert {first.approval_id, second.approval_id} <= set(stored)

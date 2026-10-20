@@ -48,3 +48,5 @@ os.environ["BANK_AUDIT_LOG_PATH"] = ""
 os.environ["BANK_AUDIT_LOG_DIR"] = "off"
 os.environ["BANK_LEDGER_STORE_PATH"] = ""
 os.environ["BANK_APPROVAL_STORE_PATH"] = "memory"
+# Due tasks advance only when a test asks for it.
+os.environ["BANK_TASK_SCHEDULER_SECONDS"] = "0"

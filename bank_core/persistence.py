@@ -52,6 +52,11 @@ logger = logging.getLogger("mock_banking.core")
 LEDGER_STORE_VERSION = 1
 OPERATION_RECEIPTS: dict[str, dict[str, Any]] = {}
 _LEDGER_STORE_BLOCKED = False
+# A failed *write* is transient (a locked file, a full disk being cleaned up):
+# it is reported and retried on the next mutation.  Only a file that fails
+# validation on *load* freezes writes, to keep the evidence.
+_LEDGER_WRITE_FAILURES = 0
+_LEDGER_LAST_WRITE_FAILED = False
 _LEDGER_STORE_LOAD_SUMMARY: dict[str, Any] = {}
 register_collections(OPERATION_RECEIPTS=OPERATION_RECEIPTS)
 
@@ -230,7 +235,7 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
 def _persist_ledger_locked() -> None:
     """Write the ledger snapshot atomically.  Assumes ``STATE_LOCK`` is held."""
 
-    global _LEDGER_STORE_BLOCKED
+    global _LEDGER_WRITE_FAILURES, _LEDGER_LAST_WRITE_FAILED
     target = _ledger_store_target()
     if not target or _LEDGER_STORE_BLOCKED:
         return
@@ -258,11 +263,16 @@ def _persist_ledger_locked() -> None:
         # that the next start would refuse as tampered.
         os.replace(temporary, target)
     except OSError:
-        # The committed mutation stands; the next one retries the write.  The
-        # health endpoint reports the store, so a silently failing disk still
-        # surfaces to an operator.
-        _LEDGER_STORE_BLOCKED = True
-        logger.exception("Unable to persist the ledger store")
+        # The committed mutation stands; the next one rewrites the whole
+        # snapshot, so nothing is lost once the disk recovers.  The health
+        # endpoint reports the failure, so a failing disk still surfaces to an
+        # operator.  Freezing here (as before) silently stopped persisting for
+        # the rest of the process after one transient error.
+        _LEDGER_WRITE_FAILURES += 1
+        _LEDGER_LAST_WRITE_FAILED = True
+        logger.exception("Unable to persist the ledger store; will retry on the next change")
+    else:
+        _LEDGER_LAST_WRITE_FAILED = False
 
 
 def persist_ledger() -> dict[str, Any]:
@@ -372,6 +382,8 @@ def ledger_store_status() -> dict[str, Any]:
         "file_loaded": bool(_LEDGER_STORE_LOAD_SUMMARY.get("loaded_state")),
         "file_rejected": bool(_LEDGER_STORE_LOAD_SUMMARY.get("rejected")),
         "writes_frozen": _LEDGER_STORE_BLOCKED,
+        "last_write_failed": _LEDGER_LAST_WRITE_FAILED,
+        "write_failures": _LEDGER_WRITE_FAILURES,
         # False means the file carries a plain checksum: whoever can write it can
         # also forge it.  Configure BANK_AUTH_SECRET to make the digest keyed.
         "integrity_keyed": AUTH_SECRET_CONFIGURED,

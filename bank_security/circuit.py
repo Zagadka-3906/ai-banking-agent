@@ -177,13 +177,6 @@ BEHAVIOR_RULES: tuple[dict[str, Any], ...] = (
         "weight": 50,
     },
     {
-        "rule_id": "LARGE_TRANSFER_AFTER_LIMIT_CHANGE",
-        "description": "调整卡片额度后立即大额转出",
-        "trigger": "LARGE_TRANSFER",
-        "requires": ("CARD_LIMIT_CHANGE",),
-        "weight": 40,
-    },
-    {
         "rule_id": "BURST_LARGE_TRANSFERS",
         "description": "窗口内连续多笔大额转账",
         "trigger": "LARGE_TRANSFER",
@@ -203,6 +196,21 @@ BEHAVIOR_RULES: tuple[dict[str, Any], ...] = (
         "trigger": "SENSITIVE_SUCCESS",
         "requires_count": {"AUTH_FAILURE": 3},
         "weight": 40,
+    },
+)
+
+# Combinations that call for stronger verification rather than a lockout.
+# Raising a card limit is itself a RED, MFA-verified action, and the card's own
+# "limit exceeded" message tells the user to do exactly that before a larger
+# payment.  Scoring "limit change then transfer" towards a lockout therefore
+# locked the genuine owner right after following the app's advice.  Instead,
+# money leaving the account inside the window is escalated to the RED tier:
+# whoever raised the limit must pass OTP and the device signature again.
+BEHAVIOR_STEP_UP_RULES: tuple[dict[str, Any], ...] = (
+    {
+        "rule_id": "TRANSFER_AFTER_LIMIT_CHANGE",
+        "description": "调整卡片额度后的窗口内转出资金，升级为强验证",
+        "requires": ("CARD_LIMIT_CHANGE",),
     },
 )
 
@@ -393,3 +401,24 @@ def behavior_status(user_id: Optional[str]) -> dict[str, Any]:
             for entry in state["timeline"]
         ]
         return base
+
+
+def behavior_step_up(user_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """Return the step-up rule that applies to an outgoing payment, if any.
+
+    Read-only: it never adds a signal or a lock.  Callers raise the payment to
+    the RED tier and audit the returned rule id.
+    """
+
+    principal = _principal_key(user_id)
+    now = time.monotonic()
+    with STATE_LOCK:
+        state = BEHAVIOR_STATE.get(principal)
+        if not state:
+            return None
+        _purge_behavior(state, now)
+        names = {entry.get("name") for entry in state["timeline"] if entry.get("kind") == "SIGNAL"}
+    for rule in BEHAVIOR_STEP_UP_RULES:
+        if all(required in names for required in rule["requires"]):
+            return {"rule_id": rule["rule_id"], "description": rule["description"]}
+    return None

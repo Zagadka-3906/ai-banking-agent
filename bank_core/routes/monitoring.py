@@ -25,6 +25,7 @@ from bank_core.payments import (
 from bank_core.persistence import (
     ledger_store_status,
 )
+from bank_core.task_scheduler import scheduler_status
 from sandbox import sandbox_health
 from security import (
     SecurityError,
@@ -54,7 +55,7 @@ def healthz():
 
 @router.get("/api/v1/security/health")
 def security_health_endpoint():
-    return {"code": 200, **security_health(), "sandbox": sandbox_health(), "ledger_persistence": ledger_store_status()}
+    return {"code": 200, **security_health(), "sandbox": sandbox_health(), "ledger_persistence": ledger_store_status(), "task_scheduler": scheduler_status()}
 
 
 class SecuritySignalRequest(StrictModel):

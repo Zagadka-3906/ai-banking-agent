@@ -25,9 +25,9 @@ CARDS: dict[str, list[dict[str, Any]]] = {
 # Mock PANs live in a separate, read-only vault.  The ledger only stores the
 # opaque reference and a masked projection; never put a full PAN or PIN here.
 MOCK_CARD_VAULT: dict[str, dict[str, str]] = {
-    "MOCK-PAN-001": {"card_number": "6222020000023082", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
-    "MOCK-PAN-002": {"card_number": "4111111111111111", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
-    "MOCK-PAN-003": {"card_number": "5555555555554444", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "招商银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
+    "MOCK-PAN-001": {"card_number": "6222020000023082", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "安言演示银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
+    "MOCK-PAN-002": {"card_number": "4111111111111111", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "安言演示银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
+    "MOCK-PAN-003": {"card_number": "5555555555554444", "owner_user_id": "user_zhang", "owner_name": "张三", "issuer_name": "安言演示银行", "pin_hash": "$argon2id$v=19$m=65536,t=3,p=4$tUBB40MvKGEJJke2Q8yCIA$P2uj5W+fw/Y1HHA2wuOHFeo6i3FyX+NNLfkAOASpwkU"},
 }
 CARD_DISCLOSURE_FAILURES: dict[tuple[str, str], dict[str, Any]] = {}
 # Self-service issuance needs a ceiling like every other collection here.  Cards

@@ -45,9 +45,11 @@ from bank_core.models import (
 from bank_core.operations import (
     hash_operation_context,
     pending_transfer_amount,
+    transfer_risk_level,
 )
 from bank_core.payments import (
     charge_card_and_balance,
+    inbound_transaction,
     daily_spent,
     payment_card,
     record_card_spend,
@@ -207,7 +209,21 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
             raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "需要用户身份"})
         owner = x_user_id
         get_actor(owner, owner, action="TASK_RUN", request_id=request_id)
-    changed = []
+    changed = advance_due_tasks(owner=owner)
+    audit_event("TASK_RUN", user_id=owner, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"changed": len(changed)})
+    return {"code": 200, "data": changed}
+
+
+def advance_due_tasks(*, owner: Optional[str] = None) -> list[dict[str, Any]]:
+    """Move every due task one step: reminders complete, money waits for the user.
+
+    Shared by the explicit endpoint and Core's background scheduler, so a due
+    birthday order or renewal reminder advances without anyone calling the API.
+    Scheduled money movement never settles here: it stops at WAITING_USER until
+    the owner approves it again.
+    """
+
+    changed: list[dict[str, Any]] = []
     with STATE_LOCK:
         for task in TASK_STORE.ready():
             if owner and task.owner_id != owner:
@@ -224,8 +240,7 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
                 continue
         if changed:
             persist_ledger()
-    audit_event("TASK_RUN", user_id=owner, decision="ALLOW", outcome="SUCCESS", request_id=request_id, metadata={"changed": len(changed)})
-    return {"code": 200, "data": changed}
+    return changed
 
 
 @router.get("/api/v1/tasks/{task_id}")
@@ -295,7 +310,7 @@ def task_precheck(task_id: str, req: TaskPrecheckRequest, request: Request = Non
         if schedule_row is not None and not schedule_row.get("card_id"):
             schedule_row["card_id"] = bound_card_id
         operation = "SCHEDULED_TRANSFER_SETTLE"
-        risk = "YELLOW" if round(daily_spent(actor) + pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2) <= 1000 else "RED"
+        risk = transfer_risk_level(actor, round(daily_spent(actor) + pending_transfer_amount(actor, exclude_schedule_id=payload.get("schedule_id")) + amount, 2), request_id=request_id)
     else:
         target_id, target_display, operation, risk = f"__ORDER_DRAFT__:{task.task_id}", str(payload.get("item") or "provider-mock"), "ORDER_DRAFT_SETTLE", "YELLOW"
         if target_display not in MOCK_MERCHANT_CATALOG or amount_to_cents(amount) != quote_cents(target_display):
@@ -398,6 +413,7 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
                     record_card_spend(actor, amount, card=paying_card)
                     txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
                     TRANSACTIONS.append({"tx_id": txn_id, "account_id": actor, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": "预约转账", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                    TRANSACTIONS.append(inbound_transaction(account_id=target_id, payer_name=account["name"], amount=amount, remark="预约转账"))
                     schedule["status"] = "SETTLED"
                     schedule["settled_at"] = datetime.now().isoformat()
                     result = {"execution_mode": "LEDGER", "transaction_id": txn_id, "transferred_amount": amount, "sender_balance": account["balance"]}

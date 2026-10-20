@@ -12,6 +12,7 @@ from planner import (
     Intent,
     analyze_transactions,
     filter_transactions,
+    is_income,
     safe_analysis_text,
 )
 from bank_agent.state import (
@@ -31,6 +32,7 @@ from bank_agent.verification import (
     valid_text_field,
     valid_wealth_collection,
 )
+from bank_agent.analysis_codegen import render_answer
 from bank_agent.rendering import (
     bill_scope_label,
     render_cards,
@@ -41,6 +43,35 @@ from bank_agent.rendering import (
 
 
 def responder_node(state: BankingAgentState) -> dict[str, Any]:
+    return _with_custom_analysis(state, _respond(state))
+
+
+def _with_custom_analysis(state: BankingAgentState, response: dict[str, Any]) -> dict[str, Any]:
+    """Lead a bill reply with the sandbox-computed answer to the user's question.
+
+    The sentence is rebuilt from the sandbox value here, so a tampered or stale
+    ``answer`` string in the result can never reach the user.
+    """
+
+    result = state.get("execution_result")
+    if state.get("final_response") or not isinstance(result, dict):
+        return response
+    if result.get("type") not in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}:
+        return response
+    custom = result.get("custom_analysis")
+    if not isinstance(custom, dict) or response.get("business_status") == "FAILED" or not response.get("final_response"):
+        return response
+    label = custom.get("label")
+    if not valid_text_field(label, max_length=40):
+        return response
+    answer = render_answer(str(custom.get("kind")), str(label), custom.get("value"))
+    if answer is None or answer != custom.get("answer"):
+        return response
+    lead = f"🧮 {answer}（由受限沙箱计算）"
+    return {**response, "final_response": lead + "\n\n" + str(response["final_response"])}
+
+
+def _respond(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response"):
         return {"final_response": state.get("final_response")}
     results = state.get("execution_results")
@@ -143,16 +174,24 @@ def responder_node(state: BankingAgentState) -> dict[str, Any]:
             return {"final_response": f"{scope_label}暂无{category}类别的交易记录。" if category else "在指定时间范围内暂无交易记录。"}
         if any(not isinstance(row, dict) or not finite_number(row.get("amount")) for row in rows):
             return response_validation_failure(state, "BILL_AMOUNT_INVALID")
-        total = sum(max(float(row["amount"]), 0.0) for row in rows)
-        refunds = sum(-min(float(row["amount"]), 0.0) for row in rows)
+        spending = [row for row in rows if not is_income(row)]
+        total = sum(max(float(row["amount"]), 0.0) for row in spending)
+        refunds = sum(-min(float(row["amount"]), 0.0) for row in spending)
+        income = sum(max(float(row["amount"]), 0.0) for row in rows if is_income(row))
         net = total - refunds
-        if not all(math.isfinite(value) for value in (total, refunds, net)):
+        if not all(math.isfinite(value) for value in (total, refunds, net, income)):
             return response_validation_failure(state, "BILL_TOTAL_INVALID")
-        lines = [f"- {row.get('time', '未知时间')} | {row.get('merchant', '未知商户')} | ¥{float(row.get('amount', 0) or 0):,.2f}" for row in rows]
+        lines = [
+            f"- {row.get('time', '未知时间')} | {row.get('merchant', '未知商户')} | "
+            + (f"+¥{float(row.get('amount', 0) or 0):,.2f}（入账）" if is_income(row) else f"¥{float(row.get('amount', 0) or 0):,.2f}")
+            for row in rows
+        ]
         category_label = f"{scope_label}{category or ''}：" if category or result.get("date_scope") == "CUSTOM" else ""
         summary = f"📋 {category_label}共 {len(rows)} 笔交易，合计支出 **¥{total:,.2f}**"
         if refunds > 0:
             summary += f"，退款 **¥{refunds:,.2f}**，净支出 **¥{net:,.2f}**"
+        if income > 0:
+            summary += f"，入账 **¥{income:,.2f}**"
         return {"final_response": summary + "：\n\n" + "\n".join(lines)}
     if rtype == Intent.BILL_ANALYSIS.value:
         if not isinstance(result.get("records", []), list):

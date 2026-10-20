@@ -200,6 +200,77 @@ def _group_spend(items: Any, group_key: Any, value_key: Any) -> dict[str, float]
     return buckets
 
 
+_MAX_TOP_ROWS = 20
+
+
+def _as_values(values: Any) -> list[str]:
+    if isinstance(values, (list, tuple, set)):
+        return [str(value) for value in values]
+    return [str(values)]
+
+
+def _filter_rows(items: Any, field: Any, values: Any) -> list[dict[str, Any]]:
+    """Rows whose ``field`` equals one of ``values`` exactly (pure)."""
+
+    wanted = set(_as_values(values))
+    return [item for item in items or [] if isinstance(item, dict) and str(item.get(field) or "其他") in wanted]
+
+
+def _match_rows(items: Any, field: Any, keyword: Any) -> list[dict[str, Any]]:
+    """Rows whose ``field`` contains ``keyword`` (pure, case-insensitive)."""
+
+    needle = str(keyword or "").casefold()
+    if not needle:
+        return []
+    return [item for item in items or [] if isinstance(item, dict) and needle in str(item.get(field) or "").casefold()]
+
+
+def _amount_between(items: Any, key: Any, low: Any = None, high: Any = None) -> list[dict[str, Any]]:
+    """Rows whose numeric ``key`` lies in [low, high]; ``None`` leaves a side open (pure)."""
+
+    lower = None if low is None else _as_finite_number(low)
+    upper = None if high is None else _as_finite_number(high)
+    rows = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        number = _as_finite_number(item.get(key))
+        if (lower is None or number >= lower) and (upper is None or number <= upper):
+            rows.append(item)
+    return rows
+
+
+def _top_rows(items: Any, key: Any, count: Any = 1) -> list[dict[str, Any]]:
+    """The ``count`` rows with the largest numeric ``key`` (pure, at most 20)."""
+
+    try:
+        limit = max(1, min(int(count), _MAX_TOP_ROWS))
+    except (TypeError, ValueError):
+        limit = 1
+    rows = [item for item in items or [] if isinstance(item, dict)]
+    return sorted(rows, key=lambda item: _as_finite_number(item.get(key)), reverse=True)[:limit]
+
+
+def _extreme_key(mapping: Any, *, largest: bool) -> Any:
+    if not isinstance(mapping, dict) or not mapping:
+        return None
+    pairs = [(str(key), _as_finite_number(value)) for key, value in mapping.items()]
+    key, value = (max if largest else min)(pairs, key=lambda pair: pair[1])
+    return [key, round(value, 2)]
+
+
+def _max_key(mapping: Any) -> Any:
+    """``[key, value]`` of the largest value in a mapping, or ``None`` (pure)."""
+
+    return _extreme_key(mapping, largest=True)
+
+
+def _min_key(mapping: Any) -> Any:
+    """``[key, value]`` of the smallest value in a mapping, or ``None`` (pure)."""
+
+    return _extreme_key(mapping, largest=False)
+
+
 _SAFE_FUNCTIONS = {
     "abs": abs,
     "min": min,
@@ -212,6 +283,12 @@ _SAFE_FUNCTIONS = {
     "spend_total": _spend_total,
     "refund_total": _refund_total,
     "group_spend": _group_spend,
+    "filter_rows": _filter_rows,
+    "match_rows": _match_rows,
+    "amount_between": _amount_between,
+    "top_rows": _top_rows,
+    "max_key": _max_key,
+    "min_key": _min_key,
 }
 
 
@@ -389,68 +466,72 @@ def _allow_thread_fallback() -> bool:
     return os.getenv("BANK_SANDBOX_ALLOW_THREAD_FALLBACK", "0").lower() in {"1", "true", "yes"}
 
 
-def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
-    """Run the validated expression behind a short-lived isolation boundary.
+# A warm worker process is reused across calls.  Spawning a fresh interpreter
+# for every calculation cost ~75 ms per bill question (the expression itself
+# runs in microseconds).  The worker is still a separate, resource-limited
+# process; it is recycled after a bounded number of tasks so the cumulative
+# CPU limit of ``sandbox_limits`` is never the reason a healthy call fails, and
+# it is discarded on any timeout or crash.
+_POOL_LOCK = threading.Lock()
+_POOL: Any = None
+_POOL_FACTORY: Any = None
+_POOL_USES = 0
 
-    Uses a worker process. If process spawning fails or the worker dies,
-    expression execution fails closed. A thread fallback is available only
-    through the explicit BANK_SANDBOX_ALLOW_THREAD_FALLBACK diagnostic switch;
-    a thread has no isolation boundary and must not be used for normal runs.
-    """
 
-    executor: Any = None
-    using_process = True
+def _worker_max_tasks() -> int:
+    return env_int("BANK_SANDBOX_WORKER_MAX_TASKS", 50, 1, 1000)
+
+
+def _discard_pool(*, terminate: bool = False) -> None:
+    global _POOL, _POOL_USES
+    pool, _POOL, _POOL_USES = _POOL, None, 0
+    if pool is None:
+        return
+    if terminate:
+        _terminate_process_workers(pool)
     try:
+        pool.shutdown(wait=False, cancel_futures=True)
+    except TypeError:  # Python < 3.9 compatibility
+        pool.shutdown(wait=False)
+    except Exception:
+        pass
+
+
+def _process_pool() -> Any:
+    """Return the warm worker pool, creating or recycling it when needed."""
+
+    global _POOL, _POOL_FACTORY, _POOL_USES
+    if _POOL is not None and (_POOL_FACTORY is not ProcessPoolExecutor or _POOL_USES >= _worker_max_tasks()):
+        _discard_pool()
+    if _POOL is None:
         # Spawn avoids inheriting the gateway's address space and credentials;
         # it also makes the fixed resource budget predictable on POSIX hosts.
-        executor = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
-        future = executor.submit(_evaluate_os_worker, expression, safe_data)
-    except (PermissionError, OSError, RuntimeError) as exc:
-        if not _allow_thread_fallback():
-            _record_telemetry(executor="process", isolation="none", fallback_reason="submit_failure", failure=True)
-            if executor is not None:
-                executor.shutdown(wait=False, cancel_futures=True)
-            raise SandboxError("沙箱隔离进程不可用") from exc
-        # Managed environments may deny child-process spawning, and Windows
-        # spawn re-imports ``__main__``: a plain script without the
-        # ``if __name__ == "__main__"`` guard fails at submit time.  Retain the
-        # AST/builtins/timeout boundary on a monitored thread instead.
-        reason = "broken_process_pool" if isinstance(exc, BrokenProcessPool) else "submit_failure"
-        _record_telemetry(
-            executor="thread_fallback", isolation="none", fallback_reason=reason, fallback=True
-        )
-        executor = _thread_fallback_executor(executor)
-        using_process = False
-        try:
-            future = executor.submit(_evaluate_worker, expression, safe_data)
-        except Exception as thread_exc:
-            _record_telemetry(executor="thread_fallback", failure=True)
-            raise SandboxError(f"沙箱执行失败: {type(thread_exc).__name__}") from thread_exc
+        _POOL = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+        _POOL_FACTORY = ProcessPoolExecutor
+    _POOL_USES += 1
+    return _POOL
+
+
+def shutdown_sandbox_worker() -> None:
+    """Stop the warm worker (process exit, tests)."""
+
+    with _POOL_LOCK:
+        _discard_pool(terminate=True)
+
+
+def _run_on_thread(expression: str, safe_data: Any, timeout: float, *, reason: str, cause: BaseException) -> Any:
+    """Diagnostic-only fallback; a thread has no isolation boundary."""
+
+    if not _allow_thread_fallback():
+        _record_telemetry(executor="process", isolation="none", fallback_reason=reason, failure=True)
+        raise SandboxError("沙箱隔离进程不可用") from cause
+    # Managed environments may deny child-process spawning, and Windows spawn
+    # re-imports ``__main__``: a plain script without the ``if __name__ ==
+    # "__main__"`` guard fails at submit time.  Retain the AST/builtins/timeout
+    # boundary on a monitored thread instead.
+    _record_telemetry(executor="thread_fallback", isolation="none", fallback_reason=reason, fallback=True)
+    executor = _thread_fallback_executor(None)
     try:
-        result = future.result(timeout=timeout)
-        if using_process:
-            _record_telemetry(executor="process", isolation="process", process_success=True)
-        else:
-            _record_telemetry(executor="thread_fallback", thread_success=True)
-        return result
-    except FutureTimeoutError as exc:
-        future.cancel()
-        if using_process:
-            _terminate_process_workers(executor)
-        _record_telemetry(
-            executor="process" if using_process else "thread_fallback",
-            timeout=True,
-        )
-        raise SandboxError("沙箱执行超时") from exc
-    except BrokenProcessPool:
-        if not _allow_thread_fallback():
-            _record_telemetry(executor="process", isolation="none", fallback_reason="broken_process_pool", failure=True)
-            raise SandboxError("沙箱隔离进程不可用")
-        _record_telemetry(
-            executor="thread_fallback", isolation="none", fallback_reason="broken_process_pool", fallback=True
-        )
-        executor = _thread_fallback_executor(executor)
-        using_process = False
         try:
             future = executor.submit(_evaluate_worker, expression, safe_data)
         except Exception as exc:
@@ -458,8 +539,6 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
             raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
         try:
             result = future.result(timeout=timeout)
-            _record_telemetry(executor="thread_fallback", thread_success=True)
-            return result
         except FutureTimeoutError as exc:
             future.cancel()
             _record_telemetry(executor="thread_fallback", timeout=True)
@@ -467,19 +546,53 @@ def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
         except Exception as exc:
             _record_telemetry(executor="thread_fallback", failure=True)
             raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
-    except Exception as exc:
-        _record_telemetry(
-            executor="process" if using_process else "thread_fallback",
-            failure=True,
-        )
-        raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
+        _record_telemetry(executor="thread_fallback", thread_success=True)
+        return result
     finally:
-        # A process timed out above has been terminated. Threads cannot be
-        # forcibly stopped; their fallback retains only logical/API bounds.
         try:
             executor.shutdown(wait=False, cancel_futures=True)
-        except TypeError:  # Python < 3.9 compatibility
+        except TypeError:
             executor.shutdown(wait=False)
+
+
+def _run_in_worker(expression: str, safe_data: Any, timeout: float) -> Any:
+    """Run the validated expression in the warm, resource-limited worker.
+
+    If process spawning fails or the worker dies, execution fails closed. A
+    thread fallback is available only through the explicit
+    BANK_SANDBOX_ALLOW_THREAD_FALLBACK diagnostic switch.  Calls are serialised
+    so one caller's timeout (which kills the worker) cannot break another's.
+    """
+
+    with _POOL_LOCK:
+        for attempt in (0, 1):
+            reused = _POOL is not None and _POOL_FACTORY is ProcessPoolExecutor
+            try:
+                future = _process_pool().submit(_evaluate_os_worker, expression, safe_data)
+            except (PermissionError, OSError, RuntimeError) as exc:
+                _discard_pool()
+                reason = "broken_process_pool" if isinstance(exc, BrokenProcessPool) else "submit_failure"
+                return _run_on_thread(expression, safe_data, timeout, reason=reason, cause=exc)
+            try:
+                result = future.result(timeout=timeout)
+            except FutureTimeoutError as exc:
+                future.cancel()
+                _discard_pool(terminate=True)
+                _record_telemetry(executor="process", timeout=True)
+                raise SandboxError("沙箱执行超时") from exc
+            except BrokenProcessPool as exc:
+                _discard_pool(terminate=True)
+                if reused and attempt == 0:
+                    # A warm worker can die between calls; one fresh spawn is
+                    # tried before the call is reported as unavailable.
+                    continue
+                return _run_on_thread(expression, safe_data, timeout, reason="broken_process_pool", cause=exc)
+            except Exception as exc:
+                _record_telemetry(executor="process", failure=True)
+                raise SandboxError(f"沙箱执行失败: {type(exc).__name__}") from exc
+            _record_telemetry(executor="process", isolation="process", process_success=True)
+            return result
+    raise SandboxError("沙箱隔离进程不可用")  # pragma: no cover - loop always returns
 
 
 def _evaluate_expression(expression: str, data: Any, *, timeout_seconds: Optional[float] = None) -> Any:

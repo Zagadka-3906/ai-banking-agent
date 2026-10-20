@@ -154,6 +154,19 @@ class BankClient:
             read_only=True,
         ).json()
 
+    def renew_session(self, session_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
+        """Obtain a successor credential for a still-live login (same login id).
+
+        Logging out of that login revokes the successor too, so a channel that
+        keeps renewing never outlives the user's own sign-out.
+        """
+
+        return self._request(
+            "POST",
+            "auth/session/renew",
+            headers=self._headers(request_id=request_id, session_token=session_token),
+        ).json()
+
     def confirm(self, auth_token: str, *, request_id: Optional[str] = None) -> dict[str, Any]:
         """Record the user's explicit confirmation for a yellow/red operation.
 

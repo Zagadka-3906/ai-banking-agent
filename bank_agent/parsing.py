@@ -252,6 +252,12 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
         slots.get("category") and "消费" in text and any(x in text for x in ("查", "看"))
     ) or (
         "境外" in text and any(x in text for x in ("怎么回事", "什么情况", "是什么消费", "是什么交易"))
+    ) or (
+        # Open spend questions answered by sandbox-generated code
+        # (bank_agent.analysis_codegen): which month/day/merchant, the largest
+        # payment, an average, or a count above a threshold.
+        re.search(r"花|消费|支出|开销", text)
+        and re.search(r"哪(?:个|一个)?月|哪(?:一)?天|哪(?:个|家)(?:商户|商家|店)|在哪(?:里|儿)?花|最大(?:的)?一笔|最贵|平均(?:每笔|一笔|单笔)|(?:超过|大于|高于)\d+.{0,6}(?:几笔|多少笔|几次)", text)
     ):
         intent = Intent.BILL_ANALYSIS.value
     elif amount is None and TRANSFER_HISTORY.search(text):

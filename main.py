@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 # Name this process before ``security`` is imported: it selects Core's own
 # audit file, separate from the Gateway's chain (see ``audit_log_path``).
@@ -26,6 +27,7 @@ from fastapi.responses import JSONResponse
 
 from bank_core import persistence
 from bank_core.http_edge import API_VERSION, request_safety_middleware
+from bank_core.task_scheduler import start_scheduler, stop_scheduler
 from bank_core.routes import (
     accounts,
     approvals,
@@ -112,10 +114,23 @@ from security import (  # noqa: F401
 
 logger = logging.getLogger("mock_banking.core")
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Due reminders and birthday orders advance on their own; the period comes
+    # from BANK_TASK_SCHEDULER_SECONDS (0 disables it).
+    start_scheduler()
+    try:
+        yield
+    finally:
+        stop_scheduler()
+
+
 app = FastAPI(
     title="Mock Bank Core API",
     description="银行 AI 智能体受控沙箱环境（含分级权限与审计）",
     version=API_VERSION,
+    lifespan=_lifespan,
 )
 app.middleware("http")(request_safety_middleware)
 

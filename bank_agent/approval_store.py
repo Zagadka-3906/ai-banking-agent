@@ -134,6 +134,8 @@ class Approval:
 
 APPROVAL_STORE_VERSION = 1
 _APPROVAL_STORE_BLOCKED = False
+_APPROVAL_WRITE_FAILURES = 0
+_APPROVAL_LAST_WRITE_FAILED = False
 _APPROVAL_STORE_LOAD_SUMMARY: dict[str, Any] = {}
 
 
@@ -161,7 +163,7 @@ def _approval_store_target() -> Optional[str]:
 def persist_approvals_locked(approvals: Mapping[str, Approval]) -> None:
     """Write the live approvals atomically.  Caller holds ``self._lock``."""
 
-    global _APPROVAL_STORE_BLOCKED
+    global _APPROVAL_WRITE_FAILURES, _APPROVAL_LAST_WRITE_FAILED
     target = _approval_store_target()
     if not target or _APPROVAL_STORE_BLOCKED:
         return
@@ -193,8 +195,12 @@ def persist_approvals_locked(approvals: Mapping[str, Approval]) -> None:
             pass  # best effort; Windows ACLs are not POSIX modes
         os.replace(temporary, target)
     except OSError:
-        _APPROVAL_STORE_BLOCKED = True
-        logger.exception("Unable to persist the approval registry")
+        # Transient: the next approval change rewrites the full registry.
+        _APPROVAL_WRITE_FAILURES += 1
+        _APPROVAL_LAST_WRITE_FAILED = True
+        logger.exception("Unable to persist the approval registry; will retry on the next change")
+    else:
+        _APPROVAL_LAST_WRITE_FAILED = False
 
 
 def load_approval_store() -> dict[str, Any]:
@@ -259,5 +265,7 @@ def approval_store_status() -> dict[str, Any]:
         "file_loaded_approvals": _APPROVAL_STORE_LOAD_SUMMARY.get("loaded_approvals", 0),
         "file_rejected": bool(_APPROVAL_STORE_LOAD_SUMMARY.get("rejected")),
         "writes_frozen": _APPROVAL_STORE_BLOCKED,
+        "last_write_failed": _APPROVAL_LAST_WRITE_FAILED,
+        "write_failures": _APPROVAL_WRITE_FAILURES,
         "integrity_keyed": AUTH_SECRET_CONFIGURED,
     }

@@ -72,6 +72,8 @@ def reset_state() -> None:
     """
 
     persistence._LEDGER_STORE_BLOCKED = False
+    persistence._LEDGER_WRITE_FAILURES = 0
+    persistence._LEDGER_LAST_WRITE_FAILED = False
     with STATE_LOCK:
         ACCOUNTS.clear()
         ACCOUNTS.update(deepcopy(_INITIAL_ACCOUNTS))

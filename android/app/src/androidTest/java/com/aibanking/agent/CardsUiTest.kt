@@ -83,7 +83,7 @@ class CardsUiTest {
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { ui.onAllNodesWithText("户名：张三").fetchSemanticsNodes().isNotEmpty() }
         check(ui.onAllNodesWithText("户名：张三").fetchSemanticsNodes().isNotEmpty())
         check(ui.onAllNodesWithText("卡号：6222020000023082").fetchSemanticsNodes().isNotEmpty())
-        check(ui.onAllNodesWithText("开户行：招商银行").fetchSemanticsNodes().isNotEmpty())
+        check(ui.onAllNodesWithText("开户行：安言演示银行").fetchSemanticsNodes().isNotEmpty())
         ui.onNodeWithContentDescription("返回").performClick()
         ui.onNodeWithTag("${UiTags.CARD_DETAIL}:CARD-001").performClick()
         check(ui.onAllNodesWithText("6222020000023082").fetchSemanticsNodes().isEmpty())

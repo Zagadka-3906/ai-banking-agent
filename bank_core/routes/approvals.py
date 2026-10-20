@@ -50,6 +50,7 @@ from bank_core.operations import (
     pending_transfer_amount,
     require_token_subject,
     resolve_subscription,
+    transfer_risk_level,
     validate_operation_name,
     validate_split_participants,
 )
@@ -114,7 +115,7 @@ def risk_precheck(req: PrecheckRequest, request: Request = None, x_user_id: Opti
         current_spent = daily_spent(req.from_user)
         pending = pending_transfer_amount(req.from_user)
         accumulated_after = round(current_spent + pending + cents / 100.0, 2)
-        risk_level = "YELLOW" if accumulated_after <= 1000.0 else "RED"
+        risk_level = transfer_risk_level(req.from_user, accumulated_after, request_id=request_id)
         required_actions = ["USER_CLICK_CONFIRM"] if risk_level == "YELLOW" else ["USER_CLICK_CONFIRM", "SMS_OTP", "FACE_RECOGNITION"]
         token, payload = issue_auth_token(from_user=req.from_user, target_id=target_id, target_display=receiver["name"], amount=req.amount, remark=remark, risk_level=risk_level, required_actions=required_actions, operation="TRANSFER", session_token=request_session_token(request))
     audit_event("RISK_PRECHECK", user_id=actor, risk_level=risk_level, decision="CHALLENGE", outcome="TOKEN_ISSUED", request_id=request_id, metadata={"jti": payload["jti"], "target_id": target_id, "amount_cents": cents, "daily_accumulated_after_cents": int(round(accumulated_after * 100)), "required_actions": required_actions})

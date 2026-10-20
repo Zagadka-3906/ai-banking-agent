@@ -18,6 +18,7 @@ from planner import (
 )
 from security import audit_event
 from bank_agent import runtime
+from bank_agent.analysis_codegen import answer_bill_question
 from bank_agent.state import (
     BankingAgentState,
 )
@@ -63,6 +64,7 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             raise RuntimeError(error_message(response))
         rows = response_json(response).get("data", [])
         rows = filter_transactions(rows, state.get("date_scope") or "ALL", date_range=state.get("date_range"))
+        date_scoped_rows = list(rows)
         slots = state.get("slots")
         if not isinstance(slots, dict):
             slots = {}
@@ -97,6 +99,13 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             result["category"] = category
         if specific_overseas:
             result["specific_query"] = "OVERSEAS_TRANSACTION"
+        else:
+            # Open questions ("哪个月花得最多") get an answer computed by
+            # generated code in the read-only sandbox over these same rows.
+            custom = answer_bill_question(question, rows, all_rows=date_scoped_rows,
+                                          user_id=user_id, request_id=state.get("request_id"))
+            if custom is not None:
+                result["custom_analysis"] = custom
         return result
     if intent == Intent.WEALTH_HOLDINGS.value:
         response = runtime._http("GET", f"wealth/holdings/{user_id}", state=state, headers={"X-User-Id": user_id})

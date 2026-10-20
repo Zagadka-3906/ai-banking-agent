@@ -295,6 +295,8 @@ class ConversationService(TurnsMixin, ApprovalsMixin):
         # that deliberately feeds a forged registry must not leave every later
         # test frozen (mirrors ``reset_security_state``).
         approval_store._APPROVAL_STORE_BLOCKED = False
+        approval_store._APPROVAL_WRITE_FAILURES = 0
+        approval_store._APPROVAL_LAST_WRITE_FAILED = False
 
 
 SERVICE = ConversationService()

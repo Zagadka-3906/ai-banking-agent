@@ -11,6 +11,7 @@ from bank_security.authorization import AUTH_TOKENS, FACE_CHALLENGES
 from bank_security.circuit import (
     BEHAVIOR_RULES,
     BEHAVIOR_STATE,
+    BEHAVIOR_STEP_UP_RULES,
     SECURITY_STATE,
     behavior_large_amount_cents,
     behavior_risk_threshold,
@@ -55,6 +56,7 @@ def security_health() -> dict[str, Any]:
                 "window_seconds": behavior_window_seconds(),
                 "large_amount_cents": behavior_large_amount_cents(),
                 "rules": [rule["rule_id"] for rule in BEHAVIOR_RULES],
+                "step_up_rules": [rule["rule_id"] for rule in BEHAVIOR_STEP_UP_RULES],
                 "tracked_principals": len(BEHAVIOR_STATE),
                 "locked_principals": sum(1 for state in SECURITY_STATE.values() if float(state.get("locked_until", 0)) > now),
             },
@@ -75,6 +77,6 @@ def security_health() -> dict[str, Any]:
                 "min_password_length": MIN_PASSWORD_LENGTH,
                 "otp_required": os.getenv("BANK_LOGIN_REQUIRE_OTP", "0").lower() in {"1", "true", "yes", "on"},
                 # Whether a deployment refuses bare identity headers on writes.
-                "session_required_for_writes": os.getenv("BANK_REQUIRE_SESSION", "0").lower() in {"1", "true", "yes", "on"},
+                "session_required_for_writes": os.getenv("BANK_REQUIRE_SESSION", "1").lower() in {"1", "true", "yes", "on"},
             },
         }

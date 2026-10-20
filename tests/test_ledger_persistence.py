@@ -212,3 +212,32 @@ def test_health_reports_the_ledger_store(client):
     body = client.get("/api/v1/security/health").json()
     assert body["ledger_persistence"]["file_configured"] is False
     assert body["ledger_persistence"]["mode"] == "memory_only"
+
+
+def test_a_failed_write_is_retried_on_the_next_change(client, store_path, monkeypatch):
+    # One transient error (an antivirus holding the file, say) used to freeze
+    # persistence for the rest of the process; every later transfer was then
+    # lost on restart.  The next change must rewrite the snapshot instead.
+    import os
+
+    real_replace = os.replace
+    calls = {"count": 0}
+
+    def flaky_replace(source, target):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise PermissionError("file locked")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(persistence.os, "replace", flaky_replace)
+    _yellow_transfer(client)
+    status = main.ledger_store_status()
+    assert status["writes_frozen"] is False
+    assert status["last_write_failed"] is True
+    assert status["write_failures"] == 1
+
+    second = _yellow_transfer(client)
+    status = main.ledger_store_status()
+    assert status["last_write_failed"] is False
+    snapshot = json.loads(store_path.read_text(encoding="utf-8"))
+    assert snapshot["state"]["ACCOUNTS"]["user_zhang"]["balance"] == second["sender_balance"]
