@@ -108,6 +108,8 @@ private fun successfulOutcome(message: ChatMessage): OperationOutcome {
 }
 
 internal fun outcomeFor(problem: OperationProblem): OperationOutcome = when {
+    // Guidance stays client-authored: the screen already shows problem.message verbatim,
+    // and this text must never carry a code the user typed.
     problem.code == "MFA_FAILED" -> OperationOutcome("验证未通过", "待重新验证", "请核对短信验证码或设备验证提示，返回原审批卡重新验证。", OutcomeTone.FAILURE)
     problem.code == "DEVICE_VERIFICATION_FAILED" -> OperationOutcome("设备验证未完成", "待重新验证", "请核对设备验证提示，返回原审批卡重新验证。", OutcomeTone.FAILURE)
     problem.code == "CIRCUIT_OPEN" -> OperationOutcome("操作已暂停", "暂时不可办理", "连续验证失败后操作暂停，请按提示稍后再试。", OutcomeTone.FAILURE)

@@ -32,7 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -157,7 +156,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                 },
                 navigationIcon = {
                     IconButton(onClick = viewModel::closeCards) {
-                        Icon(Icons.Default.Close, contentDescription = "返回聊天")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回聊天")
                     }
                 },
             )

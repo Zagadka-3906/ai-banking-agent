@@ -8,7 +8,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.printToLog
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aibanking.agent.ui.UiTags
@@ -38,7 +38,8 @@ class AntiFraudUiTest {
         assertTrue(ui.onAllNodesWithText("境外", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(ui.onAllNodesWithText("红色", substring = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(ui.onAllNodesWithTag(UiTags.APPROVAL_OTP).fetchSemanticsNodes().isNotEmpty())
-        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextInput(OTP)
+        // The debug build fills the demo code in on its own, so replace rather than append.
+        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextReplacement(OTP)
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()

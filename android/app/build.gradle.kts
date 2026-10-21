@@ -134,6 +134,9 @@ android {
         buildConfigField("String", "GATEWAY_BASE_URL", "\"$gatewayUrl\"")
         buildConfigField("String", "CORE_BASE_URL", "\"$coreUrl\"")
         buildConfigField("boolean", "FORCE_LOCAL_NETWORK_PERMISSION", forceLocalNetworkPermission.toString())
+        // The demo sends no real SMS: a red approval fetches its one-time demo
+        // code and fills it in, as a phone reading the SMS would.
+        buildConfigField("boolean", "AUTO_FILL_DEMO_OTP", "true")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -156,6 +159,8 @@ android {
             // This isolated variant always uses loopback, even when a developer
             // opts their normal HTTPS endpoints into LAN permission handling.
             buildConfigField("boolean", "FORCE_LOCAL_NETWORK_PERMISSION", "false")
+            // Regression tests drive the code field themselves (fixed and wrong codes).
+            buildConfigField("boolean", "AUTO_FILL_DEMO_OTP", "false")
         }
     }
     testBuildType = if (scenarioTests) "scenario" else "debug"

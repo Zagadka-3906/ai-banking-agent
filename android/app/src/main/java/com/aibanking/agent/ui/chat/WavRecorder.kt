@@ -33,6 +33,9 @@ internal class WavRecorder(private val onLimit: () -> Unit) {
     private var worker: Thread? = null
     private val pcm = ByteArrayOutputStream()
     @Volatile private var running = false
+    /** Loudness of the latest buffer, 0..1, for the recording waveform. */
+    @Volatile var level = 0f
+        private set
 
     /** Caller must hold RECORD_AUDIO (requested by the voice button just before). */
     @SuppressLint("MissingPermission")
@@ -53,7 +56,10 @@ internal class WavRecorder(private val onLimit: () -> Unit) {
             val buffer = ByteArray(minimum)
             while (running) {
                 val read = recorder.read(buffer, 0, buffer.size)
-                if (read > 0) synchronized(pcm) { pcm.write(buffer, 0, minOf(read, limitBytes - pcm.size())) }
+                if (read > 0) {
+                    synchronized(pcm) { pcm.write(buffer, 0, minOf(read, limitBytes - pcm.size())) }
+                    level = pcmLevel(buffer, read)
+                }
                 if (pcm.size() >= limitBytes) { running = false; onLimit() }
             }
         }, "speech-recorder").also { it.start() }
@@ -73,4 +79,20 @@ internal class WavRecorder(private val onLimit: () -> Unit) {
 
     /** Discard without returning audio (screen left, voice disabled). */
     fun cancel() { stop() }
+}
+
+/** Root-mean-square loudness of 16-bit little-endian PCM, scaled so normal speech fills most of 0..1. */
+internal fun pcmLevel(buffer: ByteArray, length: Int): Float {
+    var sum = 0.0
+    var samples = 0
+    var index = 0
+    while (index + 1 < length) {
+        val sample = (buffer[index].toInt() and 0xFF) or (buffer[index + 1].toInt() shl 8)
+        sum += sample.toDouble() * sample
+        samples++
+        index += 2
+    }
+    if (samples == 0) return 0f
+    val rms = kotlin.math.sqrt(sum / samples) / 32768.0
+    return (rms * 6).coerceIn(0.0, 1.0).toFloat()
 }

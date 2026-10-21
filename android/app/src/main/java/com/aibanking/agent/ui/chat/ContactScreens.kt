@@ -97,7 +97,7 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 navigationIcon = {
                     IconButton(onClick = viewModel::closeContacts) {
-                        BankIcon(BankIconKind.Close, contentDescription = "返回聊天")
+                        BankIcon(BankIconKind.ArrowBack, contentDescription = "返回聊天")
                     }
                 },
                 actions = {

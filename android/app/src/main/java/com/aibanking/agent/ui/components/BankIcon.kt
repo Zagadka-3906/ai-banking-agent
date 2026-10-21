@@ -15,7 +15,7 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 
 /** A small original vector family with consistent 24-unit geometry and rounded strokes. */
-enum class BankIconKind { Home, Chat, Card, Chart, People, ArrowBack, ArrowForward, Send, Add, Search, Shield, Check, Close, More, Logout, Refresh, Bank, Transfer, Wallet, Settings, Scan, Eye, Mic, Menu, Stop, ArrowUp, Task }
+enum class BankIconKind { Home, Chat, Card, Chart, People, ArrowBack, ArrowForward, Send, Add, Search, Shield, Check, Close, More, Logout, Refresh, Bank, Transfer, Wallet, Settings, Scan, Eye, Mic, Menu, Stop, ArrowUp, Task, Keyboard }
 
 @Composable
 fun BankIcon(kind: BankIconKind, modifier: Modifier = Modifier, tint: Color = LocalContentColor.current, contentDescription: String? = null) {
@@ -48,6 +48,7 @@ fun BankIcon(kind: BankIconKind, modifier: Modifier = Modifier, tint: Color = Lo
             BankIconKind.Stop -> "M8 7 H16 Q17 7 17 8 V16 Q17 17 16 17 H8 Q7 17 7 16 V8 Q7 7 8 7"
             BankIconKind.ArrowUp -> "M12 20 V4 M5 11 L12 4 L19 11"
             BankIconKind.Task -> "M9 4 H15 V7 H9 Z M7 5 H5 V21 H19 V5 H17 M8 13 L11 16 L16 10"
+            BankIconKind.Keyboard -> "M4 6 H20 Q22 6 22 8 V16 Q22 18 20 18 H4 Q2 18 2 16 V8 Q2 6 4 6 M6 10 H6.1 M10 10 H10.1 M14 10 H14.1 M18 10 H18.1 M8 14 H16"
         }
         ImageVector.Builder(kind.name, 24.dp, 24.dp, 24f, 24f).apply {
             addPath(pathData = PathParser().parsePathString(data).toNodes(), fill = null, stroke = SolidColor(Color.Black), strokeLineWidth = 1.75f, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)

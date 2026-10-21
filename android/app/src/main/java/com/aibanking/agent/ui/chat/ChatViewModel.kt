@@ -1,5 +1,6 @@
 package com.aibanking.agent.ui.chat
 
+import com.aibanking.agent.BuildConfig
 import android.app.Application
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
@@ -594,6 +595,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         persistMessages()
         if (envelope.businessStatus == "PENDING_RECONCILIATION") reconcileMessage(messageId)
         if (updateConversation && envelope.approval == null) refreshSuggestions()
+        if (envelope.approval?.mfaRequired == true) autoFillDemoOtp()
     }
 
     /**
@@ -830,6 +832,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Fetch and fill the demo code for a red approval; the demo sends no real SMS. */
+    private fun autoFillDemoOtp() {
+        if (BuildConfig.AUTO_FILL_DEMO_OTP && _state.value.otp.isEmpty()) requestDemoOtp()
+    }
+
     fun requestDemoOtp() {
         val approval = _state.value.pending ?: return
         if (!approval.mfaRequired || _state.value.busy) return
@@ -906,6 +913,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(busy = false, error = failure.message, otp = "", activeStages = emptyList(),
                 lastProblem = OperationProblem(failure.message, failure.code, failure.httpStatus))
         }
+        // A rejected code is consumed; the card still waits, so fill a fresh one.
+        if (failure.code == "MFA_FAILED" && _state.value.pending?.mfaRequired == true) autoFillDemoOtp()
     }
 
     /**

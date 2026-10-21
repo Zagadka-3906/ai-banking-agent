@@ -339,14 +339,19 @@ private fun ChatHome(
     // Keep the newest bubble in view.  A LazyColumn does not follow appended
     // items on its own, so without this the answer to a question scrolls in
     // below the fold and the user sees nothing happen.
+    // The assistant "thinking" row sits where the reply will appear. Fetching a
+    // demo code under an approval card is not a turn, so it shows no row.
+    val thinking = state.busy && (state.pending == null || state.activeStages.isNotEmpty())
     LaunchedEffect(
         state.messages.size,
         state.pending,
         state.quiz?.answered,
         state.messages.lastOrNull()?.text,
         state.messages.lastOrNull()?.traceId,
+        thinking,
     ) {
-        val itemCount = state.messages.size + (if (state.pending != null) 1 else 0) + (if (state.quiz != null) 1 else 0) + (if (showWelcome) 1 else 0)
+        val itemCount = state.messages.size + (if (state.pending != null) 1 else 0) + (if (state.quiz != null) 1 else 0) +
+            (if (showWelcome) 1 else 0) + (if (thinking) 1 else 0)
         if (itemCount > 0 && (!showWelcome || state.pending != null)) {
             snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= itemCount }
             listState.animateScrollToItem(itemCount - 1)
@@ -432,18 +437,10 @@ private fun ChatHome(
                         RiskQuizPanel(quiz, state.busy, viewModel::onQuizAnswer, viewModel::giveUpQuiz)
                     }
                 }
-            }
-            AnimatedVisibility(state.busy) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    ThinkingMark()
-                    ShimmerGradientText("安言正在为您处理…", LocalBankSemanticColors.current.brandGradientColors,
-                        style = MaterialTheme.typography.bodyMedium)
+                if (thinking) {
+                    item(key = "thinking") {
+                        ThinkingReply(state.activeStages, Modifier.animateItem().riseIn(rise = 10.dp, durationMillis = 260))
+                    }
                 }
             }
             state.lastProblem?.let {
@@ -451,9 +448,6 @@ private fun ChatHome(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp).testTag(UiTags.OPEN_FAILURE))
             }
             // Predicted next requests stay directly above the editor. A tap sends
-            if (state.busy && state.activeStages.isNotEmpty()) {
-                ReplyPanel(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) { WorkflowProgress(state.activeStages) }
-            }
             // immediately; write operations still enter the server approval flow.
             if (state.suggestions.isNotEmpty() && state.quiz == null) {
                 Column(
@@ -578,6 +572,22 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
     }
 }
 
+/** The assistant's place in the conversation while it works: its mark turns and the steps fill in. */
+@Composable
+private fun ThinkingReply(stages: List<com.aibanking.agent.data.StageProgress>, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("thinking_reply"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.padding(top = 2.dp)) { ThinkingMark() }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ShimmerGradientText("安言正在为您处理…", LocalBankSemanticColors.current.brandGradientColors,
+                style = MaterialTheme.typography.bodyLarge)
+            if (stages.isNotEmpty()) ReplyPanel { WorkflowProgress(stages) }
+        }
+    }
+}
+
 /** Slowly turning brand mark shown while a turn is being processed. */
 @Composable
 private fun ThinkingMark() {
@@ -586,7 +596,7 @@ private fun ThinkingMark() {
         val transition = rememberInfiniteTransition(label = "thinking")
         transition.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "spin").value
     } else 0f
-    BankGradientMark(Modifier.size(22.dp).rotate(angle))
+    BankGradientMark(Modifier.size(26.dp).rotate(angle))
 }
 
 @Composable
@@ -841,29 +851,35 @@ private fun InputRow(
 ) {
     val focus = LocalFocusManager.current
     val send = { if (enabled) { focus.clearFocus(); onSend() } }
+    val voice = rememberVoiceInput(voiceEnabled, captureVoiceResult, cloudSpeechAvailable, transcribeCloud)
     Column(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 8.dp)) {
         // One rounded composer holding the text, the microphone and the send button.
         Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextField(
-                    value = value, onValueChange = onValueChange,
-                    placeholder = { Text("问问安言", style = MaterialTheme.typography.bodyLarge) },
-                    textStyle = MaterialTheme.typography.bodyLarge,
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                        disabledContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
-                        disabledIndicatorColor = Color.Transparent,
-                        cursorColor = LocalBankSemanticColors.current.inputFocus,
-                    ),
-                    modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT), maxLines = 5,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { send() }),
-                )
+                // Voice mode trades the text field for the hold-to-talk bar; the
+                // recognised text comes back here for review, so the send button stays.
+                if (voice.voiceMode) {
+                    HoldToTalkBar(voice, Modifier.weight(1f))
+                } else {
+                    TextField(
+                        value = value, onValueChange = onValueChange,
+                        placeholder = { Text("问问安言", style = MaterialTheme.typography.bodyLarge) },
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent,
+                            cursorColor = LocalBankSemanticColors.current.inputFocus,
+                        ),
+                        modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT), maxLines = 5,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { send() }),
+                    )
+                }
                 Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    VoiceInputButton(enabled = voiceEnabled, captureResult = captureVoiceResult,
-                        cloudAvailable = cloudSpeechAvailable, transcribeCloud = transcribeCloud)
+                    VoiceModeToggle(voice, voiceEnabled)
                     FilledIconButton(
                         onClick = send, enabled = enabled,
                         colors = IconButtonDefaults.filledIconButtonColors(

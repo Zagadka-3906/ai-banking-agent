@@ -1,7 +1,6 @@
 package com.aibanking.agent.ui.anim
 
 import android.graphics.BlurMaskFilter
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PathMeasure
@@ -9,7 +8,6 @@ import android.graphics.RectF
 import android.graphics.SweepGradient
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
@@ -38,8 +36,8 @@ fun RiskTier.glowColor(): Color = when (this) {
 }
 
 /**
- * Several neighbouring hues per tier: rotating them around the border is what
- * makes the light look alive rather than a flat outline (the Gemini look).
+ * Several neighbouring hues per tier, spread around the border by the sweep
+ * gradient so the light reads as a soft halo rather than a flat outline.
  */
 private fun RiskTier.glowPalette(): IntArray = when (this) {
     RiskTier.GREEN -> longArrayOf(0xFF34A853, 0xFF81C995, 0xFF00BFA5, 0xFFA8DAB5, 0xFF34A853)
@@ -70,11 +68,11 @@ private class GlowLayer(val strokeDp: Float, val blurDp: Float, val alpha: Float
 
 /**
  * A soft, living light around the screen in the colour of the risk tier, in the
- * manner of the Gemini input glow: a sweep gradient of neighbouring hues slowly
- * rotates along the border and is drawn as three blurred strokes (wide bloom,
- * middle glow, bright core). It never pops in - the ring grows from the middle
- * of the screen out to the edges while it fades up - and fades out when done.
- * A waiting approval keeps it on and gently breathing.
+ * manner of the Gemini input glow: a gradient of neighbouring hues along the
+ * border, drawn as three blurred strokes (wide bloom, middle glow, bright core).
+ * The light does not travel; it breathes. It never pops in - the ring grows from
+ * the middle of the screen out to the edges while it fades up - breathes, and
+ * fades out when done. A waiting approval keeps it breathing.
  *
  * Drawing only; it never takes touches. With system animations off the light
  * simply appears at the edges and disappears.
@@ -83,7 +81,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
     val motion = LocalBankMotionEnabled.current
     val intensity = remember { Animatable(0f) }
     val spread = remember { Animatable(1f) }
-    val rotation = remember { Animatable(0f) }
     // Events already on screen when composed (a restored conversation) or already
     // shown once never light up again.
     val shown = remember { mutableSetOf<String>().apply { signal?.key?.let(::add) } }
@@ -94,12 +91,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
             return@LaunchedEffect
         }
         coroutineScope {
-            // The hues travel around the border only while the light is visible.
-            // An infinite spec (not a loop) so UI tests can still reach idle.
-            val spin = if (motion) launch {
-                rotation.snapTo(0f)
-                rotation.animateTo(360f, infiniteRepeatable(tween(4200, easing = LinearEasing), RepeatMode.Restart))
-            } else null
             if (motion) {
                 spread.snapTo(0f)
                 intensity.snapTo(0f)
@@ -112,11 +103,18 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
                 intensity.snapTo(1f)
             }
             if (signal.sustained) {
-                if (motion) intensity.animateTo(0.8f, infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse))
+                // An infinite spec (not a loop) so UI tests can still reach idle.
+                if (motion) intensity.animateTo(0.55f, infiniteRepeatable(tween(1500, easing = FastOutSlowInEasing), RepeatMode.Reverse))
+            } else if (motion) {
+                // Two slow breaths, then the light fades away.
+                repeat(2) {
+                    intensity.animateTo(0.55f, tween(1100, easing = FastOutSlowInEasing))
+                    intensity.animateTo(1f, tween(1100, easing = FastOutSlowInEasing))
+                }
+                intensity.animateTo(0f, tween(1200, easing = FastOutSlowInEasing))
             } else {
-                delay(if (motion) 2200L else 2600L)
-                if (motion) intensity.animateTo(0f, tween(1200, easing = FastOutSlowInEasing)) else intensity.snapTo(0f)
-                spin?.cancel()
+                delay(2600L)
+                intensity.snapTo(0f)
             }
         }
     }
@@ -130,7 +128,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
             GlowLayer(strokeDp = 6f, blurDp = 4f, alpha = 1.00f), // bright core
         )
     }
-    val matrix = remember { Matrix() }
     val border = remember { BorderPath() }
     // Keep the last tier so the light can fade out after the approval is resolved.
     val lastTier = remember { arrayOfNulls<RiskTier>(1) }
@@ -143,8 +140,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
         val cx = size.width / 2f
         val cy = size.height / 2f
         val shader = SweepGradient(cx, cy, tier.glowPalette(), null)
-        matrix.setRotate(rotation.value, cx, cy)
-        shader.setLocalMatrix(matrix)
         val path = border.revealed(size.width, size.height, 40.dp.toPx(), spread.value)
         drawIntoCanvas { canvas ->
             layers.forEach { layer ->

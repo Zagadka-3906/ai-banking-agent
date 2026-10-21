@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -100,7 +100,7 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
             TopAppBar(
                 title = { Text("理财") },
                 navigationIcon = {
-                    IconButton(onClick = viewModel::closeWealth) { Icon(Icons.Default.Close, contentDescription = "返回聊天") }
+                    IconButton(onClick = viewModel::closeWealth) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回聊天") }
                 },
                 actions = {
                     Text(

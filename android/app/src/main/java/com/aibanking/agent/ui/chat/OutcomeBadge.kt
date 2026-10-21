@@ -59,17 +59,18 @@ internal fun OutcomeBadge(
             if (tone == OutcomeTone.PENDING) {
                 launch { spin.animateTo(360f, infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart)) }
             }
-            disc.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = 300f))
+            // A softer, slower spring: the disc settles instead of snapping in.
+            disc.animateTo(1f, spring(dampingRatio = 0.6f, stiffness = 140f))
         }
     }
     LaunchedEffect(tone, motion) {
         if (!motion) return@LaunchedEffect
-        delay(220)
-        stroke.animateTo(1f, tween(if (tone == OutcomeTone.FAILURE) 520 else 460, easing = FastOutSlowInEasing))
+        delay(420)
+        stroke.animateTo(1f, tween(if (tone == OutcomeTone.FAILURE) 860 else 820, easing = FastOutSlowInEasing))
         if (tone == OutcomeTone.SUCCESS) {
             repeat(2) {
                 ripple.snapTo(0f)
-                ripple.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+                ripple.animateTo(1f, tween(1200, easing = FastOutSlowInEasing))
             }
         }
     }
