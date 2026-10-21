@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.espresso.Espresso
 import com.aibanking.agent.ui.UiTags
 
@@ -90,6 +91,28 @@ private fun ComposeContentTestRule.inputCleared(): Boolean {
     val node = onAllNodesWithTag(UiTags.CHAT_INPUT).fetchSemanticsNodes().firstOrNull() ?: return false
     return node.config.getOrNull(SemanticsProperties.EditableText)?.text.isNullOrEmpty()
 }
+
+/**
+ * Leave a usable code in the red approval's SMS field.
+ *
+ * The debug build fetches the issued demo code and fills it in on its own, and
+ * once a code has been issued the core accepts only that one - so overwriting a
+ * filled field guarantees a rejection. The isolated scenario build leaves the
+ * field empty, where the fixed test code is what the core expects.
+ */
+internal fun ComposeContentTestRule.enterApprovalOtp(fallback: String, timeoutMs: Long = 10_000) {
+    waitUntil(timeoutMs) { onAllNodesWithTag(UiTags.APPROVAL_OTP).fetchSemanticsNodes().isNotEmpty() }
+    // The fill is an async gateway round trip; give it a moment before deciding
+    // that the field is empty.
+    runCatching { waitUntil(timeoutMillis = 2_000) { approvalOtpText().isNotBlank() } }
+    if (approvalOtpText().isBlank()) {
+        onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextReplacement(fallback)
+    }
+}
+
+private fun ComposeContentTestRule.approvalOtpText(): String =
+    onAllNodesWithTag(UiTags.APPROVAL_OTP).fetchSemanticsNodes().firstOrNull()
+        ?.config?.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
 
 /**
  * The text currently in the chat field, or null when the chat screen is not shown.

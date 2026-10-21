@@ -12,7 +12,6 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.printToLog
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -328,8 +327,7 @@ class RedTierUiTest {
             ui.onAllNodesWithTag(UiTags.APPROVAL_OTP).fetchSemanticsNodes().isNotEmpty(),
         )
 
-        // The debug build fills the demo code in on its own, so replace rather than append.
-        ui.onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextReplacement(OTP)
+        ui.enterApprovalOtp(OTP)
         // A disabled button makes the click below a silent no-op, which would
         // surface only as a confusing timeout.  Fail here instead, naming the
         // reason: no usable authenticator on this device.
