@@ -1,5 +1,7 @@
 # Android Compose 测试 Rule 迁移与 Gradle 兼容检查（2026-10-15）
 
+> 历史过程记录：正文保留原日期、版本与结果，不代表当前版本重新验收。现行设计见 [Agent 架构](../Agent架构.md)，最新结果见[验证记录](../验证记录.md)，文档导航见[索引](../README.md)。
+
 ## 修改
 
 - 18 个测试文件的 21 处 Compose Rule 工厂调用改用 `androidx.compose.ui.test.junit4.v2`，保留默认 `StandardTestDispatcher`，不回退到 Unconfined、不抑制弃用警告。

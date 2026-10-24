@@ -1,5 +1,7 @@
 # Android lint 清理（2026-10-15）
 
+> 历史过程记录：正文保留原日期、版本与结果，不代表当前版本重新验收。现行设计见 [Agent 架构](../Agent架构.md)，最新结果见[验证记录](../验证记录.md)，文档导航见[索引](../README.md)。
+
 基线为 `e849f66` 的 `lintDebug`：19 条 Warning、1 条 Information、0 条 Error。保留既有界面、业务流程和设计素材，未添加全局忽略项或 lint baseline。
 
 ## 逐项处理

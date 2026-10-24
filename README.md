@@ -6,7 +6,7 @@
 安言由三部分组成：
 
 - **Android 客户端**（Kotlin + Jetpack Compose）：Gemini 风格对话界面，支持端侧语音输入。
-- **Agent Gateway**（`:8100`）：LangGraph 编排对话、多轮澄清、审批和流式进度。
+- **Agent Gateway**（`:8100`）：分开管理对话与办理任务，以受限只读规划获取证据，生成并独立核验自然回答；LangGraph 管理办理、审批和流式进度。
 - **Mock Core**（`:8000`）：持有虚构账本，独立执行授权、风控、设备签名与审计。
 
 另外可选接入飞书机器人私聊，仅支持只读查询。
@@ -28,7 +28,7 @@
 - 黄区、红区确认期间出现屏幕边缘光效，从两侧中部向上下延伸、交汇，再原地缓慢呼吸；确认或取消后淡出。
 - 语音采用按住说话、松开转文字、上滑取消；识别结果先填入输入框，由用户核对后发送。
 - 办理完成后自动弹出结果页，带对勾和波纹动画；查询类回复不弹出。
-- 回复文字只做简短说明，余额、回执、产品、持仓、风险等级等细节放在卡片里，不重复。
+- 咨询按当前问题给出解释；聚焦余额保留正文并省略重复卡片，流水、回执、产品与持仓按需展示结构化详情。
 - 风险测评卡片逐题切换，答完 8 题后依次显示风险等级和匹配产品。
 - 输入框上方的“猜你想问”不用固定规则：回复里给出的示例说法（如“可以说‘有哪些理财产品’”）立即变成按钮，其余由模型根据上下文生成。
 - 收款人或金额被拒后，任务保留，换人或改金额即可继续。
@@ -42,8 +42,10 @@ flowchart LR
     A -->|10.0.2.2:8100 · SSE| G[Agent Gateway]
     A -->|10.0.2.2:8000 · 登录/设备| C[Mock Core]
     F[飞书私聊<br/>只读] <--> G
-    G --> P[LangGraph<br/>意图 → 风险 → 审批 → 执行 → 回复]
-    P -->|本机 HTTP| C
+    G --> Q[只读咨询<br/>证据 → 自然回答 → 独立核验]
+    G --> P[LangGraph 办理<br/>提案 → 风险 → 审批 → 执行 → 回执]
+    Q -->|受限 GET| C
+    P -->|授权协议| C
     C --> L[(虚构账本 / 审计链 / 设备公钥)]
 ```
 
@@ -85,8 +87,8 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 `.env` 只在本机使用，不入库。可选填写：
 
-- `DEEPSEEK_API_KEY`：启用模型解析与“猜你想问”。
-- `BANK_ANSWER_PLANNING`：默认 `1`，启用有依据的自然回答和独立核验；`0` 回退固定结果。`BANK_ANSWER_MODE=shadow` 生成核验但不替换可见回复；`BANK_REVIEW_MODEL` 可配置同一模型服务上的核验模型。详见 [Agent 架构](docs/Agent架构.md)。
+- `DEEPSEEK_API_KEY`：启用对话理解、只读咨询规划、自然回答、独立核验及“猜你想问”。未配置或调用失败时使用规则与已验证结果，复杂理解和解释能力会下降。
+- `BANK_ANSWER_PLANNING`：默认 `1`，启用有依据的自然回答和独立核验；`0` 保留固定结果，咨询取证与规划仍可运行。`BANK_ANSWER_MODE=shadow` 生成核验但不替换可见回复；`BANK_REVIEW_MODEL` 可配置同一模型服务上的核验模型。详见 [Agent 架构](docs/Agent架构.md)。
 - `DASHSCOPE_API_KEY`：没有端侧识别时，经百炼转写语音。
 
 建议把 `BANK_AUTH_SECRET` 换成随机长密钥。全部变量见 [`.env.example`](.env.example)。
@@ -132,7 +134,7 @@ cd ..
 .\.venv\Scripts\python.exe scripts/run_android_regression.py --serial emulator-5580 --output-dir build/device-acceptance
 ```
 
-当前结果（2026-10-25）：后端 1250 项通过、1 项跳过，启用分支统计的总覆盖率 85.06%；Android JVM、设备与真实模型多轮结果见[验证记录](docs/验证记录.md)顶部。
+当前业务基线 `24ef775`（2026-10-25）：后端 1250 项通过、1 项跳过，启用分支统计的总覆盖率 85.06%；Android JVM 106 项、API 37 设备回归 70 项通过。最终公网 19 回合中，16 次自然回答通过核验、2 次范围外拒绝、1 次安全回退，未新增查询授权或业务写入。各轮版本、完整证据及 CI 见[验证记录](docs/验证记录.md)顶部；这些是该业务基线的结果。
 
 70 项设备回归用 `scripts/run_android_regression.py` 运行：它会创建隔离服务和账本文件，同时核对 JUnit XML 与两份 protobuf 的实际执行数量及持久化健康状态。普通 Debug 包可加 `--variant debug --test-class <类名> --minimum-tests 1` 单独验证自动填码。
 
@@ -142,7 +144,8 @@ cd ..
 
 ```text
 ├─ android/              Android 客户端（app/src/main）与 JVM、插桩测试
-├─ bank_agent/           Gateway：LangGraph 节点、意图解析、多轮对话、风险测评、回执渲染
+├─ bank_agent/           Gateway：对话状态、只读咨询、生成与核验、LangGraph 办理、风险测评、回执渲染
+├─ banking_knowledge.py  共用版本化业务知识与能力目录
 ├─ bank_core/            Core：账本、卡片、理财、支付风控、幂等、routes/ 接口
 ├─ bank_security/        共用安全边界：输入清洗、审计哈希链、熔断、授权、会话、设备
 ├─ bank_planning/        意图白名单、风险分级、任务计划、账单分析
@@ -164,6 +167,8 @@ cd ..
 | 内容 | 文件 |
 | --- | --- |
 | 作品简介（200 字） | [作品简介](docs/作品简介.md) |
+| 文档导航与当前版本口径 | [文档索引](docs/README.md) |
+| 对话、咨询与办理分工 | [Agent 架构](docs/Agent架构.md) |
 | 架构、核心算法、安全设计 | [技术文档](docs/技术文档.md) |
 | 权限分级与已知风险 | [安全自评报告](docs/安全自评报告.md) |
 | 测试步骤与验证结果 | [测试用例](docs/测试用例.md) · [验证记录](docs/验证记录.md) |

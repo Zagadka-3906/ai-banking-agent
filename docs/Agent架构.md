@@ -1,5 +1,7 @@
 # Agent 对话、咨询与交易架构
 
+现行实现对应业务基线 `24ef775`（2026-10-25），已部署服务器；完整验收、回退统计、CI 和设备版本边界见[验证记录](验证记录.md)顶部。文档导航见[索引](README.md)。
+
 2026-10-25 服务器真实会话暴露了咨询没有具体步骤、生日能力误拒绝、主题切换错误和小额风控说明缺失。原话验收集保存在 `tests/fixtures/conversation_architecture.json`，姓名和交易标识不入库。
 
 ## 职责与边界
@@ -23,7 +25,7 @@ flowchart TD
 
 ## 能力、知识与状态
 
-`banking_knowledge.py` 统一版本化能力与独立知识章节。能力目录覆盖 `planner.ALL_INTENTS`，关联必填字段和读/工作流类型。知识包含办理步骤、前提和限制，章节具有稳定 ID 和版本来源。修改知识须与可执行实现、UI、验证保持一致。
+`banking_knowledge.py` 统一版本化能力与独立知识章节，当前知识版本为 `2026-10-25.3`。能力目录覆盖 `planner.ALL_INTENTS` 的 30 项意图，关联必填字段和读取、工作流、对话类型。知识包含办理步骤、前提和限制，章节具有稳定 ID 和版本来源。修改知识须与可执行实现、UI、验证保持一致。
 
 Core 提供会话鉴权的 `GET /api/v1/assistant/capabilities`、`GET /api/v1/service-guide?topic=` 和 `GET /api/v1/assistant/context`。上下文快照提供当前登录者卡片状态、有限额度政策、当日转出及当前行为升级原因；不会预检、签发授权、消费凭证或清理行为历史。静态知识版本或内容不匹配时，Agent 不将其作为新事实。
 
@@ -41,11 +43,11 @@ Core 提供会话鉴权的 `GET /api/v1/assistant/capabilities`、`GET /api/v1/s
 
 独立核验调用分别判断范围、事实支持、是否回答当前问题与安全性，失败最多修正一次。未通过草稿不下发；咨询可回退到相关已验证知识，并明确完整解释未通过核验，其他查询保留原回执。资金成功回执、失败结果与问卷不由生成器改写。
 
-成功自然答复保留 `answer_presentation.version=1` 和 `source=VERIFIED_FACTS`，增加 `mode=GENERATED_REVIEWED`，兼容现有 Android 聚焦展示。该标记不代表绝对正确，也不用于授权。
+成功自然答复保留 `answer_presentation.version=1` 和 `source=VERIFIED_FACTS`，增加 `mode=GENERATED_REVIEWED`，兼容现有 Android 聚焦展示。已验证的固定余额答复也保留该展示标记，使用 `mode=CANONICAL`，避免客户端把有用正文替换成介绍语。该标记不代表绝对正确，也不用于授权。
 
 ## 配置与验收
 
-- `BANK_ANSWER_PLANNING=1` 默认启用生成与核验；`0` 回退已验证的固定结果。
+- `BANK_ANSWER_PLANNING=1` 默认启用生成与核验；`0` 保留已验证的固定结果，但不会关闭咨询取证与规划。需要减少意图理解调用时另看 `BANK_MODEL_FAST_PATH`，两者都不是资金授权开关。
 - `BANK_ANSWER_MODE=enforce` 默认采用核验回答；`shadow` 生成核验但保持原可见回复，记录差异计数。
 - `BANK_REVIEW_MODEL` 可指定同一已配置模型服务上的核验模型；未指定时使用主模型的独立核验调用。提示不同不等于错误来源完全独立。
 - `CONSULTATION_PLAN` 记录读取、失败、证据数量和主题；`ANSWER_REVIEW` 记录通过/拒绝、次数与规则原因；`ANSWER_SHADOW` 记录影子差异，不记录原问题、正文或凭证。
