@@ -183,6 +183,20 @@ def _resolve_undo_target(state: BankingAgentState) -> dict[str, Any]:
 def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response") or state.get("clarification_required"):
         return {"risk_level": "UNKNOWN"}
+    from bank_agent.understanding import fraud_action_requested, inquiry_route
+    from intent_language import business_text
+
+    spoken = str(state.get("user_input") or state.get("extra_info") or "")
+    flow = (state.get("context") or {}).get("compound_workflow")
+    if isinstance(flow, dict) and isinstance(flow.get("steps"), list):
+        index = flow.get("index", 0)
+        if isinstance(index, int) and 0 <= index < len(flow["steps"]):
+            spoken = str(flow["steps"][index].get("text") or spoken)
+    spoken = business_text(spoken)
+    intent = state.get("intent", Intent.UNKNOWN.value)
+    if intent not in GREEN_INTENTS and (inquiry_route(spoken) or (intent == Intent.FRAUD_DISPUTE.value and not fraud_action_requested(spoken))):
+        return {"risk_level": "UNKNOWN", "auth_token": None, "action_requirements": [], "business_status": "NEEDS_INPUT",
+                "clarification_required": True, "final_response": "当前是在询问或查询，我没有发起冻结、建单或其他变更。请说明需要查看的记录或想了解的规则。"}
     sub_requests = state.get("sub_requests") or []
     if len(sub_requests) > 1 and all(str(item.get("intent")) in GREEN_INTENTS for item in sub_requests):
         # Every sub-request is read-only (validated at parse time), so the whole

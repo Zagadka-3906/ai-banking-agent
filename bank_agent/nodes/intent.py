@@ -17,6 +17,7 @@ from planner import (
     validate_intent_payload,
 )
 from security import InjectionError, audit_event, sanitize_text
+from bank_agent.understanding import inquiry_route, understanding_context
 from intent_language import business_text, nonexecuting_action
 from bank_agent import runtime
 from bank_agent.state import (
@@ -139,7 +140,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     )
     quoted_action = re.search(r"(?:解释|翻译|分析).{0,12}(?:引文|示例|这句话)", business_text(text))
     hypothetical_action = nonexecuting_action(text)
-    if negated_action or quoted_action or hypothetical_action:
+    if negated_action or quoted_action or (hypothetical_action and not inquiry_route(text)):
         request_id = state.get("request_id") or f"gw_{uuid.uuid4().hex}"
         audit_event("INTENT_WITHHELD", user_id=state.get("user_id"), request_id=request_id,
                     decision="BLOCK", outcome="CLARIFICATION", reason="NON_EXECUTING_LANGUAGE")
@@ -199,7 +200,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         return {**empty_state(final_response="尚未购买鲜花或蛋糕。这里只会预留资金、建立提醒和待确认的订单草稿，不会替您向商家付款下单。"),
                 "context": prior_context, "request_id": state.get("request_id") or f"gw_{uuid.uuid4().hex}"}
     try:
-        parsed = validate_intent_payload(model_parse(text))
+        with understanding_context(state):
+            parsed = validate_intent_payload(model_parse(text))
     except Exception as exc:
         audit_event("INTENT_PARSE", user_id=state.get("user_id"), request_id=state["request_id"], decision="BLOCK", outcome="FAILURE", reason="INVALID_MODEL_OUTPUT", metadata={"error_type": type(exc).__name__})
         return {**empty_state(final_response="暂时无法安全解析这条指令，请补充业务类型、收款人或金额后重试。"), "request_id": state["request_id"]}

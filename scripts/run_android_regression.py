@@ -68,7 +68,7 @@ def main():
     parser.add_argument("--serial", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--gradle-init", type=Path)
-    parser.add_argument("--minimum-tests", type=int, default=69)
+    parser.add_argument("--minimum-tests", type=int, default=70)
     parser.add_argument("--test-class", help="Run a specific class instead of the regression annotation")
     parser.add_argument("--variant", choices=("scenario", "debug"), default="scenario",
                         help="Debug validates demo OTP autofill; requires an explicit test class")

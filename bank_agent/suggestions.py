@@ -30,7 +30,7 @@ _LONG_NUMBER = re.compile(r"\d{5,}")
 _PAYEE = re.compile(r"(?:转给|转账给|汇给|打给|给)([一-龥]{2,4}?)(?:转|汇|打|$|，|,)")
 # Products this demo bank does not offer; a chip for them can only dead-end.
 _UNSUPPORTED = re.compile(r"信用卡|贷款|借款|还款|欠款|分期|股票|外汇|保险|积分|兑换|话费|充值|缴费|水电")
-_CAPABILITIES = "余额、账单与消费分析、转账（含预约转账、AA 收款）、理财（推荐、对比、申购、赎回、风险测评）、卡片（冻结、挂失、限额、网上支付与境外交易开关）、订阅（查询、取消、续费提醒）、联系人、撤销预约或锁定"
+_CAPABILITIES = "余额、账单与可疑交易分析、争议工单查询与处理时效说明、业务流程咨询、转账（含预约转账、AA 收款）、理财（推荐、对比、申购、赎回、风险测评）、卡片（冻结、挂失、限额、网上支付与境外交易开关）、订阅（查询、取消、续费提醒）、联系人、撤销预约或锁定"
 
 
 def _facts(state: Mapping[str, Any]) -> dict[str, Any]:

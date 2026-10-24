@@ -187,6 +187,8 @@ def build_task_plan(parsed: Mapping[str, Any], *, plan_id: str = "plan-demo") ->
             Task("validate_transfer", "VALIDATE_TRANSFER", risk_level="GREEN", details=base),
             Task("execute_transfer", "TRANSFER", ["validate_transfer"], level, details=base),
         ]
+    elif intent in {Intent.DISPUTE_QUERY.value, Intent.BANKING_HELP.value}:
+        tasks = [Task("read_service", "READ_DISPUTES" if intent == Intent.DISPUTE_QUERY.value else "READ_SERVICE_GUIDE", risk_level="GREEN", details=base)]
     elif intent in {Intent.BILL_ANALYSIS.value, Intent.BILL_QUERY.value}:
         tasks = [
             Task("fetch_transactions", "FETCH_TRANSACTIONS", risk_level="GREEN", details=base),

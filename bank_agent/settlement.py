@@ -31,6 +31,8 @@ from bank_agent.verification import (
 # that are owned by the core task center (reminders, order drafts, participant
 # notifications) are deliberately left PENDING with an honest note.
 _SETTLE_ORDER: dict[str, list[str]] = {
+    Intent.DISPUTE_QUERY.value: ["read_service"],
+    Intent.BANKING_HELP.value: ["read_service"],
     Intent.BALANCE_QUERY.value: ["fetch_balance"],
     Intent.BILL_QUERY.value: ["fetch_transactions", "compute_facts"],
     Intent.BILL_ANALYSIS.value: ["fetch_transactions", "compute_facts"],

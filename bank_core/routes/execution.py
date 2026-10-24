@@ -529,11 +529,12 @@ def execute_operation(
                     if card.get("status") == "ACTIVE":
                         card["status"] = "FROZEN"
                     case = next((item for item in DISPUTE_CASES if item.get("owner_id") == req.user_id and item.get("transaction_id") == tx.get("tx_id") and item.get("status") in {"OPEN", "PENDING_REVIEW"}), None)
+                    case_created = case is None
                     if case is None:
                         created_at = datetime.now(timezone.utc).isoformat()
                         case = {"case_id": f"CASE-{uuid.uuid4().hex[:10].upper()}", "owner_id": req.user_id, "transaction_id": tx["tx_id"], "transaction_snapshot_hash": operation_context["transaction_snapshot_hash"], "card_id": card["card_id"], "status": "PENDING_REVIEW", "protection_status": "CARD_PROTECTED", "statement": reason, "risk_reasons": ["境外交易", "交易类别标记为可疑交易", "用户明确否认该消费"], "created_at": created_at, "updated_at": created_at}
                         DISPUTE_CASES.append(case)
-                    result.update({"status": "CARD_PROTECTED", "card": card, "dispute_case": case, "transaction": tx})
+                    result.update({"status": "CARD_PROTECTED", "card": card, "dispute_case": case, "case_created": case_created, "transaction": tx})
                 elif operation in {"CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST"}:
                     card = select_card(req.user_id, req.card_id)
                     current_status = str(card.get("status") or "")

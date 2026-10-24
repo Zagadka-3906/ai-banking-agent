@@ -36,7 +36,7 @@ private val completedOperationTitles = mapOf(
 
 private val queryTypes = setOf(
     "BALANCE", "BILL_QUERY", "BILL_ANALYSIS", "WEALTH_QUERY", "WEALTH_HOLDINGS",
-    "WEALTH_RECOMMEND", "WEALTH_COMPARE", "SUBSCRIPTION_QUERY", "CARD_QUERY",
+    "WEALTH_RECOMMEND", "WEALTH_COMPARE", "SUBSCRIPTION_QUERY", "CARD_QUERY", "DISPUTE_QUERY", "BANKING_HELP",
 )
 
 /**
@@ -100,7 +100,7 @@ private fun successfulOutcome(message: ChatMessage): OperationOutcome {
             add("已预留资金，预留不代表已向商家付款。请在待办任务中核对提醒与订单草稿。")
         }
         if (reminders.isNotEmpty()) add("请核对回执中的提醒任务状态及未建立原因；提醒不会自动扣费或取消订阅。")
-        if ("FRAUD_DISPUTE" in types) add("关联卡片已冻结，争议工单仍需人工审核，当前未执行退款。")
+        if ("FRAUD_DISPUTE" in types) add("关联卡片已冻结，争议工单已登记。本演示没有真实审核队列或预计完成时间，未执行退款。")
         if ("PASSWORD_CHANGE" in types) add("登录密码已更新，原登录会话已失效，请使用新密码重新登录。")
     }.ifEmpty { listOf("以本页回执和当前账户记录为准。") }.joinToString("\n")
     return OperationOutcome(title, if (onlyEmptyReminders) "请求已处理" else "结果已核验", guidance,

@@ -14,6 +14,7 @@ from bank_core.access import (
 )
 from bank_core.ledger import (
     ACCOUNTS,
+    DISPUTE_CASES,
     TRANSACTIONS,
 )
 from bank_core.payments import (
@@ -22,11 +23,57 @@ from bank_core.payments import (
 from planner import analyze_transactions, filter_transactions
 from security import (
     SecurityError,
+    STATE_LOCK,
     audit_event,
     sanitize_text,
 )
 
 router = APIRouter()
+
+
+_SERVICE_GUIDES = {
+    "dispute": ["可以查询已有争议工单的状态、关联交易和登记时间。", "反诈保护会冻结关联卡片并创建或关联工单，须单独确认和强验证。",
+                "当前是演示工单登记，没有真实客服审核队列，也未提供预计完成时间；不会自动退款。"],
+    "transfer": ["转账需先核对收款人和金额并确认；当日累计超1000元还需强验证。", "预约转账到期后仍等待用户确认，已完成的转账不能直接撤销。",
+                 "这是虚构账本，不提供真实跨行到账时效承诺。"],
+    "card": ["可直接查询卡片状态。", "冻结、解冻、挂失、解除挂失和调额需单独确认及强验证。",
+             "关闭交易渠道需确认，开通渠道需强验证；询问流程不会直接操作卡片。", "本演示中冻结卡片限制该卡付款，账户仍可接收转账。"],
+    "wealth": ["可以查询产品、持仓和风险等级，推荐前需完成风险测评。", "申购和赎回须单独确认及强验证；具体规则以虚构产品详情为准。",
+               "本系统不提供真实投资建议、保本保证或收益承诺。"],
+    "subscription": ["查询和取消订阅都需确认。", "系统推测的订阅候选不能直接取消，需先核实商户记录。",
+                     "演示取消记录不代表真实商户合同解除或退款。"],
+    "general": ["可查询账户、交易、卡片、理财和争议工单；可询问相关业务规则。",
+                "转账、冻结、建单等变更需另行提出并确认，询问进度或办理方法不会执行这些操作。",
+                "请说明要了解哪项业务；未提供的规则、人工处理时效或银行外部业务不能推测。"],
+}
+
+
+@router.get("/api/v1/disputes")
+def get_disputes(case_id: Optional[str] = None, transaction_id: Optional[str] = None,
+                 x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+                 x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(x_user_id, x_user_id, action="DISPUTE_QUERY", request_id=request_id)
+    safe_case = sanitize_text(case_id, field="工单编号", max_length=100).upper() if case_id else None
+    safe_tx = sanitize_text(transaction_id, field="交易编号", max_length=100) if transaction_id else None
+    fields = ("case_id", "transaction_id", "card_id", "status", "protection_status", "created_at", "updated_at")
+    with STATE_LOCK:
+        rows = [{key: row.get(key) for key in fields} for row in DISPUTE_CASES
+                if row.get("owner_id") == actor and (not safe_case or row.get("case_id") == safe_case)
+                and (not safe_tx or row.get("transaction_id") == safe_tx)]
+    if (safe_case or safe_tx) and not rows:
+        raise HTTPException(404, {"code": "DISPUTE_NOT_FOUND", "message": "未找到当前账户的该争议工单"})
+    audit_event("DISPUTE_QUERY", user_id=actor, request_id=request_id, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", metadata={"count": len(rows)})
+    return {"code": 200, "user_id": actor, "data": rows, "policy": {"version": 1, "estimated_completion": None,
+            "timing_message": _SERVICE_GUIDES["dispute"][2]}, "case_id": safe_case}
+
+
+@router.get("/api/v1/service-guide")
+def service_guide(topic: str = "general", x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+                  x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    actor = get_actor(x_user_id, x_user_id, action="BANKING_HELP", request_id=server_request_id(x_request_id))
+    safe_topic = topic if topic in _SERVICE_GUIDES else "general"
+    return {"code": 200, "user_id": actor, "topic": safe_topic, "facts": list(_SERVICE_GUIDES[safe_topic]), "version": 1}
 
 
 # ---------------------------------------------------------------------------

@@ -67,8 +67,9 @@ def test_a_model_misreading_cannot_supply_a_payee_or_amount(gateway, model):  # 
     client, _ = gateway
     model("TRANSFER", target="李四", amount=500)
     reply = _send(client, "查一下余额", conversation_id="no-invented-payment")
-    # The transfer reading has no payee or amount in what was said, so it only asks.
-    assert reply["approval"] is None and "转给哪位" in reply["reply"]
+    # The explicit read cannot become a transfer, even if the model insists.
+    assert reply["approval"] is None and reply["intent"] == "BALANCE_QUERY"
+    assert reply["business_status"] == "SUCCEEDED"
 
 
 def test_the_fast_path_can_still_be_switched_on(model, monkeypatch):

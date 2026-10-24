@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 from urllib.parse import urlencode
@@ -19,6 +20,7 @@ from planner import (
 from security import audit_event
 from bank_agent import runtime
 from bank_agent.analysis_codegen import answer_bill_question
+from bank_agent.understanding import help_topic, referenced_case
 from bank_agent.state import (
     BankingAgentState,
 )
@@ -53,6 +55,23 @@ from bank_agent.nodes.responder import (
 
 def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
     user_id = state["user_id"]
+    if intent in {Intent.DISPUTE_QUERY.value, Intent.BANKING_HELP.value}:
+        if intent == Intent.DISPUTE_QUERY.value:
+            case_id = referenced_case(state)
+            path = "disputes" + ("?" + urlencode({"case_id": case_id}) if case_id else "")
+        else:
+            topic = help_topic(str(state.get("user_input") or ""))
+            if topic == "general" and state.get("memory_principal") == user_id:
+                for observation in reversed(list((state.get("observations") or {}).values())):
+                    prior_topic = observation.get("help_topic") or help_topic(str(observation.get("intent") or "").replace("DISPUTE", "争议").replace("CARD", "卡").replace("TRANSFER", "转账"))
+                    if prior_topic != "general":
+                        topic = prior_topic
+                        break
+            path = "service-guide?" + urlencode({"topic": topic})
+        response = runtime._http("GET", path, state=state, headers={"X-User-Id": user_id})
+        if response.status_code >= 400:
+            raise RuntimeError(error_message(response))
+        return {"type": intent, "data": response_json(response)}
     if intent == Intent.BALANCE_QUERY.value:
         response = runtime._http("GET", f"accounts/{user_id}/balance", state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
@@ -70,6 +89,7 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             slots = {}
         category = slots.get("category")
         question = str(state.get("user_input") or "")
+        suspicious_only = slots.get("suspicious_only") is True
         specific_overseas = (
             any(word in question for word in ("境外", "海外", "国外"))
             and any(word in question for word in ("那笔", "这笔", "该笔", "怎么回事", "什么情况", "是什么消费", "是什么交易"))
@@ -84,6 +104,18 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             )]
             if category in {"境外", "海外", "国外", "境外消费", "海外消费", "国外消费"}:
                 category = None
+        if suspicious_only:
+            category = None
+            references: list[Any] = []
+            if re.search(r"那|这|刚才|上面|其中", question) and state.get("memory_principal") == user_id:
+                for observation in reversed(list((state.get("observations") or {}).values())):
+                    if observation.get("intent") in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}:
+                        references = observation.get("suspicious_transaction_ids") or []
+                        break
+            if not references:
+                candidates = analyze_transactions(rows, user_id=user_id, request_id=state.get("request_id"))
+                references = [item.get("tx_id") for item in candidates.get("anomalies") or []]
+            rows = [row for row in rows if row.get("tx_id") in references]
         if category is not None:
             if not valid_text_field(category, max_length=120):
                 raise RuntimeError("交易分类无效，请明确需要查询的类别")
@@ -97,7 +129,12 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             result["date_range"] = state["date_range"]
         if category is not None:
             result["category"] = category
-        if specific_overseas:
+        if suspicious_only:
+            result["specific_query"] = "SUSPICIOUS_TRANSACTIONS"
+            count = re.search(r"([0-9]{1,3})\s*笔", question)
+            if count:
+                result["mentioned_count"] = int(count.group(1))
+        elif specific_overseas:
             result["specific_query"] = "OVERSEAS_TRANSACTION"
         else:
             # Open questions ("哪个月花得最多") get an answer computed by

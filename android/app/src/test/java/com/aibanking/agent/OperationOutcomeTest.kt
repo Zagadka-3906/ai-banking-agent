@@ -13,6 +13,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class OperationOutcomeTest {
+    @Test fun dispute_progress_and_service_help_are_queries_not_completed_operations() {
+        for (type in listOf("DISPUTE_QUERY", "BANKING_HELP")) {
+            val message = completed(receipt(type))
+            assertFalse(type, isTaskOutcome(message))
+            assertEquals(type, "查询已完成", outcomeFor(message)?.title)
+        }
+    }
     private fun receipt(type: String, data: Map<String, Any> = emptyMap()): Map<String, Any> =
         mapOf("type" to type, "data" to data)
 
@@ -131,7 +138,8 @@ class OperationOutcomeTest {
     @Test fun fraud_protection_does_not_claim_refund_or_review_completion() {
         val outcome = checkNotNull(outcomeFor(completed(receipt("FRAUD_DISPUTE"))))
         assertEquals("保护措施已提交", outcome.title)
-        assertTrue(outcome.guidance.contains("仍需人工审核"))
+        assertTrue(outcome.guidance.contains("工单已登记"))
+        assertTrue(outcome.guidance.contains("没有真实审核队列或预计完成时间"))
         assertTrue(outcome.guidance.contains("未执行退款"))
     }
 

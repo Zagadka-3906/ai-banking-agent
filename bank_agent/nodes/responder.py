@@ -33,6 +33,7 @@ from bank_agent.verification import (
     valid_wealth_collection,
 )
 from bank_agent.analysis_codegen import render_answer
+from bank_agent.understanding import remember_reply
 from bank_agent.rendering import (
     bill_scope_label,
     render_cards,
@@ -43,7 +44,7 @@ from bank_agent.rendering import (
 
 
 def responder_node(state: BankingAgentState) -> dict[str, Any]:
-    return _with_custom_analysis(state, _respond(state))
+    return remember_reply(state, _with_custom_analysis(state, _respond(state)))
 
 
 def _with_custom_analysis(state: BankingAgentState, response: dict[str, Any]) -> dict[str, Any]:
@@ -123,7 +124,42 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
         if not valid_balance_payload(data):
             return response_validation_failure(state, "BALANCE_FIELDS_INVALID")
         return {"final_response": f"查询成功：账户总余额 **¥{float(data.get('total_balance', 0)):,.2f}**，锁定资金 **¥{float(data.get('locked_amount', 0)):,.2f}**，可用余额 **¥{float(data.get('available_balance', 0)):,.2f}**。"}
-    if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") == "OVERSEAS_TRANSACTION":
+    if rtype == Intent.DISPUTE_QUERY.value:
+        data = result.get("data") or {}
+        if not isinstance(data, dict):
+            return response_validation_failure(state, "DISPUTE_QUERY_INVALID")
+        rows, policy = data.get("data"), data.get("policy")
+        statuses = {"OPEN": "已登记", "PENDING_REVIEW": "待人工审核", "IN_REVIEW": "审核中", "RESOLVED": "已处理", "CLOSED": "已关闭", "REJECTED": "未通过"}
+        if (not isinstance(rows, list) or not isinstance(policy, dict) or policy.get("version") != 1
+                or policy.get("estimated_completion") is not None or not valid_text_field(policy.get("timing_message"), max_length=400)
+                or any(not isinstance(row, dict) or row.get("status") not in statuses
+                       or any(not valid_text_field(row.get(key), max_length=160) for key in ("case_id", "transaction_id", "card_id", "created_at", "updated_at")) for row in rows)):
+            return response_validation_failure(state, "DISPUTE_QUERY_INVALID")
+        lines = []
+        if not rows:
+            lines.append("当前账户没有已登记的争议工单。查询不会自动发起冻结或创建工单。")
+        else:
+            lines.append(f"查到 {len(rows)} 张争议工单：")
+            for row in rows[:20]:
+                lines.append(f"- {row['case_id']}：{statuses[row['status']]}；关联交易 {row['transaction_id']}；卡片 {row['card_id']}；登记于 {row['created_at']}，最后更新 {row['updated_at']}。")
+            if len(rows) > 1:
+                lines.append("可以提供工单编号，继续查看其中一张。")
+        timing = str(policy["timing_message"])
+        if (state.get("slots") or {}).get("dispute_timing"):
+            lines.insert(0, "关于处理时间：" + timing)
+        else:
+            lines.append(timing)
+        return {"final_response": "\n".join(lines)}
+    if rtype == Intent.BANKING_HELP.value:
+        data = result.get("data") or {}
+        if not isinstance(data, dict):
+            return response_validation_failure(state, "SERVICE_GUIDE_INVALID")
+        facts = data.get("facts")
+        if data.get("version") != 1 or not isinstance(facts, list) or not facts or any(not valid_text_field(item, max_length=400) for item in facts):
+            return response_validation_failure(state, "SERVICE_GUIDE_INVALID")
+        return {"final_response": "\n".join(str(item) for item in facts)}
+    if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") in {"OVERSEAS_TRANSACTION", "SUSPICIOUS_TRANSACTIONS"}:
+        kind = "可疑交易线索" if result.get("specific_query") == "SUSPICIOUS_TRANSACTIONS" else "境外交易"
         rows = result.get("records")
         facts = result.get("facts") or {}
         if (
@@ -134,7 +170,7 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
             return response_validation_failure(state, "SPECIFIC_BILL_RECORDS_INVALID")
         scope_label = bill_scope_label(result)
         if not rows:
-            return {"final_response": f"{scope_label}的已提供账单中未找到匹配的境外交易。请提供流水号、商户或日期，以便继续核对。"}
+            return {"final_response": f"{scope_label}的已提供账单中未找到匹配的{kind}。请提供流水号、商户或日期，以便继续核对。"}
         reasons_by_id: dict[str, list[str]] = {}
         for anomaly in facts.get("anomalies") or []:
             reasons = anomaly.get("reasons")
@@ -142,7 +178,9 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                 return response_validation_failure(state, "SPECIFIC_BILL_REASONS_INVALID")
             if anomaly.get("tx_id"):
                 reasons_by_id[str(anomaly["tx_id"])] = reasons
-        lines = [f"{scope_label}找到 {len(rows)} 笔匹配的境外交易："]
+        lines = [f"{scope_label}找到 {len(rows)} 笔匹配的{kind}："]
+        if result.get("mentioned_count") and result["mentioned_count"] != len(rows):
+            lines.insert(0, f"您提到 {result['mentioned_count']} 笔，当前查询范围实际匹配 {len(rows)} 笔。")
         for row in rows:
             for key in ("tx_id", "merchant", "time", "card_id"):
                 if row.get(key) is not None and not valid_text_field(row[key], max_length=200):
@@ -527,7 +565,7 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
     labels = {
         Intent.CARD_APPLY.value: f"✅ 虚拟卡已开立（{card_id}）。" if card_id else "✅ 虚拟卡已开立。",
         Intent.CARD_FREEZE.value: "✅ 卡片交易已冻结。",
-        Intent.FRAUD_DISPUTE.value: "✅ 已冻结关联卡片并创建争议工单，案件将由人工审核。未执行退款。",
+        Intent.FRAUD_DISPUTE.value: "✅ 已冻结关联卡片并创建争议工单，状态为待人工审核。本演示无真实审核队列，未执行退款。",
         Intent.CARD_UNFREEZE.value: "✅ 卡片交易已解冻。",
         Intent.CARD_REPORT_LOST.value: "✅ 卡片已挂失，后续交易将被拒绝。",
         Intent.CARD_UNREPORT_LOST.value: "✅ 已解除挂失，卡片恢复可用。",
@@ -535,6 +573,8 @@ def _completion_label(state: BankingAgentState, rtype: str) -> str:
         Intent.SCHEDULED_TRANSFER.value: f"✅ 已登记预约转账，预约时间为 {scheduled_label}，到期后仍需您确认才会转出资金。",
         Intent.PASSWORD_CHANGE.value: "✅ 登录凭证版本已轮换（演示不保存明文密码）。",
     }
+    if rtype == Intent.FRAUD_DISPUTE.value and inner.get("case_created") is False:
+        return "✅ 关联卡片已受保护，本次关联已有争议工单，没有新建工单。本演示无真实审核队列，未执行退款。"
     if rtype == Intent.CARD_CHANNEL.value:
         name = CARD_CHANNEL_NAMES.get(str(inner.get("channel")), "交易渠道")
         action = "开通" if inner.get("enabled") else "关闭"

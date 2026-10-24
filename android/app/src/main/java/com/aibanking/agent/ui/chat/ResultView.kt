@@ -38,6 +38,9 @@ fun ResultExtras(result: Map<String, Any?>?) {
         result.child("profile_result")?.let { RiskProfileCard(it) }
         executions.forEach { execution ->
             val type = execution.text("type")
+            // These replies already render their verified facts in the dialogue.
+            // Transport fields (user_id, policy version, topic) are not extra cards.
+            if (type == "DISPUTE_QUERY" || type == "BANKING_HELP") return@forEach
             if (type in WEALTH_PRODUCT_TYPES) {
                 execution.child("data")?.let { WealthProducts(it, type) }
                 return@forEach
@@ -304,14 +307,14 @@ private fun FraudProtectionCard(payload: Map<String, Any?>) {
                 if (status == "FROZEN") BankSemanticStatus.RiskGreen else BankSemanticStatus.Neutral,
             )
         }
-        case?.text("status")?.let { Text(if (it == "PENDING_REVIEW") "争议工单已提交，等待人工审核" else displayStatus(it), style = MaterialTheme.typography.bodyMedium) }
+        case?.text("status")?.let { Text(if (it == "PENDING_REVIEW") "争议工单已登记，状态为待人工审核" else displayStatus(it), style = MaterialTheme.typography.bodyMedium) }
         case?.text("case_id")?.let { FactRow("工单编号", it) }
         data.child("transaction")?.let { transaction ->
             transaction.text("merchant")?.let { FactRow("交易商户", it) }
             transaction.money("amount")?.let { FactRow("交易金额", it) }
         }
         if (data.text("status") == "CARD_PROTECTED" && case?.text("status") == "PENDING_REVIEW") {
-            Text("未执行退款。请等待人工审核结果。", style = MaterialTheme.typography.bodySmall, color = LocalBankSemanticColors.current.riskYellow)
+            Text("本演示没有真实审核队列或预计完成时间，未执行退款。", style = MaterialTheme.typography.bodySmall, color = LocalBankSemanticColors.current.riskYellow)
         }
     }
 }
