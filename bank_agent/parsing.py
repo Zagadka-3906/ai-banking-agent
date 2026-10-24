@@ -19,7 +19,7 @@ from security import audit_event
 from workflow_runtime import invoke_model
 from intent_language import ambiguous_amount, ambiguous_target, business_text, requested_date_range, split_tasks
 from bank_agent import runtime
-from bank_agent.understanding import DIALOGUE_ACTS, HELP_TOPICS, INTENT_DESCRIPTIONS, enforce_inquiry, model_context
+from bank_agent.understanding import DIALOGUE_ACTS, HELP_TOPICS, INTENT_DESCRIPTIONS, _safe_text, enforce_inquiry, model_context
 from bank_agent.state import (
     extract_json,
 )
@@ -426,6 +426,8 @@ def model_parse(text: str) -> dict[str, Any]:
     so the conversation can clarify them.  A model may recognize new wording
     or extract an explicitly named object; only the core resolves that object.
     """
+    from banking_knowledge import SCOPE_POLICY, capability_catalog
+
     local = local_parse(text)
     # Model first: with a model configured every request is read by it. The
     # fast path (rules alone for explicit requests) is an opt-in for latency.
@@ -444,7 +446,11 @@ def model_parse(text: str) -> dict[str, Any]:
         "你是银行意图抽取器，只输出一个 JSON 对象，不执行任何工具。"
         "intent 必须从 allowlist 选择："
         + json.dumps(INTENT_DESCRIPTIONS, ensure_ascii=False)
-        + "。字段为 intent,dialogue_act,social_kind,target,amount,date_scope,extra_info,confidence,participants,product_ids,slots,scheduled_at,event_at。"
+        + "。" + SCOPE_POLICY + "实际能力目录：" + json.dumps(capability_catalog(), ensure_ascii=False)
+        + "。字段为 intent,dialogue_act,social_kind,scope,questions,topic_relation,resume_task_id,target,amount,date_scope,extra_info,confidence,participants,product_ids,slots,scheduled_at,event_at。"
+        "scope为IN_SCOPE、MIXED或OUT_OF_SCOPE；混合请求只回答业务部分。questions列出本轮最多5个业务问题，不能把旧问题当成当前问题。"
+        "topic_relation为NEW或CONTINUE；只有明确省略追问才CONTINUE，出现新业务名时切换主题。"
+        "只有用户明确恢复任务时resume_task_id才选择discussion.tasks已有ID，否则null。"
         "先判断本轮言语行为 dialogue_act：QUERY=查已有事实，EXPLAIN=问原因/规则/影响，ACTION=要求实际办理，"
         "SLOT_REPLY=补充上轮缺失信息，UNSUPPORTED=能力未提供，UNCLEAR=对象或诉求不明，SOCIAL=问候致谢或告别。不能把 QUERY/EXPLAIN 选成写操作。"
         "SOCIAL 时必须在顶层填写 social_kind：问候选 greeting，致谢选 thanks，告别选 goodbye，问能力选 capabilities；其他模式填 null。"
@@ -452,7 +458,10 @@ def model_parse(text: str) -> dict[str, Any]:
         "‘那5笔’须结合已核验观察理解是哪组交易；可在 slots.read_reference 指定 anomalies 或 listed_transactions，不能编造编号。"
         "查询某一条历史记录（如‘第5笔’）可用 slots.transaction_id 选择 recent_observations 中已有的交易编号；"
         "只允许引用这些已核验编号，无法确定时澄清。写操作的编号仍须在本轮原文中明示。"
-        "业务说明的 slots.help_topic 只能为 general,dispute,transfer,card,wealth,subscription,security。"
+        "业务说明的 slots.help_topic 只能为 general,dispute,transfer,card,wealth,subscription,security,cross_scene,tasks,limits。"
+        "生日订花尚无真实配送，但已有预算锁定、提醒和模拟订单草稿；缺预算时解释并澄清，不能笼统说全部不支持。"
+        "取消限额不等于调额；询问能否或请求无限额时先BANKING_HELP说明限制，不发起CARD_LIMIT。"
+        "额度限制说明后用户若补充明确的新数值，可判CARD_LIMIT和SLOT_REPLY，提出有限额度调整提案，仍须确认强验证。"
         "不支持撤销争议工单时回答规则，不能再创建工单。闲聊、不支持或纠错不能强行映射到相近写操作。"
         "缺失收款人或金额时填 null，不要猜测。"
         "date_scope 只能是 TODAY、MONTH、LAST_MONTH、YEAR、ALL。\n"
@@ -489,12 +498,27 @@ def model_parse(text: str) -> dict[str, Any]:
             merged["parse_meta"] = {**merged["parse_meta"], "dialogue_act": act, "source": "model", "resolution": "model_dialogue", "fast_path_eligible": False}
             if act == "SOCIAL" and parsed.get("social_kind") in {"greeting", "thanks", "goodbye", "capabilities"}:
                 merged["parse_meta"]["social_kind"] = parsed["social_kind"]
+        if parsed.get("scope") in {"IN_SCOPE", "MIXED", "OUT_OF_SCOPE"}:
+            merged["parse_meta"]["scope"] = parsed["scope"]
+        if parsed.get("topic_relation") in {"NEW", "CONTINUE"}:
+            merged["parse_meta"]["topic_relation"] = parsed["topic_relation"]
+        if isinstance(parsed.get("questions"), list):
+            merged["parse_meta"]["questions"] = [_safe_text(value, 300) for value in parsed["questions"][:5] if isinstance(value, str)]
+        known_tasks = {task.get("id") for task in (model_context().get("discussion") or {}).get("tasks") or []}
+        if isinstance(parsed.get("resume_task_id"), str) and parsed["resume_task_id"] in known_tasks:
+            merged["parse_meta"]["resume_task_id"] = parsed["resume_task_id"]
         if model_intent in ALL_INTENTS and model_intent != Intent.UNKNOWN.value:
             merged["intent"] = model_intent
             merged["confidence"] = parsed.get("confidence")
             resolution = ("model_confirmed" if model_intent == local_intent
                           else "model_classified" if local_intent == Intent.UNKNOWN.value else "model_override")
             merged["parse_meta"] = {**merged["parse_meta"], "source": "model", "resolution": resolution, "fast_path_eligible": False}
+        if (act == "SLOT_REPLY" and model_intent == Intent.CARD_LIMIT.value and local.get("amount") is None
+                and (model_context().get("discussion") or {}).get("active_topic") == "limits"
+                and re.fullmatch(r"\s*[¥￥]?\d[\d,]*(?:\.\d{1,2})?\s*(?:元|块)?\s*", text)):
+            # A reply to the finite-limit explanation supplies a literal new
+            # value, not consent to execute or permission to reuse an old one.
+            merged["amount"] = amount_from_text(text.strip().rstrip("元块") + "元")
         source = re.split(r"备注|附言", text, maxsplit=1)[0]
         if merged["intent"] == Intent.TRANSFER.value and (
             local.get("scheduled_at") or re.search(r"预约|定时|明天|后天|下周|下星期|下个月|20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}", source)

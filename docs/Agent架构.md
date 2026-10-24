@@ -1,0 +1,55 @@
+# Agent 对话、咨询与交易架构
+
+2026-10-25 服务器真实会话暴露了咨询没有具体步骤、生日能力误拒绝、主题切换错误和小额风控说明缺失。原话验收集保存在 `tests/fixtures/conversation_architecture.json`，姓名和交易标识不入库。
+
+## 职责与边界
+
+```mermaid
+flowchart TD
+    U[用户问题与同主体上下文] --> D[对话理解与任务管理]
+    D --> Q[只读咨询规划]
+    D --> W[结构化办理提案]
+    D --> C[澄清或范围说明]
+    Q --> K[版本化知识和授权事实]
+    K --> G[自然语言生成]
+    G --> V[确定性检查和独立语义核验]
+    V --> R[答复]
+    W --> A[Core预检与原参数确认]
+    A --> M[所需验证和一次性授权]
+    M --> E[事务提交与确定性回执]
+```
+
+模型负责理解、寻求证据和综合解释。Core 独立负责主体、金额、风险、确认、MFA、幂等和持久提交。生成器与核验器没有执行工具，模型核验不承担资金授权。
+
+## 能力、知识与状态
+
+`banking_knowledge.py` 统一版本化能力与独立知识章节。能力目录覆盖 `planner.ALL_INTENTS`，关联必填字段和读/工作流类型。知识包含办理步骤、前提和限制，章节具有稳定 ID 和版本来源。修改知识须与可执行实现、UI、验证保持一致。
+
+Core 提供会话鉴权的 `GET /api/v1/assistant/capabilities`、`GET /api/v1/service-guide?topic=` 和 `GET /api/v1/assistant/context`。上下文快照提供当前登录者卡片状态、有限额度政策、当日转出及当前行为升级原因；不会预检、签发授权、消费凭证或清理行为历史。静态知识版本或内容不匹配时，Agent 不将其作为新事实。
+
+`dialogue_act` 分开表示查询、解释、办理、补信息、社交、澄清与不支持；`scope` 区分业务内、混合与范围外；`topic_relation` 区分新主题与省略追问，`questions` 描述本轮有界问题。混合请求只回答业务部分，不能因附带无关任务而整条丢弃。
+
+`dialogue_state` 按主体保存当前主题和最多四类未完成缺槽任务。显式恢复只能引用已存任务 ID，参数来自原始校验结果；恢复讨论须重新预检和审批。取消任务后移出恢复清单。复杂复合业务与问卷继续使用专用状态机。新话题不从任意旧观察中猜类型，明确承接的省略问题才沿用主题。
+
+待审批操作仍由独立审批存储管理。只读插问不恢复写图，不改变句柄、对象、金额和有效期；社交与澄清也有独立答复。插问缓存始终保持自己的查询结果，不会在审批后变成写操作回执。
+
+## 咨询、生成与核验
+
+`consultation.py` 的工具仅包括 `knowledge`、`account_context`、`balance`、`cards`、`disputes`、`transactions`。工具不接受任意 URL、身份、HTTP 方法、SQL 或执行参数。每次咨询最多五次读取、两轮规划，去除重复读取；传输层另加 GET 限制。账户型读取复用 Core 所有者过滤和原回执验证。
+
+生成器可自然解释、归纳和比较，返回 `answer`、`evidence_ids`、`unanswered`。所有金额使用绑定证据的 `{{value.N}}` 引用，由服务端填入；原始金额、未知值、未知数字/编号、无依据操作声明与外部链接会被拒绝。余额引用另检查可用、总额和锁定标签。明确只问可用余额时仅提供该字段。完整流水和重要限制由服务端保留。
+
+独立核验调用分别判断范围、事实支持、是否回答当前问题与安全性，失败最多修正一次。未通过草稿不下发；咨询可回退到相关已验证知识，并明确完整解释未通过核验，其他查询保留原回执。资金成功回执、失败结果与问卷不由生成器改写。
+
+成功自然答复保留 `answer_presentation.version=1` 和 `source=VERIFIED_FACTS`，增加 `mode=GENERATED_REVIEWED`，兼容现有 Android 聚焦展示。该标记不代表绝对正确，也不用于授权。
+
+## 配置与验收
+
+- `BANK_ANSWER_PLANNING=1` 默认启用生成与核验；`0` 回退已验证的固定结果。
+- `BANK_ANSWER_MODE=enforce` 默认采用核验回答；`shadow` 生成核验但保持原可见回复，记录差异计数。
+- `BANK_REVIEW_MODEL` 可指定同一已配置模型服务上的核验模型；未指定时使用主模型的独立核验调用。提示不同不等于错误来源完全独立。
+- `CONSULTATION_PLAN` 记录读取、失败、证据数量和主题；`ANSWER_REVIEW` 记录通过/拒绝、次数与规则原因；`ANSWER_SHADOW` 记录影子差异，不记录原问题、正文或凭证。
+
+验收分别报告回答有用性、误拒绝、范围外内容、事实准确性、重复、任务恢复与非预期写入。安全回退不计为自然回答通过；模型语义核验仍可能误判，话题检查不能保证阻止所有诱导，资金权限必须依靠独立协议。
+
+设计参考 [Rasa CALM](https://rasa.com/docs/learn/concepts/calm/) 的对话与流程分工、[NeMo Guardrails](https://docs.nvidia.com/nemo/guardrails/latest/about-nemo-guardrails-library/rail-types) 的分层检查、[LangGraph](https://docs.langchain.com/oss/python/langgraph/workflows-agents) 的动态 Agent 与工作流组合，以及 [τ-bench](https://github.com/sierra-research/tau2-bench) 的用户模拟和任务评测。此实现不依赖 Rasa Pro，也未把演示代码直接用于生产。

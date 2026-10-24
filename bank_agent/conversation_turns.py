@@ -176,7 +176,7 @@ class TurnsMixin:
                                                     "inquiry_status": side.get("business_status") or ("SUCCEEDED" if side.get("execution_result") else "NEEDS_INPUT")}))
                 remembered = remember_reply(side, {"final_response": message})
                 with self._lock:
-                    self._pending_dialogue[thread_id] = {key: remembered[key] for key in ("memory_principal", "dialogue_history", "observations")}
+                    self._pending_dialogue[thread_id] = {key: remembered[key] for key in ("memory_principal", "dialogue_history", "observations", "dialogue_state")}
                 self._audit_response(principal, envelope)
                 return envelope, {}
             # A new request does not silently replace the waiting one: say so.
@@ -205,6 +205,8 @@ class TurnsMixin:
                 return cancelled, {}
 
         if control == "cancel":
+            from bank_agent.dialogue_state import dialogue_view
+
             completed_workflow = (state.get("context") or {}).get("compound_workflow")
             if completed_workflow:
                 completed_workflow = json.loads(json.dumps(completed_workflow))
@@ -217,6 +219,8 @@ class TurnsMixin:
                 "sub_requests": None, "plan": None, "risk_level": "UNKNOWN",
                 "final_response": "已取消当前待办操作，没有执行任何资金变更。",
                 "business_status": "CANCELLED", "completed_workflow": completed_workflow,
+                "dialogue_state": {**dialogue_view(state), "tasks": [task for task in dialogue_view(state)["tasks"]
+                                                                       if task.get("intent") != state.get("intent")]},
             }
             graph.update_state(config, cleared)
             envelope = self._envelope_from_state(

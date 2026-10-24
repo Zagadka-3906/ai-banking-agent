@@ -19,6 +19,13 @@ def answer_pending_question(state: dict[str, Any], text: str, request_id: str) -
     with runtime.read_only_calls():
         with understanding_context(side):
             parsed = validate_intent_payload(model_parse(text))
+        act = (parsed.get("parse_meta") or {}).get("dialogue_act")
+        if act in {"SOCIAL", "UNCLEAR"}:
+            kind = (parsed.get("parse_meta") or {}).get("social_kind")
+            side["intent"] = "UNKNOWN"
+            side["final_response"] = ("这次的问题还不明确，可以说明想查询的记录或要了解的步骤。" if act == "UNCLEAR" else
+                                      {"thanks": "不客气。", "goodbye": "好的，有需要可以继续告诉我。"}.get(str(kind), "我在，可以先问业务问题，再决定是否确认原操作。"))
+            return dict(side)
         if (parsed.get("parse_meta") or {}).get("dialogue_act") == "UNSUPPORTED":
             side["final_response"] = "这项能力目前没有接入，无法查询或办理。原待确认操作保持不变。"
             return dict(side)

@@ -20,7 +20,7 @@ from planner import (
 from security import audit_event
 from bank_agent import runtime
 from bank_agent.analysis_codegen import answer_bill_question
-from bank_agent.understanding import HELP_TOPICS, help_topic, referenced_case, referenced_transactions
+from bank_agent.understanding import referenced_case, referenced_transactions
 from bank_agent.state import (
     BankingAgentState,
 )
@@ -55,22 +55,14 @@ from bank_agent.nodes.responder import (
 
 def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
     user_id = state["user_id"]
+    if intent == Intent.BANKING_HELP.value:
+        from bank_agent.consultation import consult
+
+        return consult(state)
     if intent in {Intent.DISPUTE_QUERY.value, Intent.BANKING_HELP.value}:
         if intent == Intent.DISPUTE_QUERY.value:
             case_id = referenced_case(state)
             path = "disputes" + ("?" + urlencode({"case_id": case_id}) if case_id else "")
-        else:
-            topic = help_topic(str(state.get("user_input") or ""))
-            specified_topic = (state.get("slots") or {}).get("help_topic")
-            if topic == "general" and specified_topic in HELP_TOPICS:
-                topic = specified_topic
-            if topic == "general" and state.get("memory_principal") == user_id:
-                for observation in reversed(list((state.get("observations") or {}).values())):
-                    prior_topic = observation.get("help_topic") or help_topic(str(observation.get("intent") or "").replace("DISPUTE", "争议").replace("CARD", "卡").replace("TRANSFER", "转账").replace("WEALTH", "理财").replace("SUBSCRIPTION", "订阅"))
-                    if prior_topic != "general":
-                        topic = prior_topic
-                        break
-            path = "service-guide?" + urlencode({"topic": topic})
         response = runtime._http("GET", path, state=state, headers={"X-User-Id": user_id})
         if response.status_code >= 400:
             raise RuntimeError(error_message(response))

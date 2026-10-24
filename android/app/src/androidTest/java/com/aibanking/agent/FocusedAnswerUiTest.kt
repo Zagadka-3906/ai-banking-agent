@@ -43,7 +43,7 @@ class FocusedAnswerUiTest {
         turn("给李四转300元")
         val handle = checkNotNull(model.state.value.pending).approvalId
         val explanation = turn("这次还要验证码吗")
-        assertTrue(explanation.text.contains("无需验证码"))
+        assertTrue(noOtp(explanation.text))
         assertFalse(explanation.approvalPreview)
         assertEquals(handle, model.state.value.pending?.approvalId)
         val check = turn("先查下余额")
@@ -53,13 +53,24 @@ class FocusedAnswerUiTest {
         assertEquals(before, control(18800, "state").toString())
         ui.runOnIdle { model.reject() }
         ui.waitUntil(30_000) { !model.state.value.busy && model.state.value.pending == null }
-        assertTrue(model.state.value.messages.any { it.id == explanation.id && it.text.contains("无需验证码") })
+        assertTrue(model.state.value.messages.any { it.id == explanation.id && noOtp(it.text) })
         assertEquals(before, control(18800, "state").toString())
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).assertDoesNotExist()
+        val procedure = turn("解冻需要去柜台办理吗")
+        assertTrue(procedure.text.contains("App", ignoreCase = true))
+        assertTrue(Regex("不需要|无需|不用").containsMatchIn(procedure.text))
+        assertTrue(procedure.text.contains("验证码") && procedure.text.contains("签名"))
+        assertNull(model.state.value.pending)
+        val crossScene = turn("跨场景联动怎么实现")
+        assertTrue(listOf("生日", "提醒", "草稿").all { crossScene.text.contains(it) })
+        assertNull(model.state.value.pending)
+        assertEquals(before, control(18800, "state").toString())
         val calls = control(18810, "records").getJSONArray("model_calls")
         assertTrue(calls.length() >= 7)
         for (index in 0 until calls.length()) assertTrue(calls.getJSONObject(index).getBoolean("success"))
     }
+
+    private fun noOtp(text: String) = Regex("(?:无需|不需要|不用)[^。；\\n]{0,12}验证码").containsMatchIn(text)
 
     private fun turn(text: String): ChatMessage {
         val prior = model.state.value.messages.map { it.id }.toSet()

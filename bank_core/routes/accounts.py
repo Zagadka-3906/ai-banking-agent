@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -30,27 +31,14 @@ from security import (
 
 router = APIRouter()
 
+from banking_knowledge import KNOWLEDGE_VERSION, TOPICS, capability_catalog, knowledge_documents
 
-_SERVICE_GUIDES = {
-    "dispute": ["可以查询已有争议工单的状态、关联交易和登记时间。", "反诈保护会冻结关联卡片并创建或关联工单，须单独确认和强验证。",
-                "当前是演示工单登记，没有真实客服审核队列，也未提供预计完成时间；不会自动退款。",
-                "目前没有提供撤回、取消或删除争议工单的功能。", "查询工单不会解除卡片冻结；如需解冻，须另外提出并完成确认和强验证。"],
-    "transfer": ["转账需先核对收款人和金额并确认；当日累计超1000元还需强验证。", "预约转账到期后仍等待用户确认，已完成的转账不能直接撤销。",
-                 "这是虚构账本，不提供真实跨行到账时效承诺。"],
-    "card": ["可直接查询卡片状态。", "冻结、解冻、挂失、解除挂失和调额需单独确认及强验证。",
-             "关闭交易渠道需确认，开通渠道需强验证；询问流程不会直接操作卡片。", "本演示中冻结卡片限制该卡付款，账户仍可接收转账。"],
-    "wealth": ["可以查询产品、持仓和风险等级，推荐前需完成风险测评。", "申购和赎回须单独确认及强验证；具体规则以虚构产品详情为准。",
-               "本系统不提供真实投资建议、保本保证或收益承诺。"],
-    "subscription": ["查询和取消订阅都需确认。", "系统推测的订阅候选不能直接取消，需先核实商户记录。",
-                     "演示取消记录不代表真实商户合同解除或退款。"],
-    "security": ["查询余额、流水或卡片状态无需操作确认；订阅查询按本演示规则仍需确认。",
-                 "待确认操作尚未执行，可以先询问规则或查询记录，再决定确认或取消。",
-                 "红区操作需要一次性验证码和登记设备的签名验证，聊天中说已验证不能替代验证。",
-                 "验证与授权绑定本次业务及对象，不能用于另一笔操作。"],
-    "general": ["可查询账户、交易、卡片、理财和争议工单；可询问相关业务规则。",
-                "转账、冻结、建单等变更需另行提出并确认，询问进度或办理方法不会执行这些操作。",
-                "请说明要了解哪项业务；未提供的规则、人工处理时效或银行外部业务不能推测。"],
-}
+from bank_core.cards import CARD_MAX_DAILY_LIMIT, user_cards
+from bank_core.payments import daily_spent
+from bank_security.circuit import BEHAVIOR_STATE, BEHAVIOR_STEP_UP_RULES, behavior_window_seconds
+
+
+_SERVICE_GUIDES = {topic: [item["text"] for item in knowledge_documents(topic)] for topic in TOPICS}
 
 
 @router.get("/api/v1/disputes")
@@ -77,8 +65,42 @@ def get_disputes(case_id: Optional[str] = None, transaction_id: Optional[str] = 
 def service_guide(topic: str = "general", x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
                   x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     actor = get_actor(x_user_id, x_user_id, action="BANKING_HELP", request_id=server_request_id(x_request_id))
-    safe_topic = topic if topic in _SERVICE_GUIDES else "general"
-    return {"code": 200, "user_id": actor, "topic": safe_topic, "facts": list(_SERVICE_GUIDES[safe_topic]), "version": 1}
+    safe_topic = topic if topic in TOPICS else "general"
+    documents = knowledge_documents(safe_topic)
+    return {"code": 200, "user_id": actor, "topic": safe_topic, "facts": [item["text"] for item in documents], "version": 1,
+            "knowledge_version": KNOWLEDGE_VERSION, "documents": documents}
+
+
+@router.get("/api/v1/assistant/capabilities")
+def assistant_capabilities(x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    actor = get_actor(x_user_id, x_user_id, action="CAPABILITY_QUERY", request_id=server_request_id(None))
+    return {"code": 200, "user_id": actor, "version": KNOWLEDGE_VERSION, "capabilities": capability_catalog()}
+
+
+@router.get("/api/v1/assistant/context")
+def assistant_context(x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+                      x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
+    """Policy explanation snapshot: never precheck, mint authorization or purge state."""
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(x_user_id, x_user_id, action="ASSISTANT_CONTEXT", request_id=request_id)
+    with STATE_LOCK:
+        account = ACCOUNTS.get(actor)
+        if account is None:
+            raise HTTPException(404, {"code": "ACCOUNT_NOT_FOUND", "message": "账户不存在"})
+        now = time.monotonic()
+        timeline = (BEHAVIOR_STATE.get(actor) or {}).get("timeline") or []
+        names = {row.get("name") for row in timeline if row.get("kind") == "SIGNAL"
+                 and 0 <= now - float(row.get("at", 0)) <= behavior_window_seconds()}
+        reasons = [row["description"] for row in BEHAVIOR_STEP_UP_RULES if all(name in names for name in row["requires"])]
+        labels = {"ACTIVE": "正常", "FROZEN": "已冻结", "LOST": "已挂失"}
+        facts = [{"id": "context.daily_spent", "text": f"当前账户今日已转出 ¥{daily_spent(actor):,.2f}。"},
+                 {"id": "context.limit_max", "text": f"当前演示卡片日额度最多可设置为 ¥{CARD_MAX_DAILY_LIMIT:,.2f}，不支持无限额度。"}]
+        for index, card in enumerate(user_cards(actor)):
+            facts.append({"id": f"context.card.{index}", "text": f"卡片 {card['card_id']} 当前状态为{labels.get(str(card.get('status')), '未知')}，日额度 ¥{float(card.get('daily_limit') or 0):,.2f}。"})
+        facts.append({"id": "context.step_up", "text": "当前存在转账强验证升级条件：" + "；".join(reasons) + "。" if reasons
+                      else "当前查询时点没有命中额度调整后的转账验证升级条件；实际要求以本次操作预检与审批卡为准。"})
+    audit_event("ASSISTANT_CONTEXT", user_id=actor, request_id=request_id, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS")
+    return {"code": 200, "user_id": actor, "version": KNOWLEDGE_VERSION, "facts": facts}
 
 
 # ---------------------------------------------------------------------------

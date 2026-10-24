@@ -93,6 +93,16 @@ if MODEL_ENABLED:
 else:
     llm = None
 
+# Separate injectable reviewer seam. An independently configured model can be
+# evaluated here; by default calls use a distinct review prompt on the main model.
+answer_reviewer: Any = None
+if MODEL_ENABLED and ChatOpenAI is not None and os.getenv("BANK_REVIEW_MODEL", "").strip():
+    answer_reviewer = ChatOpenAI(
+        model=os.environ["BANK_REVIEW_MODEL"].strip(), api_key=SecretStr(DEEPSEEK_API_KEY),
+        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), temperature=0.0,
+        timeout=model_timeout(), max_retries=0,
+    )
+
 
 def _http(method: str, path: str, *, state: BankingAgentState, json_body: Optional[dict[str, Any]] = None, headers: Optional[Mapping[str, Optional[str]]] = None) -> requests.Response:
     if _READ_ONLY.get() and method.upper() != "GET":

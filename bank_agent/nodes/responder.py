@@ -45,7 +45,14 @@ from bank_agent.rendering import (
 
 
 def responder_node(state: BankingAgentState) -> dict[str, Any]:
-    return {"answer_presentation": None, **compose_answer(state, _with_custom_analysis(state, _respond(state)))}
+    response = compose_answer(state, _with_custom_analysis(state, _respond(state)))
+    # A validated canonical balance is also safe to display verbatim when a
+    # generative draft is unavailable. The client must not overwrite it with a
+    # generic introduction and hide the actual answer from the message body.
+    if ((state.get("execution_result") or {}).get("type") == "BALANCE" and response.get("business_status") != "FAILED"
+            and not state.get("final_response") and response.get("final_response") and not response.get("answer_presentation")):
+        response["answer_presentation"] = {"version": 1, "source": "VERIFIED_FACTS", "result_type": "BALANCE", "mode": "CANONICAL"}
+    return {"answer_presentation": None, **response}
 
 
 def _with_custom_analysis(state: BankingAgentState, response: dict[str, Any]) -> dict[str, Any]:
@@ -158,6 +165,28 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
         facts = data.get("facts")
         if data.get("version") != 1 or not isinstance(facts, list) or not facts or any(not valid_text_field(item, max_length=400) for item in facts):
             return response_validation_failure(state, "SERVICE_GUIDE_INVALID")
+        if "documents" in data:
+            from banking_knowledge import KNOWLEDGE_VERSION, TOPICS, knowledge_documents
+
+            documents = data["documents"]
+            known = {item["id"]: item for topic in TOPICS for item in knowledge_documents(topic)}
+            if (data.get("knowledge_version") != KNOWLEDGE_VERSION or not isinstance(documents, list)
+                    or len(documents) != len(facts) or len(documents) > 80):
+                return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
+            ids = set()
+            for index, item in enumerate(documents):
+                if (not isinstance(item, dict) or not valid_text_field(item.get("id"), max_length=100)
+                        or item["id"] in ids or item.get("text") != facts[index]):
+                    return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
+                ids.add(item["id"])
+                if item["id"] in known:
+                    valid = item.get("text") == known[item["id"]]["text"] and item.get("source") == known[item["id"]]["source"]
+                else:
+                    valid = bool(re.fullmatch(r"context\.[a-z_.0-9]+", item["id"]) and item.get("source") == "core://assistant/context"
+                                 or re.fullmatch(r"read\.(balance|cards|disputes|transactions)\.\d+", item["id"])
+                                 and item.get("source") == "core://" + item["id"].split(".")[1])
+                if not valid:
+                    return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
         return {"final_response": "\n".join(str(item) for item in facts)}
     if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") in {"OVERSEAS_TRANSACTION", "SUSPICIOUS_TRANSACTIONS", "TRANSACTION_REFERENCE"}:
         kind = {"SUSPICIOUS_TRANSACTIONS": "可疑交易线索", "TRANSACTION_REFERENCE": "所指交易"}.get(str(result.get("specific_query")), "境外交易")

@@ -168,7 +168,7 @@ def _resolve_undo_target(state: BankingAgentState) -> dict[str, Any]:
 
     kind = str((state.get("slots") or {}).get("undo_kind") or "")
     if kind == "SETTLED_TRANSFER":
-        return {"risk_level": "UNKNOWN", "final_response": "已完成的转账无法撤销或退回，系统不会发起反向付款。如需追回，请联系收款人，或在任务页请求人工处理。仍未执行的预约转账、未付款的 AA 请求和资金锁定可以撤销。"}
+        return {"risk_level": "UNKNOWN", "business_status": "NEEDS_INPUT", "final_response": "已完成的转账无法撤销或退回，系统不会发起反向付款。如需追回，请联系收款人，或在任务页请求人工处理。仍未执行的预约转账、未付款的 AA 请求和资金锁定可以撤销。"}
     response = runtime._http("GET", "tasks/undoable", state=state, headers={"X-User-Id": state["user_id"]})
     if response.status_code >= 400:
         raise RuntimeError(error_message(response))
@@ -176,7 +176,7 @@ def _resolve_undo_target(state: BankingAgentState) -> dict[str, Any]:
     match = next((row for row in rows if kind == "LAST" or row.get("task_type") == kind), None)
     if match is None:
         label = UNDO_KINDS.get(kind, "操作")
-        return {"risk_level": "UNKNOWN", "final_response": f"当前没有可撤销的{label}。已执行的转账、申购等资金操作不能撤销；可在任务页查看全部安排。"}
+        return {"risk_level": "UNKNOWN", "business_status": "NEEDS_INPUT", "final_response": f"当前没有可撤销的{label}。已执行的转账、申购等资金操作不能撤销；可在任务页查看全部安排。"}
     return {"task_id": str(match["task_id"])}
 
 

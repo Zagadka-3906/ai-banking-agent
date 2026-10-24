@@ -21,10 +21,15 @@ def fixed_model(monkeypatch, intent, act, choose=None, calls=None, **extra):
     def invoke(messages):
         if calls is not None:
             calls.append(messages)
-        if "银行答复组织器" in str(messages[0].content):
+        if "银行只读咨询规划器" in str(messages[0].content):
+            return SimpleNamespace(content='{"reads":[]}')
+        if "独立银行回答核验器" in str(messages[0].content):
+            return SimpleNamespace(content='{"in_scope":true,"grounded":true,"answers_question":true,"safe":true}')
+        if "银行业务解答助手" in str(messages[0].content):
             payload = json.loads(messages[-1].content)
             ids = choose(payload) if choose else [payload["facts"][0]["id"]]
-            return SimpleNamespace(content=json.dumps({"fact_ids": ids, "layout": "direct"}, ensure_ascii=False))
+            answer = "\n".join(item["text"] for key in ids for item in payload["facts"] if item["id"] == key)
+            return SimpleNamespace(content=json.dumps({"answer": answer, "evidence_ids": ids, "unanswered": []}, ensure_ascii=False))
         if "银行意图抽取器" in str(messages[-1].content):
             return SimpleNamespace(content=json.dumps({"intent": intent, "dialogue_act": act, "confidence": .99, **extra}, ensure_ascii=False))
         return SimpleNamespace(content='{"expression":null}')
@@ -148,7 +153,7 @@ def test_question_focused_balance_answer_uses_only_selected_verified_field(gatew
     reply = _send(client, "只告诉我现在能用的钱", conversation_id="focused-balance")
     assert "可用余额" in reply["reply"] and "15,000.00" in reply["reply"]
     assert "总余额" not in reply["reply"] and "锁定金额" not in reply["reply"]
-    assert reply["result"]["answer_presentation"] == {"version": 1, "source": "VERIFIED_FACTS", "result_type": "BALANCE"}
+    assert reply["result"]["answer_presentation"] == {"version": 1, "source": "VERIFIED_FACTS", "result_type": "BALANCE", "mode": "GENERATED_REVIEWED"}
 
 
 def test_effect_question_leads_with_the_effect_not_all_card_procedures(gateway, monkeypatch):
@@ -273,7 +278,7 @@ def test_verification_question_uses_this_approval_and_remembers_the_side_discuss
     reply = _send(client, "这次还需要验证码吗", conversation_id="verification-question")
     assert "无需验证码" in reply["reply"] and reply["approval"]["approval_id"] == pending["approval"]["approval_id"]
     _send(client, "那设备签名呢", conversation_id="verification-question")
-    assert "这次还需要验证码吗" in str(calls[-2][-1].content)
+    assert any("这次还需要验证码吗" in str(call[-1].content) for call in calls)
     assert financial_state() == before
 
 

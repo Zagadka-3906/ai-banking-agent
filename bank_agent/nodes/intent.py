@@ -211,6 +211,12 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     if parsed.get("intent") == Intent.UNKNOWN.value and len(product_ids) == 1 and re.search(r"比较|对比", text):
         parsed["intent"] = Intent.WEALTH_COMPARE.value
         parsed["confidence"] = None
+    from bank_agent.dialogue_state import resume_task
+
+    restored = resume_task(state, parsed, text)
+    if restored:
+        prior_context = {**prior_context, "pending_clarification": restored}
+        state = {**state, "context": prior_context}
     pending = prior_context.get("pending_clarification")
     if isinstance(pending, dict) and pending.get("intent") == Intent.WEALTH_COMPARE.value and "product_ids" in (pending.get("missing") or []):
         previous = pending.get("payload")
@@ -257,11 +263,15 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             return start_risk_quiz({**state, "context": {**prior_context, "compound_workflow": compound}}, retake=has_profile)
     # Several read-only asks in one sentence become one ordered sub-task DAG.
     sub_requests = split_read_requests(text)
-    if len(split_parts(text)) > 1 and not compound and not sub_requests:
+    consultation = (parsed.get("intent") == Intent.BANKING_HELP.value
+                    and (parsed.get("parse_meta") or {}).get("dialogue_act") in {"QUERY", "EXPLAIN"})
+    if consultation:
+        sub_requests = []
+    if len(split_parts(text)) > 1 and not compound and not sub_requests and not consultation:
         return {**empty_state(final_response="这条消息包含多项业务，其中有尚未明确的请求。请逐项补充业务、对象和金额，或分开办理。"), "context": {}, "request_id": state["request_id"]}
     # A compound request that also contains a mutating part is never split and
     # never silently half-answered: the user is asked to handle it in steps.
-    mixed_write = has_mutating_part(text) and not sub_requests and not compound
+    mixed_write = has_mutating_part(text) and not sub_requests and not compound and not consultation
     # Resolve only explicit conversational references.  A prior recipient is
     # never silently used for a fresh request; the user must say “同一位/他”
     # and the operation remains behind the normal approval gate.
@@ -425,7 +435,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         "reminder_at": None,
         "sub_requests": sub_requests or None,
     }
-    audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence"), "parse_meta": parsed.get("parse_meta"), "sub_intents": [item.get("intent") for item in sub_requests] or None})
+    audit_meta = {key: value for key, value in (parsed.get("parse_meta") or {}).items() if key != "questions"}
+    audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence"), "parse_meta": audit_meta, "sub_intents": [item.get("intent") for item in sub_requests] or None})
     return result
 
 

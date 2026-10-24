@@ -13,6 +13,7 @@ from planner import (
 
 
 class BankingAgentState(TypedDict, total=False):
+    dialogue_state: dict[str, Any]
     memory_principal: Optional[str]
     dialogue_history: list[dict[str, str]]
     observations: dict[str, dict[str, Any]]

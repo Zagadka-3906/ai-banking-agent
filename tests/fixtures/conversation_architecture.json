@@ -1,0 +1,26 @@
+{
+  "source": "服务器会话 2026-10-25 05:16–05:21（Asia/Taipei），去除姓名及交易标识",
+  "cases": [
+    {"question":"查一下余额","kind":"read"},
+    {"question":"查一下最近账单","kind":"read"},
+    {"question":"这几笔转账能撤销吗","kind":"consult","topic":"transfer"},
+    {"question":"已完成的转账怎么处理","kind":"consult","topic":"transfer"},
+    {"question":"那预约转账怎么撤销","kind":"consult","topic":"transfer","obligations":["待办任务","确认"]},
+    {"question":"给联系人转100","kind":"action"},
+    {"question":"我的卡片怎么解冻","kind":"consult","topic":"card","obligations":["App","验证码","签名"]},
+    {"question":"解冻需要怎么验证","kind":"consult","topic":"card","obligations":["验证码","签名"]},
+    {"question":"解冻需要去柜台办理吗","kind":"consult","topic":"card","obligations":["App","不需要真实柜台"]},
+    {"question":"卡片解冻","kind":"action"},
+    {"question":"取消卡片限额","kind":"clarify","topic":"limits","obligations":["不支持取消限额"]},
+    {"question":"10000","kind":"slot"},
+    {"question":"给联系人转500","kind":"action"},
+    {"question":"今日消费多少","kind":"read"},
+    {"question":"给李四转100","kind":"action"},
+    {"question":"查一下这笔转账的流水","kind":"read"},
+    {"question":"这笔转账能撤销吗","kind":"consult","topic":"transfer"},
+    {"question":"撤销这笔预约转账","kind":"action"},
+    {"question":"后天是我老婆生日,给她预订一束花","kind":"consult","topic":"cross_scene","obligations":["尚未接入","预算","草稿"]},
+    {"question":"跨场景联动怎么实现","kind":"consult","topic":"cross_scene","obligations":["生日","提醒","草稿"]},
+    {"question":"转账超1000元怎么验证","kind":"consult","topic":"transfer","obligations":["验证码","签名"]}
+  ]
+}

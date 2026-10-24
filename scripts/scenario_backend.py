@@ -306,7 +306,7 @@ def run() -> None:
     module = importlib.import_module("main" if args.service == "core" else "agent_api")
     app = module.app
     source_root = Path(args.source_dir).resolve() if args.source_dir else ROOT
-    sources = ["agent.py", "agent_api.py", "conversation.py", "main.py", "planner.py", "security.py", "bank_tools.py", "sandbox.py", "intent_language.py", "workflow_contract.py", "workflow_runtime.py"]
+    sources = ["agent.py", "agent_api.py", "conversation.py", "main.py", "planner.py", "security.py", "bank_tools.py", "sandbox.py", "intent_language.py", "workflow_contract.py", "workflow_runtime.py", "banking_knowledge.py"]
     sources += sorted(path.relative_to(source_root).as_posix() for package in ("bank_core", "bank_agent", "bank_security", "bank_planning")
                       for path in (source_root / package).rglob("*.py"))
     sources += sorted(path.relative_to(source_root).as_posix() for path in (source_root / "bank_security").rglob("*.py"))
