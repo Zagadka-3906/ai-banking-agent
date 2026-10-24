@@ -348,3 +348,18 @@ def test_explicit_number_after_limit_explanation_proposes_that_value_for_fresh_s
     assert reply["approval"] is not None and reply["approval"]["risk_level"] == "RED"
     assert state("finite-limit-reply")["amount"] == 10000
     assert main.CARDS == old_cards
+
+
+@pytest.mark.parametrize("model_available", [False, True])
+def test_small_payment_verification_explains_policy_even_without_an_active_step_up(gateway, monkeypatch, model_available):
+    client, _ = gateway
+    if model_available:
+        # Invalid generation forces a real fallback rather than hand-picking a
+        # good answer, reproducing the public acceptance failure.
+        monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content='{}')))
+    before = financial_state()
+    reply = _send(client, "为什么我转小额也可能要强验证", conversation_id="potential-step-up")
+    assert reply["intent"] == "BANKING_HELP" and reply["approval"] is None
+    assert "累计" in reply["reply"] and "额度" in reply["reply"]
+    assert "当前存在转账强验证升级条件" not in reply["reply"]
+    assert financial_state() == before

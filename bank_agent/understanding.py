@@ -16,7 +16,7 @@ _CASE = re.compile(r"(?i)(?<![A-Za-z0-9-])CASE-[a-z0-9]{4,32}(?![A-Za-z0-9-])")
 _DISPUTE = re.compile(r"争议|工单|案件|CASE-", re.I)
 _SUSPICIOUS = re.compile(r"可疑|异常交易|异常消费|盗刷")
 _READ = re.compile(r"查询|查看|查(?:一?下|下|看|查)?|明细|记录|详情|哪几笔|哪些|分析|解释|怎么回事|什么情况")
-_HELP = re.compile(r"解释|说明|怎么|如何|多久|多长时间|什么时候|何时|多少.{0,8}结果|进度|流程|步骤|时效|规则|影响|费用|有什么|是什么|是否|是不是|需要(?:什么|哪些)|(?:需要|能|会|还能|可以).{0,16}[吗么？?]|能不能|能否")
+_HELP = re.compile(r"解释|说明|为什么|为何|怎么|如何|多久|多长时间|什么时候|何时|多少.{0,8}结果|进度|流程|步骤|时效|规则|影响|费用|有什么|是什么|是否|是不是|需要(?:什么|哪些)|(?:需要|能|会|还能|可以).{0,16}[吗么？?]|能不能|能否")
 _DIRECT = re.compile(r"(?<!申)(?:帮我|替我|给我|请|麻烦)(?:先|现在|立即|马上|直接|把|将|这张|这笔|我的|\s){0,8}(?:冻结|解冻|挂失|转账|转给|取消|申购|赎回|创建|提交|发起|办理)")
 _BANKING = re.compile(r"转账|到账|交易|消费|扣款|预约|卡|冻结|挂失|解冻|理财|申购|赎回|订阅|代扣|工单|争议|案件|验证|测评")
 DIALOGUE_ACTS = {"QUERY", "EXPLAIN", "ACTION", "SLOT_REPLY", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}
@@ -109,7 +109,8 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         previous = result.get("intent")
         # A generic procedure keyword must not replace a model's grounded
         # request for actual card/account/product state with a help brochure.
-        if (intent == Intent.BANKING_HELP.value and act == "QUERY" and previous in READ_INTENTS - {Intent.BANKING_HELP.value}
+        read_understood = act in {"QUERY", "EXPLAIN"} or act is None and bool(re.search(r"为什么|为何", text))
+        if (intent == Intent.BANKING_HELP.value and read_understood and previous in READ_INTENTS - {Intent.BANKING_HELP.value}
                 and not (_DISPUTE.search(text) and re.search(r"撤销|撤回|取消|删除", text))):
             return result
         if intent == Intent.BILL_QUERY.value and previous in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and not slots:

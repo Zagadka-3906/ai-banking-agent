@@ -219,7 +219,7 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
 
         documents = knowledge_documents(discussion_topic(state))
         text = str(state.get("user_input") or "")
-        keywords = [word for word in ("撤销", "完成", "验证", "解冻", "柜台", "限额", "额度", "生日", "草稿", "订花", "签名", "收款", "接收", "取消", "撤回") if word in text]
+        keywords = [word for word in ("撤销", "完成", "验证", "解冻", "柜台", "限额", "额度", "生日", "草稿", "订花", "签名", "收款", "接收", "取消", "撤回", "小额", "累计", "条件") if word in text]
         if "收款" in keywords:
             keywords.append("接收")
         if "撤销" in keywords or "取消" in keywords:

@@ -9,7 +9,7 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-10-25.2"
+KNOWLEDGE_VERSION = "2026-10-25.3"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
@@ -62,6 +62,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
         ("change", "可先查询当前卡片额度；若要调整，需明确卡片与新日额度，再核对确认并完成验证码和登记设备签名。调整后转账仍受余额、日额度及风控约束。"),
     ],
     "security": [
+        ("step_up", "小额转账也可能需要强验证：验证等级取决于当日累计转出和行为条件；近期调整卡片额度后，窗口内的小额转账也会升级。是否当前触发以核心预检和本次审批卡为准，不能只看单笔金额。"),
         ("factors", "强验证的步骤是核对本次审批卡，用户确认，填写一次性验证码，再由登记设备完成签名；以本次审批卡列出的实际要求为准。"),
         ("device", "登记设备签名由App调用本地密钥完成，可由设备凭据或本地PIN解锁；它不是真实人脸识别服务。不要把验证码、PIN或密码发到聊天中。"),
         ("binding", "确认与验证只对本次对象、金额和操作有效；修改关键内容须重新审批，之前的验证不能授权另一笔操作。"),
