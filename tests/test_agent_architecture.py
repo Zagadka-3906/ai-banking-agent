@@ -363,3 +363,29 @@ def test_small_payment_verification_explains_policy_even_without_an_active_step_
     assert "累计" in reply["reply"] and "额度" in reply["reply"]
     assert "当前存在转账强验证升级条件" not in reply["reply"]
     assert financial_state() == before
+
+
+@pytest.mark.parametrize("prefix", ["**1.** ", "1）", "（1）"])
+def test_procedure_formatting_does_not_turn_an_ordinal_into_a_financial_fact(monkeypatch, prefix):
+    _generating_model(monkeypatch, {"answer": prefix + "核对卡片后确认，再完成验证码和登记设备签名。", "evidence_ids": ["fact.0"], "unanswered": []})
+    reply = compose_answer({"user_input": "解冻如何验证", "execution_result": {"type": "BANKING_HELP"}}, {
+        "final_response": "核对卡片后确认，再完成验证码和登记设备签名。"})
+    assert reply.get("answer_presentation")
+
+
+def test_an_unknown_decimal_is_not_accepted_as_list_formatting(monkeypatch):
+    _generating_model(monkeypatch, {"answer": "1.5%保证收益", "evidence_ids": ["fact.0"], "unanswered": []})
+    canonical = {"final_response": "没有收益承诺。"}
+    assert compose_answer({"user_input": "收益", "execution_result": {"type": "WEALTH_QUERY"}}, canonical) == canonical
+
+
+def test_consultation_refreshes_a_referenced_case_without_creating_another(gateway):
+    from test_inquiry_boundaries import protect
+
+    client, core = gateway
+    protect(core)
+    _send(client, "查争议工单进度", conversation_id="case-evidence")
+    before = financial_state()
+    result = consult({**state("case-evidence"), "user_input": "能撤销这笔争议工单吗"})
+    assert any(item["id"].startswith("read.disputes.") for item in result["data"]["documents"])
+    assert financial_state() == before

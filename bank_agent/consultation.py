@@ -115,6 +115,8 @@ def consult(state: Mapping[str, Any]) -> dict[str, Any]:
             execute({"tool": "account_context"})
         if topic == "transfer" and re.search(r"这笔|那笔|这几笔|那几笔|刚才", str(state.get("user_input") or "")):
             execute({"tool": "transactions"})
+        if topic == "dispute" and re.search(r"这笔|那笔|这张|那张|该|CASE-", str(state.get("user_input") or ""), re.I):
+            execute({"tool": "disputes"})
         for _ in range(2):
             if not runtime.llm or reads >= 5:
                 break

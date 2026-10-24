@@ -132,7 +132,7 @@ cd ..
 .\.venv\Scripts\python.exe scripts/run_android_regression.py --serial emulator-5580 --output-dir build/device-acceptance
 ```
 
-当前结果（2026-10-25）：后端 1245 项通过、1 项跳过，启用分支统计的总覆盖率 85.05%；Android JVM、设备与真实模型多轮结果见[验证记录](docs/验证记录.md)顶部。
+当前结果（2026-10-25）：后端 1250 项通过、1 项跳过，启用分支统计的总覆盖率 85.06%；Android JVM、设备与真实模型多轮结果见[验证记录](docs/验证记录.md)顶部。
 
 70 项设备回归用 `scripts/run_android_regression.py` 运行：它会创建隔离服务和账本文件，同时核对 JUnit XML 与两份 protobuf 的实际执行数量及持久化健康状态。普通 Debug 包可加 `--variant debug --test-class <类名> --minimum-tests 1` 单独验证自动填码。
 
