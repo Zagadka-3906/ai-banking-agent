@@ -54,8 +54,29 @@ jobs:
           script: |
             adb shell locksettings set-pin "$BANK_TEST_DEVICE_PIN"
             python scripts/run_android_regression.py --serial emulator-5554 --output-dir build/ci-regression
+      - name: Publish device regression summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path("build/ci-regression/summary.json")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as report:
+              report.write("## Android device regression\n\n")
+              if path.exists():
+                  summary = json.loads(path.read_text(encoding="utf-8"))
+                  for key in ("tests", "failures", "errors", "skipped"):
+                      report.write(f"- {key}: {summary[key]}\n")
+              else:
+                  report.write("No verified summary was produced; inspect the failed test step.\n")
+          PY
+      # The job summary remains available even when artifact storage is full.
+      # Test failures still fail the job; optional archival cannot mask them.
       # Deliberately upload no raw logs, app data, tokens, PINs or account traces.
       - uses: actions/upload-artifact@v6
+        if: always() && hashFiles('build/ci-regression/summary.json') != ''
+        continue-on-error: true
         with:
           name: android-regression-summary
           path: build/ci-regression/summary.json

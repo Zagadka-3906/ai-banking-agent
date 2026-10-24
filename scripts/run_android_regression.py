@@ -68,11 +68,15 @@ def main():
     parser.add_argument("--serial", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--gradle-init", type=Path)
-    parser.add_argument("--minimum-tests", type=int, default=68)
+    parser.add_argument("--minimum-tests", type=int, default=69)
     parser.add_argument("--test-class", help="Run a specific class instead of the regression annotation")
+    parser.add_argument("--variant", choices=("scenario", "debug"), default="scenario",
+                        help="Debug validates demo OTP autofill; requires an explicit test class")
     parser.add_argument("--case-manifest", type=Path, help="Synthetic multi-turn cases for NaturalConversationUiTest")
     parser.add_argument("--mode", choices=("offline", "live"), default="offline")
     args = parser.parse_args()
+    if args.variant == "debug" and (not args.test_class or args.case_manifest):
+        parser.error("Debug acceptance requires --test-class and cannot use scenario manifests")
     output = args.output_dir.resolve()
     if not output.is_relative_to(ROOT / "build"):
         raise ValueError("Artifacts must stay under repository build/")
@@ -126,9 +130,15 @@ def main():
         if args.gradle_init:
             command += ["-I", str(args.gradle_init.resolve())]
         selector = f"-Pandroid.testInstrumentationRunnerArguments.class={args.test_class}" if args.test_class else "-Pandroid.testInstrumentationRunnerArguments.annotation=com.aibanking.agent.BankingRegression"
-        command += ["-PbankScenarioTests=true", selector,
+        command += (["-PbankScenarioTests=true"] if args.variant == "scenario" else [
+            "-PbankScenarioTests=false",
+            "-PbankGatewayUrl=http://127.0.0.1:18810/", "-PbankCoreUrl=http://127.0.0.1:18800/",
+            "-PbankLocalNetwork=false",
+        ])
+        command += [selector,
                     f"-Pandroid.testInstrumentationRunnerArguments.controlToken={env['BANK_SCENARIO_CONTROL_TOKEN']}",
-                    f"-Pandroid.testInstrumentationRunnerArguments.devicePin={pin}", ":app:connectedScenarioAndroidTest"]
+                    f"-Pandroid.testInstrumentationRunnerArguments.devicePin={pin}",
+                    f":app:connected{args.variant.capitalize()}AndroidTest"]
         if args.case_manifest:
             if args.test_class != "com.aibanking.agent.NaturalConversationUiTest":
                 raise ValueError("Case manifests require the natural conversation recorder")
@@ -141,9 +151,14 @@ def main():
                 raise RuntimeError("Device regression timed out; private command arguments are not printed") from None
             if result.returncode:
                 raise RuntimeError("Device regression failed; inspect the private Gradle log")
-        source = ROOT / "android/app/build/outputs/androidTest-results/connected/scenario"
+        source = ROOT / "android/app/build/outputs/androidTest-results/connected" / args.variant
         summary = verify_results(source, args.minimum_tests)
         verify_protobuf(source, summary["tests"])
+        with urllib.request.urlopen("http://127.0.0.1:18800/api/v1/security/health", timeout=10) as response:
+            durability = json.load(response)["ledger_persistence"]
+        if not durability["file_configured"] or durability["last_write_failed"] or durability["writes_frozen"]:
+            raise RuntimeError("Isolated ledger persistence is not healthy")
+        summary.update({"variant": args.variant, "mode": args.mode, "ledger_persistence": "healthy"})
         shutil.copytree(source, output / "device-results", dirs_exist_ok=True)
         if args.case_manifest:
             sys.path.insert(0, str(ROOT))

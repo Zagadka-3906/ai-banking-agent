@@ -57,6 +57,8 @@ from bank_core.payments import (
     resolve_payee,
 )
 from bank_core.persistence import (
+    audit_ledger_event as audit_event,
+    durable_ledger_write,
     OPERATION_RECEIPTS,
     persist_ledger,
 )
@@ -69,7 +71,6 @@ from security import (
     STATE_LOCK,
     SecurityError,
     amount_to_cents,
-    audit_event,
     authorize_execution,
     inspect_auth_token,
     issue_auth_token,
@@ -99,6 +100,7 @@ def split_inbox(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_re
 
 
 @router.post("/api/v1/splits/{split_id}/decline")
+@durable_ledger_write
 def decline_split(split_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     actor = get_actor(x_user_id, x_user_id, action="SPLIT_DECLINE", request_id=server_request_id(x_request_id))
     safe_id = sanitize_text(split_id, field="AA 编号", max_length=100)
@@ -214,6 +216,7 @@ def run_due_tasks(x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_
     return {"code": 200, "data": changed}
 
 
+@durable_ledger_write
 def advance_due_tasks(*, owner: Optional[str] = None) -> list[dict[str, Any]]:
     """Move every due task one step: reminders complete, money waits for the user.
 
@@ -333,6 +336,7 @@ def task_precheck(task_id: str, req: TaskPrecheckRequest, request: Request = Non
 
 
 @router.post("/api/v1/tasks/{task_id}/execute")
+@durable_ledger_write
 def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     request_id = server_request_id(x_request_id)
     actor = get_actor(req.user_id, x_user_id, action="TASK_EXECUTE", request_id=request_id)
@@ -431,6 +435,7 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
         raise HTTPException(status_code=500, detail={"code": "CORE_ERROR", "message": "任务执行失败，请稍后重试"}) from exc
 
 
+@durable_ledger_write
 def _task_action(task_id: str, action: str, req: TaskActionRequest, x_user_id: Optional[str], x_request_id: Optional[str]):
     # Task state and its schedule/split reservation form one ledger mutation.
     # Hold the same lock used by settlement so cancellation cannot win only

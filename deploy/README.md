@@ -95,6 +95,8 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
 
 ## 注意
 
+- 配置 `BANK_LEDGER_STORE_PATH` 时，业务和回执保存成功后才返回成功。写盘失败返回 503 / `LEDGER_PERSISTENCE_FAILED`，本次业务、任务和幂等回执回滚；用户重新确认后才能重办，不应自动重复执行旧授权。先检查磁盘空间、目录权限和文件占用，存储恢复后下一次请求可重新提交。健康详情的 `ledger_persistence.last_write_failed` 与 `write_failures` 可用于排查；成功保存会清除前者。若 `writes_frozen=true`，表示加载文件校验失败，写操作返回 `LEDGER_STORE_BLOCKED`，应保留原文件并按备份流程处理。
+
 - 演示账号口令 `Bank@2026` 在仓库里是公开的，拿到 App 的人都能登录，看到的都是虚构数据。所以只把 APK 发给需要演示的人。
-- 演示验证码在审批卡上获取（`BANK_MFA_DYNAMIC_OTP=1`），不发送真实短信。
+- 演示验证码由普通 App 的红区审批卡自动获取并填入（`BANK_MFA_DYNAMIC_OTP=1`），不发送真实短信。
 - 证书由脚本生成：CA 有效期 10 年，服务器证书 825 天。私钥只保存在服务器的 `/etc/anyan/tls`。

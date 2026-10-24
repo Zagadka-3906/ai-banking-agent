@@ -280,7 +280,7 @@ class LoginAndChatUiTest {
         const val LOGIN_TIMEOUT_MS = 30_000L
         const val TURN_TIMEOUT_MS = 45_000L
         const val PRINCIPAL = "user_zhang"
-        const val CORE_BASE = "http://10.0.2.2:8000"
+        val CORE_BASE = BuildConfig.CORE_BASE_URL.trimEnd('/')
     }
 }
 
@@ -342,6 +342,11 @@ class RedTierUiTest {
         ui.returnFromOutcome(settleMs = TURN_TIMEOUT_MS)
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             ui.onAllNodesWithText("¥", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        ui.runOnIdle {
+            val state = ViewModelProvider(ui.activity)[ChatViewModel::class.java].state.value
+            assertTrue("the red operation must have a verified successful receipt",
+                state.messages.any { it.businessStatus == "SUCCEEDED" && it.riskLevel == "RED" })
         }
     }
 

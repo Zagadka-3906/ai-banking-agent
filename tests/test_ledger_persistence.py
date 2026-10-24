@@ -13,6 +13,7 @@ refuse.  These tests pin the contract of ``BANK_LEDGER_STORE_PATH``:
 """
 
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -44,14 +45,14 @@ def store_path(tmp_path, monkeypatch):
     return path
 
 
-def _yellow_transfer(client, idempotency_key=None):
+def _yellow_transfer(client, idempotency_key=None, expected_status=200):
     headers = {"X-User-Id": "user_zhang"}
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
     precheck = client.post(
         "/api/v1/risk/precheck",
         json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 300},
-        headers=headers,
+        headers={"X-User-Id": "user_zhang"},
     )
     assert precheck.status_code == 200, precheck.text
     token = precheck.json()["auth_token"]
@@ -62,7 +63,7 @@ def _yellow_transfer(client, idempotency_key=None):
         json={"from_user": "user_zhang", "target_name_or_id": "李四", "amount": 300},
         headers={**headers, "X-Auth-Token": token},
     )
-    assert executed.status_code == 200, executed.text
+    assert executed.status_code == expected_status, executed.text
     return executed.json()
 
 
@@ -81,6 +82,25 @@ def test_a_committed_transfer_survives_a_restart(client, store_path):
     assert main.ACCOUNTS["user_li"]["balance"] == 2300.0
     assert any(tx.get("account_id") == "user_zhang" and tx.get("amount") == 300.0 for tx in main.TRANSACTIONS)
     assert main.ledger_store_status()["file_loaded"] is True
+
+
+def test_receipt_and_ledger_commit_once_before_the_success_audit(client, store_path, monkeypatch):
+    real_replace = persistence.os.replace
+    snapshots = []
+
+    def observe_commit(source, target):
+        with open(source, encoding="utf-8") as handle:
+            snapshots.append(json.load(handle)["state"])
+        assert not any(event["action"] == "TRANSFER_EXECUTE" and event["outcome"] == "SUCCESS" for event in security.AUDIT_LOGS)
+        return real_replace(source, target)
+
+    monkeypatch.setattr(persistence.os, "replace", observe_commit)
+    settled = _yellow_transfer(client, "coupled-commit-operation")
+    assert len(snapshots) == 1
+    snapshot = snapshots[0]
+    assert snapshot["ACCOUNTS"]["user_zhang"]["balance"] == settled["sender_balance"]
+    assert next(iter(snapshot["OPERATION_RECEIPTS"].values()))["response"] == settled
+    assert any(event["action"] == "TRANSFER_EXECUTE" and event["outcome"] == "SUCCESS" for event in security.AUDIT_LOGS)
 
 
 def test_operation_receipt_survives_restart_and_remains_owner_scoped(client, store_path):
@@ -126,9 +146,11 @@ def test_a_tampered_snapshot_is_refused_and_writes_frozen(client, store_path):
     # The forged balance never entered memory...
     assert main.ACCOUNTS["user_zhang"]["balance"] != 999999.0
 
-    # ...and the next committed mutation cannot overwrite the evidence.
+    # ...and subsequent mutations are refused without overwriting evidence.
     before = store_path.read_text(encoding="utf-8")
-    _yellow_transfer(client)
+    balance = main.ACCOUNTS["user_zhang"]["balance"]
+    assert _yellow_transfer(client, expected_status=503)["detail"]["code"] == "LEDGER_STORE_BLOCKED"
+    assert main.ACCOUNTS["user_zhang"]["balance"] == balance
     assert store_path.read_text(encoding="utf-8") == before
 
 
@@ -214,30 +236,48 @@ def test_health_reports_the_ledger_store(client):
     assert body["ledger_persistence"]["mode"] == "memory_only"
 
 
-def test_a_failed_write_is_retried_on_the_next_change(client, store_path, monkeypatch):
-    # One transient error (an antivirus holding the file, say) used to freeze
-    # persistence for the rest of the process; every later transfer was then
-    # lost on restart.  The next change must rewrite the snapshot instead.
-    import os
+@pytest.mark.parametrize("failure_at", ["open", "fsync", "replace"])
+@pytest.mark.parametrize("operation", [None, "failed-persistent-operation"])
+def test_failed_commit_rolls_back_and_cannot_report_success_after_restart(client, store_path, monkeypatch, failure_at, operation):
+    from bank_core.payments import card_daily_spent, daily_spent
 
-    real_replace = os.replace
-    calls = {"count": 0}
+    # Prechecks normalize today's counters before entering the write boundary.
+    daily_spent("user_zhang")
+    card_daily_spent("CARD-001")
+    main.persist_ledger()
+    before_file = store_path.read_bytes()
+    before = {name: deepcopy(persistence.LEDGER_COLLECTIONS[name]) for name in persistence.LEDGER_STATE_NAMES}
 
-    def flaky_replace(source, target):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            raise PermissionError("file locked")
-        return real_replace(source, target)
+    def fail(*args, **kwargs):
+        raise OSError("simulated storage failure")
 
-    monkeypatch.setattr(persistence.os, "replace", flaky_replace)
-    _yellow_transfer(client)
+    with monkeypatch.context() as storage:
+        if failure_at == "open":
+            storage.setattr(persistence, "open", fail, raising=False)
+        else:
+            storage.setattr(persistence.os, failure_at, fail)
+        rejected = _yellow_transfer(client, operation, expected_status=503)
+    assert rejected["detail"]["code"] == "LEDGER_PERSISTENCE_FAILED"
+    assert {name: persistence.LEDGER_COLLECTIONS[name] for name in before} == before
+    assert store_path.read_bytes() == before_file
+    assert any(record["used"] for record in main.AUTH_TOKENS.values())
+    assert security.AUDIT_LOGS[-1]["outcome"] == "PERSISTENCE_FAILED_ROLLBACK"
+    assert not any(event["action"] == "TRANSFER_EXECUTE" and event["outcome"] == "SUCCESS" for event in security.AUDIT_LOGS)
     status = main.ledger_store_status()
     assert status["writes_frozen"] is False
     assert status["last_write_failed"] is True
     assert status["write_failures"] == 1
-
-    second = _yellow_transfer(client)
-    status = main.ledger_store_status()
-    assert status["last_write_failed"] is False
-    snapshot = json.loads(store_path.read_text(encoding="utf-8"))
-    assert snapshot["state"]["ACCOUNTS"]["user_zhang"]["balance"] == second["sender_balance"]
+    if operation:
+        query = client.get(f"/api/v1/operations/{operation}?endpoint=transfer_execute", headers={"X-User-Id": "user_zhang"})
+        assert query.json()["status"] == "UNKNOWN"
+        # The failed response was removed from both caches; a fresh approval
+        # can reuse the operation key after storage recovers, without restart.
+        settled = _yellow_transfer(client, operation)
+        assert settled["sender_balance"] == 14700
+        assert main.ledger_store_status()["last_write_failed"] is False
+    main.reset_state()
+    assert main.load_ledger_store()["loaded_state"] is True
+    assert main.ACCOUNTS["user_zhang"]["balance"] == (14700 if operation else 15000)
+    assert main.ACCOUNTS["user_li"]["balance"] == (2300 if operation else 2000)
+    if operation:
+        assert client.get(f"/api/v1/operations/{operation}?endpoint=transfer_execute", headers={"X-User-Id": "user_zhang"}).json()["receipt"] == settled

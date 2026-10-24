@@ -25,6 +25,8 @@ from bank_core.payments import (
     ensure_account,
 )
 from bank_core.persistence import (
+    audit_ledger_event as audit_event,
+    durable_ledger_write,
     persist_ledger,
 )
 from bank_core.wealth_data import (
@@ -43,7 +45,6 @@ from bank_core.wealth_data import (
 from security import (
     STATE_LOCK,
     SecurityError,
-    audit_event,
     sanitize_text,
 )
 
@@ -141,6 +142,7 @@ def get_risk_profile(x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 
 
 @router.post("/api/v1/wealth/risk-assessment")
+@durable_ledger_write
 def wealth_risk_assessment(
     req: RiskAssessmentRequest,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),

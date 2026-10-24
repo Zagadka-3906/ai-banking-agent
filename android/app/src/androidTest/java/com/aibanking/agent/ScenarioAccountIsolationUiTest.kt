@@ -84,6 +84,40 @@ class ScenarioAccountIsolationUiTest {
         queryBalance()
     }
 
+    @Test fun voice_entry_preserves_the_draft_without_sending_with_or_without_recognition() {
+        instrumentation.uiAutomation.grantRuntimePermission(BuildConfig.APPLICATION_ID, "android.permission.RECORD_AUDIO")
+        ui.runOnIdle { model.onInputChange("给李四转300元") }
+        val before = model.state.value.messages
+        fun messageRequests(): Int {
+            val requests = control(GATEWAY, "requests").getJSONArray("requests")
+            return (0 until requests.length()).count {
+                requests.getJSONObject(it).getString("path").startsWith("/api/v1/agent/messages")
+            }
+        }
+        val requestsBefore = messageRequests()
+        ui.onNodeWithTag("voice_input").performClick()
+        ui.waitUntil(10_000) {
+            ui.onAllNodesWithTag("voice_hold").fetchSemanticsNodes().isNotEmpty() ||
+                ui.onAllNodesWithTag("voice_cloud_consent").fetchSemanticsNodes().isNotEmpty() ||
+                ui.onAllNodesWithText("本设备不支持端侧语音识别，请输入文字").fetchSemanticsNodes().isNotEmpty()
+        }
+        if (ui.onAllNodesWithTag("voice_cloud_consent").fetchSemanticsNodes().isNotEmpty()) {
+            ui.onNodeWithTag("voice_cloud_consent").performClick()
+        }
+        if (ui.onAllNodesWithTag("voice_hold").fetchSemanticsNodes().isNotEmpty()) {
+            ui.onNodeWithTag("voice_hold").assertIsDisplayed()
+            ui.onNodeWithTag(UiTags.CHAT_INPUT).assertDoesNotExist()
+            assertEquals("给李四转300元", model.state.value.input)
+            ui.onNodeWithTag("voice_input").performClick()
+        } else {
+            ui.onNodeWithText("知道了").performClick()
+        }
+        ui.onNodeWithTag(UiTags.CHAT_INPUT).assertTextContains("给李四转300元")
+        assertEquals(before, model.state.value.messages)
+        assertNull(model.state.value.pending)
+        assertEquals(requestsBefore, messageRequests())
+    }
+
     @Test fun voice_result_cannot_replace_later_manual_edits_or_auto_send() {
         lateinit var result: (String) -> Unit
         ui.runOnIdle { result = model.captureVoiceResult(); model.onInputChange("手工输入") }

@@ -77,6 +77,8 @@ from bank_core.payments import (
     split_id_from_remark,
 )
 from bank_core.persistence import (
+    audit_ledger_event as audit_event,
+    durable_ledger_write,
     persist_ledger,
 )
 from bank_core.routes.subscriptions import (
@@ -93,7 +95,6 @@ from scheduler import TASK_STORE, TaskState
 from security import (
     SecurityError,
     amount_to_cents,
-    audit_event,
     authorize_execution,
     behavior_large_amount_cents,
     hash_password,
@@ -110,6 +111,7 @@ router = APIRouter()
 # Yellow/red execution gates
 # ---------------------------------------------------------------------------
 @router.post("/api/v1/transfers/execute")
+@durable_ledger_write
 def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_confirmation: Optional[str] = Header(None, alias="X-User-Confirmation"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     request_id = server_request_id(x_request_id)
     actor = get_actor(req.from_user, x_user_id, action="TRANSFER_EXECUTE", request_id=request_id)
@@ -179,6 +181,7 @@ def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_aut
 
 
 @router.post("/api/v1/accounts/lock_fund")
+@durable_ledger_write
 def lock_fund(req: LockFundRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_confirmation: Optional[str] = Header(None, alias="X-User-Confirmation"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     request_id = server_request_id(x_request_id)
     actor = get_actor(req.user_id, x_user_id, action="LOCK_FUND", request_id=request_id)
@@ -246,6 +249,7 @@ def lock_fund(req: LockFundRequest, request: Request = None, x_auth_token: Optio
 
 @router.post("/api/v1/accounts/unlock_fund")
 @router.post("/api/v1/accounts/rollback_lock")
+@durable_ledger_write
 def unlock_fund(req: UnlockFundRequest, request: Request = None, x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"), x_mfa_proof: Optional[str] = Header(None, alias="X-MFA-Proof"), x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     """Release reserved funds through the same confirmation gate.
 
@@ -309,6 +313,7 @@ def unlock_fund(req: UnlockFundRequest, request: Request = None, x_auth_token: O
 @router.post("/api/v1/wealth/purchase")
 @router.post("/api/v1/wealth/redeem")
 @router.post("/api/v1/auth/password/change")
+@durable_ledger_write
 def execute_operation(
     req: OperationExecuteRequest,
     x_auth_token: Optional[str] = Header(None, alias="X-Auth-Token"),

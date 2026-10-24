@@ -44,12 +44,13 @@ from bank_core.payments import (
     ensure_account,
 )
 from bank_core.persistence import (
+    audit_ledger_event as audit_event,
+    durable_ledger_write,
     persist_ledger,
 )
 from security import (
     STATE_LOCK,
     SecurityError,
-    audit_event,
     sanitize_text,
     verify_password,
 )
@@ -90,6 +91,7 @@ class CardAddRequest(StrictModel):
 
 
 @router.post("/api/v1/cards/{user_id}/add")
+@durable_ledger_write
 def add_card(
     user_id: str,
     req: CardAddRequest,

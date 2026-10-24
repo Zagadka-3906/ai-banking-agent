@@ -252,3 +252,56 @@ def test_legacy_snapshot_without_task_queue_remains_readable(durable):
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     restart()
     assert main.ACCOUNTS["user_zhang"]["balance"] == 1234
+
+
+@pytest.mark.parametrize("action", ["cancel", "takeover", "run-due", "execute"])
+def test_disk_failure_restores_task_and_ledger_without_a_success_receipt(durable, monkeypatch, action):
+    from bank_core import persistence
+
+    client, path = durable
+    task_id = schedule(client)
+    body = {}
+    if action in {"run-due", "execute"}:
+        main.TASK_STORE.get(task_id).run_at = "2000-01-01T00:00:00+00:00"
+    if action == "execute":
+        assert client.post("/api/v1/tasks/run-due", headers=HEADERS).status_code == 200
+        precheck = client.post(f"/api/v1/tasks/{task_id}/precheck", json={"user_id": "user_zhang"}, headers=HEADERS)
+        token = precheck.json()["auth_token"]
+        confirm(client, token)
+        body = {"user_id": "user_zhang", "auth_token": token}
+    main.persist_ledger()
+    before = (deepcopy(main.ACCOUNTS), deepcopy(main.SCHEDULED_TRANSFERS), main.TASK_STORE.export_records(), path.read_bytes())
+
+    def fail(*args):
+        raise OSError("simulated full disk")
+
+    with monkeypatch.context() as storage:
+        storage.setattr(persistence.os, "replace", fail)
+        endpoint = "/api/v1/tasks/run-due" if action == "run-due" else f"/api/v1/tasks/{task_id}/{action}"
+        response = client.post(endpoint, json=body, headers={**HEADERS, "Idempotency-Key": "failed-task-commit"})
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"]["code"] == "LEDGER_PERSISTENCE_FAILED"
+    assert (main.ACCOUNTS, main.SCHEDULED_TRANSFERS, main.TASK_STORE.export_records(), path.read_bytes()) == before
+    assert not main.OPERATION_RECEIPTS
+    restart()
+    assert main.TASK_STORE.export_records() == before[2]
+
+
+def test_background_tick_retries_rolled_back_tasks_after_storage_recovers(durable, monkeypatch):
+    from bank_core import persistence
+    from bank_core.task_scheduler import run_scheduler_once
+    from security import SecurityError
+
+    _client, _path = durable
+    task = main.TASK_STORE.create("user_zhang", "REMINDER", {})
+    main.persist_ledger()
+    with monkeypatch.context() as storage:
+        def fail(*args):
+            raise OSError("simulated full disk")
+        storage.setattr(persistence.os, "replace", fail)
+        with pytest.raises(SecurityError, match="账本保存失败"):
+            run_scheduler_once()
+    assert main.TASK_STORE.get(task.task_id).status == "PENDING"
+    assert run_scheduler_once() == 1
+    restart()
+    assert main.TASK_STORE.get(task.task_id).status == "SUCCEEDED"

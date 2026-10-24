@@ -25,7 +25,8 @@
 
 界面和交互特点：
 
-- 黄区、红区操作出现屏幕边缘光效，光效从屏幕两侧中部向上下延伸、交汇。
+- 黄区、红区确认期间出现屏幕边缘光效，从两侧中部向上下延伸、交汇，再原地缓慢呼吸；确认或取消后淡出。
+- 语音采用按住说话、松开转文字、上滑取消；识别结果先填入输入框，由用户核对后发送。
 - 办理完成后自动弹出结果页，带对勾和波纹动画；查询类回复不弹出。
 - 回复文字只做简短说明，余额、回执、产品、持仓、风险等级等细节放在卡片里，不重复。
 - 风险测评卡片逐题切换，答完 8 题后依次显示风险等级和匹配产品。
@@ -49,7 +50,7 @@ flowchart LR
 1. **意图识别**：配置了 DeepSeek 时，每句话都由模型理解，判断用户要办什么。规则同时解析一遍做校验：两者理解不同时以模型为准（如“我的卡好像找不到了”理解为挂失）；金额、日期、收款人只取规则从原文里抽出的值，模型不能编造，任何变更仍要用户在确认卡上确认。模型超时或出错时退回规则。没有模型密钥时全程使用规则，仍可完整演示。
 2. **风险分级**：Core 对意图、金额、对象重新校验并定级。绿区直接执行，黄区要求确认，红区还要求一次性验证码和 Android Keystore 设备签名。
 3. **一次性授权**：预检签发单次使用的凭证，执行时 Core 重新核对主体、金额、对象、余额与风险等级，防止重放和篡改。
-4. **回执与核对**：回执使用 `response.version=1` 协议，区分对话状态与业务状态。资金操作丢失回执时，按操作编号只读核对，不会重复提交。
+4. **回执与核对**：回执使用 `response.version=1` 协议，区分对话状态与业务状态。资金操作丢失回执时，按操作编号只读核对，不会重复提交。配置账本文件时，账本、任务和支持持久回执的操作编号一起保存后才返回成功；写盘失败返回 503 并回滚本次业务变更，需重新确认办理。
 
 详细设计见[技术文档](docs/技术文档.md)，安全边界见[安全自评报告](docs/安全自评报告.md)。
 
@@ -112,7 +113,7 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 红区操作还需要：
 
 - 模拟器设置屏幕锁，应用会登记设备公钥。
-- 一次性演示验证码，在审批卡上获取。
+- 一次性演示验证码，普通 App 在红区审批时自动获取并填入；隔离回归包关闭自动填码，供测试分别验证正确码和错误码。
 
 飞书接入步骤见[飞书接入说明](docs/飞书IM接入.md)。
 
@@ -123,13 +124,15 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 .\.venv\Scripts\python.exe -m ruff check . --ignore E402
 .\.venv\Scripts\python.exe -m mypy
 cd android
-.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
-.\gradlew.bat :app:connectedDebugAndroidTest           # 需先启动服务与模拟器
+.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
+cd ..
+# 专用测试 AVD 已启动，BANK_TEST_DEVICE_PIN 已设为其屏幕锁 PIN：
+.\.venv\Scripts\python.exe scripts/run_android_regression.py --serial emulator-5580 --output-dir build/device-acceptance
 ```
 
-当前结果为后端 1041 项测试通过、Android JVM 99 项通过。
+当前结果（2026-10-24）：后端 1118 项通过、1 项跳过，启用分支统计的总覆盖率 84.15%；Android JVM 与设备结果见[验证记录](docs/验证记录.md)顶部。
 
-68 项设备回归用 `scripts/run_android_regression.py` 运行：它会创建隔离服务，并核对实际执行数量。
+69 项设备回归用 `scripts/run_android_regression.py` 运行：它会创建隔离服务和账本文件，同时核对 JUnit XML 与两份 protobuf 的实际执行数量及持久化健康状态。普通 Debug 包可加 `--variant debug --test-class <类名> --minimum-tests 1` 单独验证自动填码。
 
 可复现步骤见[测试用例](docs/测试用例.md)，历次结果见[验证记录](docs/验证记录.md)。
 

@@ -288,7 +288,7 @@ def run() -> None:
         "BANK_API_BASE": "http://127.0.0.1:18800/api/v1",
         "BANK_REQUIRE_SESSION": "1", "BANK_DEMO_MODE": "1",
         "BANK_CONVERSATION_DB": "memory", "BANK_APPROVAL_STORE_PATH": "memory",
-        "BANK_LEDGER_STORE_PATH": "",
+        "BANK_LEDGER_STORE_PATH": str(folder / "ledger.json"),
         "BANK_DEVICE_STORE_PATH": str(folder / "devices.json"),
         "BANK_AUDIT_LOG_PATH": "", "BANK_AUDIT_LOG_DIR": str(folder),  # -> {service}-audit.jsonl
         "BANK_AGENT_RATE_LIMIT_PER_MINUTE": "0",

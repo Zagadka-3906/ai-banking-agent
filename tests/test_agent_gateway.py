@@ -246,6 +246,29 @@ def test_yellow_approval_settles_the_transfer(gateway):
     assert float(balance["available_balance"]) == 14700.0
 
 
+def test_gateway_reports_a_failed_commit_without_success_or_cached_receipt(gateway, tmp_path, monkeypatch):
+    from bank_core import persistence
+
+    client, core = gateway
+    monkeypatch.setenv("BANK_LEDGER_STORE_PATH", str(tmp_path / "ledger.json"))
+    main.persist_ledger()
+    envelope = _send(client, "给李四转300元", conversation_id="c-disk-failure")
+
+    def fail(*args):
+        raise OSError("simulated storage failure")
+
+    with monkeypatch.context() as storage:
+        storage.setattr(persistence.os, "replace", fail)
+        resolved = client.post(f"/api/v1/agent/approvals/{envelope['approval']['approval_id']}",
+                               json={"decision": "approve"}, headers=_headers())
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["business_status"] == "FAILED"
+    assert "账本保存失败" in resolved.json()["reply"]
+    balance = core.get("/api/v1/accounts/user_zhang/balance", headers=_headers()).json()
+    assert float(balance["available_balance"]) == 15000
+    assert not main.OPERATION_RECEIPTS
+
+
 def test_rejecting_an_approval_leaves_the_ledger_untouched(gateway):
     client, core = gateway
     envelope = _send(client, "给李四转 300 元", conversation_id="c-yellow-reject")

@@ -24,13 +24,14 @@ from bank_core.payments import (
     ensure_account,
 )
 from bank_core.persistence import (
+    audit_ledger_event as audit_event,
+    durable_ledger_write,
     persist_ledger,
 )
 from scheduler import TASK_STORE
 from security import (
     STATE_LOCK,
     SecurityError,
-    audit_event,
 )
 
 router = APIRouter()
@@ -58,6 +59,7 @@ def subscription_query_result(user_id: str) -> dict[str, Any]:
 
 
 @router.post("/api/v1/subscriptions/{user_id}/reminders")
+@durable_ledger_write
 def create_renewal_reminders(user_id: str, merchant: Optional[str] = None, days_before: int = 2, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     """Create idempotent renewal reminders, optionally for one named merchant.
 

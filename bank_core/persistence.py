@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import inspect
 import json
 import logging
 import math
@@ -10,7 +11,10 @@ import os
 import re
 import time
 from copy import deepcopy
-from typing import Any, Optional
+from contextvars import ContextVar
+from dataclasses import dataclass, field
+from functools import wraps
+from typing import Any, Callable, Optional, TypeVar, cast
 
 from bank_core.ledger import (
     CONTACT_PHONE_RE,
@@ -21,6 +25,8 @@ from scheduler import TASK_STORE
 from security import (
     AUTH_SECRET_CONFIGURED,
     STATE_LOCK,
+    SecurityError,
+    audit_event,
     resolve_store_digest_algorithm,
     store_integrity_digest,
 )
@@ -58,6 +64,16 @@ _LEDGER_STORE_BLOCKED = False
 _LEDGER_WRITE_FAILURES = 0
 _LEDGER_LAST_WRITE_FAILED = False
 _LEDGER_STORE_LOAD_SUMMARY: dict[str, Any] = {}
+
+
+@dataclass
+class _WriteContext:
+    requested: bool = False
+    audits: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+
+
+_WRITE_PENDING: ContextVar[Optional[_WriteContext]] = ContextVar("ledger_write_pending", default=None)
+_WriteFunction = TypeVar("_WriteFunction", bound=Callable[..., Any])
 register_collections(OPERATION_RECEIPTS=OPERATION_RECEIPTS)
 
 # Every domain collection whose committed state a restart must restore.  The
@@ -237,8 +253,10 @@ def _persist_ledger_locked() -> None:
 
     global _LEDGER_WRITE_FAILURES, _LEDGER_LAST_WRITE_FAILED
     target = _ledger_store_target()
-    if not target or _LEDGER_STORE_BLOCKED:
+    if not target:
         return
+    if _LEDGER_STORE_BLOCKED:
+        raise SecurityError("账本文件校验失败，写入已停止，请联系管理员", 503, "LEDGER_STORE_BLOCKED")
     state = {name: deepcopy(LEDGER_COLLECTIONS[name]) for name in LEDGER_STATE_NAMES}
     state["TASK_STORE"] = TASK_STORE.export_records()
     canonical = json.dumps(state, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -255,6 +273,8 @@ def _persist_ledger_locked() -> None:
             os.makedirs(directory, exist_ok=True)
         with open(temporary, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            handle.flush()
+            os.fsync(handle.fileno())
         try:
             os.chmod(temporary, 0o600)
         except OSError:
@@ -262,25 +282,107 @@ def _persist_ledger_locked() -> None:
         # Replace, never truncate: a crash mid-write must not leave a half file
         # that the next start would refuse as tampered.
         os.replace(temporary, target)
-    except OSError:
-        # The committed mutation stands; the next one rewrites the whole
-        # snapshot, so nothing is lost once the disk recovers.  The health
-        # endpoint reports the failure, so a failing disk still surfaces to an
-        # operator.  Freezing here (as before) silently stopped persisting for
-        # the rest of the process after one transient error.
+    except OSError as exc:
+        # The enclosing write boundary rolls back the business state. A later
+        # explicitly approved request can retry once storage recovers.
         _LEDGER_WRITE_FAILURES += 1
         _LEDGER_LAST_WRITE_FAILED = True
-        logger.exception("Unable to persist the ledger store; will retry on the next change")
+        logger.exception("Unable to persist the ledger store; rejecting this write")
+        raise SecurityError("账本保存失败，本次操作未完成，请稍后重新确认办理", 503, "LEDGER_PERSISTENCE_FAILED") from exc
     else:
         _LEDGER_LAST_WRITE_FAILED = False
 
 
 def persist_ledger() -> dict[str, Any]:
-    """Persist on demand; a no-op when durability is off or writes are frozen."""
+    """Persist now, or request a commit at the enclosing write boundary."""
 
     with STATE_LOCK:
-        _persist_ledger_locked()
+        pending = _WRITE_PENDING.get()
+        if pending is None:
+            _persist_ledger_locked()
+        else:
+            pending.requested = True
     return ledger_store_status()
+
+
+def audit_ledger_event(action: str, **kwargs: Any) -> None:
+    """Publish allowed business events only after their durable commit.
+
+    Security auditing remains immediate: consumed factors and blocked attempts
+    are real even when the business mutation is later rolled back.
+    """
+
+    pending = _WRITE_PENDING.get()
+    if pending is not None and kwargs.get("decision") == "ALLOW":
+        pending.audits.append((action, deepcopy(kwargs)))
+    else:
+        audit_event(action, **kwargs)
+
+
+def durable_ledger_write(function: _WriteFunction) -> _WriteFunction:
+    """Commit a complete synchronous mutation before exposing its response.
+
+    Routes may request persistence before assembling their final receipt. Delay
+    that write until the endpoint returns, under the same lock as its mutation
+    and idempotency record. A failed commit restores business state, tasks and
+    cached responses; consumed security factors stay consumed. Memory-only
+    demos retain their existing behavior. Nested writers share one commit.
+    """
+
+    signature = inspect.signature(function, eval_str=True)
+
+    @wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if not _ledger_store_target() or _WRITE_PENDING.get() is not None:
+            return function(*args, **kwargs)
+        # Imported lazily because idempotency itself imports the receipt store.
+        from bank_core.idempotency import IDEMPOTENCY_RECORDS
+        from bank_core.access import server_request_id
+
+        bound = signature.bind(*args, **kwargs)
+        request_id = server_request_id(bound.arguments.get("x_request_id"))
+        if "x_request_id" in signature.parameters:
+            bound.arguments["x_request_id"] = request_id
+        with STATE_LOCK:
+            if _LEDGER_STORE_BLOCKED:
+                audit_event("LEDGER_COMMIT", user_id=bound.arguments.get("x_user_id"), request_id=request_id,
+                            decision="BLOCK", outcome="FAILURE", reason="LEDGER_STORE_BLOCKED")
+                raise SecurityError("账本文件校验失败，写入已停止，请联系管理员", 503, "LEDGER_STORE_BLOCKED")
+            snapshots = {name: deepcopy(LEDGER_COLLECTIONS[name]) for name in LEDGER_STATE_NAMES}
+            tasks = TASK_STORE.snapshot()
+            idempotency = deepcopy(IDEMPOTENCY_RECORDS)
+            pending = _WriteContext()
+            context = _WRITE_PENDING.set(pending)
+            try:
+                response = function(*bound.args, **bound.kwargs)
+                if pending.requested:
+                    try:
+                        _persist_ledger_locked()
+                    except SecurityError:
+                        for name, snapshot in snapshots.items():
+                            current = LEDGER_COLLECTIONS[name]
+                            if isinstance(current, dict):
+                                current.clear()
+                                current.update(snapshot)
+                            else:
+                                current[:] = snapshot
+                        TASK_STORE.restore(tasks)
+                        IDEMPOTENCY_RECORDS.clear()
+                        IDEMPOTENCY_RECORDS.update(idempotency)
+                        audit_event("LEDGER_COMMIT", user_id=bound.arguments.get("x_user_id"),
+                                    request_id=request_id, decision="BLOCK", outcome="PERSISTENCE_FAILED_ROLLBACK",
+                                    metadata={"operation": function.__name__})
+                        raise
+                for action, event in pending.audits:
+                    audit_event(action, **event)
+                return response
+            finally:
+                _WRITE_PENDING.reset(context)
+
+    # Resolve postponed annotations in the original module for FastAPI, rather
+    # than asking it to resolve route-specific models in this wrapper's globals.
+    setattr(wrapped, "__signature__", signature)
+    return cast(_WriteFunction, wrapped)
 
 
 def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:

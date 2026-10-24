@@ -71,3 +71,36 @@ def test_memory_receipt_is_not_mutated_by_later_card_state(client):
     repeated = client.post("/api/v1/operations/execute", json=execution, headers=HEADERS)
     assert repeated.json() == first.json()
     assert repeated.json()["data"]["card"]["status"] == "FROZEN"
+
+
+@pytest.mark.parametrize("operation", ["SUBSCRIPTION_CANCEL", "CARD_FREEZE"])
+def test_failed_operation_commit_restores_business_state_and_consumes_authorization(client, monkeypatch, operation):
+    from copy import deepcopy
+    from bank_core import persistence
+
+    body = {"user_id": "user_zhang", "operation": operation}
+    if operation == "SUBSCRIPTION_CANCEL":
+        body["target"] = main.SUBSCRIPTIONS["user_zhang"][0]["subscription_id"]
+    else:
+        body["card_id"] = "CARD-001"
+    execution = approve(client, body)
+    main.persist_ledger()
+    before = {name: deepcopy(persistence.LEDGER_COLLECTIONS[name]) for name in persistence.LEDGER_STATE_NAMES}
+
+    def fail(*args):
+        raise OSError("simulated disk failure")
+
+    with monkeypatch.context() as storage:
+        storage.setattr(persistence.os, "replace", fail)
+        result = client.post("/api/v1/operations/execute", json=execution, headers=HEADERS)
+    assert result.status_code == 503, result.text
+    assert {name: persistence.LEDGER_COLLECTIONS[name] for name in before} == before
+    assert main.AUTH_TOKENS[execution["auth_token"]]["used"] is True
+    retried = client.post("/api/v1/operations/execute", json=execution, headers=HEADERS)
+    assert retried.status_code == 403, retried.text
+    assert retried.json()["detail"]["code"] == "TOKEN_REPLAY"
+    main.reset_state()
+    assert main.load_ledger_store()["loaded_state"] is True
+    assert main.CARDS["user_zhang"][0]["status"] == "ACTIVE"
+    assert main.SUBSCRIPTIONS["user_zhang"][0]["status"] == "ACTIVE"
+    assert not main.OPERATION_RECEIPTS

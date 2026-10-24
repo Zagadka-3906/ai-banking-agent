@@ -102,10 +102,11 @@ private fun ComposeContentTestRule.inputCleared(): Boolean {
  */
 internal fun ComposeContentTestRule.enterApprovalOtp(fallback: String, timeoutMs: Long = 10_000) {
     waitUntil(timeoutMs) { onAllNodesWithTag(UiTags.APPROVAL_OTP).fetchSemanticsNodes().isNotEmpty() }
-    // The fill is an async gateway round trip; give it a moment before deciding
-    // that the field is empty.
-    runCatching { waitUntil(timeoutMillis = 2_000) { approvalOtpText().isNotBlank() } }
-    if (approvalOtpText().isBlank()) {
+    if (BuildConfig.AUTO_FILL_DEMO_OTP) {
+        // Debug acceptance must prove automatic issuance and filling. Falling
+        // back to a fixed code would hide a broken demo OTP request.
+        waitUntil(timeoutMs) { approvalOtpText().isNotBlank() }
+    } else {
         onNodeWithTag(UiTags.APPROVAL_OTP).performScrollTo().performTextReplacement(fallback)
     }
 }

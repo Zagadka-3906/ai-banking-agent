@@ -41,12 +41,13 @@ from bank_core.payments import (
     resolve_payee,
 )
 from bank_core.persistence import (
+    audit_ledger_event as audit_event,
+    durable_ledger_write,
     persist_ledger,
 )
 from security import (
     STATE_LOCK,
     SecurityError,
-    audit_event,
     sanitize_text,
 )
 
@@ -115,6 +116,7 @@ def list_contact_book(user_id: str, x_user_id: Optional[str] = Header(None, alia
 
 
 @router.post("/api/v1/contacts/{user_id}/book")
+@durable_ledger_write
 def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     """Add one contact (name, phone, relationship, birthday) for the caller.
 
@@ -203,6 +205,7 @@ def add_contact(user_id: str, req: ContactAddRequest, x_user_id: Optional[str] =
 
 
 @router.post("/api/v1/contacts/{user_id}/book/{contact_id}/remove")
+@durable_ledger_write
 def remove_contact(user_id: str, contact_id: str, x_user_id: Optional[str] = Header(None, alias="X-User-Id"), x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
     """Remove one contact from the caller's book.
 
