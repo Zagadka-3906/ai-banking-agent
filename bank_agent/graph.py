@@ -28,6 +28,7 @@ from bank_agent.nodes.responder import (
 from bank_agent.nodes.executor import (
     executor_node,
 )
+from bank_agent.understanding import remember_reply
 
 
 def route_after_risk_check(state: BankingAgentState) -> str:
@@ -70,11 +71,13 @@ def build_graph(checkpointer: Any = None) -> Any:
     workflow.add_node("executor", instrument("executor", executor_node))
     workflow.add_node("responder", instrument("responder", responder_node))
     workflow.add_node("workflow_next", instrument("workflow_next", workflow_next_node))
+    workflow.add_node("remember", lambda state: remember_reply(state, {"final_response": state.get("final_response")}))
     workflow.set_entry_point("intent_parser")
     workflow.add_edge("intent_parser", "risk_checker")
-    workflow.add_conditional_edges("risk_checker", route_after_risk_check)
-    workflow.add_conditional_edges("human_review", route_after_human_review)
+    workflow.add_conditional_edges("risk_checker", route_after_risk_check, {END: "remember", "human_review": "human_review", "executor": "executor"})
+    workflow.add_conditional_edges("human_review", route_after_human_review, {END: "remember", "executor": "executor"})
     workflow.add_edge("executor", "responder")
-    workflow.add_conditional_edges("responder", lambda state: "workflow_next" if (state.get("context") or {}).get("compound_workflow") else END)
-    workflow.add_conditional_edges("workflow_next", route_after_workflow_next)
+    workflow.add_conditional_edges("responder", lambda state: "workflow_next" if (state.get("context") or {}).get("compound_workflow") else "remember")
+    workflow.add_conditional_edges("workflow_next", route_after_workflow_next, {END: "remember", "risk_checker": "risk_checker"})
+    workflow.add_edge("remember", END)
     return workflow.compile(checkpointer=checkpointer if checkpointer is not None else MemorySaver())

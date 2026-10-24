@@ -212,6 +212,10 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                       "fast_path_eligible": meta.get("fast_path_eligible") is True}
         if meta.get("model_intent") in ALL_INTENTS:
             parse_meta["model_intent"] = str(meta["model_intent"])
+        if meta.get("dialogue_act") in {"QUERY", "EXPLAIN", "ACTION", "SLOT_REPLY", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}:
+            parse_meta["dialogue_act"] = str(meta["dialogue_act"])
+        if meta.get("social_kind") in {"greeting", "thanks", "goodbye", "capabilities"}:
+            parse_meta["social_kind"] = str(meta["social_kind"])
     # Renewal scheduling is opt-in and only meaningful for subscription reads.
     # Never let truthy strings or unrestricted day offsets create reminders.
     if intent == Intent.SUBSCRIPTION_QUERY.value and slots.get("renewal_reminder") is True:

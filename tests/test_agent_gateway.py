@@ -377,8 +377,10 @@ def test_retried_message_id_is_deduped(gateway):
 def test_redelivery_after_approval_returns_latest_outcome(gateway, decision, stream):
     client, core = gateway
     first = _send(client, "给李四转300元", conversation_id="c-dedupe-final", message_id="original")
-    # A message sent while waiting also points at that approval.
-    _send(client, "查余额", conversation_id="c-dedupe-final", message_id="while-waiting")
+    # A held new write still points at the original approval. A completed side
+    # query has its own result and must never replay as that write's receipt.
+    _send(client, "给王美转50元", conversation_id="c-dedupe-final", message_id="while-waiting")
+    _send(client, "查余额", conversation_id="c-dedupe-final", message_id="side-query")
     approval_id = first["approval"]["approval_id"]
     resolved = client.post(f"/api/v1/agent/approvals/{approval_id}", json={"decision": decision}, headers=_headers())
     assert resolved.status_code == 200, resolved.text
@@ -392,6 +394,13 @@ def test_redelivery_after_approval_returns_latest_outcome(gateway, decision, str
             replay = _send(client, "给李四转300元", conversation_id="c-dedupe-final", message_id=message_id)
         assert replay == expected
         assert replay["approval"] is None
+    if stream:
+        query_frames = _parse_sse(_stream(client, "查余额", conversation_id="c-dedupe-final", message_id="side-query").text)
+        assert [event for event, _ in query_frames] == ["result"]
+        replay_query = query_frames[0][1]
+    else:
+        replay_query = _send(client, "查余额", conversation_id="c-dedupe-final", message_id="side-query")
+    assert replay_query["response"]["sections"][0]["type"] == "BALANCE" and replay_query["approval"] is None
     balance = core.get("/api/v1/accounts/user_zhang/balance", headers=_headers()).json()
     assert float(balance["available_balance"]) == (14700.0 if decision == "approve" else 15000.0)
 

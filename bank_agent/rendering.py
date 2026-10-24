@@ -98,7 +98,8 @@ def render_cards(data: Mapping[str, Any]) -> str:
     rows = data.get("data") or []
     lines = [f"💳 卡片共 {len(rows)} 张："]
     for item in rows:
-        line = f"- `{item.get('card_id')}`（{item.get('type')}）｜ 状态 {item.get('status')} ｜ 日限额 ¥{float(item.get('daily_limit') or 0):,.2f}"
+        status = {"ACTIVE": "正常", "FROZEN": "已冻结", "LOST": "已挂失", "CLOSED": "已关闭"}.get(str(item.get("status")), str(item.get("status")))
+        line = f"- `{item.get('card_id')}`（{item.get('type')}）｜ 状态 {status} ｜ 日限额 ¥{float(item.get('daily_limit') or 0):,.2f}"
         if finite_number(item.get("daily_spent_today"), nonnegative=True):
             line += f" ｜ 今日已用 ¥{float(item.get('daily_spent_today')):,.2f}"
         if finite_number(item.get("daily_remaining"), nonnegative=True):

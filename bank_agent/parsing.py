@@ -19,7 +19,7 @@ from security import audit_event
 from workflow_runtime import invoke_model
 from intent_language import ambiguous_amount, ambiguous_target, business_text, requested_date_range, split_tasks
 from bank_agent import runtime
-from bank_agent.understanding import INTENT_DESCRIPTIONS, enforce_inquiry, model_context
+from bank_agent.understanding import DIALOGUE_ACTS, HELP_TOPICS, INTENT_DESCRIPTIONS, enforce_inquiry, model_context
 from bank_agent.state import (
     extract_json,
 )
@@ -444,7 +444,16 @@ def model_parse(text: str) -> dict[str, Any]:
         "你是银行意图抽取器，只输出一个 JSON 对象，不执行任何工具。"
         "intent 必须从 allowlist 选择："
         + json.dumps(INTENT_DESCRIPTIONS, ensure_ascii=False)
-        + "。字段为 intent,target,amount,date_scope,extra_info,confidence,participants,product_ids,slots,scheduled_at,event_at。"
+        + "。字段为 intent,dialogue_act,social_kind,target,amount,date_scope,extra_info,confidence,participants,product_ids,slots,scheduled_at,event_at。"
+        "先判断本轮言语行为 dialogue_act：QUERY=查已有事实，EXPLAIN=问原因/规则/影响，ACTION=要求实际办理，"
+        "SLOT_REPLY=补充上轮缺失信息，UNSUPPORTED=能力未提供，UNCLEAR=对象或诉求不明，SOCIAL=问候致谢或告别。不能把 QUERY/EXPLAIN 选成写操作。"
+        "SOCIAL 时必须在顶层填写 social_kind：问候选 greeting，致谢选 thanks，告别选 goodbye，问能力选 capabilities；其他模式填 null。"
+        "‘查这笔转账记录’是 BILL_QUERY；‘我的卡是不是冻结了’是 CARD_QUERY；‘冻结后有什么影响’是 BANKING_HELP。"
+        "‘那5笔’须结合已核验观察理解是哪组交易；可在 slots.read_reference 指定 anomalies 或 listed_transactions，不能编造编号。"
+        "查询某一条历史记录（如‘第5笔’）可用 slots.transaction_id 选择 recent_observations 中已有的交易编号；"
+        "只允许引用这些已核验编号，无法确定时澄清。写操作的编号仍须在本轮原文中明示。"
+        "业务说明的 slots.help_topic 只能为 general,dispute,transfer,card,wealth,subscription,security。"
+        "不支持撤销争议工单时回答规则，不能再创建工单。闲聊、不支持或纠错不能强行映射到相近写操作。"
         "缺失收款人或金额时填 null，不要猜测。"
         "date_scope 只能是 TODAY、MONTH、LAST_MONTH、YEAR、ALL。\n"
         "查询交易、工单进度、处理多久，与发起冻结/争议是不同任务。不能因为提到业务名称就执行该业务。"
@@ -475,12 +484,17 @@ def model_parse(text: str) -> dict[str, Any]:
         merged = dict(local)
         model_intent = str(parsed.get("intent") or "").upper().strip()
         local_intent = local["intent"]
+        act = str(parsed.get("dialogue_act") or "").upper()
+        if act in DIALOGUE_ACTS:
+            merged["parse_meta"] = {**merged["parse_meta"], "dialogue_act": act, "source": "model", "resolution": "model_dialogue", "fast_path_eligible": False}
+            if act == "SOCIAL" and parsed.get("social_kind") in {"greeting", "thanks", "goodbye", "capabilities"}:
+                merged["parse_meta"]["social_kind"] = parsed["social_kind"]
         if model_intent in ALL_INTENTS and model_intent != Intent.UNKNOWN.value:
             merged["intent"] = model_intent
             merged["confidence"] = parsed.get("confidence")
             resolution = ("model_confirmed" if model_intent == local_intent
                           else "model_classified" if local_intent == Intent.UNKNOWN.value else "model_override")
-            merged["parse_meta"] = {**local["parse_meta"], "source": "model", "resolution": resolution, "fast_path_eligible": False}
+            merged["parse_meta"] = {**merged["parse_meta"], "source": "model", "resolution": resolution, "fast_path_eligible": False}
         source = re.split(r"备注|附言", text, maxsplit=1)[0]
         if merged["intent"] == Intent.TRANSFER.value and (
             local.get("scheduled_at") or re.search(r"预约|定时|明天|后天|下周|下星期|下个月|20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}", source)
@@ -544,9 +558,19 @@ def model_parse(text: str) -> dict[str, Any]:
         # the model can extract is a transaction ID literally in the utterance.
         slots = dict(local.get("slots") or {})
         model_slots = parsed.get("slots")
+        if isinstance(model_slots, Mapping):
+            if model_slots.get("help_topic") in HELP_TOPICS:
+                slots["help_topic"] = model_slots["help_topic"]
+            if model_slots.get("read_reference") in {"anomalies", "listed_transactions"}:
+                slots["read_reference"] = model_slots["read_reference"]
         if isinstance(model_slots, Mapping) and "transaction_id" not in slots:
             transaction_id = model_slots.get("transaction_id")
-            if stated(transaction_id, identifier=True):
+            known_read_ids = {value for item in model_context().get("recent_observations") or []
+                              for value in (item.get("transaction_ids") or []) + (item.get("suspicious_transaction_ids") or [])
+                              if isinstance(value, str)}
+            known_read = (merged.get("intent") in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}
+                          and isinstance(transaction_id, str) and transaction_id in known_read_ids)
+            if stated(transaction_id, identifier=True) or known_read:
                 slots["transaction_id"] = str(transaction_id).strip()
         merged["slots"] = slots
         if merged["intent"] == Intent.CROSS_SCENE_LOCK.value:

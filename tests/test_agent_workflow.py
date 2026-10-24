@@ -453,7 +453,7 @@ def test_read_collections_are_rendered_readably(wired):
         ("查看理财产品", "WEALTH_QUERY", ("LX00118", "HQ30060", "SG20270", "YH50365", "在售理财产品")),
         ("比较 LX00118 和 HQ30060", "WEALTH_COMPARE", ("产品对比", "LX00118", "HQ30060")),
         ("我有哪些订阅", "SUBSCRIPTION_QUERY", ("Apple 订阅", "视频会员", "下次扣款")),
-        ("我的卡片", "CARD_QUERY", ("CARD-001", "日限额", "状态 ACTIVE")),
+        ("我的卡片", "CARD_QUERY", ("CARD-001", "日限额", "状态 正常")),
     ]
     for index, (text, intent, expected) in enumerate(cases):
         config = {"configurable": {"thread_id": f"test-render-{index}"}}

@@ -17,7 +17,7 @@ from planner import (
     validate_intent_payload,
 )
 from security import InjectionError, audit_event, sanitize_text
-from bank_agent.understanding import inquiry_route, understanding_context
+from bank_agent.understanding import enforce_inquiry, inquiry_route, understanding_context
 from intent_language import business_text, nonexecuting_action
 from bank_agent import runtime
 from bank_agent.state import (
@@ -225,13 +225,18 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             parsed["intent"] = Intent.WEALTH_COMPARE.value
             parsed["product_ids"] = list(dict.fromkeys(previous_ids + explicit_ids))
     # A reply that only answers the previous question belongs to that request.
-    parsed = merge_pending_clarification(parsed, state, text)
+    understood_meta = dict(parsed.get("parse_meta") or {})
+    if understood_meta.get("dialogue_act") not in {"SOCIAL", "UNSUPPORTED", "UNCLEAR"}:
+        parsed = merge_pending_clarification(parsed, state, text)
+    if understood_meta.get("dialogue_act"):
+        parsed["parse_meta"] = {**(parsed.get("parse_meta") or {}), **understood_meta}
     # Explicit back-references ("再转一次", "还是上次那个") reuse the previous
     # turn's request; the operation is re-authorized from scratch.
     prior = state.get("context")
     if not isinstance(prior, dict):
         prior = {}
     parsed = validate_intent_payload(resolve_ellipsis(parsed, prior, text, state.get("execution_result")))
+    parsed = validate_intent_payload(enforce_inquiry(parsed, business_text(text)))
     if compound:
         step = compound["steps"][compound["index"]]
         if parsed.get("intent") != step["payload"].get("intent"):
@@ -303,7 +308,17 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     elif clarification:
         intent = parsed.get("intent")
         if intent == Intent.UNKNOWN.value:
-            if any(phrase in text for phrase in ELLIPSIS_REPEAT + ELLIPSIS_SAME_TARGET + ELLIPSIS_SAME_PRODUCT + ELLIPSIS_CANCEL_IT):
+            act = (parsed.get("parse_meta") or {}).get("dialogue_act")
+            if act == "SOCIAL":
+                response = {"greeting": "你好，我在。想查账户情况，还是了解某项业务？",
+                            "thanks": "不客气。还有要核对的记录，继续告诉我就好。", "goodbye": "好的，有需要再来找我。",
+                            "capabilities": "可以查账户、账单、卡片和争议工单，也可以先问业务规则；实际办理会单独请您确认。"}.get(
+                                str((parsed.get("parse_meta") or {}).get("social_kind")), "我在，有需要可以继续告诉我。")
+            elif act == "UNSUPPORTED":
+                response = "这项能力目前没有接入，我无法查询或办理，也没有发起相近操作。可以换成查询本行已有记录，或说明想了解的银行业务规则。"
+            elif act == "UNCLEAR":
+                response = "我还没有确定这次的问题。您希望解释刚才的结果、查询已有记录，还是办理一项新操作？"
+            elif any(phrase in text for phrase in ELLIPSIS_REPEAT + ELLIPSIS_SAME_TARGET + ELLIPSIS_SAME_PRODUCT + ELLIPSIS_CANCEL_IT):
                 response = "我没有找到可以沿用的上一次操作，请直接说明要办理的业务、对象和金额。"
             else:
                 response = "我可以帮您查询余额/账单、转账、分析消费、管理理财、卡片或订阅。请告诉我具体要办理什么。"
@@ -361,6 +376,12 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             }
             missing_names = [labels.get(item, item) for item in missing_fields]
             response = ("请补充：" + "、".join(missing_names) + "。") if missing_names else "请确认这次要办理的具体业务和操作要求。"
+    # A read-only detour answers the question without discarding a simple
+    # unfinished request. A subsequent bare amount/name can still fill its slot.
+    if (pending_clarification is None and isinstance(pending, dict) and not prior_context.get("compound_workflow")
+            and (parsed.get("intent") in GREEN_INTENTS - RISK_QUIZ_INTENTS
+                 or understood_meta.get("dialogue_act") in {"SOCIAL", "UNSUPPORTED", "UNCLEAR"})):
+        pending_clarification = pending
     result = {
         **parsed,
         "request_id": state.get("request_id") or f"agent_{uuid.uuid4().hex}",

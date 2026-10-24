@@ -20,7 +20,7 @@ from planner import (
 from security import audit_event
 from bank_agent import runtime
 from bank_agent.analysis_codegen import answer_bill_question
-from bank_agent.understanding import help_topic, referenced_case
+from bank_agent.understanding import HELP_TOPICS, help_topic, referenced_case, referenced_transactions
 from bank_agent.state import (
     BankingAgentState,
 )
@@ -61,9 +61,12 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             path = "disputes" + ("?" + urlencode({"case_id": case_id}) if case_id else "")
         else:
             topic = help_topic(str(state.get("user_input") or ""))
+            specified_topic = (state.get("slots") or {}).get("help_topic")
+            if topic == "general" and specified_topic in HELP_TOPICS:
+                topic = specified_topic
             if topic == "general" and state.get("memory_principal") == user_id:
                 for observation in reversed(list((state.get("observations") or {}).values())):
-                    prior_topic = observation.get("help_topic") or help_topic(str(observation.get("intent") or "").replace("DISPUTE", "争议").replace("CARD", "卡").replace("TRANSFER", "转账"))
+                    prior_topic = observation.get("help_topic") or help_topic(str(observation.get("intent") or "").replace("DISPUTE", "争议").replace("CARD", "卡").replace("TRANSFER", "转账").replace("WEALTH", "理财").replace("SUBSCRIPTION", "订阅"))
                     if prior_topic != "general":
                         topic = prior_topic
                         break
@@ -90,6 +93,13 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
         category = slots.get("category")
         question = str(state.get("user_input") or "")
         suspicious_only = slots.get("suspicious_only") is True
+        reference_ids, reference_kind = referenced_transactions(state)
+        if slots.get("transaction_id"):
+            reference_ids, reference_kind = [str(slots["transaction_id"])], "TRANSACTION_REFERENCE"
+        if reference_ids:
+            rows = [row for row in rows if row.get("tx_id") in reference_ids]
+            category = None
+            suspicious_only = reference_kind == "SUSPICIOUS_TRANSACTIONS"
         specific_overseas = (
             any(word in question for word in ("境外", "海外", "国外"))
             and any(word in question for word in ("那笔", "这笔", "该笔", "怎么回事", "什么情况", "是什么消费", "是什么交易"))
@@ -134,6 +144,8 @@ def _execute_green(state: BankingAgentState, intent: str) -> dict[str, Any]:
             count = re.search(r"([0-9]{1,3})\s*笔", question)
             if count:
                 result["mentioned_count"] = int(count.group(1))
+        elif reference_kind:
+            result["specific_query"] = reference_kind
         elif specific_overseas:
             result["specific_query"] = "OVERSEAS_TRANSACTION"
         else:

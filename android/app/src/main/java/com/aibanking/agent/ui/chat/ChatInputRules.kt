@@ -52,6 +52,13 @@ private val CARD_LEADS = mapOf(
     "TRANSFER_SUCCESS" to "✅ 转账已完成，回执如下：",
 )
 
+/** A versioned server marker means the verified answer is already in the text. */
+internal fun hasFocusedBalanceAnswer(result: Map<String, Any?>?): Boolean {
+    val presentation = result?.get("answer_presentation") as? Map<*, *> ?: return false
+    return (presentation["version"] as? Number)?.toDouble() == 1.0 &&
+        presentation["source"] == "VERIFIED_FACTS" && presentation["result_type"] == "BALANCE"
+}
+
 internal fun displayText(reply: String, result: Map<String, Any>?): String {
     // Finished questionnaire: the level card and the matched products follow.
     // Structured replies arrive as "execution_results" (one per section); older ones as "execution_result".
@@ -68,7 +75,7 @@ internal fun displayText(reply: String, result: Map<String, Any>?): String {
     var lines = reply.lines()
     val execution = executions.singleOrNull()
     // Receipts and balances are shown in full on their card; one introducing line is enough.
-    if (execution?.get("data") is Map<*, *>) {
+    if (execution?.get("data") is Map<*, *> && !(execution["type"] == "BALANCE" && hasFocusedBalanceAnswer(result))) {
         CARD_LEADS[execution["type"]?.toString()]?.let { return it }
     }
     if (types.any { it in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE", "WEALTH_HOLDINGS") }) {

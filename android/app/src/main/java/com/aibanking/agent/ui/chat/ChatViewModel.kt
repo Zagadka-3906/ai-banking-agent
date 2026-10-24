@@ -565,7 +565,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val previous = state.messages.firstOrNull { it.id == messageId }
             val message = ChatMessage(id = messageId, role = ChatRole.ASSISTANT,
                 text = displayText(envelope.response?.summary ?: envelope.reply, envelope.displayResult),
-                riskLevel = envelope.riskLevel, approvalPreview = envelope.approval != null,
+                riskLevel = envelope.riskLevel, approvalPreview = envelope.approval != null && envelope.result?.get("side_inquiry") != true,
                 result = envelope.displayResult, traceId = envelope.requestId,
                 businessStatus = envelope.businessStatus, response = envelope.response,
                 conversationId = envelope.conversationId,

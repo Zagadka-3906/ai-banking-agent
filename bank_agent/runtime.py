@@ -58,6 +58,16 @@ MODEL_ENABLED = bool(DEEPSEEK_API_KEY and ChatOpenAI is not None)
 # credential kept there would outlive the request that legitimately held it.
 # ``channel_session`` scopes it to one graph invocation.
 _CHANNEL_SESSION: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("bank_channel_session", default=None)
+_READ_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("bank_read_only_calls", default=False)
+
+
+@contextmanager
+def read_only_calls():
+    token = _READ_ONLY.set(True)
+    try:
+        yield
+    finally:
+        _READ_ONLY.reset(token)
 
 
 @contextmanager
@@ -85,6 +95,8 @@ else:
 
 
 def _http(method: str, path: str, *, state: BankingAgentState, json_body: Optional[dict[str, Any]] = None, headers: Optional[Mapping[str, Optional[str]]] = None) -> requests.Response:
+    if _READ_ONLY.get() and method.upper() != "GET":
+        raise RuntimeError("A side inquiry cannot invoke a write or authorization endpoint")
     merged: dict[str, Optional[str]] = {"X-Request-Id": state.get("request_id") or f"agent_{uuid.uuid4().hex}"}
     # When the core requires a session for writes, the calls a turn makes on the
     # user's behalf must present the user's own credential.  It arrives through a

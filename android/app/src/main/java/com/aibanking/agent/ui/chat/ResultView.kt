@@ -38,6 +38,7 @@ fun ResultExtras(result: Map<String, Any?>?) {
         result.child("profile_result")?.let { RiskProfileCard(it) }
         executions.forEach { execution ->
             val type = execution.text("type")
+            if (type == "BALANCE" && hasFocusedBalanceAnswer(result)) return@forEach
             // These replies already render their verified facts in the dialogue.
             // Transport fields (user_id, policy version, topic) are not extra cards.
             if (type == "DISPUTE_QUERY" || type == "BANKING_HELP") return@forEach

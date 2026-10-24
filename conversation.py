@@ -161,6 +161,7 @@ class ConversationService(TurnsMixin, ApprovalsMixin):
         self._lock = threading.RLock()
         self._approvals: dict[str, Approval] = {}
         self._turns: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
+        self._pending_dialogue: dict[str, dict[str, Any]] = {}
         self._thread_locks: dict[str, threading.RLock] = {}
         # The factory takes the caller's session credential so every call the
         # gateway makes on their behalf can present it.  A channel that spoke for
@@ -222,6 +223,8 @@ class ConversationService(TurnsMixin, ApprovalsMixin):
             for turn_key, (created_at, _) in list(self._turns.items()):
                 if now - created_at > TURN_CACHE_TTL_SECONDS:
                     self._turns.pop(turn_key, None)
+            live_threads = {item.thread_id for item in self._approvals.values() if not item.resolved and not item.expired}
+            self._pending_dialogue = {key: value for key, value in self._pending_dialogue.items() if key in live_threads}
             if len(self._turns) > TURN_CACHE_MAX_RECORDS:
                 ordered = sorted(self._turns.items(), key=lambda item: item[1][0])
                 for turn_key, _ in ordered[: len(self._turns) - TURN_CACHE_MAX_RECORDS]:

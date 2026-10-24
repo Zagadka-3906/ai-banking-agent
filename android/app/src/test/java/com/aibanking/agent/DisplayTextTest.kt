@@ -1,6 +1,7 @@
 package com.aibanking.agent
 
 import com.aibanking.agent.ui.chat.displayText
+import com.aibanking.agent.ui.chat.hasFocusedBalanceAnswer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,6 +9,19 @@ import org.junit.Test
 
 /** The reply text introduces; cards carry the details, so nothing is said twice. */
 class DisplayTextTest {
+    @Test
+    fun a_verified_focused_balance_answer_is_preserved_without_an_extra_card() {
+        val reply = "当前可用余额为 **¥15,000.00**。"
+        val result = mapOf("execution_results" to listOf(mapOf("type" to "BALANCE", "data" to mapOf("available_balance" to 15000.0))),
+            "answer_presentation" to mapOf("version" to 1.0, "source" to "VERIFIED_FACTS", "result_type" to "BALANCE"))
+        assertTrue(hasFocusedBalanceAnswer(result))
+        assertEquals(reply, displayText(reply, result))
+        for (marker in listOf(mapOf("version" to 2, "source" to "VERIFIED_FACTS", "result_type" to "BALANCE"),
+            mapOf("version" to 1, "source" to "MODEL_TEXT", "result_type" to "BALANCE"),
+            mapOf("version" to 1, "source" to "VERIFIED_FACTS", "result_type" to "TRANSFER_SUCCESS"))) {
+            assertFalse(hasFocusedBalanceAnswer(result + ("answer_presentation" to marker)))
+        }
+    }
     @Test
     fun finished_quiz_introduces_the_level_and_products_once() {
         val text = displayText(

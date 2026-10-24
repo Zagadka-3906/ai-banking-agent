@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -33,7 +34,7 @@ from bank_agent.verification import (
     valid_wealth_collection,
 )
 from bank_agent.analysis_codegen import render_answer
-from bank_agent.understanding import remember_reply
+from bank_agent.answering import compose_answer
 from bank_agent.rendering import (
     bill_scope_label,
     render_cards,
@@ -44,7 +45,7 @@ from bank_agent.rendering import (
 
 
 def responder_node(state: BankingAgentState) -> dict[str, Any]:
-    return remember_reply(state, _with_custom_analysis(state, _respond(state)))
+    return {"answer_presentation": None, **compose_answer(state, _with_custom_analysis(state, _respond(state)))}
 
 
 def _with_custom_analysis(state: BankingAgentState, response: dict[str, Any]) -> dict[str, Any]:
@@ -158,8 +159,8 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
         if data.get("version") != 1 or not isinstance(facts, list) or not facts or any(not valid_text_field(item, max_length=400) for item in facts):
             return response_validation_failure(state, "SERVICE_GUIDE_INVALID")
         return {"final_response": "\n".join(str(item) for item in facts)}
-    if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") in {"OVERSEAS_TRANSACTION", "SUSPICIOUS_TRANSACTIONS"}:
-        kind = "可疑交易线索" if result.get("specific_query") == "SUSPICIOUS_TRANSACTIONS" else "境外交易"
+    if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") in {"OVERSEAS_TRANSACTION", "SUSPICIOUS_TRANSACTIONS", "TRANSACTION_REFERENCE"}:
+        kind = {"SUSPICIOUS_TRANSACTIONS": "可疑交易线索", "TRANSACTION_REFERENCE": "所指交易"}.get(str(result.get("specific_query")), "境外交易")
         rows = result.get("records")
         facts = result.get("facts") or {}
         if (
@@ -193,9 +194,9 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
             )
             reasons = reasons_by_id.get(str(row.get("tx_id")), [])
             lines.append("  规则提示：" + ("、".join(reasons) if reasons else "未命中当前异常规则") + "。")
-        if len(rows) > 1:
+        if len(rows) > 1 and re.search(r"这笔|那笔|该笔", str(state.get("user_input") or "")):
             lines.append("尚不能确定您指的是哪一笔，请提供要核对的流水号。")
-        lines.append("以上仅为账单记录和规则提示，不能据此确认盗刷；本次只做查询，未冻结卡片或创建争议工单。")
+        lines.append("以上是所指交易的实际记录，本次只做查询。" if kind == "所指交易" else "以上仅为账单记录和规则提示，不能据此确认盗刷；本次只做查询，未冻结卡片或创建争议工单。")
         return {"final_response": "\n".join(lines)}
     if rtype == Intent.BILL_QUERY.value:
         rows = result.get("records", [])

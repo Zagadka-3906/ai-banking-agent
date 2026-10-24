@@ -40,6 +40,8 @@ from bank_agent.conversation_base import (  # noqa: F401
     conversation_thread_id,
 )
 
+_PENDING_NOTE = "\n\n原待确认的操作仍保留，请在需要时确认或取消。"
+
 
 class TurnsMixin:
     """Mixed into ``conversation.ConversationService``; uses its state and ``_graph()``."""
@@ -52,7 +54,7 @@ class TurnsMixin:
         request_id: Optional[str],
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
-        for key in ("execution_result", "execution_results", "chart_data", "todo_card", "plan", "risk_quiz", "profile_result", "suggestions"):
+        for key in ("execution_result", "execution_results", "chart_data", "todo_card", "plan", "risk_quiz", "profile_result", "suggestions", "answer_presentation"):
             value = state.get(key)
             if value not in (None, [], {}):
                 result[key] = value
@@ -102,6 +104,7 @@ class TurnsMixin:
             "chart_data": None,
             "todo_card": None,
             "final_response": None,
+            "answer_presentation": None,
             "clarification_required": False,
             "business_status": None,
             "reconciliation": None,
@@ -153,6 +156,29 @@ class TurnsMixin:
         pending = self._pending_approval(thread_id)
         control = self._dialogue_control(text)
         if pending is not None and control is None:
+            from bank_agent.pending_questions import answer_pending_question
+            from bank_agent.understanding import remember_reply
+
+            with self._lock:
+                memory = dict(self._pending_dialogue.get(thread_id) or {})
+            pending_view = {"intent": state.get("intent"), "risk_level": pending.risk_level, "summary": pending.summary,
+                            "required_actions": list(pending.required_actions)}
+            with channel_session(session_token):
+                side = answer_pending_question({**state, **memory, "pending_operation": pending_view}, text, request_id)
+            if side is not None:
+                message = str(side.get("final_response") or "这次查询没有取得结果。") + _PENDING_NOTE
+                envelope = self._approval_envelope(pending, message=message)
+                response = reply_contract(side, message, "WAITING_APPROVAL")
+                response["workflow_plan"] = envelope["response"]["workflow_plan"]
+                envelope.update(response=response, request_id=request_id, intent=side.get("intent"),
+                                result=public_data({"execution_result": side.get("execution_result"), "workflow_plan": response["workflow_plan"],
+                                                    "answer_presentation": side.get("answer_presentation"), "side_inquiry": True,
+                                                    "inquiry_status": side.get("business_status") or ("SUCCEEDED" if side.get("execution_result") else "NEEDS_INPUT")}))
+                remembered = remember_reply(side, {"final_response": message})
+                with self._lock:
+                    self._pending_dialogue[thread_id] = {key: remembered[key] for key in ("memory_principal", "dialogue_history", "observations")}
+                self._audit_response(principal, envelope)
+                return envelope, {}
             # A new request does not silently replace the waiting one: say so.
             return self._approval_envelope(pending, message=(
                 f"您还有一笔待确认的操作：{pending.summary.removeprefix('您正准备进行：')}。"
@@ -238,12 +264,25 @@ class TurnsMixin:
             pending = envelope.get("approval") or {}
             if pending.get("approval_id"):
                 approval = self._approvals.get(pending["approval_id"])
+                if (envelope.get("result") or {}).get("side_inquiry") and (approval is None or approval.expired or approval.resolved):
+                    return self._finished_inquiry(envelope)
                 if approval is None or approval.expired:
                     raise ConversationError("审批已超时，请重新发起操作", 410, "APPROVAL_EXPIRED")
                 if approval.resolved:
                     raise ConversationError("该审批已处理，请核对当前操作状态", 409, "APPROVAL_ALREADY_RESOLVED")
                 return {**envelope, "approval": approval.public_view()}
             return envelope
+
+    @staticmethod
+    def _finished_inquiry(envelope: dict[str, Any]) -> dict[str, Any]:
+        """A retried read stays a read after the unrelated approval is handled."""
+        result = dict(envelope.get("result") or {})
+        result.pop("workflow_plan", None)
+        status = result.get("inquiry_status") or "NEEDS_INPUT"
+        summary = str(envelope.get("reply") or "").removesuffix(_PENDING_NOTE)
+        response = {**(envelope.get("response") or {}), "status": status, "summary": summary, "workflow_plan": None}
+        return {**envelope, "status": "COMPLETED", "turn_status": "COMPLETED", "business_status": status,
+                "approval": None, "risk_level": "GREEN", "response": response, "reply": summary, "result": result}
 
     def _update_cached_progress(
         self, *, principal: str, conversation_id: str, envelope: dict[str, Any],
@@ -262,7 +301,7 @@ class TurnsMixin:
                 same_approval = approval_id and (cached.get("approval") or {}).get("approval_id") == approval_id
                 same_operation = operation_id and (cached.get("response") or {}).get("operation_id") == operation_id
                 if same_approval or same_operation:
-                    self._turns[key] = (created_at, envelope)
+                    self._turns[key] = (created_at, self._finished_inquiry(cached) if (cached.get("result") or {}).get("side_inquiry") else envelope)
 
     def _remember_turn(self, principal: str, conversation_id: str, message_id: str, envelope: dict[str, Any]) -> None:
         with self._lock:

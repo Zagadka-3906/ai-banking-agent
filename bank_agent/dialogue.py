@@ -105,7 +105,8 @@ def resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: str
     prior_intent = str(prior.get("intent") or "")
     if not prior_intent or prior_intent == Intent.UNKNOWN.value:
         return parsed
-    if any(phrase in text for phrase in ELLIPSIS_REPEAT):
+    if (any(phrase in text for phrase in ELLIPSIS_REPEAT)
+            and (parsed.get("parse_meta") or {}).get("dialogue_act") not in {"QUERY", "EXPLAIN", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}):
         repeated = parsed_payload(
             prior_intent,
             text=text,

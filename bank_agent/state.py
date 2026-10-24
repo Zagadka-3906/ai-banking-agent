@@ -16,6 +16,8 @@ class BankingAgentState(TypedDict, total=False):
     memory_principal: Optional[str]
     dialogue_history: list[dict[str, str]]
     observations: dict[str, dict[str, Any]]
+    pending_operation: Optional[dict[str, Any]]
+    answer_presentation: Optional[dict[str, Any]]
     user_id: str
     user_input: str
     intent: Optional[str]
@@ -69,6 +71,7 @@ def empty_state(*, final_response: Optional[str] = None) -> dict[str, Any]:
         "date_range": None,
         "parse_meta": None,
         "extra_info": None,
+        "answer_presentation": None,
         "risk_level": None,
         "auth_token": None,
         "mfa_proof": None,
