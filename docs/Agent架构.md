@@ -54,4 +54,6 @@ Core 提供会话鉴权的 `GET /api/v1/assistant/capabilities`、`GET /api/v1/s
 
 验收分别报告回答有用性、误拒绝、范围外内容、事实准确性、重复、任务恢复与非预期写入。安全回退不计为自然回答通过；模型语义核验仍可能误判，话题检查不能保证阻止所有诱导，资金权限必须依靠独立协议。
 
+开发回归另加入[多轮任务评测](多轮任务评测.md)：模拟用户按当前阶段和实际答复自然追问，任务标准只供事后评测器使用；真实 Core 状态与审批检查独立于沟通评分。重复试验报告 pass^k，模拟用户偏移与评分器错误单列，不把脚本化问答计作自适应模拟，也不以模型自述替代执行结果。
+
 设计参考 [Rasa CALM](https://rasa.com/docs/learn/concepts/calm/) 的对话与流程分工、[NeMo Guardrails](https://docs.nvidia.com/nemo/guardrails/latest/about-nemo-guardrails-library/rail-types) 的分层检查、[LangGraph](https://docs.langchain.com/oss/python/langgraph/workflows-agents) 的动态 Agent 与工作流组合，以及 [τ-bench](https://github.com/sierra-research/tau2-bench) 的用户模拟和任务评测。此实现不依赖 Rasa Pro，也未把演示代码直接用于生产。
