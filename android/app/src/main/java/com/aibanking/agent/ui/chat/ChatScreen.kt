@@ -449,7 +449,7 @@ private fun ChatHome(
             }
             // Predicted next requests stay directly above the editor. A tap sends
             // immediately; write operations still enter the server approval flow.
-            if (state.suggestions.isNotEmpty() && state.quiz == null) {
+            if (state.suggestions.isNotEmpty() && state.quiz == null && state.input.isBlank()) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

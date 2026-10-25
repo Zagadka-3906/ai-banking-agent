@@ -23,12 +23,11 @@ def test_the_level_card_and_its_chips_stay_on_the_turn_that_finished_the_quiz(ga
     assert not (later["result"] or {}).get("suggestions")
 
 
-def test_quiz_completion_suggests_a_product_that_actually_matched(gateway):  # noqa: F811
+def test_quiz_completion_suggests_reads_without_choosing_a_purchase_amount(gateway):  # noqa: F811
     client, _ = gateway
     done = _finish_quiz(client, "chips")
-    matched = [row["product_id"] for row in done["result"]["execution_result"]["data"]["data"]]
-    buy = [chip for chip in done["result"]["suggestions"] if chip.startswith("申购")]
-    assert buy and buy[0].split()[1] in matched
+    assert done["result"]["execution_result"]["data"]["data"]
+    assert done["result"]["suggestions"] == ["查看理财产品", "查看我的持仓"]
 
 
 def test_a_clear_request_leaves_an_unfinished_quiz_instead_of_being_read_as_an_answer(gateway):  # noqa: F811

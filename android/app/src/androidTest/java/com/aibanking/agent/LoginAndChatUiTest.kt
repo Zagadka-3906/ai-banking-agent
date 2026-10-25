@@ -19,6 +19,7 @@ import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.chat.ChatRole
 import com.aibanking.agent.ui.chat.ChatViewModel
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -68,6 +69,15 @@ class LoginAndChatUiTest {
      * start on the chat screen already.
      */
     private fun ensureLoggedIn() = ui.ensureLoggedIn(DEMO_PASSWORD, LOGIN_TIMEOUT_MS)
+
+    private fun freshLogin() {
+        lateinit var model: ChatViewModel
+        ui.runOnIdle { model = ViewModelProvider(ui.activity)[ChatViewModel::class.java] }
+        ui.waitUntil(LOGIN_TIMEOUT_MS) { !model.state.value.restoring }
+        if (model.state.value.authenticated) ui.runOnIdle { model.logout() }
+        ui.waitUntil(LOGIN_TIMEOUT_MS) { !model.state.value.authenticated && !model.state.value.busy }
+        ensureLoggedIn()
+    }
 
     private fun send(text: String) = ui.sendChatMessage(text)
 
@@ -169,7 +179,7 @@ class LoginAndChatUiTest {
 
     @Test
     fun predicted_quick_option_sends_immediately() {
-        ensureLoggedIn()
+        freshLogin()
         lateinit var viewModel: ChatViewModel
         lateinit var prompt: String
         var previousMatches = 0
@@ -193,14 +203,11 @@ class LoginAndChatUiTest {
         }
         ui.runOnIdle { assertTrue(viewModel.state.value.input.isEmpty()) }
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { !viewModel.state.value.busy }
-        ui.runOnIdle {
-            assertTrue("follow-up suggestions missing", viewModel.state.value.suggestions.isNotEmpty())
-        }
-        assertTrue(ui.onAllNodesWithTag(UiTags.QUICK_SUGGESTIONS).fetchSemanticsNodes().isNotEmpty())
+        // A useful follow-up is optional; an empty reviewed result is valid.
     }
 
     @Test
-    fun subscription_query_offers_named_cancel_shortcut() {
+    fun subscription_query_does_not_suggest_cancellation_but_explicit_requests_still_work() {
         ensureLoggedIn()
         send("查看我的订阅")
         lateinit var viewModel: ChatViewModel
@@ -215,13 +222,10 @@ class LoginAndChatUiTest {
             viewModel.approve()
         }
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
-            !viewModel.state.value.busy &&
-                viewModel.state.value.suggestions.firstOrNull() == "取消 Apple 订阅"
+            !viewModel.state.value.busy && viewModel.state.value.pending == null
         }
-
-        ui.onNodeWithText("取消 Apple 订阅", useUnmergedTree = true).assertIsDisplayed()
-        ui.onNodeWithTag(UiTags.QUICK_SUGGESTIONS).assertIsDisplayed()
-        ui.onNodeWithText("取消 Apple 订阅", useUnmergedTree = true).performClick()
+        ui.runOnIdle { assertTrue(viewModel.state.value.suggestions.none { it.startsWith("取消") }) }
+        send("取消 Apple 订阅")
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             !viewModel.state.value.busy && viewModel.state.value.pending != null
         }
@@ -234,6 +238,30 @@ class LoginAndChatUiTest {
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
             !viewModel.state.value.busy && viewModel.state.value.pending == null
         }
+    }
+
+    @Test
+    fun typing_hides_suggestions_and_stale_taps_cannot_erase_the_draft() {
+        freshLogin()
+        lateinit var viewModel: ChatViewModel
+        lateinit var prompt: String
+        var messageCount = 0
+        ui.runOnIdle {
+            viewModel = ViewModelProvider(ui.activity)[ChatViewModel::class.java]
+            prompt = viewModel.state.value.suggestions.first()
+            messageCount = viewModel.state.value.messages.size
+            viewModel.onInputChange("我正在编辑的问题")
+        }
+        ui.onNodeWithTag(UiTags.QUICK_SUGGESTIONS).assertDoesNotExist()
+        ui.runOnIdle {
+            viewModel.onSuggestionClick(prompt)
+            assertEquals("我正在编辑的问题", viewModel.state.value.input)
+            assertEquals(messageCount, viewModel.state.value.messages.size)
+            viewModel.onInputChange("")
+            viewModel.onSuggestionClick("一条已经过期的推荐")
+            assertEquals(messageCount, viewModel.state.value.messages.size)
+        }
+        ui.onNodeWithTag(UiTags.QUICK_SUGGESTIONS).assertIsDisplayed()
     }
 
     @Test

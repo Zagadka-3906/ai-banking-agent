@@ -15,6 +15,11 @@ def _fake_model(monkeypatch, reply):
 
     def invoke(model, messages):
         calls.append(messages)
+        if "Independently review" in messages[0].content:
+            candidates = json.loads(messages[-1].content.split("\n")[-1])["candidates"]
+            return SimpleNamespace(content=json.dumps({"reviews": [
+                {"index": index, "relevant": True, "not_answered": True, "supported": True, "safe_next": True}
+                for index in range(len(candidates))]}))
         return SimpleNamespace(content=json.dumps(reply, ensure_ascii=False))
 
     monkeypatch.setattr(runtime, "llm", object())
@@ -46,6 +51,7 @@ def test_model_chips_follow_the_conversation_and_unsafe_ones_are_dropped(gateway
     # The prompt carries the latest turn as data, not secrets.
     prompt = calls[0][-1].content
     assert "查一下余额" in prompt and "session" not in prompt.lower()
+    assert len(calls) == 2
 
 
 def test_an_amount_already_in_the_conversation_may_be_repeated(gateway, monkeypatch):  # noqa: F811

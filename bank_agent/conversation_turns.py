@@ -60,12 +60,13 @@ class TurnsMixin:
                 result[key] = value
         status = business_status(state)
         summary = state.get("final_response") or "本次请求没有产生可核验的结果。"
-        if "suggestions" not in result:
-            # Wording the reply offers ("可以说“…”") is shown as chips at once, without waiting for the model.
-            from bank_agent.suggestions import reply_examples
+        # Explicit reply examples and structured chips obey the same policy;
+        # neither may choose a missing amount or introduce an unsolicited write.
+        from bank_agent.suggestions import instant_suggestions
 
-            if examples := reply_examples(str(state.get("final_response") or "")):
-                result["suggestions"] = examples
+        result.pop("suggestions", None)
+        if examples := instant_suggestions(state):
+            result["suggestions"] = examples
         if workflow_plan(state):
             result["workflow_plan"] = workflow_plan(state)
         return {

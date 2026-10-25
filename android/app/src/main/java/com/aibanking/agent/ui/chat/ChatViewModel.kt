@@ -539,7 +539,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun onSuggestionClick(suggestion: String) {
         val prompt = suggestion.trim()
         val current = _state.value
-        if (!current.authenticated || current.busy || current.quiz != null || prompt.isEmpty()) return
+        if (!current.authenticated || current.busy || current.quiz != null || current.input.isNotBlank() ||
+            prompt.isEmpty() || prompt !in current.suggestions) return
         _state.update { it.copy(input = "") }
         sendInternal(prompt)
     }
@@ -599,8 +600,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Show the chips the model predicts from the conversation (led by any wording
-     * the reply itself offers) once they arrive. The reply is never held for
+     * Show independently reviewed follow-ups once they arrive. The reply is never held for
      * them; a newer turn, an approval or the quiz keeps the chips it already has.
      */
     private fun refreshSuggestions() {
@@ -612,10 +612,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 io { agent.suggestions(principal, credential(), conversation) }
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure
-                emptyList()
+                null
             }
-            val chips = cleanSuggestions(predicted)
-            if (chips.isEmpty()) return@launch
+            // An authoritative empty result removes rejected examples. A
+            // transport failure keeps the safe examples already on screen.
+            val chips = predicted?.let(::cleanSuggestions) ?: return@launch
             _state.update { state ->
                 if (revision != interactionRevision || state.busy || state.pending != null || state.quiz != null) state
                 else state.copy(suggestions = chips)
