@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -196,6 +197,22 @@ class OperationOutcomeScreenTest {
         ui.onNodeWithText("核对服务暂不可用，请稍后再试。").assertIsDisplayed()
         ui.onNodeWithTag(UiTags.OUTCOME_RETURN).assertIsDisplayed()
         screenshot("outcome-reconciliation-error")
+    }
+
+    @Test
+    fun a_notice_never_covers_the_task_shortcut_touch_target() {
+        val calls = Calls()
+        render {
+            val snackbar = remember { SnackbarHostState() }
+            LaunchedEffect(Unit) { snackbar.showSnackbar("会话已建立，但本机设备未注册：红色风险操作暂不可用",
+                duration = SnackbarDuration.Indefinite) }
+            ResultScreen(success(), calls, snackbar = snackbar)
+        }
+        ui.onNodeWithText("会话已建立，但本机设备未注册：红色风险操作暂不可用").assertIsDisplayed()
+        ui.onNodeWithTag(UiTags.OUTCOME_TASKS).performScrollTo().assertIsDisplayed().performClick()
+        ui.runOnIdle { assertEquals(1, calls.tasks); assertEquals(0, calls.back) }
+        ui.onNodeWithText("会话已建立，但本机设备未注册：红色风险操作暂不可用").assertIsDisplayed()
+        screenshot("outcome-notice-actions")
     }
 
     private fun assertNoWriteOrQueryActions() {

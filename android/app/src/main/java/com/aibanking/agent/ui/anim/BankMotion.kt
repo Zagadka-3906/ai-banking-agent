@@ -25,6 +25,13 @@ import androidx.compose.ui.platform.LocalContext
 /** Explicit guard for custom delays, infinite shimmer and gesture transforms. */
 val LocalBankMotionEnabled = staticCompositionLocalOf { true }
 
+/** Shared pacing for conversation feedback; financial facts never interpolate. */
+object BankConversationMotion {
+    const val FeedbackMillis = 160
+    const val DisclosureMillis = 220
+    const val ReplyEntranceMillis = 280
+}
+
 @Composable
 fun rememberBankMotionEnabled(): Boolean {
     val resolver = LocalContext.current.contentResolver

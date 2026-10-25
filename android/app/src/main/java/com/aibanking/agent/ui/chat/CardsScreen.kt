@@ -103,7 +103,6 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
-import com.aibanking.agent.ui.anim.CountUpText
 
 /**
  * 银行风格“我的银行卡”页：仿真卡面（渐变卡板 + 脱敏卡号 + 余额）+ 卡片
@@ -327,8 +326,9 @@ private fun CardFace(card: CardView) {
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("可用余额", color = foreground.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium)
-                CountUpText(card.availableBalance, { "¥" + String.format(Locale.CHINA, "%,.2f", it) }, onceKey = "card:${card.cardId}",
-                    color = foreground, style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.SemiBold))
+                Text("¥" + String.format(Locale.CHINA, "%,.2f", card.availableBalance),
+                    color = foreground, style = MaterialTheme.typography.headlineLarge.copy(
+                        fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"))
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}", color = foreground.copy(alpha = .9f), style = MaterialTheme.typography.titleSmall, fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)

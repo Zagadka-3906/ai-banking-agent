@@ -12,17 +12,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -30,25 +25,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
-import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.DeviceView
 import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.data.SplitRequestView
@@ -58,11 +46,9 @@ import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.GradientRevealText
 import com.aibanking.agent.ui.anim.ShimmerGradientText
 import com.aibanking.agent.ui.anim.bankPressScale
-import com.aibanking.agent.ui.anim.breathe
-import com.aibanking.agent.ui.anim.popOnChange
 import com.aibanking.agent.ui.anim.rememberEntranceTracker
 import com.aibanking.agent.ui.anim.riseIn
-import com.aibanking.agent.ui.anim.LocalCountUpAllowed
+import com.aibanking.agent.ui.anim.BankConversationMotion
 import com.aibanking.agent.ui.anim.RiskSignal
 import com.aibanking.agent.ui.anim.RiskTier
 import com.aibanking.agent.ui.anim.riskEdgeGlow
@@ -72,11 +58,8 @@ import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.verificationFrost
 import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.BankSpacing
-import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
-import androidx.compose.foundation.gestures.animateScrollBy
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -336,40 +319,9 @@ private fun ChatHome(
     val showWelcome = state.messages.none { it.role == ChatRole.USER }
     // Messages restored from storage appear at once; new turns slide into place.
     val entrance = rememberEntranceTracker(state.messages.map { it.id })
-    // Keep the newest bubble in view.  A LazyColumn does not follow appended
-    // items on its own, so without this the answer to a question scrolls in
-    // below the fold and the user sees nothing happen.
-    // The assistant "thinking" row sits where the reply will appear. Fetching a
-    // demo code under an approval card is not a turn, so it shows no row.
-    val thinking = state.busy && (state.pending == null || state.activeStages.isNotEmpty())
-    LaunchedEffect(
-        state.messages.size,
-        state.pending,
-        state.quiz?.answered,
-        state.messages.lastOrNull()?.text,
-        state.messages.lastOrNull()?.traceId,
-        thinking,
-    ) {
-        val itemCount = state.messages.size + (if (state.pending != null) 1 else 0) + (if (state.quiz != null) 1 else 0) +
-            (if (showWelcome) 1 else 0) + (if (thinking) 1 else 0)
-        if (itemCount > 0 && (!showWelcome || state.pending != null)) {
-            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= itemCount }
-            listState.animateScrollToItem(itemCount - 1)
-            if (state.quiz != null || state.pending != null) {
-                // The quiz/approval card must show down to its last option or button,
-                // also after a question of a different height slides in.
-                repeat(2) {
-                    delay(if (it == 0) 60L else 340L)
-                    val info = listState.layoutInfo
-                    val last = info.visibleItemsInfo.lastOrNull { item -> item.index == itemCount - 1 }
-                    if (last != null) {
-                        val overflow = last.offset + last.size - (info.viewportEndOffset - info.afterContentPadding)
-                        if (overflow > 0) listState.animateScrollBy(overflow.toFloat())
-                    }
-                }
-            }
-        }
-    }
+    val thinking = state.busy && state.messages.none { it.streaming } && (state.pending == null || state.activeStages.isNotEmpty())
+    val itemCount = state.messages.size + (if (state.pending != null) 1 else 0) +
+        (if (state.quiz != null) 1 else 0) + (if (showWelcome) 1 else 0) + (if (thinking) 1 else 0)
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -385,29 +337,31 @@ private fun ChatHome(
                 .consumeWindowInsets(padding)
                 .imePadding(),
         ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth().testTag(UiTags.CHAT_LIST),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ConversationList(
+                listState = listState,
+                contentRevision = listOf(state.messages.lastOrNull(), state.pending?.approvalId, state.quiz?.answered, thinking, state.activeStages),
+                latestUserMessageId = state.messages.lastOrNull { it.role == ChatRole.USER }?.id,
+                itemCount = itemCount,
+                ensureLastCardVisible = state.pending != null || state.quiz != null,
+                followUpdates = !showWelcome || state.pending != null,
+                latestLabel = if (state.pending != null) "查看待确认操作" else "回到最新消息",
+                modifier = Modifier.weight(1f).fillMaxWidth(),
             ) {
                 if (showWelcome) {
                     item(key = "welcome") { ChatWelcome(onSuggestion = viewModel::onSuggestionClick) }
                 }
                 items(state.messages, key = { it.id }) { message ->
                     val fresh = remember(message.id) { entrance.isNew(message.id) }
-                    val arrive = if (message.role == ChatRole.USER) Modifier.riseIn(fresh, rise = 6.dp, fromX = 28.dp, durationMillis = 280)
-                        else Modifier.riseIn(fresh, delayMillis = 60, rise = 18.dp, durationMillis = 420)
-                    // Amounts count up only in a reply that has just arrived.
-                    CompositionLocalProvider(LocalCountUpAllowed provides fresh) {
-                        MessageBubble(message, Modifier.animateItem().then(arrive).verificationFrost(redVerification),
-                            onReconcile = { viewModel.reconcileMessage(message.id) }, onOutcome = { viewModel.openOutcome(message.id) })
-                    }
+                    val arrive = if (message.role == ChatRole.USER) Modifier.riseIn(fresh, rise = 6.dp, fromX = 14.dp,
+                        durationMillis = BankConversationMotion.ReplyEntranceMillis)
+                        else Modifier.riseIn(fresh, rise = 10.dp, durationMillis = BankConversationMotion.ReplyEntranceMillis)
+                    MessageBubble(message, Modifier.animateItem().then(arrive).verificationFrost(redVerification),
+                        onReconcile = { viewModel.reconcileMessage(message.id) }, onOutcome = { viewModel.openOutcome(message.id) })
                 }
                 state.pending?.let { approval ->
                     item(key = "approval:${approval.approvalId}") {
                         ApprovalCard(
-                            modifier = Modifier.riseIn(delayMillis = 80, rise = 24.dp, fromScale = 0.96f, durationMillis = 380),
+                            modifier = Modifier.riseIn(rise = 0.dp, durationMillis = BankConversationMotion.FeedbackMillis),
                             approval = approval,
                             deadlineMillis = requireNotNull(approvalDeadlineMillis),
                             otp = state.otp,
@@ -487,6 +441,7 @@ private fun ChatHome(
                 transcribeCloud = viewModel::transcribeCloud,
                 onValueChange = viewModel::onInputChange,
                 onSend = viewModel::send,
+                processing = state.busy,
                 modifier = Modifier.verificationFrost(redVerification),
             )
         }
@@ -574,7 +529,7 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
 
 /** The assistant's place in the conversation while it works: its mark turns and the steps fill in. */
 @Composable
-private fun ThinkingReply(stages: List<com.aibanking.agent.data.StageProgress>, modifier: Modifier = Modifier) {
+internal fun ThinkingReply(stages: List<com.aibanking.agent.data.StageProgress>, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("thinking_reply"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -583,7 +538,12 @@ private fun ThinkingReply(stages: List<com.aibanking.agent.data.StageProgress>, 
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             ShimmerGradientText("安言正在为您处理…", LocalBankSemanticColors.current.brandGradientColors,
                 style = MaterialTheme.typography.bodyLarge)
-            if (stages.isNotEmpty()) ReplyPanel { WorkflowProgress(stages) }
+            if (stages.isNotEmpty()) ReplyPanel {
+                Text("处理进度", style = MaterialTheme.typography.labelLarge)
+                WorkflowProgress(stages)
+                Text("处理步骤的完成状态以实际回执为准。", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -613,125 +573,6 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier, o
         ) {
             Text(message.text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
                 style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-        }
-    }
-}
-
-@Composable
-private fun ApprovalCard(
-    approval: ApprovalView,
-    modifier: Modifier = Modifier,
-    deadlineMillis: Long,
-    otp: String,
-    busy: Boolean,
-    canPromptBiometric: Boolean,
-    onOtpChange: (String) -> Unit,
-    onRequestOtp: () -> Unit,
-    onReject: () -> Unit,
-    onApprove: () -> Unit,
-    onBiometricApprove: () -> Unit,
-) {
-    val isRed = approval.mfaRequired
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    fun secondsLeft(): Int = ((deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999L).div(1_000L).toInt()
-    var remainingSeconds by remember(approval.approvalId, deadlineMillis) { mutableIntStateOf(secondsLeft()) }
-    LaunchedEffect(approval.approvalId, deadlineMillis) {
-        do {
-            remainingSeconds = secondsLeft()
-            if (remainingSeconds > 0) delay(250)
-        } while (remainingSeconds > 0)
-    }
-    BankSectionCard(modifier = modifier) {
-        Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
-            BankStatusChip(if (isRed) "红 · 强验证" else "黄 · 需确认", if (isRed) BankSemanticStatus.RiskRed else BankSemanticStatus.RiskYellow,
-                Modifier.breathe(active = remainingSeconds > 0, min = 0.6f))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(
-                    if (isRed) Icons.Default.Warning else Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp),
-                )
-                Text(
-                    text = if (isRed) "验证身份后执行" else "请核对本次操作",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            Text(
-                approval.summary,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-            )
-            Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                shape = CircleShape,
-            ) {
-                Text(
-                    text = if (remainingSeconds > 0) "请在 $remainingSeconds 秒内确认" else "已超时，请重新发起操作",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                )
-            }
-            // The remaining time drains smoothly and turns red in the last 15 seconds.
-            val total = approval.expiresIn.coerceAtLeast(1).toFloat()
-            val fraction by animateFloatAsState((remainingSeconds / total).coerceIn(0f, 1f), tween(450, easing = LinearEasing), label = "approvalTime")
-            LinearProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
-                drawStopIndicator = {},
-            )
-            if (isRed) {
-                OutlinedTextField(
-                    colors = bankTextFieldColors(),
-                    value = otp,
-                    onValueChange = onOtpChange,
-                    label = { Text("短信验证码（6 位）") },
-                    singleLine = true,
-                    // A one-time code is shown like an SMS code so the user can check it.
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_OTP),
-                )
-                TextButton(onClick = onRequestOtp, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), enabled = !busy && remainingSeconds > 0) { Text("获取本机一次性演示验证码") }
-                if (!canPromptBiometric) {
-                    Text(
-                        "本设备未录入生物识别凭据，无法完成红色风险强验证。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                BankPrimaryButton(
-                    text = if (isRed) "验证并确认办理" else "确认本次操作",
-                    onClick = {
-                        remainingSeconds = secondsLeft()
-                        if (remainingSeconds > 0) {
-                            keyboardController?.hide()
-                            focusManager.clearFocus()
-                            if (isRed) onBiometricApprove() else onApprove()
-                        }
-                    },
-                    enabled = !busy && remainingSeconds > 0 && (!isRed || (canPromptBiometric && otp.length >= 6)),
-                    loading = busy,
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
-                )
-                BankSecondaryButton("取消操作", onReject, enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_REJECT))
-            }
-            Text(
-                "请核对办理对象、金额和具体内容。确认后，才会继续本次操作。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
@@ -834,70 +675,6 @@ private fun RiskQuizPanel(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    }
-}
-
-@Composable
-private fun InputRow(
-    value: String,
-    enabled: Boolean,
-    voiceEnabled: Boolean,
-    captureVoiceResult: () -> (String) -> Unit,
-    cloudSpeechAvailable: ((Boolean) -> Unit) -> Unit,
-    transcribeCloud: (ByteArray, (String) -> Unit, (String) -> Unit) -> Unit,
-    onValueChange: (String) -> Unit,
-    onSend: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val focus = LocalFocusManager.current
-    val send = { if (enabled) { focus.clearFocus(); onSend() } }
-    val voice = rememberVoiceInput(voiceEnabled, captureVoiceResult, cloudSpeechAvailable, transcribeCloud)
-    Column(modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 8.dp)) {
-        // One rounded composer holding the text, the microphone and the send button.
-        Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                // Voice mode trades the text field for the hold-to-talk bar; the
-                // recognised text comes back here for review, so the send button stays.
-                if (voice.voiceMode) {
-                    HoldToTalkBar(voice, Modifier.weight(1f))
-                } else {
-                    TextField(
-                        value = value, onValueChange = onValueChange,
-                        placeholder = { Text("问问安言", style = MaterialTheme.typography.bodyLarge) },
-                        textStyle = MaterialTheme.typography.bodyLarge,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent,
-                            cursorColor = LocalBankSemanticColors.current.inputFocus,
-                        ),
-                        modifier = Modifier.weight(1f).testTag(UiTags.CHAT_INPUT), maxLines = 5,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { send() }),
-                    )
-                }
-                Row(Modifier.padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    VoiceModeToggle(voice, voiceEnabled)
-                    FilledIconButton(
-                        onClick = send, enabled = enabled,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        ),
-                        modifier = Modifier.size(48.dp).popOnChange(enabled).testTag(UiTags.CHAT_SEND),
-                    ) {
-                        BankIcon(BankIconKind.ArrowUp, Modifier.size(22.dp), contentDescription = "发送")
-                    }
-                }
-            }
-        }
-        Text("安言可能会出错；资金操作以确认卡和银行核心回执为准。", style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
     }
 }
 

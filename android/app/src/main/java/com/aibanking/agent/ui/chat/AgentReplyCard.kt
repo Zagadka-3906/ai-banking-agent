@@ -5,7 +5,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
@@ -20,21 +19,29 @@ import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.components.BankGradientMark
 import com.aibanking.agent.ui.components.BankIcon
 import com.aibanking.agent.ui.components.BankIconKind
-import com.aibanking.agent.ui.components.BankSticker
 import com.aibanking.agent.ui.components.BankTextButton
 import com.aibanking.agent.ui.components.BankSecondaryButton
 import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
-import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.UiTags
-import com.aibanking.agent.ui.anim.riseIn
+import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
+import com.aibanking.agent.ui.anim.BankConversationMotion
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
 
 /** A readable reply with financial facts kept separate from support metadata. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}, onOutcome: () -> Unit = {}) {
+    if (message.streaming) {
+        Box(modifier.fillMaxWidth().testTag("reply_card_${message.id}")) {
+            ThinkingReply(message.stages.orEmpty())
+        }
+        return
+    }
     var showDetails by rememberSaveable(message.id) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
+    val motion = LocalBankMotionEnabled.current
     // Assistant turns sit directly on the canvas, led by the gradient brand mark.
     Row(
         modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("reply_card_${message.id}"),
@@ -53,7 +60,7 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier,
             }
             if (risk != null || message.businessStatus != null) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    risk?.let { (label, status) -> BankStatusChip(label, status, Modifier.riseIn(delayMillis = 200, rise = 0.dp, fromScale = 0.8f, durationMillis = 240)) }
+                    risk?.let { (label, status) -> BankStatusChip(label, status) }
                     message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
                 }
             }
@@ -109,11 +116,13 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier,
                     }
                     AnimatedVisibility(
                         visible = showDetails,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically(),
+                        enter = fadeIn(if (motion) tween(BankConversationMotion.FeedbackMillis) else snap()) +
+                            expandVertically(if (motion) tween(BankConversationMotion.DisclosureMillis) else snap()),
+                        exit = fadeOut(if (motion) tween(BankConversationMotion.FeedbackMillis) else snap()) +
+                            shrinkVertically(if (motion) tween(BankConversationMotion.DisclosureMillis) else snap()),
                     ) {
                         ReplyPanel {
-                            message.stages?.takeIf { it.isNotEmpty() }?.let { WorkflowProgress(it) }
+                            message.stages?.takeIf { it.isNotEmpty() }?.let { WorkflowProgress(it, showTimings = true) }
                             Text("回复编号", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                             SelectionContainer {
                                 Text(traceId, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,

@@ -39,6 +39,8 @@ data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val role: ChatRole,
     val text: String,
+    /** Transient activity row replaced by the verified reply in the same list slot. */
+    val streaming: Boolean = false,
     val riskLevel: String? = null,
     /** Temporary summary shown only while its approval is still actionable. */
     val approvalPreview: Boolean = false,

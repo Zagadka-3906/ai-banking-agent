@@ -71,11 +71,11 @@ fun Modifier.riseIn(
     val motion = LocalBankMotionEnabled.current && !LocalInBackPreviewBeneath.current
     val run = animate && motion
     val progress = remember { Animatable(if (run) 0f else 1f) }
-    if (run) {
-        LaunchedEffect(Unit) {
+    LaunchedEffect(run) {
+        if (run && progress.value < 1f) {
             if (delayMillis > 0) delay(delayMillis.toLong())
             progress.animateTo(1f, tween(durationMillis, easing = EmphasizedDecelerateEasing))
-        }
+        } else progress.snapTo(1f)
     }
     graphicsLayer {
         val p = progress.value
@@ -93,9 +93,9 @@ fun Modifier.popOnChange(trigger: Any?): Modifier = composed {
     val motion = LocalBankMotionEnabled.current
     val scale = remember { Animatable(1f) }
     var first by remember { mutableStateOf(true) }
-    LaunchedEffect(trigger) {
+    LaunchedEffect(trigger, motion) {
+        if (!motion) { scale.snapTo(1f); first = true; return@LaunchedEffect }
         if (first) { first = false; return@LaunchedEffect }
-        if (!motion) return@LaunchedEffect
         scale.snapTo(0.82f)
         scale.animateTo(1f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMedium))
     }

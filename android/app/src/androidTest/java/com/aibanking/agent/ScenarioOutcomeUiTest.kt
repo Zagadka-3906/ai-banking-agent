@@ -4,6 +4,7 @@ import android.os.SystemClock
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -179,17 +180,27 @@ class ScenarioOutcomeUiTest {
     @Test fun result_actions_return_to_chat_and_logout_clears_the_previous_accounts_result() {
         val first = queryBalance()
         openOutcome(first.id)
+        ui.runOnIdle {
+            model.onInputChange("尚未发送的下一条草稿")
+            stateFlow().value = model.state.value.copy(suggestions = emptyList())
+        }
         val previousIds = model.state.value.messages.map { it.id }.toSet()
         ui.onNodeWithTag(UiTags.OUTCOME_BALANCE).performScrollTo().performClick()
         ui.waitUntil(30_000) { !model.state.value.busy && model.state.value.messages.any {
             it.id !in previousIds && it.businessStatus == "SUCCEEDED"
         } }
         assertNull(model.state.value.outcomeMessageId)
+        assertEquals("尚未发送的下一条草稿", model.state.value.input)
         ui.onNodeWithTag(UiTags.CHAT_INPUT).assertIsDisplayed()
 
         val latest = model.state.value.messages.last { it.businessStatus == "SUCCEEDED" }
         openOutcome(latest.id)
-        ui.onNodeWithText("查看待办任务").performScrollTo().performClick()
+        val taskAction = ui.onNodeWithTag(UiTags.OUTCOME_TASKS).performScrollTo().assertIsEnabled()
+        // Synchronize with the drawn frame after scrolling, and retain it for visual review.
+        captureOutcomeScreen("task-entry")
+        taskAction.performClick()
+        captureOutcomeScreen("task-panel")
+        ui.runOnIdle { assertTrue("The task shortcut must open its panel", model.state.value.showTasks) }
         ui.waitUntil(15_000) { model.state.value.showTasks && !model.state.value.panelBusy }
         assertNull(model.state.value.outcomeMessageId)
         assertNull(model.state.value.panelError)
@@ -334,6 +345,18 @@ class ScenarioOutcomeUiTest {
     }
 
     private fun message(id: String) = model.state.value.messages.single { it.id == id }
+
+    private fun captureOutcomeScreen(name: String) {
+        val extra = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val folder = (if (extra != null) java.io.File(extra, "outcome-navigation") else
+            java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "outcome-navigation")).apply { mkdirs() }
+        val bitmap = ui.onRoot().captureToImage().asAndroidBitmap()
+        try {
+            java.io.File(folder, "$name.png").outputStream().use {
+                check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+            }
+        } finally { bitmap.recycle() }
+    }
     private fun reconciliationPath(message: ChatMessage) =
         "/api/v1/agent/conversations/${checkNotNull(message.conversationId)}/operations/${checkNotNull(message.response?.operationId)}"
 

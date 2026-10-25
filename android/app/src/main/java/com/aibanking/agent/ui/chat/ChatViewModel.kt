@@ -313,7 +313,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         if (!current.authenticated || current.busy || current.pending != null || current.quiz != null) return
         closeOutcome()
-        onSuggestionClick("查一下余额")
+        // This explicit read-only action is independent of generated suggestions
+        // and leaves any draft intact when returning to the conversation.
+        sendInternal("查一下余额")
     }
     fun outcomeTasks() {
         if (!_state.value.authenticated) return
@@ -482,7 +484,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Seal the transcript (bounded) so a restart restores the same conversation. */
     private fun persistMessages() {
-        val bounded = _state.value.messages.takeLast(MAX_PERSISTED_MESSAGES)
+        val bounded = _state.value.messages.filterNot { it.streaming }.takeLast(MAX_PERSISTED_MESSAGES)
         sessionWork.persist("messages") {
             runCatching { gson.toJson(bounded) }.getOrNull()?.let { sessionStore.saveMessages(it) }
         }
@@ -686,7 +688,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         interactionRevision++
         // A placeholder assistant bubble carries the live stage label and is then
         // replaced by the real answer, so progress appears where the reply will.
-        val placeholder = ChatMessage(role = ChatRole.ASSISTANT, text = "正在处理…")
+        val placeholder = ChatMessage(role = ChatRole.ASSISTANT, text = "正在处理…", streaming = true)
         _state.update {
             it.copy(
                 // 问卷作答在后台提交：答案不进对话，直接等待结果。
