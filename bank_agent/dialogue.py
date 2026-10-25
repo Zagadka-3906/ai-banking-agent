@@ -17,7 +17,7 @@ from planner import (
     needs_clarification,
     validate_intent_payload,
 )
-from intent_language import ambiguous_amount, business_text, split_tasks
+from intent_language import ambiguous_amount, ambiguous_target, business_text, execution_constraint, split_tasks
 from bank_agent.state import (
     BankingAgentState,
 )
@@ -299,6 +299,32 @@ def advance_multi_plan(state: BankingAgentState, sub_requests: list[dict[str, An
         if task.status.value == "PENDING":
             PlanExecutor.keep_pending(plan, task.task_id, note=task.details.get("note") or "由核心任务中心接管")
     return plan.to_dict()
+
+
+def bind_pending_amount_reference(parsed: dict[str, Any], state: BankingAgentState, text: str) -> dict[str, Any]:
+    """Bind a literal supplement to the original payee, not "李四那笔".
+
+    A new recipient, correction or hypothetical remains a new request or a
+    clarification; only the original pending amount field can fill here.
+    """
+    pending = (state.get("context") or {}).get("pending_clarification") or {}
+    payload = pending.get("payload") or {}
+    recipient = payload.get("target")
+    if (pending.get("intent") not in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value}
+            or pending.get("missing") != ["amount"] or not isinstance(recipient, str) or not recipient
+            or execution_constraint(text) or ambiguous_amount(text)
+            or re.search(r"收款人.{0,6}(?:改|换)|不是给|改给|换给", business_text(text))):
+        return parsed
+    reference = re.search(r"(?:给|向|^|[，,。；;\s])\s*" + re.escape(recipient)
+                          + r"(?:的|那(?:一)?笔|这(?:一)?笔|的那(?:一)?笔)\s*(?:转账|汇款)", business_text(text))
+    if not reference or not re.search(r"补|金额|那笔|这笔", text) or ambiguous_target(text):
+        return parsed
+    amount = amount_from_text(text)
+    if amount is None or amount <= 0:
+        return parsed
+    return {**payload, "intent": pending["intent"], "target": recipient, "amount": amount, "confidence": None,
+            "parse_meta": {"source": "rules_context", "resolution": "bound_amount_reference", "dialogue_act": "SLOT_REPLY",
+                           "scope": "IN_SCOPE", "fast_path_eligible": False}}
 
 
 def merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState, text: str) -> dict[str, Any]:

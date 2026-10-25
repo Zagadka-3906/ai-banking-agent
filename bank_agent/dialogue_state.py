@@ -28,12 +28,34 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
         tasks = [task for task in tasks if task.get("intent") != intent]
     topic = help_topic(str(state.get("user_input") or ""))
     selected = (state.get("slots") or {}).get("help_topic")
-    if topic == "general" and selected:
+    if (topic == "general" or intent == "BANKING_HELP") and selected:
         topic = selected
     relation = (state.get("parse_meta") or {}).get("topic_relation")
     if topic == "general" and relation == "CONTINUE":
         topic = view.get("active_topic", "general")
-    return {**view, "active_topic": topic, "question": _safe_text(state.get("user_input"), 500), "tasks": tasks[-4:]}
+    result = {**view, "active_topic": topic, "question": _safe_text(state.get("user_input"), 500), "tasks": tasks[-4:]}
+    # A finite-limit explanation can ask for a value without pretending that
+    # a write was requested. This typed, principal-bound input expires on the
+    # next topic/turn; the value itself must be stated anew, then re-approved.
+    execution = state.get("execution_result") or {}
+    result["next_input"] = ({"intent": "CARD_LIMIT", "field": "amount"}
+                            if intent == "BANKING_HELP" and topic == "limits"
+                            and execution.get("type") == "BANKING_HELP" and (execution.get("data") or {}).get("documents")
+                            else None)
+    if result["next_input"]:
+        import re
+        from intent_language import business_text
+
+        text = business_text(str(state.get("user_input") or ""))
+        cards = set(re.findall(r"(?i)(?<![A-Za-z0-9])CARD-[0-9a-z]{2,}(?![A-Za-z0-9])", text))
+        if len(cards) == 1:
+            # This is the user's literal selector, not proof of ownership.
+            # Core validates it again before issuing the new approval.
+            result["next_input"]["target"] = next(iter(cards)).upper()
+        elif len(cards) > 1 or re.search(r"尾号|末四位|后四位|那张|这张", text):
+            # A bare amount must not silently choose a different primary card.
+            result["next_input"] = None
+    return result
 
 
 def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:

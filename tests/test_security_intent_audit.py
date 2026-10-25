@@ -29,10 +29,15 @@ def test_nonexecuting_language_never_creates_an_actionable_approval(gateway, mon
         "intent": "TRANSFER", "target": "李四", "amount": 100, "confidence": 0.99,
     }, ensure_ascii=False))))
     before = deepcopy((main.ACCOUNTS, main.CARDS, main.WEALTH_HOLDINGS, main.SUBSCRIPTIONS, main.TRANSACTIONS))
+    authorization_before = deepcopy(security.AUTH_TOKENS)
     response = _send(client, text, conversation_id="not-an-authorization")
     assert response["approval"] is None, response
     assert response["request_id"], response
-    assert not (response.get("result") or {}).get("execution_result"), response
+    # Explaining a negated/quoted request is now allowed; a read result is not
+    # an executed financial operation. Authorization must still be untouched.
+    result = (response.get("result") or {}).get("execution_result")
+    assert result is None or result.get("type") == "BANKING_HELP", response
+    assert security.AUTH_TOKENS == authorization_before
     assert (main.ACCOUNTS, main.CARDS, main.WEALTH_HOLDINGS, main.SUBSCRIPTIONS, main.TRANSACTIONS) == before
 
 

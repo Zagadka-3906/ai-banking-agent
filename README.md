@@ -134,7 +134,7 @@ cd ..
 .\.venv\Scripts\python.exe scripts/run_android_regression.py --serial emulator-5580 --output-dir build/device-acceptance
 ```
 
-当前业务基线 `24ef775`（2026-10-25）：后端 1250 项通过、1 项跳过，启用分支统计的总覆盖率 85.06%；Android JVM 106 项、API 37 设备回归 70 项通过。最终公网 19 回合中，16 次自然回答通过核验、2 次范围外拒绝、1 次安全回退，未新增查询授权或业务写入。各轮版本、完整证据及 CI 见[验证记录](docs/验证记录.md)顶部；这些是该业务基线的结果。
+最新后端、设备、真实模型与服务器验收见[验证记录](docs/验证记录.md)顶部，按实际运行版本分别记录。本轮修复前置规则跳过模型、咨询话题被背景词覆盖、待补金额的收款人回指、额度单值补槽与聚焦余额回退；原审批与 Core 的确认、强验证和持久提交边界保持独立。
 
 70 项设备回归用 `scripts/run_android_regression.py` 运行：它会创建隔离服务和账本文件，同时核对 JUnit XML 与两份 protobuf 的实际执行数量及持久化健康状态。普通 Debug 包可加 `--variant debug --test-class <类名> --minimum-tests 1` 单独验证自动填码。
 

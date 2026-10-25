@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
-from intent_language import ambiguous_amount, ambiguous_target, split_tasks
+from intent_language import ambiguous_amount, ambiguous_target, normalize_money_separators, split_tasks
 
 
 _CHINESE_DIGITS = {
@@ -69,7 +69,7 @@ def amount_from_text(text: str) -> Optional[float]:
     if len(split_tasks(text)) == 1 and ambiguous_amount(text):
         return None
     # Object identifiers and calendar fields never supply a missing amount.
-    money_text = re.split(r"备注|附言", text, maxsplit=1)[0].replace("−", "-").replace("－", "-")
+    money_text = normalize_money_separators(re.split(r"备注|附言", text, maxsplit=1)[0].replace("−", "-").replace("－", "-"))
     money_text = re.sub(r"(?i)\b(?:card-[0-9a-z]+|[a-z]{1,8}\d{3,})\b", " ", money_text)
     money_text = re.sub(r"(?<!\d)\d{11,19}(?!\d)", " ", money_text)
     money_text = re.sub(r"(?:尾号|末四位|后四位)\s*\d{4}", " ", money_text)

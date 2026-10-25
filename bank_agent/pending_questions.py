@@ -6,7 +6,7 @@ from typing import Any, Optional, cast
 from bank_agent import runtime
 from bank_agent.parsing import model_parse
 from bank_agent.state import BankingAgentState, empty_state
-from bank_agent.understanding import READ_INTENTS, understanding_context, unresolved_transaction_reference
+from bank_agent.understanding import READ_INTENTS, understanding_context, unresolved_transaction_reference, unsupported_reply
 from planner import needs_clarification, validate_intent_payload
 from security import audit_event
 
@@ -27,7 +27,7 @@ def answer_pending_question(state: dict[str, Any], text: str, request_id: str) -
                                       {"thanks": "不客气。", "goodbye": "好的，有需要可以继续告诉我。"}.get(str(kind), "我在，可以先问业务问题，再决定是否确认原操作。"))
             return dict(side)
         if (parsed.get("parse_meta") or {}).get("dialogue_act") == "UNSUPPORTED":
-            side["final_response"] = "这项能力目前没有接入，无法查询或办理。原待确认操作保持不变。"
+            side["final_response"] = unsupported_reply(parsed.get("parse_meta") or {}, pending=True)
             return dict(side)
         if parsed["intent"] not in READ_INTENTS or needs_clarification(parsed):
             return None

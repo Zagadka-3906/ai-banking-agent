@@ -17,8 +17,8 @@ from planner import (
     validate_intent_payload,
 )
 from security import InjectionError, audit_event, sanitize_text
-from bank_agent.understanding import enforce_inquiry, inquiry_route, understanding_context
-from intent_language import business_text, nonexecuting_action
+from bank_agent.understanding import enforce_inquiry, understanding_context
+from intent_language import business_text
 from bank_agent import runtime
 from bank_agent.state import (
     BankingAgentState,
@@ -111,6 +111,7 @@ from bank_agent.dialogue import (
     ELLIPSIS_SAME_PRODUCT,
     ELLIPSIS_SAME_TARGET,
     build_multi_read_plan,
+    bind_pending_amount_reference,
     has_mutating_part,
     merge_pending_clarification,
     resolve_ellipsis,
@@ -130,22 +131,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         if report_security_signal(exc.code, request_id=state["request_id"]):
             reply += INJECTION_LOCKED_NOTICE
         return {**empty_state(final_response=reply), "request_id": state["request_id"]}
-    # The action words inside a negation, quotation or hypothetical are data,
-    # not a request to issue an actionable approval. This guard also constrains
-    # a model that extracts a confident financial intent from quoted prose.
-    negated_action = re.search(
-        r"(?:不要|别|不用|不必)(?:再|帮我|替我|现在|立即|马上|真的|实际|先)*"
-        r"[^，,。；;!?！？]{0,12}(?:执行|操作|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定)",
-        business_text(text),
-    )
-    quoted_action = re.search(r"(?:解释|翻译|分析).{0,12}(?:引文|示例|这句话)", business_text(text))
-    hypothetical_action = nonexecuting_action(text)
-    if negated_action or quoted_action or (hypothetical_action and not inquiry_route(text)):
-        request_id = state.get("request_id") or f"gw_{uuid.uuid4().hex}"
-        audit_event("INTENT_WITHHELD", user_id=state.get("user_id"), request_id=request_id,
-                    decision="BLOCK", outcome="CLARIFICATION", reason="NON_EXECUTING_LANGUAGE")
-        return {**empty_state(final_response="这是对操作的否定、引用或假设，我没有发起执行或审批。如需实际办理，请单独明确业务、对象和金额。"),
-                "request_id": request_id, "context": {}}
+    # Language constraints apply to executable proposals after understanding;
+    # they must not short-circuit consultation or erase an unfinished task.
     # 问卷进行中：本回合输入按答题处理，不走常规意图解析。
     prior_context = state.get("context")
     if not isinstance(prior_context, dict):
@@ -230,6 +217,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             # card/transaction IDs and duplicate products cannot fill it.
             parsed["intent"] = Intent.WEALTH_COMPARE.value
             parsed["product_ids"] = list(dict.fromkeys(previous_ids + explicit_ids))
+    parsed = bind_pending_amount_reference(parsed, state, text)
     # A reply that only answers the previous question belongs to that request.
     understood_meta = dict(parsed.get("parse_meta") or {})
     if understood_meta.get("dialogue_act") not in {"SOCIAL", "UNSUPPORTED", "UNCLEAR"}:
@@ -243,6 +231,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         prior = {}
     parsed = validate_intent_payload(resolve_ellipsis(parsed, prior, text, state.get("execution_result")))
     parsed = validate_intent_payload(enforce_inquiry(parsed, business_text(text)))
+    if (parsed.get("parse_meta") or {}).get("execution_constraint"):
+        audit_event("INTENT_WITHHELD", user_id=state.get("user_id"), request_id=state["request_id"],
+                    decision="READ_ONLY", outcome="CONSULTATION", reason="NON_EXECUTING_LANGUAGE")
     if compound:
         step = compound["steps"][compound["index"]]
         if parsed.get("intent") != step["payload"].get("intent"):
@@ -265,9 +256,11 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     sub_requests = split_read_requests(text)
     consultation = (parsed.get("intent") == Intent.BANKING_HELP.value
                     and (parsed.get("parse_meta") or {}).get("dialogue_act") in {"QUERY", "EXPLAIN"})
+    semantic_read = (parsed.get("intent") in GREEN_INTENTS - RISK_QUIZ_INTENTS
+                     and (parsed.get("parse_meta") or {}).get("dialogue_act") in {"QUERY", "EXPLAIN"})
     if consultation:
         sub_requests = []
-    if len(split_parts(text)) > 1 and not compound and not sub_requests and not consultation:
+    if len(split_parts(text)) > 1 and not compound and not sub_requests and not consultation and not semantic_read:
         return {**empty_state(final_response="这条消息包含多项业务，其中有尚未明确的请求。请逐项补充业务、对象和金额，或分开办理。"), "context": {}, "request_id": state["request_id"]}
     # A compound request that also contains a mutating part is never split and
     # never silently half-answered: the user is asked to handle it in steps.
@@ -325,7 +318,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                             "capabilities": "可以查账户、账单、卡片和争议工单，也可以先问业务规则；实际办理会单独请您确认。"}.get(
                                 str((parsed.get("parse_meta") or {}).get("social_kind")), "我在，有需要可以继续告诉我。")
             elif act == "UNSUPPORTED":
-                response = "这项能力目前没有接入，我无法查询或办理，也没有发起相近操作。可以换成查询本行已有记录，或说明想了解的银行业务规则。"
+                from bank_agent.understanding import unsupported_reply
+                response = unsupported_reply(parsed.get("parse_meta") or {})
             elif act == "UNCLEAR":
                 response = "我还没有确定这次的问题。您希望解释刚才的结果、查询已有记录，还是办理一项新操作？"
             elif any(phrase in text for phrase in ELLIPSIS_REPEAT + ELLIPSIS_SAME_TARGET + ELLIPSIS_SAME_PRODUCT + ELLIPSIS_CANCEL_IT):

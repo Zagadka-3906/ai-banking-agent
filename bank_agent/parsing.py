@@ -17,7 +17,7 @@ from planner import (
 )
 from security import audit_event
 from workflow_runtime import invoke_model
-from intent_language import ambiguous_amount, ambiguous_target, business_text, requested_date_range, split_tasks
+from intent_language import ambiguous_amount, ambiguous_target, business_text, execution_constraint, finite_limit_change, requested_date_range, split_tasks
 from bank_agent import runtime
 from bank_agent.understanding import DIALOGUE_ACTS, HELP_TOPICS, INTENT_DESCRIPTIONS, _safe_text, enforce_inquiry, model_context
 from bank_agent.state import (
@@ -419,6 +419,25 @@ def local_parse(text: str) -> dict[str, Any]:
     return parsed
 
 
+def _contextual_limit_reply(text: str, local: dict[str, Any]) -> Optional[dict[str, Any]]:
+    discussion = model_context().get("discussion") or {}
+    next_input = discussion.get("next_input") or {}
+    if (next_input.get("intent") != "CARD_LIMIT" or next_input.get("field") != "amount" or execution_constraint(text)
+            or (local.get("slots") or {}).get("target_ambiguous")):
+        return None
+    bare = re.fullmatch(r"\s*[¥￥]?\d[\d,]*(?:\.\d{1,2})?\s*(?:元|块)?\s*", text)
+    if not bare and not finite_limit_change(text):
+        return None
+    value = amount_from_text(text.strip().rstrip("元块") + "元") if bare else amount_from_text(text)
+    if value is None or value <= 0 or ambiguous_amount(text):
+        return None
+    # Never reuse the previous amount/card or accept a number from the model.
+    return {**local, "intent": Intent.CARD_LIMIT.value, "target": local.get("target") or next_input.get("target"), "amount": value, "confidence": None,
+            "slots": {key: value for key, value in (local.get("slots") or {}).items() if key not in {"help_topic", "request_ambiguous"}},
+            "parse_meta": {**(local.get("parse_meta") or {}), "source": "rules_context", "dialogue_act": "SLOT_REPLY",
+                           "scope": "IN_SCOPE", "resolution": "typed_limit_input", "fast_path_eligible": False}}
+
+
 def model_parse(text: str) -> dict[str, Any]:
     """Use model semantics without letting model output supply financial facts.
 
@@ -429,6 +448,11 @@ def model_parse(text: str) -> dict[str, Any]:
     from banking_knowledge import SCOPE_POLICY, capability_catalog
 
     local = local_parse(text)
+    contextual = _contextual_limit_reply(text, local)
+    if contextual:
+        # A typed literal value is a proposal input, not a free-form intent
+        # classification. The risk node still obtains fresh RED approval.
+        return contextual
     # Model first: with a model configured every request is read by it. The
     # fast path (rules alone for explicit requests) is an opt-in for latency.
     if os.getenv("BANK_MODEL_FAST_PATH", "0") == "1":
@@ -453,6 +477,9 @@ def model_parse(text: str) -> dict[str, Any]:
         "只有用户明确恢复任务时resume_task_id才选择discussion.tasks已有ID，否则null。"
         "先判断本轮言语行为 dialogue_act：QUERY=查已有事实，EXPLAIN=问原因/规则/影响，ACTION=要求实际办理，"
         "SLOT_REPLY=补充上轮缺失信息，UNSUPPORTED=能力未提供，UNCLEAR=对象或诉求不明，SOCIAL=问候致谢或告别。不能把 QUERY/EXPLAIN 选成写操作。"
+        "‘我想给李四转点钱，先看看怎么办理’先提出了办理目标，选TRANSFER/ACTION并追问缺少金额；不是引用或否定。"
+        "‘如何给李四转账’仅问步骤，选BANKING_HELP/EXPLAIN。‘先别管转账，解释生日联动’只回答新咨询，保留原待补信息任务。"
+        "‘先不确认’不等于取消办理目标：明确提出对象和金额时可展示待确认提案，不能自动确认或执行。"
         "SOCIAL 时必须在顶层填写 social_kind：问候选 greeting，致谢选 thanks，告别选 goodbye，问能力选 capabilities；其他模式填 null。"
         "‘查这笔转账记录’是 BILL_QUERY；‘我的卡是不是冻结了’是 CARD_QUERY；‘冻结后有什么影响’是 BANKING_HELP。"
         "‘那5笔’须结合已核验观察理解是哪组交易；可在 slots.read_reference 指定 anomalies 或 listed_transactions，不能编造编号。"
@@ -513,12 +540,6 @@ def model_parse(text: str) -> dict[str, Any]:
             resolution = ("model_confirmed" if model_intent == local_intent
                           else "model_classified" if local_intent == Intent.UNKNOWN.value else "model_override")
             merged["parse_meta"] = {**merged["parse_meta"], "source": "model", "resolution": resolution, "fast_path_eligible": False}
-        if (act == "SLOT_REPLY" and model_intent == Intent.CARD_LIMIT.value and local.get("amount") is None
-                and (model_context().get("discussion") or {}).get("active_topic") == "limits"
-                and re.fullmatch(r"\s*[¥￥]?\d[\d,]*(?:\.\d{1,2})?\s*(?:元|块)?\s*", text)):
-            # A reply to the finite-limit explanation supplies a literal new
-            # value, not consent to execute or permission to reuse an old one.
-            merged["amount"] = amount_from_text(text.strip().rstrip("元块") + "元")
         source = re.split(r"备注|附言", text, maxsplit=1)[0]
         if merged["intent"] == Intent.TRANSFER.value and (
             local.get("scheduled_at") or re.search(r"预约|定时|明天|后天|下周|下星期|下个月|20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}", source)

@@ -9,6 +9,7 @@ from typing import Any, Iterator, Mapping, Optional
 from planner import GREEN_INTENTS, Intent
 from security import redact
 from banking_knowledge import DESCRIPTIONS, TOPICS
+from intent_language import action_request_clause, execution_constraint, finite_limit_change
 
 
 _CONTEXT: ContextVar[dict[str, Any]] = ContextVar("intent_understanding_context", default={})
@@ -32,6 +33,8 @@ def help_topic(text: str) -> str:
         return "cross_scene"
     if re.search(r"限额|额度|上限", text) and not re.search(r"验证|为什么|原因", text):
         return "limits"
+    if re.search(r"核对|确认|查证|核实|本人", text) and re.search(r"消费|交易|商户|扣款", text):
+        return "dispute"
     for topic, pattern in (("dispute", _DISPUTE), ("transfer", re.compile(r"转账|到账|预约")),
                            ("card", re.compile(r"卡|挂失|冻结|解冻")), ("wealth", re.compile(r"理财|申购|赎回|测评")),
                            ("subscription", re.compile(r"订阅|代扣|续费")), ("security", re.compile(r"验证|确认|审批|密码|口令|安全")),
@@ -48,7 +51,10 @@ def inquiry_route(text: str) -> Optional[tuple[str, dict[str, Any]]]:
     Existing records, procedures and time estimates never imply a new write.
     """
     directive = bool(_DIRECT.search(text))
-    if re.search(r"(?:取消|解除|去掉|关闭).{0,6}(?:限额|额度上限)|(?:无限|不限额)", text):
+    if (not directive and not action_request_clause(text)
+            and re.search(r"(?:可用|能用|可支配)(?:余额|资金|的钱)?(?:还)?(?:有|是)?(?:多少钱|多少)", text)):
+        return Intent.BALANCE_QUERY.value, {}
+    if re.search(r"(?:取消|解除|去掉|关闭).{0,6}(?:限额|额度上限)|(?:无限|不限额)", text) and not finite_limit_change(text):
         return Intent.BANKING_HELP.value, {"help_topic": "limits"}
     if help_topic(text) == "cross_scene" and (_HELP.search(text) or re.search(r"预订.{0,6}花|订一束|买一束", text)):
         return Intent.BANKING_HELP.value, {"help_topic": "cross_scene"}
@@ -68,7 +74,7 @@ def inquiry_route(text: str) -> Optional[tuple[str, dict[str, Any]]]:
     if (_READ.search(text) and re.search(r"交易|消费|流水|转账记录", text) and not directive
             and not re.search(r"流程|步骤|多久|何时|时效|进度|影响|规则|费用", text)):
         return Intent.BILL_QUERY.value, {}
-    if _HELP.search(text) and _BANKING.search(text) and not directive:
+    if _HELP.search(text) and _BANKING.search(text) and not directive and not action_request_clause(text) and not finite_limit_change(text):
         return Intent.BANKING_HELP.value, {"help_topic": help_topic(text)}
     if _READ.search(text) and not directive:
         if "余额" in text:
@@ -90,6 +96,14 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     route = inquiry_route(text)
     result = dict(parsed)
     act = (result.get("parse_meta") or {}).get("dialogue_act")
+    constraint = execution_constraint(text)
+    if constraint:
+        result["parse_meta"] = {**(result.get("parse_meta") or {}), "execution_constraint": constraint}
+        if result.get("intent") not in READ_INTENTS and act not in {"SOCIAL", "UNSUPPORTED"}:
+            result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
+            result["slots"] = {"help_topic": help_topic(text)}
+            result["parse_meta"]["dialogue_act"] = "EXPLAIN"
+            act = "EXPLAIN"
     if act == "UNSUPPORTED" and route and route[1].get("help_topic") in {"cross_scene", "limits"}:
         # Explain the genuine nearby capability without opening a write flow.
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
@@ -106,6 +120,12 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         result["slots"] = {"help_topic": help_topic(text)}
     if route:
         intent, slots = route
+        if intent == Intent.BANKING_HELP.value:
+            selected = (result.get("slots") or {}).get("help_topic")
+            mandatory_topic = bool(re.search(r"取消.{0,6}(?:限额|额度)|无限|不限额|(?:撤销|撤回|取消|删除).{0,8}(?:工单|争议)", text))
+            if (selected in TOPICS and selected != "general" and
+                    (slots.get("help_topic") == "general" or act in {"QUERY", "EXPLAIN"} and not mandatory_topic)):
+                slots = {**slots, "help_topic": selected}
         previous = result.get("intent")
         # A generic procedure keyword must not replace a model's grounded
         # request for actual card/account/product state with a help brochure.
@@ -129,6 +149,14 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     return result
 
 
+def unsupported_reply(meta: Mapping[str, Any], *, pending: bool = False) -> str:
+    if meta.get("scope") == "OUT_OF_SCOPE":
+        reply = "我专注于银行业务咨询和办理，不能完成这类非银行请求。可以继续问账户、转账、卡片或其他银行问题。"
+    else:
+        reply = "这项能力目前没有接入。当前可以查询账户和交易、了解银行业务规则，或办理已支持的转账、理财、卡片与订阅业务。"
+    return reply + ("原待确认操作保持不变。" if pending else "")
+
+
 def _safe_text(value: Any, limit: int) -> str:
     text = str(redact(str(value or "")))[:limit]
     text = re.sub(r"(?i)(密码|验证码|password|otp)\s*(?:[:：=]|是|为)?\s*[A-Za-z0-9!@#$%^&*_.-]{4,}", r"\1：[已隐藏]", text)
@@ -143,12 +171,16 @@ def understanding_context(state: Mapping[str, Any]) -> Iterator[None]:
     history = (state.get("dialogue_history") or []) if same_user else []
     observations = (state.get("observations") or {}) if same_user else {}
     pending = (state.get("context") or {}).get("pending_clarification") or {}
-    value = {"recent_turns": history[-6:], "recent_observations": list(observations.values())[-4:],
+    value: dict[str, Any] = {"recent_turns": history[-6:], "recent_observations": list(observations.values())[-4:],
              "pending_question": {"intent": pending.get("intent"), "missing": pending.get("missing") or []}}
     view = dialogue_view(state)
     value["discussion"] = {"active_topic": view.get("active_topic"), "tasks": [
         {"id": task.get("id"), "intent": task.get("intent"), "missing": (task.get("pending") or {}).get("missing")}
         for task in view["tasks"]]}
+    next_input = view.get("next_input")
+    if (isinstance(next_input, dict) and next_input.get("intent") == "CARD_LIMIT" and next_input.get("field") == "amount"
+            and set(next_input) <= {"intent", "field", "target"}):
+        value["discussion"]["next_input"] = dict(next_input)
     operation = state.get("pending_operation")
     if isinstance(operation, dict):
         value["pending_operation"] = {"intent": operation.get("intent"), "risk_level": operation.get("risk_level"),

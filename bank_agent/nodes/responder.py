@@ -131,6 +131,11 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
         data = result.get("data", {})
         if not valid_balance_payload(data):
             return response_validation_failure(state, "BALANCE_FIELDS_INVALID")
+        from bank_agent.answering import balance_fact_labels
+        focused = balance_fact_labels(str(state.get("user_input") or ""))
+        if len(focused) == 1:
+            key, label = focused[0]
+            return {"final_response": f"{label} **¥{float(data[key]):,.2f}**。"}
         return {"final_response": f"查询成功：账户总余额 **¥{float(data.get('total_balance', 0)):,.2f}**，锁定资金 **¥{float(data.get('locked_amount', 0)):,.2f}**，可用余额 **¥{float(data.get('available_balance', 0)):,.2f}**。"}
     if rtype == Intent.DISPUTE_QUERY.value:
         data = result.get("data") or {}

@@ -214,6 +214,8 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             parse_meta["model_intent"] = str(meta["model_intent"])
         if meta.get("dialogue_act") in {"QUERY", "EXPLAIN", "ACTION", "SLOT_REPLY", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}:
             parse_meta["dialogue_act"] = str(meta["dialogue_act"])
+        if meta.get("execution_constraint") in {"NEGATED_ACTION", "QUOTED_ACTION", "CONDITIONAL_ACTION", "PROCEDURE_QUESTION"}:
+            parse_meta["execution_constraint"] = str(meta["execution_constraint"])
         if meta.get("social_kind") in {"greeting", "thanks", "goodbye", "capabilities"}:
             parse_meta["social_kind"] = str(meta["social_kind"])
         if meta.get("scope") in {"IN_SCOPE", "MIXED", "OUT_OF_SCOPE"}:

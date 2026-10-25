@@ -21,6 +21,10 @@ def split_tasks(text: str) -> list[str]:
     # Do not split a contact list, product comparison, number or partial slot.
     def separator(match):
         before, after = source[:match.start()], source[match.end():]
+        # A procedural qualifier does not name a second banking operation.
+        if (re.match(r"\s*(?:请|麻烦|帮我|替我|先|再|我想)*\s*(?:看(?:一?下|看)?|了解|说明|解释)?\s*(?:怎么|如何|怎样|办理流程|操作步骤)", after)
+                and not re.search(r"余额|账单|卡片|银行卡|订阅|理财|申购|赎回|冻结|解冻|挂失|转账|预约|生日", after)):
+            return match.group()
         left_request = re.search(r"查询|查看|查一下|看一下|看看|分析|给.{1,24}(?:转|汇)|转账|转给|申购|赎回|(?:冻结|解冻|挂失|解挂).*(?:卡|CARD)|取消|关闭|申请|锁定|预留", before, re.IGNORECASE)
         bare_read = re.fullmatch(r"(?:本月|上月|这个月|上个月|今天|今年)?(?:余额|账单|银行卡|卡片|订阅|持仓)", before.strip())
         if not left_request and not bare_read:
@@ -38,8 +42,14 @@ def split_tasks(text: str) -> list[str]:
     return parts
 
 
+def normalize_money_separators(text: str) -> str:
+    # Sanitization folds Chinese commas into ASCII. A clause separator before
+    # "300元" is not part of the number; a digit-comma-digit thousands group is.
+    return re.sub(r"(?<!\d),(?=\s*[+\-]?\d)", " ", text)
+
+
 def money_source(text: str) -> str:
-    source = business_text(text).replace("−", "-").replace("－", "-")
+    source = normalize_money_separators(business_text(text).replace("−", "-").replace("－", "-"))
     source = re.sub(r"(?i)\b(?:card-[0-9a-z]+|[a-z]{1,8}\d{3,})\b", " ", source)
     source = re.sub(r"(?<!\d)\d{11,19}(?!\d)|(?:尾号|末四位|后四位)\s*\d{4}", " ", source)
     source = re.sub(r"20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?", " ", source)
@@ -80,6 +90,46 @@ def nonexecuting_action(text: str) -> bool:
     if re.search(r"(?:假设|如果|若是|要是)", source) and re.search(mutation, source):
         return True
     return bool(re.search(r"如何|怎么(?:样)?(?:才能|操作|办理|给|把)|怎样|有什么(?:要求|条件)|需要什么", source) and re.search(mutation, source))
+
+
+def action_request_clause(text: str) -> str | None:
+    """Find an affirmative request preceding a question about how to continue.
+
+    A procedure question containing an action verb is not such a request.
+    This supplies conversational structure, never consent or banking facts.
+    """
+    for clause in re.split(r"[，,。；;!?！？]", business_text(text)):
+        clause = clause.strip()
+        if re.search(r"如何|怎么|怎样|为什么|为何|多久|多长|何时|什么时候|进度|流程|步骤|时效|规则|影响|费用|需要|假设|如果|要是|若是|能否|能不能|是否|什么|不要|别|不必|不想|不打算|[吗么“”\"‘’]", clause):
+            continue
+        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)|请|麻烦|帮我|替我|给我)?\s*(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设))", clause):
+            return clause
+    return None
+
+
+def finite_limit_change(text: str) -> bool:
+    """Recognize a new affirmative clause, not an earlier unlimited-limit quote."""
+    for clause in re.split(r"[，,。；;!?！？]", business_text(text)):
+        if re.search(r"如何|怎么|怎样|假设|如果|要是|能否|能不能|是否|多少|[吗么？?]|不要|不必|不想|不能|取消|无限|不限额", clause):
+            continue
+        if re.search(r"(?:限额|额度).{0,8}(?:改|调|设)(?:成|为|到|至|置为)?\s*[¥￥]?\s*\d|(?:那|就|直接)?(?:改成|改为|调到|设为)\s*[¥￥]?\s*\d", clause):
+            return True
+    return False
+
+
+def execution_constraint(text: str) -> str | None:
+    """Restrict executable actions without preventing read-only understanding."""
+    source = business_text(text)
+    mutation = r"执行|操作|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定|调额|修改限额"
+    if re.search(r"(?:不要|别|不用|不必|不想|不打算)(?:再|帮我|替我|现在|立即|马上|真的|实际|先)*[^，,。；;!?！？]{0,12}(?:" + mutation + r")", source):
+        return "NEGATED_ACTION"
+    if re.search(r"(?:解释|翻译|分析).{0,12}(?:引文|示例|这句话)", source):
+        return "QUOTED_ACTION"
+    if re.search(r"假设|如果|若是|要是", source):
+        return "CONDITIONAL_ACTION"
+    if nonexecuting_action(source) and not action_request_clause(source):
+        return "PROCEDURE_QUESTION"
+    return None
 
 
 def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str, Any] | None:

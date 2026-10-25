@@ -58,7 +58,7 @@ def get_disputes(case_id: Optional[str] = None, transaction_id: Optional[str] = 
         raise HTTPException(404, {"code": "DISPUTE_NOT_FOUND", "message": "未找到当前账户的该争议工单"})
     audit_event("DISPUTE_QUERY", user_id=actor, request_id=request_id, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS", metadata={"count": len(rows)})
     return {"code": 200, "user_id": actor, "data": rows, "policy": {"version": 1, "estimated_completion": None,
-            "timing_message": _SERVICE_GUIDES["dispute"][2]}, "case_id": safe_case}
+            "timing_message": next(item["text"] for item in knowledge_documents("dispute") if item["id"] == "guide.dispute.timing")}, "case_id": safe_case}
 
 
 @router.get("/api/v1/service-guide")

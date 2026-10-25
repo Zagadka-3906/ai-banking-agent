@@ -184,7 +184,7 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response") or state.get("clarification_required"):
         return {"risk_level": "UNKNOWN"}
     from bank_agent.understanding import READ_INTENTS, fraud_action_requested, inquiry_route, unresolved_transaction_reference
-    from intent_language import business_text
+    from intent_language import business_text, execution_constraint
 
     spoken = str(state.get("user_input") or state.get("extra_info") or "")
     flow = (state.get("context") or {}).get("compound_workflow")
@@ -198,7 +198,8 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         return {"risk_level": "UNKNOWN", "auth_token": None, "action_requirements": [], "business_status": "NEEDS_INPUT",
                 "clarification_required": True, "final_response": "我还没找到这几笔所指的已核验交易。请提供流水号，或先查询/分析账单后指定其中的记录；我不会用全部流水替代。"}
     nonaction = (state.get("parse_meta") or {}).get("dialogue_act") in {"QUERY", "EXPLAIN", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}
-    if ((nonaction and intent not in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}) or
+    if ((execution_constraint(spoken) and intent not in READ_INTENTS) or
+            (nonaction and intent not in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}) or
             intent not in GREEN_INTENTS and (inquiry_route(spoken) or (intent == Intent.FRAUD_DISPUTE.value and not fraud_action_requested(spoken)))):
         return {"risk_level": "UNKNOWN", "auth_token": None, "action_requirements": [], "business_status": "NEEDS_INPUT",
                 "clarification_required": True, "final_response": "当前是在询问或查询，我没有发起冻结、建单或其他变更。请说明需要查看的记录或想了解的规则。"}

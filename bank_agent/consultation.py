@@ -28,7 +28,7 @@ def discussion_topic(state: Mapping[str, Any]) -> str:
     text = str(state.get("user_input") or "")
     topic = help_topic(text)
     specified = (state.get("slots") or {}).get("help_topic")
-    if topic == "general" and specified in TOPICS:
+    if specified in TOPICS:
         topic = specified
     if (topic == "general" and (state.get("parse_meta") or {}).get("topic_relation") == "CONTINUE"
             and re.search(r"这|那|刚才|之前|上次|为什么", text)):
@@ -113,7 +113,7 @@ def consult(state: Mapping[str, Any]) -> dict[str, Any]:
             execute({"tool": "knowledge", "topic": "security"})
         if re.search(r"为什么|为何|怎么.{0,4}(?:也|还)|限额|额度|我的卡|这次.*验证", str(state.get("user_input") or "")):
             execute({"tool": "account_context"})
-        if topic == "transfer" and re.search(r"这笔|那笔|这几笔|那几笔|刚才", str(state.get("user_input") or "")):
+        if topic in {"transfer", "dispute"} and re.search(r"这笔|那笔|这几笔|那几笔|刚才|核对|核实", str(state.get("user_input") or "")):
             execute({"tool": "transactions"})
         if topic == "dispute" and re.search(r"这笔|那笔|这张|那张|该|CASE-", str(state.get("user_input") or ""), re.I):
             execute({"tool": "disputes"})
