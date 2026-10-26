@@ -40,6 +40,8 @@ def _payee_names(state: BankingAgentState) -> list[str]:
         except Exception:
             continue
         for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and (row.get('account_id') == user_id or row.get('contact_id') == user_id):
+                continue
             name = (row.get("name") or row.get("display_name")) if isinstance(row, dict) else None
             if isinstance(name, str) and 0 < len(name.strip()) <= 20 and name.strip() not in names:
                 names.append(name.strip())
@@ -344,6 +346,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         elif intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value} and "target" in missing_fields:
             # Ask who first - before the amount - and offer the real payees by name.
             names = _payee_names(state)
+            if pending_clarification is not None:
+                pending_clarification['choices'] = {'target': names}
             examples = f"，例如：{'、'.join(names)}" if names else ""
             response = f"要转给哪位收款人？请说出联系人姓名或手机号{examples}。我不会替您猜测收款账户。"
         elif intent in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value} and "target" in missing_fields:

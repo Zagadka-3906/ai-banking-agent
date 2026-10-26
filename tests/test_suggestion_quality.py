@@ -79,19 +79,22 @@ def test_bare_payee_choices_must_be_explicitly_offered_for_the_current_slot():
 
 def test_independent_review_rejects_paraphrases_and_topic_jumps(monkeypatch):
     _fake_model(monkeypatch, [])
-    candidates = ["这张卡怎么解冻", "查看我的理财产品", "核对这笔消费的商户"]
+    candidates = ["这张卡怎么解冻", "查看我的理财产品", "查看本月账单"]
     rows = [{"index": 0, "relevant": True, "not_answered": False, "supported": True, "safe_next": True},
             {"index": 1, "relevant": False, "not_answered": True, "supported": True, "safe_next": True},
             {"index": 2, "relevant": True, "not_answered": True, "supported": True, "safe_next": True}]
+    for row in rows:
+        row.update(answerable=True, support_id='transactions', rule_ids=['guide.dispute.check_transaction'])
     monkeypatch.setattr(suggestions, "invoke_model", lambda *args: SimpleNamespace(content=json.dumps({"reviews": rows})))
     assert suggestions._review(candidates, suggestions._facts(state())) == [candidates[2]]
 
 
 @pytest.mark.parametrize("index,flag", [(True, True), (10, True), (0, "true"), (0, 1), (0, False)])
 def test_invalid_review_indices_and_non_boolean_votes_are_not_accepted(monkeypatch, index, flag):
-    row = {"index": index, "relevant": flag, "not_answered": True, "supported": True, "safe_next": True}
+    row = {"index": index, "relevant": flag, "not_answered": True, "supported": True, "safe_next": True,
+           'answerable': True, 'support_id': 'transactions', 'rule_ids': ['guide.dispute.check_transaction']}
     monkeypatch.setattr(suggestions, "invoke_model", lambda *args: SimpleNamespace(content=json.dumps({"reviews": [row]})))
-    assert suggestions._review(["核对这笔消费的商户"], suggestions._facts(state())) == []
+    assert suggestions._review(["查看本月账单"], suggestions._facts(state())) == []
 
 
 def test_review_failure_does_not_release_unreviewed_model_chips(monkeypatch):
@@ -100,7 +103,7 @@ def test_review_failure_does_not_release_unreviewed_model_chips(monkeypatch):
 
     def invoke(model, messages):
         calls.append(messages)
-        return SimpleNamespace(content='["核对这笔消费的商户"]' if len(calls) == 1 else '{"reviews":"invalid"}')
+        return SimpleNamespace(content='["查看本月账单"]' if len(calls) == 1 else '{"reviews":"invalid"}')
 
     monkeypatch.setattr(suggestions, "invoke_model", invoke)
     assert suggestions.followup_suggestions(state()) == ([], "none")

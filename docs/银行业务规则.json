@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "knowledge_version": "2026-10-26.2",
-  "rules_version": "63ce62d07a73afc817ffc791db1695e0df45e3a14d3a08218462088780fbd453",
+  "knowledge_version": "2026-10-26.3",
+  "rules_version": "36778ff1b7769d83c0941a929e7151b947eee5ec547132e1675e1895726b314d",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answering.py": "406aab578f0661aa40a50a822fa0a9464f30ca4d727a826c6e299ee340bd54bd",
     "bank_agent/conversation_approvals.py": "d165fae834bdccffb449d3546d91d24e744ab84afe1b682512279db8bd58ce89",
     "bank_agent/query_focus.py": "fc5aa2abd3ca35736343002dd5dfd66d64a4907f578a5067f64257a0fadffc13",
     "bank_agent/risk_quiz.py": "836ce036d9f234f1e1532e5524fdc24256dc1d0c3db90b32afc0c82554638b33",
-    "bank_agent/understanding.py": "e3ab1522a1bd2475c862f038179beb0359f9b92cd5dc18cd9fd51b228e1b6b9b",
+    "bank_agent/understanding.py": "d6986b5c7acb362e1070341ce013db338163e807bdb81c5f093711da67c2dbe8",
     "bank_core/cards.py": "a603c3a03d48837dee697abb8f57ad4612a87978ac8b9a2c3754a4a52facf844",
     "bank_core/operations.py": "ad55c9aaf1b27496736412a44d46e39bd122ed3d10c9fc90f3a82bab477ad887",
     "bank_core/payments.py": "372e2d22d823e61c7238ddc818b111793452792c0136dd19d831fe70272dd593",
@@ -25,8 +25,8 @@
     "bank_planning/intents.py": "0675e787d08e53f837b2081d0389b8ef61d376258b6496ca85016495d80d5b6c",
     "bank_security/authorization.py": "652fe51c1fd7d96fbc580661f4352a2ceaafc00fb2cd85cb1aa5c47387ac48c7",
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
-    "banking_knowledge.py": "f7f8eb6d6c73fd82ad7e7d9b9bce19d3e35b20d07275548e8428a8639111ada5",
-    "banking_rules.py": "a36512daf1b31518c00af57f124ee081794eae4f68250c3e188a5721f4236be7",
+    "banking_knowledge.py": "6bab19171f347c4328b0d309b42181452384209900a02a90c26e19ff6c749429",
+    "banking_rules.py": "492313a474c3165523b8b1cc410fbcb70d502c267b7d5282a792b63c3e0b1bbd",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f"
   },
   "rules": [
@@ -34,7 +34,7 @@
       "id": "guide.card.selection",
       "topic": "card",
       "text": "卡片操作必须属于本人，明确卡片编号优先；多张卡或尾号有多义时先明确对象，不能擅自换到主卡。收款人与付款卡是两个不同字段，卡片编号不能覆盖转账收款人。实际卡片状态以本人卡片接口为准。",
-      "source": "product://2026-10-26.2/card/selection",
+      "source": "product://2026-10-26.3/card/selection",
       "title": "卡片管理：卡片操作必须属于本人，明确卡片编号优先；多张卡或",
       "kind": "policy",
       "code_refs": [
@@ -47,7 +47,7 @@
       "id": "guide.card.apply",
       "topic": "card",
       "text": "可以通过 App 申请演示虚拟卡，仍需核对确认；卡包可查看卡片状态、额度和交易渠道。本产品没有信用卡额度、贷款、真实银行柜台或信用卡还款能力。",
-      "source": "product://2026-10-26.2/card/apply",
+      "source": "product://2026-10-26.3/card/apply",
       "title": "卡片管理：可以通过 App 申请演示虚拟卡，仍需核对确认；",
       "kind": "policy",
       "code_refs": [
@@ -60,7 +60,7 @@
       "id": "guide.card.unfreeze",
       "topic": "card",
       "text": "本演示可在App对话提出卡片解冻，核对卡片后确认，完成一次性验证码和登记设备签名验证，以核心成功回执为准；不需要真实柜台办理。",
-      "source": "product://2026-10-26.2/card/unfreeze",
+      "source": "product://2026-10-26.3/card/unfreeze",
       "title": "卡片管理：本演示可在App对话提出卡片解冻，核对卡片后确认",
       "kind": "policy",
       "code_refs": [
@@ -73,7 +73,7 @@
       "id": "guide.card.unfreeze_steps",
       "topic": "card",
       "text": "App内解冻步骤：在对话页输入“我的卡片”并发送，核对目标卡片与状态；输入“解冻”加该卡片编号并发送，核对红色审批卡，领取或核对本机一次性演示验证码，点击“验证并确认办理”，按系统提示用设备PIN或生物识别完成设备签名，再等待核心成功回执。未收到成功回执不能视为已解冻；不需要真实柜台办理。",
-      "source": "product://2026-10-26.2/card/unfreeze_steps",
+      "source": "product://2026-10-26.3/card/unfreeze_steps",
       "title": "卡片管理：App内解冻步骤",
       "kind": "policy",
       "code_refs": [
@@ -86,7 +86,7 @@
       "id": "guide.card.verification",
       "topic": "card",
       "text": "冻结、解冻、挂失、解除挂失和调额均需单独确认及强验证；登记设备签名通常由设备凭据或本地PIN解锁，不能用聊天中的已验证声明替代。",
-      "source": "product://2026-10-26.2/card/verification",
+      "source": "product://2026-10-26.3/card/verification",
       "title": "卡片管理：冻结、解冻、挂失、解除挂失和调额均需单独确认及强",
       "kind": "policy",
       "code_refs": [
@@ -99,7 +99,7 @@
       "id": "guide.card.lost",
       "topic": "card",
       "text": "冻结与挂失是不同状态；挂失卡须解除挂失，单纯解冻不能解除挂失。可先查询实际卡片状态再决定操作。",
-      "source": "product://2026-10-26.2/card/lost",
+      "source": "product://2026-10-26.3/card/lost",
       "title": "卡片管理：冻结与挂失是不同状态；挂失卡须解除挂失，单纯解冻",
       "kind": "policy",
       "code_refs": [
@@ -112,7 +112,7 @@
       "id": "guide.card.receive",
       "topic": "card",
       "text": "本演示中冻结卡片限制该卡付款，账户仍可接收转账。",
-      "source": "product://2026-10-26.2/card/receive",
+      "source": "product://2026-10-26.3/card/receive",
       "title": "卡片管理：本演示中冻结卡片限制该卡付款，账户仍可接收转账。",
       "kind": "policy",
       "code_refs": [
@@ -125,7 +125,7 @@
       "id": "guide.card.channels",
       "topic": "card",
       "text": "关闭网上支付或境外交易渠道需确认，开通渠道需强验证；查询状态或询问影响不会改变开关。",
-      "source": "product://2026-10-26.2/card/channels",
+      "source": "product://2026-10-26.3/card/channels",
       "title": "卡片管理：关闭网上支付或境外交易渠道需确认，开通渠道需强验",
       "kind": "policy",
       "code_refs": [
@@ -138,7 +138,7 @@
       "id": "guide.contacts.source",
       "topic": "contacts",
       "text": "确认联系人是否保存应使用 contacts 工具读取本人联系人簿，不能用转账次数代替。当前聊天工具支持读取；添加、删除及撤销删除在 App 联系人页面办理，不应在聊天中虚构已完成这些变更。",
-      "source": "product://2026-10-26.2/contacts/source",
+      "source": "product://2026-10-26.3/contacts/source",
       "title": "联系人与收款人：确认联系人是否保存应使用 contacts 工具",
       "kind": "policy",
       "code_refs": [
@@ -151,7 +151,7 @@
       "id": "guide.contacts.entry",
       "topic": "contacts",
       "text": "查看收款人列表：打开 App 侧边栏 → 联系人，可查看本人已保存联系人、搜索姓名并选择收款人。",
-      "source": "product://2026-10-26.2/contacts/entry",
+      "source": "product://2026-10-26.3/contacts/entry",
       "title": "联系人与收款人：查看收款人列表",
       "kind": "policy",
       "code_refs": [
@@ -164,7 +164,7 @@
       "id": "guide.contacts.saved",
       "topic": "contacts",
       "text": "是否已保存联系人必须查询本人的联系人簿，不能凭转账流水或收款人账户存在作判断。本产品没有单独的常用频率标记，已保存与交易频率是不同信息。",
-      "source": "product://2026-10-26.2/contacts/saved",
+      "source": "product://2026-10-26.3/contacts/saved",
       "title": "联系人与收款人：是否已保存联系人必须查询本人的联系人簿，不能凭转",
       "kind": "policy",
       "code_refs": [
@@ -177,7 +177,7 @@
       "id": "guide.contacts.common_flag",
       "topic": "contacts",
       "text": "本产品没有单独的常用频率标记，已保存与交易频率是不同信息。",
-      "source": "product://2026-10-26.2/contacts/common_flag",
+      "source": "product://2026-10-26.3/contacts/common_flag",
       "title": "联系人与收款人：本产品没有单独的常用频率标记，已保存与交易频率是",
       "kind": "policy",
       "code_refs": [
@@ -190,7 +190,7 @@
       "id": "guide.cross_scene.capability",
       "topic": "cross_scene",
       "text": "生日联动支持为指定对象和日期预留明确预算，创建生日提醒、模拟鲜花与蛋糕订单草稿，并在待办任务展示依赖关系。",
-      "source": "product://2026-10-26.2/cross_scene/capability",
+      "source": "product://2026-10-26.3/cross_scene/capability",
       "title": "生日联动：生日联动支持为指定对象和日期预留明确预算，创建生",
       "kind": "policy",
       "code_refs": [
@@ -203,7 +203,7 @@
       "id": "guide.cross_scene.start",
       "topic": "cross_scene",
       "text": "可提供生日对象、生日日期、预算及提醒时间；例如说明爱人的生日日期、锁定预算并提前提醒。缺少预算或日期时应补充，系统不会自行决定花费。",
-      "source": "product://2026-10-26.2/cross_scene/start",
+      "source": "product://2026-10-26.3/cross_scene/start",
       "title": "生日联动：可提供生日对象、生日日期、预算及提醒时间；例如说",
       "kind": "policy",
       "code_refs": [
@@ -216,7 +216,7 @@
       "id": "guide.cross_scene.fulfillment",
       "topic": "cross_scene",
       "text": "真实订花、支付给外部花店和配送尚未接入；可以建立生日提醒和模拟订单草稿，到期仍需用户再次确认才会在虚构账本执行模拟订单。",
-      "source": "product://2026-10-26.2/cross_scene/fulfillment",
+      "source": "product://2026-10-26.3/cross_scene/fulfillment",
       "title": "生日联动：真实订花、支付给外部花店和配送尚未接入；可以建立",
       "kind": "policy",
       "code_refs": [
@@ -229,7 +229,7 @@
       "id": "guide.cross_scene.cancel",
       "topic": "cross_scene",
       "text": "尚未执行的生日锁资可在明确请求并确认后撤销，释放资金并取消相关提醒和订单草稿；已完成的资金操作不回滚。",
-      "source": "product://2026-10-26.2/cross_scene/cancel",
+      "source": "product://2026-10-26.3/cross_scene/cancel",
       "title": "生日联动：尚未执行的生日锁资可在明确请求并确认后撤销，释放",
       "kind": "policy",
       "code_refs": [
@@ -242,7 +242,7 @@
       "id": "guide.dispute.check_transaction",
       "topic": "dispute",
       "text": "核对是否本人消费：先在账单中核对该笔商户、金额、时间、卡片与流水号，再对照自己的订单、付款记录和同意的代扣；仅凭可疑规则不能确认是否盗刷。查不到对应付款或仍不认识该笔时，可继续查询本人已有争议工单或明确提出反诈保护，办理须另行确认和强验证。这里没有真实商户核验、客服审核或自动退款。",
-      "source": "product://2026-10-26.2/dispute/check_transaction",
+      "source": "product://2026-10-26.3/dispute/check_transaction",
       "title": "可疑交易与争议：核对是否本人消费",
       "kind": "policy",
       "code_refs": [
@@ -254,7 +254,7 @@
       "id": "guide.dispute.query",
       "topic": "dispute",
       "text": "可以查询已有争议工单的状态、关联交易和登记时间；查询不会重新冻结或建单。",
-      "source": "product://2026-10-26.2/dispute/query",
+      "source": "product://2026-10-26.3/dispute/query",
       "title": "可疑交易与争议：可以查询已有争议工单的状态、关联交易和登记时间；",
       "kind": "policy",
       "code_refs": [
@@ -266,7 +266,7 @@
       "id": "guide.dispute.protect",
       "topic": "dispute",
       "text": "明确请求反诈保护后，经单独确认和强验证，冻结关联卡片并创建或关联工单；可疑规则线索不能直接认定盗刷。",
-      "source": "product://2026-10-26.2/dispute/protect",
+      "source": "product://2026-10-26.3/dispute/protect",
       "title": "可疑交易与争议：明确请求反诈保护后，经单独确认和强验证，冻结关联",
       "kind": "policy",
       "code_refs": [
@@ -278,7 +278,7 @@
       "id": "guide.dispute.timing",
       "topic": "dispute",
       "text": "当前是演示工单登记，没有真实客服审核队列，也未提供预计完成时间；不会自动退款。",
-      "source": "product://2026-10-26.2/dispute/timing",
+      "source": "product://2026-10-26.3/dispute/timing",
       "title": "可疑交易与争议：当前是演示工单登记，没有真实客服审核队列，也未提",
       "kind": "policy",
       "code_refs": [
@@ -290,7 +290,7 @@
       "id": "guide.dispute.cancel",
       "topic": "dispute",
       "text": "目前没有提供撤回、取消或删除争议工单的功能。",
-      "source": "product://2026-10-26.2/dispute/cancel",
+      "source": "product://2026-10-26.3/dispute/cancel",
       "title": "可疑交易与争议：目前没有提供撤回、取消或删除争议工单的功能。",
       "kind": "policy",
       "code_refs": [
@@ -302,7 +302,7 @@
       "id": "guide.dispute.unfreeze",
       "topic": "dispute",
       "text": "查询工单不会解除卡片冻结；如需解冻，须另外提出并完成确认和强验证。",
-      "source": "product://2026-10-26.2/dispute/unfreeze",
+      "source": "product://2026-10-26.3/dispute/unfreeze",
       "title": "可疑交易与争议：查询工单不会解除卡片冻结；如需解冻，须另外提出并",
       "kind": "policy",
       "code_refs": [
@@ -314,7 +314,7 @@
       "id": "guide.general.data_sources",
       "topic": "general",
       "text": "当前事实来源：余额用 balance，卡片用 cards 或 account_context，流水用 transactions，联系人用 contacts，争议用 disputes。订阅实际记录需走确认后的订阅查询流程。rules 和 knowledge 只提供产品规则，不能替代这些本人记录。",
-      "source": "product://2026-10-26.2/general/data_sources",
+      "source": "product://2026-10-26.3/general/data_sources",
       "title": "通用对话与事实：当前事实来源",
       "kind": "policy",
       "code_refs": [
@@ -329,7 +329,7 @@
       "id": "guide.general.source_priority",
       "topic": "general",
       "text": "回答顺序：识别本轮问题，检索对应业务规则，再查询本人实际记录。规则说明能证明产品如何工作，不能证明账户余额、联系人是否保存、某会员是否生效或某操作已完成；这些结论必须分别有对应 Core 记录。",
-      "source": "product://2026-10-26.2/general/source_priority",
+      "source": "product://2026-10-26.3/general/source_priority",
       "title": "通用对话与事实：回答顺序",
       "kind": "policy",
       "code_refs": [
@@ -344,7 +344,7 @@
       "id": "guide.general.dialogue",
       "topic": "general",
       "text": "不想、不要、先别、假设或只问操作步骤均不授权办理。先区分查询事实、解释规则、实际办理、补充信息、切换话题与不支持；引用和条件陈述不能当作新变更；当前问题优先于历史话题，插问不自动取消或恢复原办理。不要把普通语气词或谓词误当业务对象二选一。",
-      "source": "product://2026-10-26.2/general/dialogue",
+      "source": "product://2026-10-26.3/general/dialogue",
       "title": "通用对话与事实：不想、不要、先别、假设或只问操作步骤均不授权办理",
       "kind": "policy",
       "code_refs": [
@@ -359,7 +359,7 @@
       "id": "guide.general.objects",
       "topic": "general",
       "text": "用户明确写出的对象和编号优先，并与本人已核验记录匹配；不能因模型漏填而改成查询全部，也不能用名称前缀误选另一人或商户。历史只帮助解释明确指代，不为新办理补造收款人、金额或预算；真正缺项或多义时针对该字段追问。",
-      "source": "product://2026-10-26.2/general/objects",
+      "source": "product://2026-10-26.3/general/objects",
       "title": "通用对话与事实：用户明确写出的对象和编号优先，并与本人已核验记录",
       "kind": "policy",
       "code_refs": [
@@ -374,7 +374,7 @@
       "id": "guide.general.balance",
       "topic": "general",
       "text": "余额字段分别表示总余额、锁定金额和可用余额，可用余额为总余额减锁定金额。只问可用余额就回答该字段，不能用总余额替代；金额来自本人余额接口，不能由模型或规则文本推算当前账户值。",
-      "source": "product://2026-10-26.2/general/balance",
+      "source": "product://2026-10-26.3/general/balance",
       "title": "通用对话与事实：余额字段分别表示总余额、锁定金额和可用余额，可用",
       "kind": "policy",
       "code_refs": [
@@ -389,7 +389,7 @@
       "id": "guide.general.answer_focus",
       "topic": "general",
       "text": "直接回答当前问题所指对象和字段。不要附带无关的全量流水、其他订阅或取消建议；解释必须区分登记状态、计划日期和已执行结果。证据缺失应指出具体缺口，不能用通用能力介绍代替答案。",
-      "source": "product://2026-10-26.2/general/answer_focus",
+      "source": "product://2026-10-26.3/general/answer_focus",
       "title": "通用对话与事实：直接回答当前问题所指对象和字段。不要附带无关的全",
       "kind": "policy",
       "code_refs": [
@@ -404,7 +404,7 @@
       "id": "guide.general.commit",
       "topic": "general",
       "text": "审批、确认、验证通过或 HTTP 请求已发出，都不等于业务成功。配置持久化后，业务及回执保存成功才可发布成功；写盘失败则返回失败并回滚业务，已消耗的授权不恢复。结果不确定时查询原操作回执，不自动以新请求重做付款。",
-      "source": "product://2026-10-26.2/general/commit",
+      "source": "product://2026-10-26.3/general/commit",
       "title": "通用对话与事实：审批、确认、验证通过或 HTTP 请求已发出，都",
       "kind": "policy",
       "code_refs": [
@@ -419,7 +419,7 @@
       "id": "guide.general.capabilities",
       "topic": "general",
       "text": "可以查询账户、账单、交易、卡片、理财和争议，咨询办理流程与产品使用；支持预约转账、AA及生日联动。",
-      "source": "product://2026-10-26.2/general/capabilities",
+      "source": "product://2026-10-26.3/general/capabilities",
       "title": "通用对话与事实：可以查询账户、账单、交易、卡片、理财和争议，咨询",
       "kind": "policy",
       "code_refs": [
@@ -434,7 +434,7 @@
       "id": "guide.general.boundaries",
       "topic": "general",
       "text": "本系统使用虚构银行账本与本机模拟商户，没有真实银行柜台、商户配送、客服审核或退款服务。",
-      "source": "product://2026-10-26.2/general/boundaries",
+      "source": "product://2026-10-26.3/general/boundaries",
       "title": "通用对话与事实：本系统使用虚构银行账本与本机模拟商户，没有真实银",
       "kind": "policy",
       "code_refs": [
@@ -449,7 +449,7 @@
       "id": "guide.general.consent",
       "topic": "general",
       "text": "咨询、解释和查询不表示同意办理；实际变更需要另行提出、核对对象和金额并确认。",
-      "source": "product://2026-10-26.2/general/consent",
+      "source": "product://2026-10-26.3/general/consent",
       "title": "通用对话与事实：咨询、解释和查询不表示同意办理；实际变更需要另行",
       "kind": "policy",
       "code_refs": [
@@ -464,7 +464,7 @@
       "id": "guide.limits.finite",
       "topic": "limits",
       "text": "目前只能设置明确的有限卡片日额度，不支持取消限额或设为无限；取消限额不能自动解释为调高额度，需先明确是否改为指定数值。",
-      "source": "product://2026-10-26.2/limits/finite",
+      "source": "product://2026-10-26.3/limits/finite",
       "title": "卡片额度：目前只能设置明确的有限卡片日额度，不支持取消限额",
       "kind": "policy",
       "code_refs": [
@@ -477,7 +477,7 @@
       "id": "guide.limits.change",
       "topic": "limits",
       "text": "可先查询当前卡片额度；若要调整，需明确卡片与新日额度，再核对确认并完成验证码和登记设备签名。调整后转账仍受余额、日额度及风控约束。",
-      "source": "product://2026-10-26.2/limits/change",
+      "source": "product://2026-10-26.3/limits/change",
       "title": "卡片额度：可先查询当前卡片额度；若要调整，需明确卡片与新日",
       "kind": "policy",
       "code_refs": [
@@ -490,7 +490,7 @@
       "id": "guide.security.authorization",
       "topic": "security",
       "text": "资金权限由 Core 会话身份、操作预检、用户确认、一次性授权及相应强验证共同决定。授权绑定本人、当前会话、操作、对象、金额和有效期；改动参数、过期或重复使用均不能沿用，模型、规则检索和聊天里的同意声明都不能签发授权。",
-      "source": "product://2026-10-26.2/security/authorization",
+      "source": "product://2026-10-26.3/security/authorization",
       "title": "身份、确认与验证：资金权限由 Core 会话身份、操作预检、用户确",
       "kind": "policy",
       "code_refs": [
@@ -503,7 +503,7 @@
       "id": "guide.security.channels",
       "topic": "security",
       "text": "App 中实际变更仍走确认及相应设备验证；飞书通道只读，不把 IM 消息当付款授权。设备私钥留在本机，验证码或本机演示码不能替代登记设备签名，也不要让用户在聊天里提供这些凭据。",
-      "source": "product://2026-10-26.2/security/channels",
+      "source": "product://2026-10-26.3/security/channels",
       "title": "身份、确认与验证：App 中实际变更仍走确认及相应设备验证；飞书通",
       "kind": "policy",
       "code_refs": [
@@ -516,7 +516,7 @@
       "id": "guide.security.step_up",
       "topic": "security",
       "text": "小额转账也可能需要强验证：验证等级取决于当日累计转出和行为条件；近期调整卡片额度后，窗口内的小额转账也会升级。是否当前触发以核心预检和本次审批卡为准，不能只看单笔金额。",
-      "source": "product://2026-10-26.2/security/step_up",
+      "source": "product://2026-10-26.3/security/step_up",
       "title": "身份、确认与验证：小额转账也可能需要强验证",
       "kind": "policy",
       "code_refs": [
@@ -529,7 +529,7 @@
       "id": "guide.security.factors",
       "topic": "security",
       "text": "强验证的步骤是核对本次审批卡，用户确认，填写一次性验证码，再由登记设备完成签名；以本次审批卡列出的实际要求为准。",
-      "source": "product://2026-10-26.2/security/factors",
+      "source": "product://2026-10-26.3/security/factors",
       "title": "身份、确认与验证：强验证的步骤是核对本次审批卡，用户确认，填写一次",
       "kind": "policy",
       "code_refs": [
@@ -542,7 +542,7 @@
       "id": "guide.security.device",
       "topic": "security",
       "text": "登记设备签名由App调用本地密钥完成，可由设备凭据或本地PIN解锁；它不是真实人脸识别服务。不要把验证码、PIN或密码发到聊天中。",
-      "source": "product://2026-10-26.2/security/device",
+      "source": "product://2026-10-26.3/security/device",
       "title": "身份、确认与验证：登记设备签名由App调用本地密钥完成，可由设备凭",
       "kind": "policy",
       "code_refs": [
@@ -555,7 +555,7 @@
       "id": "guide.security.binding",
       "topic": "security",
       "text": "确认与验证只对本次对象、金额和操作有效；修改关键内容须重新审批，之前的验证不能授权另一笔操作。",
-      "source": "product://2026-10-26.2/security/binding",
+      "source": "product://2026-10-26.3/security/binding",
       "title": "身份、确认与验证：确认与验证只对本次对象、金额和操作有效；修改关键",
       "kind": "policy",
       "code_refs": [
@@ -568,7 +568,7 @@
       "id": "guide.security.pending",
       "topic": "security",
       "text": "待确认操作尚未执行，可以先咨询或查询再确认，也可取消；取消后不能继续使用原授权。",
-      "source": "product://2026-10-26.2/security/pending",
+      "source": "product://2026-10-26.3/security/pending",
       "title": "身份、确认与验证：待确认操作尚未执行，可以先咨询或查询再确认，也可",
       "kind": "policy",
       "code_refs": [
@@ -581,7 +581,7 @@
       "id": "guide.subscription.source",
       "topic": "subscription",
       "text": "订阅是否登记、每期金额、状态和计划扣款日期，必须使用本人完成查询确认后释放的订阅记录，不能用联系人、流水频率或通用规则替代。指定商户时独立绑定原文字面对象，再按所问金额、状态或日期返回；查询仍需用户确认，取消是另一项独立操作。",
-      "source": "product://2026-10-26.2/subscription/source",
+      "source": "product://2026-10-26.3/subscription/source",
       "title": "订阅与代扣：订阅是否登记、每期金额、状态和计划扣款日期，必须",
       "kind": "policy",
       "code_refs": [
@@ -594,7 +594,7 @@
       "id": "guide.subscription.entry",
       "topic": "subscription",
       "text": "查询订阅：在 App 首页点击查看订阅，或在对话输入查看我的订阅，核对确认后查看记录。本 App 没有独立的订阅管理页或订阅/代扣管理页面。",
-      "source": "product://2026-10-26.2/subscription/entry",
+      "source": "product://2026-10-26.3/subscription/entry",
       "title": "订阅与代扣：查询订阅",
       "kind": "policy",
       "code_refs": [
@@ -607,7 +607,7 @@
       "id": "guide.subscription.failure",
       "topic": "subscription",
       "text": "当前演示不执行真实商户续费扣款，也未接入商户扣款失败回调、自动重试或会员停用联动；无法判断商户是否重试或暂停真实会员。可核对商户订单与本人银行流水；订阅登记状态与计划日期不能证明扣款成功或失败，也不能证明真实会员权益。",
-      "source": "product://2026-10-26.2/subscription/failure",
+      "source": "product://2026-10-26.3/subscription/failure",
       "title": "订阅与代扣：当前演示不执行真实商户续费扣款，也未接入商户扣款",
       "kind": "policy",
       "code_refs": [
@@ -620,7 +620,7 @@
       "id": "guide.subscription.freshness",
       "topic": "subscription",
       "text": "订阅的 ACTIVE 表示本系统登记为生效中，不等于已核实真实商户服务。计划扣款日期早于查询日期时，应标为已过期的原记录；不能自行推算新日期，也不能据此声称已经扣款。",
-      "source": "product://2026-10-26.2/subscription/freshness",
+      "source": "product://2026-10-26.3/subscription/freshness",
       "title": "订阅与代扣：订阅的 ACTIVE 表示本系统登记为生效中，不",
       "kind": "policy",
       "code_refs": [
@@ -633,7 +633,7 @@
       "id": "guide.subscription.query",
       "topic": "subscription",
       "text": "查询和取消订阅都需确认；系统推测的订阅候选不能直接取消，需先核实商户记录。",
-      "source": "product://2026-10-26.2/subscription/query",
+      "source": "product://2026-10-26.3/subscription/query",
       "title": "订阅与代扣：查询和取消订阅都需确认；系统推测的订阅候选不能直",
       "kind": "policy",
       "code_refs": [
@@ -646,7 +646,7 @@
       "id": "guide.subscription.effect",
       "topic": "subscription",
       "text": "演示取消记录不代表真实商户合同解除或退款；续费提醒不会自动扣费或取消订阅。",
-      "source": "product://2026-10-26.2/subscription/effect",
+      "source": "product://2026-10-26.3/subscription/effect",
       "title": "订阅与代扣：演示取消记录不代表真实商户合同解除或退款；续费提",
       "kind": "policy",
       "code_refs": [
@@ -659,7 +659,7 @@
       "id": "guide.tasks.source",
       "topic": "tasks",
       "text": "本人任务状态可在 App 侧边栏 → 待办任务中读取，底层提供本人任务接口。当前咨询工具未接入任意任务实时查询，只有规则检索时不能声称已查询到某任务状态；实际撤销和任务办理仍按对应确认流程处理。",
-      "source": "product://2026-10-26.2/tasks/source",
+      "source": "product://2026-10-26.3/tasks/source",
       "title": "待办与撤销：本人任务状态可在 App 侧边栏 → 待办任务中",
       "kind": "policy",
       "code_refs": [
@@ -672,7 +672,7 @@
       "id": "guide.tasks.status",
       "topic": "tasks",
       "text": "待办状态须查询本人任务记录，不能从聊天推断。任务到了设定时间不会自动扣款付款；需要付款的预约或订单须等待用户确认。提醒已发和订单草稿已生成也不代表资金已支付；执行失败或结果不确定须分别说明，不能整体报成功。",
-      "source": "product://2026-10-26.2/tasks/status",
+      "source": "product://2026-10-26.3/tasks/status",
       "title": "待办与撤销：待办状态须查询本人任务记录，不能从聊天推断。任务",
       "kind": "policy",
       "code_refs": [
@@ -685,7 +685,7 @@
       "id": "guide.tasks.entry",
       "topic": "tasks",
       "text": "打开侧边栏的待办任务可核对预约、提醒与订单草稿的状态、时间及依赖关系，也可选择请求人工处理以暂停相关步骤。",
-      "source": "product://2026-10-26.2/tasks/entry",
+      "source": "product://2026-10-26.3/tasks/entry",
       "title": "待办与撤销：打开侧边栏的待办任务可核对预约、提醒与订单草稿的",
       "kind": "policy",
       "code_refs": [
@@ -698,7 +698,7 @@
       "id": "guide.tasks.undo",
       "topic": "tasks",
       "text": "未执行预约、未收款AA和锁资支持撤销；撤销需要核对目标并确认，已付款或已结算步骤不能通过撤销恢复资金。",
-      "source": "product://2026-10-26.2/tasks/undo",
+      "source": "product://2026-10-26.3/tasks/undo",
       "title": "待办与撤销：未执行预约、未收款AA和锁资支持撤销；撤销需要核",
       "kind": "policy",
       "code_refs": [
@@ -711,7 +711,7 @@
       "id": "guide.tasks.handoff",
       "topic": "tasks",
       "text": "任务页的请求人工处理会暂停任务并登记原因；这是演示接管记录，不代表已有真实客服人员接单。",
-      "source": "product://2026-10-26.2/tasks/handoff",
+      "source": "product://2026-10-26.3/tasks/handoff",
       "title": "待办与撤销：任务页的请求人工处理会暂停任务并登记原因；这是演",
       "kind": "policy",
       "code_refs": [
@@ -724,7 +724,7 @@
       "id": "guide.transfer.inputs",
       "topic": "transfer",
       "text": "即时转账需要明确收款人和金额；先核对本人联系人或本行可用收款账户，再由 Core 检查状态、余额、额度及风险。备注只是付款附言，不能改变业务、身份、对象或金额；已完成转账通过流水核对，不再次发起转账。",
-      "source": "product://2026-10-26.2/transfer/inputs",
+      "source": "product://2026-10-26.3/transfer/inputs",
       "title": "转账、预约与AA：即时转账需要明确收款人和金额；先核对本人联系人或",
       "kind": "policy",
       "code_refs": [
@@ -737,7 +737,7 @@
       "id": "guide.transfer.split",
       "topic": "transfer",
       "text": "AA 收款需要明确总额和参与人。发起人创建收款请求不代表收到款项；参与人必须以自己的有效会话确认付款，核心核对份额后才会入账，不能替参与人自动同意或扣款。",
-      "source": "product://2026-10-26.2/transfer/split",
+      "source": "product://2026-10-26.3/transfer/split",
       "title": "转账、预约与AA：AA 收款需要明确总额和参与人。发起人创建收款请",
       "kind": "policy",
       "code_refs": [
@@ -750,7 +750,7 @@
       "id": "guide.transfer.verification",
       "topic": "transfer",
       "text": "转账需核对收款人与金额并确认；当日累计超过1000元需一次性验证码和登记设备签名，额度调整后的风控窗口也可使小额转账升级强验证。",
-      "source": "product://2026-10-26.2/transfer/verification",
+      "source": "product://2026-10-26.3/transfer/verification",
       "title": "转账、预约与AA：转账需核对收款人与金额并确认；当日累计超过100",
       "kind": "policy",
       "code_refs": [
@@ -763,7 +763,7 @@
       "id": "guide.transfer.scheduled_cancel",
       "topic": "transfer",
       "text": "撤销预约转账：打开侧边栏的待办任务，核对未执行的预约并取消；也可在对话中明确说撤销哪笔预约，核对确认卡后确认。已结算交易不能撤销。",
-      "source": "product://2026-10-26.2/transfer/scheduled_cancel",
+      "source": "product://2026-10-26.3/transfer/scheduled_cancel",
       "title": "转账、预约与AA：撤销预约转账",
       "kind": "policy",
       "code_refs": [
@@ -776,7 +776,7 @@
       "id": "guide.transfer.completed",
       "topic": "transfer",
       "text": "已完成转账可查询流水核对收款人、金额和时间；本演示不支持撤回已结算转账或自动追回款项，也不会替用户向收款人发起反向付款。",
-      "source": "product://2026-10-26.2/transfer/completed",
+      "source": "product://2026-10-26.3/transfer/completed",
       "title": "转账、预约与AA：已完成转账可查询流水核对收款人、金额和时间；本演",
       "kind": "policy",
       "code_refs": [
@@ -789,7 +789,7 @@
       "id": "guide.transfer.schedule",
       "topic": "transfer",
       "text": "预约转账到期只进入等待用户确认状态，再次确认并满足当时风控与余额条件后才会扣款；取消未执行预约不会产生转账。",
-      "source": "product://2026-10-26.2/transfer/schedule",
+      "source": "product://2026-10-26.3/transfer/schedule",
       "title": "转账、预约与AA：预约转账到期只进入等待用户确认状态，再次确认并满",
       "kind": "policy",
       "code_refs": [
@@ -802,7 +802,7 @@
       "id": "guide.transfer.timing",
       "topic": "transfer",
       "text": "这是虚构账本，不提供真实跨行到账时效承诺。",
-      "source": "product://2026-10-26.2/transfer/timing",
+      "source": "product://2026-10-26.3/transfer/timing",
       "title": "转账、预约与AA：这是虚构账本，不提供真实跨行到账时效承诺。",
       "kind": "policy",
       "code_refs": [
@@ -815,7 +815,7 @@
       "id": "guide.wealth.source",
       "topic": "wealth",
       "text": "产品列表和产品比较使用对应产品读取能力，持仓、测评档案使用本人读取能力；当前通用咨询工具不包含任意理财接口，缺少所需记录时应转为已支持的明确查询或说明入口，不能凭规则文本编造本人持仓或匹配结果。",
-      "source": "product://2026-10-26.2/wealth/source",
+      "source": "product://2026-10-26.3/wealth/source",
       "title": "理财与测评：产品列表和产品比较使用对应产品读取能力，持仓、测",
       "kind": "policy",
       "code_refs": [
@@ -828,7 +828,7 @@
       "id": "guide.wealth.suitability",
       "topic": "wealth",
       "text": "理财产品信息来自产品列表，持仓和适当性来自本人持仓及风险测评记录。推荐前完成问卷，不能代填答案或保证收益；测评频次和能否重做以核心返回的实际限制为准。",
-      "source": "product://2026-10-26.2/wealth/suitability",
+      "source": "product://2026-10-26.3/wealth/suitability",
       "title": "理财与测评：理财产品信息来自产品列表，持仓和适当性来自本人持",
       "kind": "policy",
       "code_refs": [
@@ -841,7 +841,7 @@
       "id": "guide.wealth.amounts",
       "topic": "wealth",
       "text": "申购须明确产品与金额，核心校验产品起购金额和本人风险匹配；赎回依据本人实际持仓和可赎金额。产品最小金额、期限、风险、持仓本金或演示市值不能由模型编造，具体约束以产品与持仓记录及审批为准。",
-      "source": "product://2026-10-26.2/wealth/amounts",
+      "source": "product://2026-10-26.3/wealth/amounts",
       "title": "理财与测评：申购须明确产品与金额，核心校验产品起购金额和本人",
       "kind": "policy",
       "code_refs": [
@@ -854,7 +854,7 @@
       "id": "guide.wealth.read",
       "topic": "wealth",
       "text": "可以查询产品、持仓和风险等级，推荐前需完成风险测评；产品比较需明确产品。",
-      "source": "product://2026-10-26.2/wealth/read",
+      "source": "product://2026-10-26.3/wealth/read",
       "title": "理财与测评：可以查询产品、持仓和风险等级，推荐前需完成风险测",
       "kind": "policy",
       "code_refs": [
@@ -867,7 +867,7 @@
       "id": "guide.wealth.trade",
       "topic": "wealth",
       "text": "申购与赎回需核对产品和金额，确认后完成强验证；具体规则以虚构产品详情与本次审批要求为准。",
-      "source": "product://2026-10-26.2/wealth/trade",
+      "source": "product://2026-10-26.3/wealth/trade",
       "title": "理财与测评：申购与赎回需核对产品和金额，确认后完成强验证；具",
       "kind": "policy",
       "code_refs": [
@@ -880,7 +880,7 @@
       "id": "guide.wealth.limits",
       "topic": "wealth",
       "text": "本系统不提供真实投资建议、保本保证或收益承诺。",
-      "source": "product://2026-10-26.2/wealth/limits",
+      "source": "product://2026-10-26.3/wealth/limits",
       "title": "理财与测评：本系统不提供真实投资建议、保本保证或收益承诺。",
       "kind": "policy",
       "code_refs": [
@@ -894,7 +894,7 @@
       "topic": "general",
       "title": "只读账户余额",
       "text": "能力：只读账户余额。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/BALANCE_QUERY",
+      "source": "rules://2026-10-26.3/capability/BALANCE_QUERY",
       "kind": "capability",
       "intent": "BALANCE_QUERY",
       "required_fields": [],
@@ -913,7 +913,7 @@
       "topic": "general",
       "title": "解释办理步骤、业务规则、验证方法、产品能力、生日联动及功能限制；可查询本人联系人簿确认是否已保存，不能用流水替代通讯录；可以检索和组合多项只读证据",
       "text": "能力：解释办理步骤、业务规则、验证方法、产品能力、生日联动及功能限制；可查询本人联系人簿确认是否已保存，不能用流水替代通讯录；可以检索和组合多项只读证据。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/BANKING_HELP",
+      "source": "rules://2026-10-26.3/capability/BANKING_HELP",
       "kind": "capability",
       "intent": "BANKING_HELP",
       "required_fields": [],
@@ -932,7 +932,7 @@
       "topic": "general",
       "title": "只读消费统计、异常线索及原因，不确认盗刷",
       "text": "能力：只读消费统计、异常线索及原因，不确认盗刷。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/BILL_ANALYSIS",
+      "source": "rules://2026-10-26.3/capability/BILL_ANALYSIS",
       "kind": "capability",
       "intent": "BILL_ANALYSIS",
       "required_fields": [],
@@ -951,7 +951,7 @@
       "topic": "general",
       "title": "只读交易明细、已完成转账和可疑交易线索",
       "text": "能力：只读交易明细、已完成转账和可疑交易线索。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/BILL_QUERY",
+      "source": "rules://2026-10-26.3/capability/BILL_QUERY",
       "kind": "capability",
       "intent": "BILL_QUERY",
       "required_fields": [],
@@ -970,7 +970,7 @@
       "topic": "card",
       "title": "申请演示虚拟卡，不支持信用卡或贷款",
       "text": "能力：申请演示虚拟卡，不支持信用卡或贷款。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_APPLY",
+      "source": "rules://2026-10-26.3/capability/CARD_APPLY",
       "kind": "capability",
       "intent": "CARD_APPLY",
       "required_fields": [],
@@ -987,7 +987,7 @@
       "topic": "card",
       "title": "实际开关网上支付或境外交易渠道",
       "text": "能力：实际开关网上支付或境外交易渠道。解析字段提示：支付渠道。协议：关闭渠道需确认，开通需强验证，以 Core 审批为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_CHANNEL",
+      "source": "rules://2026-10-26.3/capability/CARD_CHANNEL",
       "kind": "capability",
       "intent": "CARD_CHANNEL",
       "required_fields": [
@@ -1006,7 +1006,7 @@
       "topic": "card",
       "title": "实际冻结",
       "text": "能力：实际冻结。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_FREEZE",
+      "source": "rules://2026-10-26.3/capability/CARD_FREEZE",
       "kind": "capability",
       "intent": "CARD_FREEZE",
       "required_fields": [],
@@ -1023,7 +1023,7 @@
       "topic": "limits",
       "title": "设置明确的有限日额度，不支持取消额度上限",
       "text": "能力：设置明确的有限日额度，不支持取消额度上限。解析字段提示：金额。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_LIMIT",
+      "source": "rules://2026-10-26.3/capability/CARD_LIMIT",
       "kind": "capability",
       "intent": "CARD_LIMIT",
       "required_fields": [
@@ -1042,7 +1042,7 @@
       "topic": "card",
       "title": "只读卡片状态",
       "text": "能力：只读卡片状态。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_QUERY",
+      "source": "rules://2026-10-26.3/capability/CARD_QUERY",
       "kind": "capability",
       "intent": "CARD_QUERY",
       "required_fields": [],
@@ -1059,7 +1059,7 @@
       "topic": "card",
       "title": "实际挂失",
       "text": "能力：实际挂失。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_REPORT_LOST",
+      "source": "rules://2026-10-26.3/capability/CARD_REPORT_LOST",
       "kind": "capability",
       "intent": "CARD_REPORT_LOST",
       "required_fields": [],
@@ -1076,7 +1076,7 @@
       "topic": "card",
       "title": "实际解冻",
       "text": "能力：实际解冻。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_UNFREEZE",
+      "source": "rules://2026-10-26.3/capability/CARD_UNFREEZE",
       "kind": "capability",
       "intent": "CARD_UNFREEZE",
       "required_fields": [],
@@ -1093,7 +1093,7 @@
       "topic": "card",
       "title": "实际解除挂失",
       "text": "能力：实际解除挂失。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CARD_UNREPORT_LOST",
+      "source": "rules://2026-10-26.3/capability/CARD_UNREPORT_LOST",
       "kind": "capability",
       "intent": "CARD_UNREPORT_LOST",
       "required_fields": [],
@@ -1110,7 +1110,7 @@
       "topic": "cross_scene",
       "title": "按生日对象、日期和明确预算锁资，生成提醒与模拟鲜花/蛋糕订单草稿；不能真实订花",
       "text": "能力：按生日对象、日期和明确预算锁资，生成提醒与模拟鲜花/蛋糕订单草稿；不能真实订花。解析字段提示：对象或编号、金额、预约日期时间。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/CROSS_SCENE_LOCK",
+      "source": "rules://2026-10-26.3/capability/CROSS_SCENE_LOCK",
       "kind": "capability",
       "intent": "CROSS_SCENE_LOCK",
       "required_fields": [
@@ -1131,7 +1131,7 @@
       "topic": "dispute",
       "title": "只读已有工单状态、关联交易及已提供时效",
       "text": "能力：只读已有工单状态、关联交易及已提供时效。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/DISPUTE_QUERY",
+      "source": "rules://2026-10-26.3/capability/DISPUTE_QUERY",
       "kind": "capability",
       "intent": "DISPUTE_QUERY",
       "required_fields": [],
@@ -1147,7 +1147,7 @@
       "topic": "dispute",
       "title": "明确否认消费或请求反诈保护后，经确认强验证冻结卡并创建/关联争议，不用于查询",
       "text": "能力：明确否认消费或请求反诈保护后，经确认强验证冻结卡并创建/关联争议，不用于查询。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/FRAUD_DISPUTE",
+      "source": "rules://2026-10-26.3/capability/FRAUD_DISPUTE",
       "kind": "capability",
       "intent": "FRAUD_DISPUTE",
       "required_fields": [],
@@ -1163,7 +1163,7 @@
       "topic": "security",
       "title": "轮换演示登录凭据版本",
       "text": "能力：轮换演示登录凭据版本。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/PASSWORD_CHANGE",
+      "source": "rules://2026-10-26.3/capability/PASSWORD_CHANGE",
       "kind": "capability",
       "intent": "PASSWORD_CHANGE",
       "required_fields": [],
@@ -1180,7 +1180,7 @@
       "topic": "transfer",
       "title": "新建预约转账",
       "text": "能力：新建预约转账。解析字段提示：预约日期时间、对象或编号、金额。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/SCHEDULED_TRANSFER",
+      "source": "rules://2026-10-26.3/capability/SCHEDULED_TRANSFER",
       "kind": "capability",
       "intent": "SCHEDULED_TRANSFER",
       "required_fields": [
@@ -1201,7 +1201,7 @@
       "topic": "transfer",
       "title": "新建AA收款请求",
       "text": "能力：新建AA收款请求。解析字段提示：金额、参与人。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/SPLIT_BILL",
+      "source": "rules://2026-10-26.3/capability/SPLIT_BILL",
       "kind": "capability",
       "intent": "SPLIT_BILL",
       "required_fields": [
@@ -1221,7 +1221,7 @@
       "topic": "subscription",
       "title": "取消已核实订阅，不能保证真实商户合同解除",
       "text": "能力：取消已核实订阅，不能保证真实商户合同解除。解析字段提示：对象或编号。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/SUBSCRIPTION_CANCEL",
+      "source": "rules://2026-10-26.3/capability/SUBSCRIPTION_CANCEL",
       "kind": "capability",
       "intent": "SUBSCRIPTION_CANCEL",
       "required_fields": [
@@ -1240,7 +1240,7 @@
       "topic": "subscription",
       "title": "查询订阅，仍需确认",
       "text": "能力：查询订阅，仍需确认。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/SUBSCRIPTION_QUERY",
+      "source": "rules://2026-10-26.3/capability/SUBSCRIPTION_QUERY",
       "kind": "capability",
       "intent": "SUBSCRIPTION_QUERY",
       "required_fields": [],
@@ -1257,7 +1257,7 @@
       "topic": "transfer",
       "title": "提出即时转账",
       "text": "能力：提出即时转账。解析字段提示：对象或编号、金额。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/TRANSFER",
+      "source": "rules://2026-10-26.3/capability/TRANSFER",
       "kind": "capability",
       "intent": "TRANSFER",
       "required_fields": [
@@ -1277,7 +1277,7 @@
       "topic": "tasks",
       "title": "撤销未执行的预约、AA或锁资，不撤销已结算交易",
       "text": "能力：撤销未执行的预约、AA或锁资，不撤销已结算交易。解析字段提示：撤销类型。协议：需核对确认，实际风险及验证要求以 Core 预检为准。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/UNDO_OPERATION",
+      "source": "rules://2026-10-26.3/capability/UNDO_OPERATION",
       "kind": "capability",
       "intent": "UNDO_OPERATION",
       "required_fields": [
@@ -1296,7 +1296,7 @@
       "topic": "general",
       "title": "范围外或诉求不明确，应引导或澄清，不能选择相近写操作",
       "text": "能力：范围外或诉求不明确，应引导或澄清，不能选择相近写操作。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：澄清或准确说明不支持，不发起相近操作。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/UNKNOWN",
+      "source": "rules://2026-10-26.3/capability/UNKNOWN",
       "kind": "capability",
       "intent": "UNKNOWN",
       "required_fields": [],
@@ -1315,7 +1315,7 @@
       "topic": "wealth",
       "title": "比较明确产品",
       "text": "能力：比较明确产品。解析字段提示：产品编号。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/WEALTH_COMPARE",
+      "source": "rules://2026-10-26.3/capability/WEALTH_COMPARE",
       "kind": "capability",
       "intent": "WEALTH_COMPARE",
       "required_fields": [
@@ -1334,7 +1334,7 @@
       "topic": "wealth",
       "title": "查询持仓",
       "text": "能力：查询持仓。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/WEALTH_HOLDINGS",
+      "source": "rules://2026-10-26.3/capability/WEALTH_HOLDINGS",
       "kind": "capability",
       "intent": "WEALTH_HOLDINGS",
       "required_fields": [],
@@ -1351,7 +1351,7 @@
       "topic": "wealth",
       "title": "实际申购",
       "text": "能力：实际申购。解析字段提示：对象或编号、金额。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/WEALTH_PURCHASE",
+      "source": "rules://2026-10-26.3/capability/WEALTH_PURCHASE",
       "kind": "capability",
       "intent": "WEALTH_PURCHASE",
       "required_fields": [
@@ -1371,7 +1371,7 @@
       "topic": "wealth",
       "title": "浏览理财产品",
       "text": "能力：浏览理财产品。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/WEALTH_QUERY",
+      "source": "rules://2026-10-26.3/capability/WEALTH_QUERY",
       "kind": "capability",
       "intent": "WEALTH_QUERY",
       "required_fields": [],
@@ -1388,7 +1388,7 @@
       "topic": "wealth",
       "title": "按已完成测评匹配产品",
       "text": "能力：按已完成测评匹配产品。解析字段提示：按问题明确对象；不能推断本人实时状态。协议：无需办理确认的查询或对话。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/WEALTH_RECOMMEND",
+      "source": "rules://2026-10-26.3/capability/WEALTH_RECOMMEND",
       "kind": "capability",
       "intent": "WEALTH_RECOMMEND",
       "required_fields": [],
@@ -1405,7 +1405,7 @@
       "topic": "wealth",
       "title": "实际赎回",
       "text": "能力：实际赎回。解析字段提示：对象或编号、金额。协议：需确认和强验证。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/WEALTH_REDEEM",
+      "source": "rules://2026-10-26.3/capability/WEALTH_REDEEM",
       "kind": "capability",
       "intent": "WEALTH_REDEEM",
       "required_fields": [
@@ -1425,7 +1425,7 @@
       "topic": "wealth",
       "title": "实际开始风险测评",
       "text": "能力：实际开始风险测评。解析字段提示：亏损承受能力（旧字段）、投资经验（旧字段）、投资期限（旧字段）。协议：按本人真实答案完成问卷并保存档案，不代表已申购。字段提示不是完整办理条件，主题规则及 Core 的实际数据、风险与参数校验仍需满足。",
-      "source": "rules://2026-10-26.2/capability/WEALTH_RISK_ASSESSMENT",
+      "source": "rules://2026-10-26.3/capability/WEALTH_RISK_ASSESSMENT",
       "kind": "capability",
       "intent": "WEALTH_RISK_ASSESSMENT",
       "required_fields": [
@@ -1439,6 +1439,344 @@
         "bank_core/routes/wealth.py",
         "bank_core/routes/execution.py",
         "bank_agent/risk_quiz.py"
+      ]
+    }
+  ],
+  "followups": [
+    {
+      "id": "balance",
+      "intent": "BALANCE_QUERY",
+      "from_topics": [
+        "general",
+        "transfer",
+        "wealth"
+      ],
+      "coverage": "本人总余额、锁定额、可用余额",
+      "excluded": "未来余额、收益预测",
+      "rule_ids": [
+        "guide.general.balance"
+      ],
+      "questions": [
+        "查看余额",
+        "查看可用余额",
+        "查看余额里的锁定金额"
+      ]
+    },
+    {
+      "id": "transactions",
+      "intent": "BILL_QUERY",
+      "from_topics": [
+        "general",
+        "transfer",
+        "dispute",
+        "subscription"
+      ],
+      "coverage": "本人流水的商户、金额、时间、卡片、流水号及已完成转账",
+      "excluded": "外部商户订单、盗刷认定、退款进度",
+      "rule_ids": [
+        "guide.transfer.completed",
+        "guide.dispute.check_transaction"
+      ],
+      "questions": [
+        "查看本月账单",
+        "查询最近转账"
+      ]
+    },
+    {
+      "id": "analysis",
+      "intent": "BILL_ANALYSIS",
+      "from_topics": [
+        "general",
+        "transfer",
+        "dispute"
+      ],
+      "coverage": "依据已有流水计算消费分类、趋势和异常线索",
+      "excluded": "商户真实扣款原因、确认盗刷",
+      "rule_ids": [
+        "guide.dispute.check_transaction"
+      ],
+      "questions": [
+        "分析本月账单"
+      ]
+    },
+    {
+      "id": "contacts",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "contacts",
+        "transfer"
+      ],
+      "coverage": "读取本人联系人簿核对已保存姓名或列出联系人",
+      "excluded": "常用频率标记、聊天中增删联系人",
+      "rule_ids": [
+        "guide.contacts.source",
+        "guide.contacts.saved"
+      ],
+      "questions": [
+        "查看我的联系人列表"
+      ]
+    },
+    {
+      "id": "cards",
+      "intent": "CARD_QUERY",
+      "from_topics": [
+        "card",
+        "limits",
+        "security",
+        "general"
+      ],
+      "coverage": "本人卡片登记状态、日额度、交易渠道",
+      "excluded": "信用卡、贷款、信用评分",
+      "rule_ids": [
+        "guide.card.selection",
+        "guide.card.channels"
+      ],
+      "questions": [
+        "查看我的卡片"
+      ]
+    },
+    {
+      "id": "disputes",
+      "intent": "DISPUTE_QUERY",
+      "from_topics": [
+        "dispute"
+      ],
+      "coverage": "已有争议工单的登记状态、关联交易与登记时间",
+      "excluded": "预计处理时限、退款日期、客服进度、撤回工单",
+      "rule_ids": [
+        "guide.dispute.query",
+        "guide.dispute.timing"
+      ],
+      "questions": [
+        "查看已有争议工单"
+      ]
+    },
+    {
+      "id": "products",
+      "intent": "WEALTH_QUERY",
+      "from_topics": [
+        "wealth"
+      ],
+      "coverage": "本演示理财产品列表和已提供的产品字段",
+      "excluded": "未来收益、净值预测、真实投资建议",
+      "rule_ids": [
+        "guide.wealth.read",
+        "guide.wealth.source"
+      ],
+      "questions": [
+        "查看理财产品",
+        "有哪些理财产品"
+      ]
+    },
+    {
+      "id": "holdings",
+      "intent": "WEALTH_HOLDINGS",
+      "from_topics": [
+        "wealth"
+      ],
+      "coverage": "本人理财持仓与已提供字段",
+      "excluded": "未来收益、未经提供的实时行情",
+      "rule_ids": [
+        "guide.wealth.source",
+        "guide.wealth.amounts"
+      ],
+      "questions": [
+        "查看我的持仓"
+      ]
+    },
+    {
+      "id": "compare",
+      "intent": "WEALTH_COMPARE",
+      "from_topics": [
+        "wealth"
+      ],
+      "coverage": "比较明确的演示产品已有字段",
+      "excluded": "预测收益、选取用户未指定的产品",
+      "rule_ids": [
+        "guide.wealth.read"
+      ],
+      "questions": []
+    },
+    {
+      "id": "recommend",
+      "intent": "WEALTH_RECOMMEND",
+      "from_topics": [
+        "wealth"
+      ],
+      "coverage": "按本人已完成测评匹配演示产品；未测评时转问卷",
+      "excluded": "保证收益、代填测评、主动申购",
+      "rule_ids": [
+        "guide.wealth.suitability"
+      ],
+      "questions": [
+        "推荐理财产品"
+      ]
+    },
+    {
+      "id": "subscriptions",
+      "intent": "SUBSCRIPTION_QUERY",
+      "from_topics": [
+        "subscription"
+      ],
+      "coverage": "确认后读取本人订阅商户、每期金额、登记状态和原计划日期",
+      "excluded": "真实扣款结果、过期日期外推、会员权益、商户重试或退款",
+      "rule_ids": [
+        "guide.subscription.source",
+        "guide.subscription.freshness"
+      ],
+      "questions": [
+        "我有哪些订阅",
+        "查看我的订阅"
+      ]
+    },
+    {
+      "id": "verification",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "security",
+        "transfer",
+        "card",
+        "limits",
+        "dispute",
+        "wealth"
+      ],
+      "coverage": "说明确认、验证码和登记设备签名的步骤及绑定范围",
+      "excluded": "索取凭据、免验证、冒充真实人脸识别",
+      "rule_ids": [
+        "guide.security.factors",
+        "guide.security.device",
+        "guide.security.binding"
+      ],
+      "questions": [
+        "怎么完成验证码和设备签名"
+      ]
+    },
+    {
+      "id": "verification_reason",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "security",
+        "transfer",
+        "limits"
+      ],
+      "coverage": "结合本人 account_context 解释本次验证升级及日额度规则",
+      "excluded": "没有记录的风控原因、真实银行风控政策",
+      "rule_ids": [
+        "guide.security.step_up",
+        "guide.limits.finite"
+      ],
+      "questions": [
+        "为什么小额也要强验证"
+      ]
+    },
+    {
+      "id": "transfer_steps",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "transfer"
+      ],
+      "coverage": "即时转账的必要信息、确认步骤及预约到期仍需确认",
+      "excluded": "真实跨行到账时效、撤回已结算付款、追回资金",
+      "rule_ids": [
+        "guide.transfer.inputs",
+        "guide.transfer.verification",
+        "guide.transfer.schedule"
+      ],
+      "questions": [
+        "如何转账",
+        "预约到期会自动扣款吗"
+      ]
+    },
+    {
+      "id": "card_steps",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "card"
+      ],
+      "coverage": "App 卡片查询、解冻步骤、冻结与挂失区别及渠道影响",
+      "excluded": "信用卡、贷款、银行柜台办理",
+      "rule_ids": [
+        "guide.card.unfreeze_steps",
+        "guide.card.lost",
+        "guide.card.channels"
+      ],
+      "questions": [
+        "如何在App内解冻卡片",
+        "冻结和挂失有什么区别",
+        "关闭交易渠道有什么影响"
+      ]
+    },
+    {
+      "id": "contacts_entry",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "contacts",
+        "transfer"
+      ],
+      "coverage": "侧边栏联系人入口、搜索和选择已保存收款人",
+      "excluded": "不存在的常用频率页面或聊天增删操作",
+      "rule_ids": [
+        "guide.contacts.entry",
+        "guide.contacts.source"
+      ],
+      "questions": [
+        "怎么查看已保存联系人"
+      ]
+    },
+    {
+      "id": "subscription_entry",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "subscription"
+      ],
+      "coverage": "现有订阅查询入口与确认流程、登记状态和计划日期的含义",
+      "excluded": "独立订阅管理页、商户重试、退款和真实权益",
+      "rule_ids": [
+        "guide.subscription.entry",
+        "guide.subscription.query",
+        "guide.subscription.freshness"
+      ],
+      "questions": [
+        "如何查询订阅",
+        "订阅登记是什么意思"
+      ]
+    },
+    {
+      "id": "tasks_entry",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "tasks",
+        "cross_scene",
+        "transfer"
+      ],
+      "coverage": "侧边栏待办入口、预约和模拟订单需再次确认的机制",
+      "excluded": "聊天查询某个实时任务、自动扣款、真人接管进度",
+      "rule_ids": [
+        "guide.tasks.entry",
+        "guide.tasks.source",
+        "guide.tasks.status"
+      ],
+      "questions": [
+        "如何查看待办任务",
+        "预约到期还需要确认吗"
+      ]
+    },
+    {
+      "id": "birthday_steps",
+      "intent": "BANKING_HELP",
+      "from_topics": [
+        "cross_scene"
+      ],
+      "coverage": "生日对象、日期、预算与提醒、模拟订单草稿的依赖",
+      "excluded": "真实鲜花配送、花店支付和送达时间",
+      "rule_ids": [
+        "guide.cross_scene.capability",
+        "guide.cross_scene.start",
+        "guide.cross_scene.fulfillment"
+      ],
+      "questions": [
+        "生日联动需要哪些信息",
+        "生日订单草稿会自动付款吗"
       ]
     }
   ]

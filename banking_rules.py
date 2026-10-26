@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from banking_knowledge import KNOWLEDGE_VERSION, TOPICS, capability_catalog, knowledge_documents
+from banking_knowledge import KNOWLEDGE_VERSION, TOPICS, capability_catalog, followup_catalog, knowledge_documents
 
 TOPIC_NAMES = {'general': '通用对话与事实', 'contacts': '联系人与收款人', 'transfer': '转账、预约与AA',
                'card': '卡片管理', 'limits': '卡片额度', 'security': '身份、确认与验证', 'cross_scene': '生日联动',
@@ -91,7 +91,7 @@ def implementation_manifest() -> dict[str, str]:
 
 @lru_cache(maxsize=1)
 def rules_version() -> str:
-    payload = json.dumps({'documents': rule_documents(), 'implementation': implementation_manifest()},
+    payload = json.dumps({'documents': rule_documents(), 'followups': followup_catalog(), 'implementation': implementation_manifest()},
                          ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()
     return hashlib.sha256(payload).hexdigest()
 
@@ -139,7 +139,7 @@ def search_rules(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
 
 def export_rules() -> dict[str, Any]:
     return {'schema_version': 1, 'knowledge_version': KNOWLEDGE_VERSION, 'rules_version': rules_version(),
-            'implementation': implementation_manifest(), 'rules': rule_documents()}
+            'implementation': implementation_manifest(), 'rules': rule_documents(), 'followups': followup_catalog()}
 
 
 def render_rulebook() -> str:
@@ -166,4 +166,9 @@ def render_rulebook() -> str:
             lines += [f"### {item['id']}", '', item['text'], '']
         refs = '、'.join(f'[{path}](../{path})' for path in REFERENCES[topic])
         lines += ['实现依据：' + refs + '。', '']
+    lines += ['', '## 推荐问题的可回答范围', '',
+              '推荐仅从服务端登记的问题及有据绑定的对象中选择，模型负责选择、排序和独立核验，不能自行改写按钮。排除项即使能回答“不支持”，也不主动推荐。实际读取仍需当前会话及相应确认；用户原有缺槽任务仅可补充必要字段，不代选金额。自由输入不受推荐问题集合限制。', '',
+              '| 编号 | 可回答范围 | 不主动推荐的方向 |', '| --- | --- | --- |']
+    for item in followup_catalog():
+        lines.append(f"| `{item['id']}` | {item['coverage']} | {item['excluded']} |")
     return '\n'.join(lines).rstrip() + '\n'

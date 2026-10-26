@@ -16,10 +16,21 @@ def _fake_model(monkeypatch, reply):
     def invoke(model, messages):
         calls.append(messages)
         if "Independently review" in messages[0].content:
-            candidates = json.loads(messages[-1].content.split("\n")[-1])["candidates"]
+            data = json.loads(messages[-1].content.split("\n")[-1])
+            candidates = data['candidates']
+            from bank_agent.parsing import local_parse
+
+            def basis(text):
+                intent = local_parse(text)['intent']
+                choices = [item for item in data['conversation']['prepared']['targets'] if item['intent'] == intent]
+                if not choices:
+                    return {'support_id': 'unavailable', 'rule_ids': [], 'answerable': False}
+                item = choices[0]
+                return {'support_id': item['id'], 'rule_ids': item['rule_ids'], 'answerable': True}
+
             return SimpleNamespace(content=json.dumps({"reviews": [
-                {"index": index, "relevant": True, "not_answered": True, "supported": True, "safe_next": True}
-                for index in range(len(candidates))]}))
+                {"index": index, "relevant": True, "not_answered": True, "supported": True, "safe_next": True, **basis(text)}
+                for index, text in enumerate(candidates)]}))
         return SimpleNamespace(content=json.dumps(reply, ensure_ascii=False))
 
     monkeypatch.setattr(runtime, "llm", object())
@@ -47,7 +58,9 @@ def test_model_chips_follow_the_conversation_and_unsafe_ones_are_dropped(gateway
     ])
     body = _suggest(client, "model-chips")
     assert body["source"] == "model"
-    assert body["suggestions"] == ["查看本月账单", "查询最近转账", "看看理财产品"]
+    # The balance context has no prepared wealth follow-up. Two variants of
+    # the same transaction-reading direction also occupy only one chip.
+    assert body["suggestions"] == ["查看本月账单"]
     # The prompt carries the latest turn as data, not secrets.
     prompt = calls[0][-1].content
     assert "查一下余额" in prompt and "session" not in prompt.lower()

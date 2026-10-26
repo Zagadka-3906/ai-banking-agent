@@ -9,7 +9,7 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-10-26.2"
+KNOWLEDGE_VERSION = "2026-10-26.3"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits", "contacts"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、联系人与收款人、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
@@ -140,3 +140,36 @@ def capability_catalog() -> list[dict[str, Any]]:
              "mode": "read" if intent in GREEN_INTENTS - {"WEALTH_RISK_ASSESSMENT"} else "dialogue" if intent == "UNKNOWN" else "workflow",
              "baseline": "GREEN" if intent in GREEN_INTENTS else "RED" if intent in RED_INTENTS else "CORE_POLICY",
              "required_fields": missing_slots({"intent": intent})} for intent in sorted(ALL_INTENTS)]
+
+
+# Positive recommendation coverage. A registered banking intent alone is too
+# broad: e.g. a dispute query does not provide an estimated refund date.
+# These describe answerable facets, not prewritten model replies or authority.
+FOLLOWUP_TARGETS = [
+    ("balance", "BALANCE_QUERY", "general transfer wealth", "本人总余额、锁定额、可用余额", "未来余额、收益预测", "general.balance", ("查看余额", "查看可用余额", "查看余额里的锁定金额")),
+    ("transactions", "BILL_QUERY", "general transfer dispute subscription", "本人流水的商户、金额、时间、卡片、流水号及已完成转账", "外部商户订单、盗刷认定、退款进度", "transfer.completed dispute.check_transaction", ("查看本月账单", "查询最近转账")),
+    ("analysis", "BILL_ANALYSIS", "general transfer dispute", "依据已有流水计算消费分类、趋势和异常线索", "商户真实扣款原因、确认盗刷", "dispute.check_transaction", ("分析本月账单",)),
+    ("contacts", "BANKING_HELP", "contacts transfer", "读取本人联系人簿核对已保存姓名或列出联系人", "常用频率标记、聊天中增删联系人", "contacts.source contacts.saved", ("查看我的联系人列表",)),
+    ("cards", "CARD_QUERY", "card limits security general", "本人卡片登记状态、日额度、交易渠道", "信用卡、贷款、信用评分", "card.selection card.channels", ("查看我的卡片",)),
+    ("disputes", "DISPUTE_QUERY", "dispute", "已有争议工单的登记状态、关联交易与登记时间", "预计处理时限、退款日期、客服进度、撤回工单", "dispute.query dispute.timing", ("查看已有争议工单",)),
+    ("products", "WEALTH_QUERY", "wealth", "本演示理财产品列表和已提供的产品字段", "未来收益、净值预测、真实投资建议", "wealth.read wealth.source", ("查看理财产品", "有哪些理财产品")),
+    ("holdings", "WEALTH_HOLDINGS", "wealth", "本人理财持仓与已提供字段", "未来收益、未经提供的实时行情", "wealth.source wealth.amounts", ("查看我的持仓",)),
+    ("compare", "WEALTH_COMPARE", "wealth", "比较明确的演示产品已有字段", "预测收益、选取用户未指定的产品", "wealth.read", ()),
+    ("recommend", "WEALTH_RECOMMEND", "wealth", "按本人已完成测评匹配演示产品；未测评时转问卷", "保证收益、代填测评、主动申购", "wealth.suitability", ("推荐理财产品",)),
+    ("subscriptions", "SUBSCRIPTION_QUERY", "subscription", "确认后读取本人订阅商户、每期金额、登记状态和原计划日期", "真实扣款结果、过期日期外推、会员权益、商户重试或退款", "subscription.source subscription.freshness", ("我有哪些订阅", "查看我的订阅")),
+    ("verification", "BANKING_HELP", "security transfer card limits dispute wealth", "说明确认、验证码和登记设备签名的步骤及绑定范围", "索取凭据、免验证、冒充真实人脸识别", "security.factors security.device security.binding", ("怎么完成验证码和设备签名",)),
+    ("verification_reason", "BANKING_HELP", "security transfer limits", "结合本人 account_context 解释本次验证升级及日额度规则", "没有记录的风控原因、真实银行风控政策", "security.step_up limits.finite", ("为什么小额也要强验证",)),
+    ("transfer_steps", "BANKING_HELP", "transfer", "即时转账的必要信息、确认步骤及预约到期仍需确认", "真实跨行到账时效、撤回已结算付款、追回资金", "transfer.inputs transfer.verification transfer.schedule", ("如何转账", "预约到期会自动扣款吗")),
+    ("card_steps", "BANKING_HELP", "card", "App 卡片查询、解冻步骤、冻结与挂失区别及渠道影响", "信用卡、贷款、银行柜台办理", "card.unfreeze_steps card.lost card.channels", ("如何在App内解冻卡片", "冻结和挂失有什么区别", "关闭交易渠道有什么影响")),
+    ("contacts_entry", "BANKING_HELP", "contacts transfer", "侧边栏联系人入口、搜索和选择已保存收款人", "不存在的常用频率页面或聊天增删操作", "contacts.entry contacts.source", ("怎么查看已保存联系人",)),
+    ("subscription_entry", "BANKING_HELP", "subscription", "现有订阅查询入口与确认流程、登记状态和计划日期的含义", "独立订阅管理页、商户重试、退款和真实权益", "subscription.entry subscription.query subscription.freshness", ("如何查询订阅", "订阅登记是什么意思")),
+    ("tasks_entry", "BANKING_HELP", "tasks cross_scene transfer", "侧边栏待办入口、预约和模拟订单需再次确认的机制", "聊天查询某个实时任务、自动扣款、真人接管进度", "tasks.entry tasks.source tasks.status", ("如何查看待办任务", "预约到期还需要确认吗")),
+    ("birthday_steps", "BANKING_HELP", "cross_scene", "生日对象、日期、预算与提醒、模拟订单草稿的依赖", "真实鲜花配送、花店支付和送达时间", "cross_scene.capability cross_scene.start cross_scene.fulfillment", ("生日联动需要哪些信息", "生日订单草稿会自动付款吗")),
+]
+
+
+def followup_catalog() -> list[dict[str, Any]]:
+    return [{"id": key, "intent": intent, "from_topics": topics.split(), "coverage": coverage,
+             "excluded": excluded, "rule_ids": ['guide.' + name for name in rules.split()],
+             "questions": list(examples)}
+            for key, intent, topics, coverage, excluded, rules, examples in FOLLOWUP_TARGETS]
