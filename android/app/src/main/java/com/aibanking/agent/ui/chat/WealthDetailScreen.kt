@@ -50,8 +50,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -61,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.BankHaptics
 import com.aibanking.agent.ui.components.BankButton
 import com.aibanking.agent.ui.components.BankCard
 import com.aibanking.agent.ui.components.BankFilterChip
@@ -587,6 +592,7 @@ internal fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
 @Composable
 private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: ProductView) {
     val profile = state.riskProfile
+    val view = LocalView.current
     val eligible = profile != null && (profileRank(profile.riskProfile) ?: 0) >= productRank(product.riskLevel)
     Surface(
         shadowElevation = 4.dp,
@@ -610,12 +616,26 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                 }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("查看推荐", style = MaterialTheme.typography.labelMedium) }
             }
             if (eligible) {
+                val liveSummary = remember(state.buyAmount, product) {
+                    wealthLivePurchaseSummary(product, state.buyAmount)
+                }
                 OutlinedTextField(
                     value = state.buyAmount,
                     onValueChange = viewModel::onBuyAmountChange,
                     label = { Text("申购金额") },
                     placeholder = { Text("起购 ¥%,.0f".format(Locale.CHINA, product.minAmount)) },
                     prefix = { Text("¥") },
+                    supportingText = if (liveSummary != null) {
+                        {
+                            Text(
+                                liveSummary,
+                                style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                            )
+                        }
+                    } else {
+                        null
+                    },
                     enabled = !state.panelBusy,
                     colors = bankTextFieldColors(),
                     singleLine = true,
@@ -623,6 +643,48 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_AMOUNT),
                 )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BankFilterChip(
+                        selected = false,
+                        onClick = {
+                            BankHaptics.tick(view)
+                            viewModel.onBuyAmountChange(stepPurchaseAmount(state.buyAmount, -100.0, product.minAmount))
+                        },
+                        enabled = !state.panelBusy,
+                        label = { Text("-100", style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum")) },
+                    )
+                    BankFilterChip(
+                        selected = false,
+                        onClick = {
+                            BankHaptics.tick(view)
+                            viewModel.onBuyAmountChange("%.0f".format(Locale.ROOT, product.minAmount.coerceAtLeast(100.0)))
+                        },
+                        enabled = !state.panelBusy,
+                        label = { Text("起购 ¥%,.0f".format(Locale.CHINA, product.minAmount.coerceAtLeast(100.0)), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum")) },
+                    )
+                    BankFilterChip(
+                        selected = false,
+                        onClick = {
+                            BankHaptics.tick(view)
+                            viewModel.onBuyAmountChange(stepPurchaseAmount(state.buyAmount, 100.0, product.minAmount))
+                        },
+                        enabled = !state.panelBusy,
+                        label = { Text("+100", style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum")) },
+                    )
+                    BankFilterChip(
+                        selected = false,
+                        onClick = {
+                            BankHaptics.tick(view)
+                            viewModel.onBuyAmountChange(stepPurchaseAmount(state.buyAmount, 1000.0, product.minAmount))
+                        },
+                        enabled = !state.panelBusy,
+                        label = { Text("+1,000", style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum")) },
+                    )
+                }
             } else {
                 Text(
                     if (profile == null) "购买前先完成风险测评" else "当前风险档案与本产品不匹配，请重新测评",
@@ -656,4 +718,46 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
             }
         }
     }
+}
+
+/**
+ * Steps the purchase amount input by [delta] while respecting [minAmount] as a floor.
+ */
+internal fun stepPurchaseAmount(currentRaw: String, delta: Double, minAmount: Double): String {
+    val floor = minAmount.coerceAtLeast(100.0)
+    val current = parseAmountInput(currentRaw)?.toDouble() ?: floor
+    val next = if (currentRaw.isBlank() && delta > 0) {
+        floor + delta
+    } else {
+        (current + delta).coerceAtLeast(floor)
+    }
+    return if (next % 1.0 == 0.0) {
+        "%.0f".format(Locale.ROOT, next)
+    } else {
+        "%.2f".format(Locale.ROOT, next)
+    }
+}
+
+/**
+ * Computes real-time linkage feedback for the purchase amount field:
+ * - Shortfall message when > 0 and below [ProductView.minAmount]
+ * - Estimated fee + confirmation rule when >= [ProductView.minAmount]
+ */
+internal fun wealthLivePurchaseSummary(product: ProductView, rawAmount: String): String? {
+    if (rawAmount.isBlank()) return null
+    val parsed = parseAmountInput(rawAmount)?.toDouble() ?: return "请输入合法的数字金额（最多两位小数）"
+    if (parsed <= 0.0) return "申购金额需大于 0 元"
+    if (parsed < product.minAmount) {
+        val diff = (product.minAmount - parsed).coerceAtLeast(0.0)
+        return "距起购金额还差 ¥%,.2f（起购 ¥%,.0f）".format(Locale.CHINA, diff, product.minAmount)
+    }
+    val ratePct = listOf(product.discountFeeRate, product.feeRate, product.originalFeeRate)
+        .firstOrNull { it != null && it.isFinite() && it >= 0.0 }
+    val feePart = if (ratePct != null) {
+        val estFee = parsed * (ratePct / 100.0)
+        "预估买入费用 ¥%,.2f".format(Locale.CHINA, estFee)
+    } else {
+        "买入费率以产品说明书为准"
+    }
+    return "$feePart · ${wealthConfirmationText(product)}"
 }

@@ -6,18 +6,21 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -26,35 +29,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import com.aibanking.agent.data.DeviceView
-import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.data.SplitRequestView
+import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
-import com.aibanking.agent.ui.anim.PredictiveBackPreview
-import com.aibanking.agent.ui.anim.GradientRevealText
-import com.aibanking.agent.ui.anim.ShimmerGradientText
-import com.aibanking.agent.ui.anim.bankPressScale
-import com.aibanking.agent.ui.anim.rememberEntranceTracker
-import com.aibanking.agent.ui.anim.riseIn
 import com.aibanking.agent.ui.anim.BankConversationMotion
+import com.aibanking.agent.ui.anim.BankHaptics
+import com.aibanking.agent.ui.anim.GradientRevealText
+import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.RiskSignal
 import com.aibanking.agent.ui.anim.RiskTier
-import com.aibanking.agent.ui.anim.riskEdgeGlow
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.aibanking.agent.ui.anim.ShimmerGradientText
+import com.aibanking.agent.ui.anim.bankPressScale
 import com.aibanking.agent.ui.anim.pageSlideSpec
+import com.aibanking.agent.ui.anim.rememberEntranceTracker
+import com.aibanking.agent.ui.anim.riskEdgeGlow
+import com.aibanking.agent.ui.anim.riseIn
 import com.aibanking.agent.ui.anim.verificationFrost
 import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.BankSpacing
@@ -80,11 +82,20 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             it.startsWith("会话有效期") || it == "本机设备已注册，高风险操作可用"
         }
         val message = state.error ?: notice
-        if (message != null) {
-            snackbar.showSnackbar(message)
-        }
+        val canUndoContactDelete = state.error == null && notice != null &&
+            state.recentlyDeletedContact != null && notice.contains("已删除")
         if (state.error != null || state.notice != null) {
             viewModel.dismissMessages()
+        }
+        if (message != null) {
+            val result = snackbar.showSnackbar(
+                message = message,
+                actionLabel = if (canUndoContactDelete) "撤销" else null,
+                duration = SnackbarDuration.Short,
+            )
+            if (canUndoContactDelete && result == SnackbarResult.ActionPerformed) {
+                viewModel.undoRemoveContact()
+            }
         }
     }
     // The deadline survives destination changes and Activity recreation.
@@ -96,10 +107,12 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     val resultMessage = state.messages.firstOrNull { it.id == state.outcomeMessageId }
     val outcome = resultMessage?.let(::outcomeFor) ?: state.lastProblem?.takeIf { state.showProblem }?.let(::outcomeFor)
     if (outcome != null) {
-        OperationOutcomeScreen(outcome, resultMessage, state.lastProblem.takeIf { state.showProblem },
+        OperationOutcomeScreen(
+            outcome, resultMessage, state.lastProblem.takeIf { state.showProblem },
             canQuery = state.authenticated && !state.busy && state.pending == null && state.quiz == null,
             onBack = viewModel::closeOutcome, onBalance = viewModel::outcomeBalance, onTasks = viewModel::outcomeTasks,
-            onReconcile = { resultMessage?.let { viewModel.reconcileMessage(it.id) } }, snackbarHostState = snackbar)
+            onReconcile = { resultMessage?.let { viewModel.reconcileMessage(it.id) } }, snackbarHostState = snackbar,
+        )
         return
     }
 
@@ -168,8 +181,10 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                     ) { current ->
                         Box(Modifier.fillMaxSize()) {
                             when (current) {
-                                AppPage.CHAT -> ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis,
-                                    onMenu = { drawerScope.launch { drawerState.open() } })
+                                AppPage.CHAT -> ChatHome(
+                                    state, viewModel, activity, listState, approvalDeadlineMillis,
+                                    onMenu = { drawerScope.launch { drawerState.open() } },
+                                )
                                 AppPage.CARDS -> CardsUi(state, viewModel)
                                 AppPage.WEALTH -> WealthUi(state, viewModel, snackbar)
                                 AppPage.CONTACTS -> ContactsUi(state, viewModel)
@@ -231,8 +246,11 @@ private fun BankNavigationDrawer(
         modifier = Modifier.widthIn(max = 320.dp).testTag(UiTags.NAV_DRAWER),
     ) {
         Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 16.dp)) {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 BankGradientMark(Modifier.size(28.dp))
                 Text("安言", style = MaterialTheme.typography.titleLarge)
             }
@@ -248,21 +266,32 @@ private fun BankNavigationDrawer(
                 DrawerEntry("设备与飞书", BankIconKind.Shield, UiTags.OPEN_DEVICES, null, onDevices),
             )
             main.forEachIndexed { index, entry -> DrawerItem(entry, selected = entry.page == currentPage, open = open, index = index) }
-            Text("服务", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
+            Text(
+                "服务",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp),
+            )
             tools.forEachIndexed { index, entry -> DrawerItem(entry, selected = false, open = open, index = main.size + index) }
             Spacer(Modifier.height(24.dp))
             HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 AccountAvatar(principal)
                 Column(Modifier.weight(1f)) {
                     Text(principal.ifBlank { "已登录" }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text("演示账户 · 本机模拟银行", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            DrawerItem(DrawerEntry("退出登录", BankIconKind.Logout, UiTags.LOGOUT, null, onLogout), selected = false,
-                open = open, index = main.size + tools.size)
+            DrawerItem(
+                DrawerEntry("退出登录", BankIconKind.Logout, UiTags.LOGOUT, null, onLogout),
+                selected = false,
+                open = open,
+                index = main.size + tools.size,
+            )
         }
     }
 }
@@ -271,21 +300,23 @@ private fun BankNavigationDrawer(
 private fun DrawerItem(entry: DrawerEntry, selected: Boolean, open: Boolean = false, index: Int = 0) {
     // Re-keyed on every opening so the destinations cascade in from the left.
     key(open) {
-    NavigationDrawerItem(
-        label = { Text(entry.label, style = MaterialTheme.typography.labelLarge) },
-        icon = { BankIcon(entry.icon, Modifier.size(22.dp)) },
-        selected = selected,
-        onClick = entry.onClick,
-        shape = CircleShape,
-        colors = NavigationDrawerItemDefaults.colors(
-            unselectedContainerColor = Color.Transparent,
-            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-            selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        ),
-        modifier = Modifier.heightIn(min = 52.dp).testTag(entry.tag)
-            .riseIn(animate = open, delayMillis = 40 + index * 35, durationMillis = 260, rise = 0.dp, fromX = (-16).dp),
-    )
+        NavigationDrawerItem(
+            label = { Text(entry.label, style = MaterialTheme.typography.labelLarge) },
+            icon = { BankIcon(entry.icon, Modifier.size(22.dp)) },
+            selected = selected,
+            onClick = entry.onClick,
+            shape = CircleShape,
+            colors = NavigationDrawerItemDefaults.colors(
+                unselectedContainerColor = Color.Transparent,
+                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            ),
+            modifier = Modifier
+                .heightIn(min = 52.dp)
+                .testTag(entry.tag)
+                .riseIn(animate = open, delayMillis = 40 + index * 35, durationMillis = 260, rise = 0.dp, fromX = (-16).dp),
+        )
     }
 }
 
@@ -294,7 +325,10 @@ private fun DrawerItem(entry: DrawerEntry, selected: Boolean, open: Boolean = fa
 internal fun AccountAvatar(principal: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val initial = principal.removePrefix("user_").firstOrNull()?.uppercaseChar()?.toString() ?: "我"
     Box(
-        modifier.size(36.dp).clip(CircleShape).background(LocalBankSemanticColors.current.brandGradient)
+        modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(LocalBankSemanticColors.current.brandGradient)
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClickLabel = "打开菜单", onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
@@ -352,11 +386,27 @@ private fun ChatHome(
                 }
                 items(state.messages, key = { it.id }) { message ->
                     val fresh = remember(message.id) { entrance.isNew(message.id) }
-                    val arrive = if (message.role == ChatRole.USER) Modifier.riseIn(fresh, rise = 6.dp, fromX = 14.dp,
-                        durationMillis = BankConversationMotion.ReplyEntranceMillis)
-                        else Modifier.riseIn(fresh, rise = 10.dp, durationMillis = BankConversationMotion.ReplyEntranceMillis)
-                    MessageBubble(message, Modifier.animateItem().then(arrive).verificationFrost(redVerification),
-                        onReconcile = { viewModel.reconcileMessage(message.id) }, onOutcome = { viewModel.openOutcome(message.id) })
+                    val arrive = if (message.role == ChatRole.USER) {
+                        Modifier.riseIn(
+                            fresh,
+                            rise = 6.dp,
+                            fromX = 14.dp,
+                            durationMillis = BankConversationMotion.ReplyEntranceMillis,
+                        )
+                    } else {
+                        Modifier.riseIn(
+                            fresh,
+                            rise = 10.dp,
+                            durationMillis = BankConversationMotion.ReplyEntranceMillis,
+                        )
+                    }
+                    MessageBubble(
+                        message,
+                        Modifier.animateItem().then(arrive).verificationFrost(redVerification),
+                        freshReveal = fresh,
+                        onReconcile = { viewModel.reconcileMessage(message.id) },
+                        onOutcome = { viewModel.openOutcome(message.id) },
+                    )
                 }
                 state.pending?.let { approval ->
                     item(key = "approval:${approval.approvalId}") {
@@ -398,8 +448,11 @@ private fun ChatHome(
                 }
             }
             state.lastProblem?.let {
-                BankSecondaryButton("查看原因与下一步", viewModel::openProblem,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp).testTag(UiTags.OPEN_FAILURE))
+                BankSecondaryButton(
+                    "查看原因与下一步",
+                    viewModel::openProblem,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp).testTag(UiTags.OPEN_FAILURE),
+                )
             }
             // Predicted next requests stay directly above the editor. A tap sends
             // immediately; write operations still enter the server approval flow.
@@ -418,7 +471,8 @@ private fun ChatHome(
                             SuggestionChip(
                                 onClick = { viewModel.onSuggestionClick(suggestion) },
                                 enabled = !state.busy,
-                                modifier = Modifier.testTag(UiTags.quickSuggestion(index))
+                                modifier = Modifier
+                                    .testTag(UiTags.quickSuggestion(index))
                                     .riseIn(delayMillis = 120 + index * 60, rise = 10.dp, fromScale = 0.92f, durationMillis = 260),
                                 label = { Text(suggestion, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(vertical = 10.dp)) },
                                 shape = RoundedCornerShape(16.dp),
@@ -442,6 +496,7 @@ private fun ChatHome(
                 onValueChange = viewModel::onInputChange,
                 onSend = viewModel::send,
                 processing = state.busy,
+                contacts = state.contacts,
                 modifier = Modifier.verificationFrost(redVerification),
             )
         }
@@ -475,9 +530,12 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             // The session carries a login ID, not a display name, so the greeting stays generic.
             GradientRevealText("你好，我是安言", semantic.brandGradientColors, style = MaterialTheme.typography.displaySmall)
-            Text("今天想办点什么？", style = MaterialTheme.typography.displaySmall,
+            Text(
+                "今天想办点什么？",
+                style = MaterialTheme.typography.displaySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                modifier = Modifier.riseIn(delayMillis = 450, rise = 10.dp, durationMillis = 500))
+                modifier = Modifier.riseIn(delayMillis = 450, rise = 10.dp, durationMillis = 500),
+            )
         }
         val actions = listOf(
             WelcomeAction("查询余额", "查一下余额", BankIconKind.Wallet, true),
@@ -493,21 +551,36 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
                         row.forEachIndexed { columnIndex, (label, prompt, icon, readOnly) ->
                             val order = rowIndex * columns + columnIndex
                             val press = remember { MutableInteractionSource() }
-                            Surface(onClick = { onSuggestion(prompt) }, shape = RoundedCornerShape(20.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainer, interactionSource = press,
-                                modifier = Modifier.weight(1f)
+                            Surface(
+                                onClick = { onSuggestion(prompt) },
+                                shape = RoundedCornerShape(20.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                interactionSource = press,
+                                modifier = Modifier
+                                    .weight(1f)
                                     .riseIn(delayMillis = 600 + order * 80, rise = 20.dp, durationMillis = 420)
-                                    .bankPressScale(press)) {
+                                    .bankPressScale(press),
+                            ) {
                                 Column(Modifier.heightIn(min = 96.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Box(Modifier.size(32.dp).clip(CircleShape)
-                                        .background(if (readOnly) semantic.riskGreenContainer else MaterialTheme.colorScheme.primaryContainer),
-                                        contentAlignment = Alignment.Center) {
-                                        BankIcon(icon, Modifier.size(18.dp),
-                                            tint = if (readOnly) semantic.onRiskContainer else MaterialTheme.colorScheme.onPrimaryContainer)
+                                    Box(
+                                        Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(if (readOnly) semantic.riskGreenContainer else MaterialTheme.colorScheme.primaryContainer),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        BankIcon(
+                                            icon,
+                                            Modifier.size(18.dp),
+                                            tint = if (readOnly) semantic.onRiskContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+                                        )
                                     }
                                     Text(label, style = MaterialTheme.typography.titleSmall)
-                                    Text(if (readOnly) "直接查询" else "补充信息后再确认", style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        if (readOnly) "直接查询" else "补充信息后再确认",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
@@ -516,8 +589,11 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
             }
         }
         Column(Modifier.riseIn(delayMillis = 950, rise = 8.dp, durationMillis = 400), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("查询直接回复，资金操作先确认；需要确认时，屏幕边缘会亮起对应颜色的光效。",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "查询直接回复，资金操作先确认；需要确认时，屏幕边缘会亮起对应颜色的光效。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 BankStatusChip("绿 · 只读", BankSemanticStatus.RiskGreen)
                 BankStatusChip("黄 · 需确认", BankSemanticStatus.RiskYellow)
@@ -536,13 +612,19 @@ internal fun ThinkingReply(stages: List<com.aibanking.agent.data.StageProgress>,
     ) {
         Box(Modifier.padding(top = 2.dp)) { ThinkingMark() }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            ShimmerGradientText("安言正在为您处理…", LocalBankSemanticColors.current.brandGradientColors,
-                style = MaterialTheme.typography.bodyLarge)
+            ShimmerGradientText(
+                "安言正在为您处理…",
+                LocalBankSemanticColors.current.brandGradientColors,
+                style = MaterialTheme.typography.bodyLarge,
+            )
             if (stages.isNotEmpty()) ReplyPanel {
                 Text("处理进度", style = MaterialTheme.typography.labelLarge)
                 WorkflowProgress(stages)
-                Text("处理步骤的完成状态以实际回执为准。", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "处理步骤的完成状态以实际回执为准。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -560,9 +642,15 @@ private fun ThinkingMark() {
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}, onOutcome: () -> Unit = {}) {
+private fun MessageBubble(
+    message: ChatMessage,
+    modifier: Modifier = Modifier,
+    freshReveal: Boolean = false,
+    onReconcile: () -> Unit = {},
+    onOutcome: () -> Unit = {},
+) {
     if (message.role == ChatRole.ASSISTANT) {
-        AgentReplyCard(message, modifier, onReconcile, onOutcome)
+        AgentReplyCard(message, modifier, freshReveal = freshReveal, onReconcile = onReconcile, onOutcome = onOutcome)
         return
     }
     Column(modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = Alignment.End) {
@@ -571,8 +659,12 @@ private fun MessageBubble(message: ChatMessage, modifier: Modifier = Modifier, o
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(0.82f).wrapContentWidth(Alignment.End),
         ) {
-            Text(message.text, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                message.text,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
@@ -591,11 +683,16 @@ private fun RiskQuizPanel(
 ) {
     val question = quiz.currentQuestion ?: return
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
     val motion = com.aibanking.agent.ui.anim.LocalBankMotionEnabled.current
     // The tapped option lights up briefly before the next question slides in.
     var picked by remember(question.number) { mutableStateOf<String?>(null) }
-    BankSectionCard(modifier = Modifier.fillMaxWidth().padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xxs)
-        .riseIn(rise = 20.dp, durationMillis = 360)) {
+    BankSectionCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = BankSpacing.sm, vertical = BankSpacing.xxs)
+            .riseIn(rise = 20.dp, durationMillis = 360),
+    ) {
         Column(Modifier.fillMaxWidth().animateContentSize(tween(260)), verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -634,11 +731,13 @@ private fun RiskQuizPanel(
                         val chosen = picked == option.key && shown.number == question.number
                         val container by animateColorAsState(
                             if (chosen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                            tween(180), label = "optionColor",
+                            tween(180),
+                            label = "optionColor",
                         )
                         Surface(
                             onClick = {
                                 if (picked == null) {
+                                    BankHaptics.confirm(view)
                                     picked = option.key
                                     scope.launch {
                                         if (motion) delay(240)
@@ -649,7 +748,9 @@ private fun RiskQuizPanel(
                             enabled = !busy && picked == null,
                             shape = RoundedCornerShape(16.dp),
                             color = container,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .riseIn(delayMillis = 60 + index * 40, rise = 8.dp, durationMillis = 240),
                         ) {
                             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -695,10 +796,15 @@ private fun DevicePanel(
     // The sheet window never takes focus, so system Back reaches the Activity
     // dispatcher and would finish the app instead of closing the panel.
     BackHandler(enabled = true) { onDismiss() }
-    BankBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    BankBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
     ) {
-        LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             item {
                 BankScreenHeading("已注册设备", subtitle = "管理可访问您账户的设备", eyebrow = "设备安全")
             }
@@ -706,8 +812,11 @@ private fun DevicePanel(
                 BankSectionCard {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("飞书私聊查询", style = MaterialTheme.typography.titleMedium)
-                        Text("获取一次性绑定码后，在飞书机器人私聊发送“/绑定 绑定码”。余额与账单可在飞书查询；转账和审批仍需回到本应用。",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "获取一次性绑定码后，在飞书机器人私聊发送“/绑定 绑定码”。余额与账单可在飞书查询；转账和审批仍需回到本应用。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         if (feishuBindingCode != null && System.currentTimeMillis() < feishuCodeExpiresAtMillis) {
                             SelectionContainer {
                                 Text("/绑定 $feishuBindingCode", style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
@@ -729,8 +838,10 @@ private fun DevicePanel(
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(device.label ?: "未知设备", style = MaterialTheme.typography.titleMedium)
                             }
-                            BankStatusChip(if (device.status == "ACTIVE") "已启用" else "已停用",
-                                if (device.status == "ACTIVE") BankSemanticStatus.RiskGreen else BankSemanticStatus.Neutral)
+                            BankStatusChip(
+                                if (device.status == "ACTIVE") "已启用" else "已停用",
+                                if (device.status == "ACTIVE") BankSemanticStatus.RiskGreen else BankSemanticStatus.Neutral,
+                            )
                         }
                         if (device.createdAt > 0) Text("注册于 ${formatEpochSeconds(device.createdAt)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         var showDetails by rememberSaveable(device.deviceId) { mutableStateOf(false) }
@@ -744,8 +855,12 @@ private fun DevicePanel(
                             Text("这是本机：停用后红色风险操作在本机将不可用。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
                         if (device.status == "ACTIVE") {
-                            BankSecondaryButton("停用", { onRevoke(device.deviceId) }, enabled = !busy,
-                                modifier = Modifier.fillMaxWidth().testTag(UiTags.DEVICE_REVOKE))
+                            BankSecondaryButton(
+                                "停用",
+                                { onRevoke(device.deviceId) },
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth().testTag(UiTags.DEVICE_REVOKE),
+                            )
                         }
                     }
                 }
@@ -772,25 +887,48 @@ private fun TaskPanel(
         AlertDialog(
             onDismissRequest = { takeoverId = null },
             title = { Text("请求人工处理") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("将暂停本任务及关联的待执行步骤。已完成操作不会撤销，已锁定资金不会自动释放。本机演示没有在线客服。")
-                OutlinedTextField(value = takeoverReason, onValueChange = { takeoverReason = it.take(300) },
-                    label = { Text("处理原因") }, modifier = Modifier.fillMaxWidth(), maxLines = 4)
-            } },
-            confirmButton = { TextButton(colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), enabled = !busy && takeoverReason.isNotBlank(), onClick = {
-                takeoverId?.let { onTakeover(it, takeoverReason) }
-                takeoverId = null
-            }) { Text("确认暂停") } },
-            dismissButton = { TextButton(colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), onClick = { takeoverId = null }) { Text("返回") } },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("将暂停本任务及关联的待执行步骤。已完成操作不会撤销，已锁定资金不会自动释放。本机演示没有在线客服。")
+                    OutlinedTextField(
+                        value = takeoverReason,
+                        onValueChange = { takeoverReason = it.take(300) },
+                        label = { Text("处理原因") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+                    enabled = !busy && takeoverReason.isNotBlank(),
+                    onClick = {
+                        takeoverId?.let { onTakeover(it, takeoverReason) }
+                        takeoverId = null
+                    },
+                ) { Text("确认暂停") }
+            },
+            dismissButton = {
+                TextButton(
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+                    onClick = { takeoverId = null },
+                ) { Text("返回") }
+            },
         )
     }
     // The sheet window never takes focus, so system Back reaches the Activity
     // dispatcher and would finish the app instead of closing the panel.
     BackHandler(enabled = true) { onDismiss() }
-    BankBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    BankBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
     ) {
-        LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             item { BankScreenHeading("待办任务", subtitle = "计划有序，生活从容", eyebrow = "任务安排") }
             if (busy) item { BankLoadingState(message = "正在更新任务…") }
             if (!busy && tasks.isEmpty() && splitRequests.isEmpty()) item { BankEmptyState("当前没有任务。") }
@@ -814,12 +952,15 @@ private fun TaskPanel(
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             BankIcon(BankIconKind.Check, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.secondary)
                             Text(taskTypeLabel(task.taskType), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                            BankStatusChip(taskStatusLabel(task.status), when (task.status) {
-                                "COMPLETED", "SUCCESS", "SUCCEEDED" -> BankSemanticStatus.RiskGreen
-                                "FAILED" -> BankSemanticStatus.RiskRed
-                                "WAITING_USER" -> BankSemanticStatus.RiskYellow
-                                else -> BankSemanticStatus.Neutral
-                            })
+                            BankStatusChip(
+                                taskStatusLabel(task.status),
+                                when (task.status) {
+                                    "COMPLETED", "SUCCESS", "SUCCEEDED" -> BankSemanticStatus.RiskGreen
+                                    "FAILED" -> BankSemanticStatus.RiskRed
+                                    "WAITING_USER" -> BankSemanticStatus.RiskYellow
+                                    else -> BankSemanticStatus.Neutral
+                                },
+                            )
                         }
                         taskSummary(task)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                         Text("任务编号 · ${task.taskId}", style = MaterialTheme.typography.bodySmall)
@@ -836,17 +977,29 @@ private fun TaskPanel(
                         }
                         formatLocalTimestamp(task.runAt)?.let { Text("计划时间 · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         if (task.status in CANCELLABLE_TASK_STATUSES) {
-                            BankSecondaryButton("取消", { onCancel(task.taskId) }, enabled = !busy,
-                                modifier = Modifier.fillMaxWidth().testTag(UiTags.TASK_CANCEL))
-                            BankSecondaryButton("请求人工处理", { takeoverId = task.taskId; takeoverReason = "" }, enabled = !busy,
-                                modifier = Modifier.fillMaxWidth().testTag("task_takeover"))
+                            BankSecondaryButton(
+                                "取消",
+                                { onCancel(task.taskId) },
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth().testTag(UiTags.TASK_CANCEL),
+                            )
+                            BankSecondaryButton(
+                                "请求人工处理",
+                                { takeoverId = task.taskId; takeoverReason = "" },
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth().testTag("task_takeover"),
+                            )
                         }
                     }
                 }
             }
             item {
-                Text("到期需要资金的任务会先暂停并显示在任务列表，确认后才会执行。", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    "到期需要资金的任务会先暂停并显示在任务列表，确认后才会执行。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
             }
         }
     }

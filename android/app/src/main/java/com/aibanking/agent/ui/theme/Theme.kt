@@ -97,11 +97,11 @@ private val DarkColors = darkColorScheme(
     surfaceTint = Color.Transparent,
     surfaceDim = Color(0xFF131314),
     surfaceBright = Color(0xFF37393B),
-    surfaceContainerLowest = Color(0xFF0E0E0F),
-    surfaceContainerLow = Color(0xFF1B1B1C),
-    surfaceContainer = Color(0xFF1E1F20),
-    surfaceContainerHigh = Color(0xFF282A2C),
-    surfaceContainerHighest = Color(0xFF333537),
+    surfaceContainerLowest = Color(0xFF0D0E10),
+    surfaceContainerLow = Color(0xFF181A1D),
+    surfaceContainer = Color(0xFF202327),
+    surfaceContainerHigh = Color(0xFF2B2E33),
+    surfaceContainerHighest = Color(0xFF363A40),
     outline = Color(0xFF8E918F),
     outlineVariant = Color(0xFF444746),
     inverseSurface = Color(0xFFE3E3E3),
@@ -113,24 +113,27 @@ private val DarkColors = darkColorScheme(
     scrim = Color.Black,
 )
 
-// Airy type: regular-weight body, medium headings, no negative tracking on CJK.
+// Airy type: regular-weight body, medium headings, no negative tracking on CJK, tabular figures globally.
 private val BankTypography = Typography(
     displayLarge = TextStyle(fontSize = 48.sp, lineHeight = 56.sp, fontWeight = FontWeight.Normal, fontFeatureSettings = "tnum"),
     displayMedium = TextStyle(fontSize = 40.sp, lineHeight = 48.sp, fontWeight = FontWeight.Normal, fontFeatureSettings = "tnum"),
     displaySmall = TextStyle(fontSize = 32.sp, lineHeight = 40.sp, fontWeight = FontWeight.Normal, fontFeatureSettings = "tnum"),
-    headlineLarge = TextStyle(fontSize = 30.sp, lineHeight = 38.sp, fontWeight = FontWeight.Medium),
-    headlineMedium = TextStyle(fontSize = 26.sp, lineHeight = 34.sp, fontWeight = FontWeight.Medium),
+    headlineLarge = TextStyle(fontSize = 30.sp, lineHeight = 38.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
+    headlineMedium = TextStyle(fontSize = 26.sp, lineHeight = 34.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
     headlineSmall = TextStyle(fontSize = 22.sp, lineHeight = 30.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
-    titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Medium),
-    titleMedium = TextStyle(fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium),
-    titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
-    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 26.sp),
-    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 22.sp),
-    bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    labelLarge = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
-    labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium),
-    labelSmall = TextStyle(fontSize = 11.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.2.sp),
+    titleLarge = TextStyle(fontSize = 20.sp, lineHeight = 28.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
+    titleMedium = TextStyle(fontSize = 16.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
+    titleSmall = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
+    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 26.sp, fontFeatureSettings = "tnum"),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 22.sp, fontFeatureSettings = "tnum"),
+    bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp, fontFeatureSettings = "tnum"),
+    labelLarge = TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
+    labelMedium = TextStyle(fontSize = 12.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium, fontFeatureSettings = "tnum"),
+    labelSmall = TextStyle(fontSize = 11.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.2.sp, fontFeatureSettings = "tnum"),
 )
+
+/** Explicit helper to enforce OpenType tabular numerals on custom TextStyle instances. */
+fun TextStyle.tabular(): TextStyle = copy(fontFeatureSettings = "tnum")
 
 // Generous radii: cards 24 dp, sheets and the composer 28 dp, buttons fully round.
 private val BankShapes = Shapes(

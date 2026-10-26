@@ -1,9 +1,12 @@
 package com.aibanking.agent.ui.anim
 
 import android.database.ContentObserver
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -57,4 +60,39 @@ fun Modifier.bankPressScale(interactionSource: MutableInteractionSource, enabled
         label = "bankPress",
     )
     graphicsLayer { scaleX = scale; scaleY = scale }
+}
+
+/**
+ * Unified, restrained haptic vocabulary for financial interactions:
+ * - [tick]: subtle gear/step feedback for wheel pickers, sliders, chart scrubbers, and segment taps
+ * - [confirm]: crisp confirmation tap for completing a quiz option or submitting a high-value action
+ * - [reject]: warning feedback when an invalid input or blocked action occurs
+ */
+object BankHaptics {
+    fun tick(view: View) {
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+        } else {
+            HapticFeedbackConstants.CLOCK_TICK
+        }
+        view.performHapticFeedback(code)
+    }
+
+    fun confirm(view: View) {
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            HapticFeedbackConstants.CONFIRM
+        } else {
+            HapticFeedbackConstants.KEYBOARD_TAP
+        }
+        view.performHapticFeedback(code)
+    }
+
+    fun reject(view: View) {
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            HapticFeedbackConstants.REJECT
+        } else {
+            HapticFeedbackConstants.LONG_PRESS
+        }
+        view.performHapticFeedback(code)
+    }
 }

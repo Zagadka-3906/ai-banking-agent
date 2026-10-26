@@ -211,5 +211,10 @@ fun CountUpText(
     LaunchedEffect(value) { if (motion) progress.animateTo(1f, tween(durationMillis, easing = FastOutSlowInEasing)) }
     val finalText = format(value)
     val shown = if (progress.value >= 1f) finalText else format(value * progress.value)
-    Text(shown, modifier.clearAndSetSemantics { text = AnnotatedString(finalText) }, style = style, color = color)
+    Text(
+        shown,
+        modifier.clearAndSetSemantics { text = AnnotatedString(finalText) },
+        style = style.copy(fontFeatureSettings = "tnum"),
+        color = color,
+    )
 }

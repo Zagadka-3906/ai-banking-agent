@@ -1,29 +1,43 @@
 package com.aibanking.agent.ui.chat
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aibanking.agent.ui.theme.BankPalette
+import com.aibanking.agent.ui.anim.BankHaptics
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.components.*
+import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import java.util.Locale
+import kotlin.math.cos
+import kotlin.math.sin
 
 /** Render returned facts without fabricating defaults or deriving financial outcomes. */
 @Composable
@@ -83,6 +97,7 @@ private fun RiskProfileCard(profile: Map<String, Any?>) {
                 Text(typeName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 if (levels.isNotBlank()) Text("匹配理财产品级别：$levels", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            RiskGauge(grade = grade, modifier = Modifier.width(88.dp).height(52.dp))
         }
         if (traits.isNotBlank()) Text("特点：$traits", style = MaterialTheme.typography.bodyMedium)
         ReplyDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -94,6 +109,121 @@ private fun RiskProfileCard(profile: Map<String, Any?>) {
     }
 }
 
+/**
+ * Semi-circular risk gauge for C1–C5. Sweeps smoothly from 180° to the grade's
+ * target angle with zero-bounce FastOutSlowInEasing.
+ */
+@Composable
+private fun RiskGauge(grade: String, modifier: Modifier = Modifier) {
+    val semantic = LocalBankSemanticColors.current
+    val needleColor = MaterialTheme.colorScheme.onSurface
+    val motion = LocalBankMotionEnabled.current
+    val targetAngle = when (grade.uppercase(Locale.ROOT)) {
+        "C1" -> 198f
+        "C2" -> 230f
+        "C3" -> 270f
+        "C4" -> 310f
+        "C5" -> 342f
+        else -> 270f
+    }
+    var started by remember(grade) { mutableStateOf(false) }
+    LaunchedEffect(grade) { started = true }
+    val angle by animateFloatAsState(
+        targetValue = if (started || !motion) targetAngle else 180f,
+        animationSpec = tween(durationMillis = if (motion) 520 else 0, easing = FastOutSlowInEasing),
+        label = "riskGaugeAngle",
+    )
+    Canvas(modifier) {
+        val strokeWidth = 7.dp.toPx()
+        val pad = strokeWidth / 2f + 2.dp.toPx()
+        val diameter = (size.width - pad * 2f).coerceAtMost((size.height - pad) * 2f)
+        val arcSize = Size(diameter, diameter)
+        val topLeft = Offset((size.width - diameter) / 2f, size.height - pad - diameter / 2f)
+        val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+
+        // Green (C1-C2), Yellow (C3), Red (C4-C5)
+        drawArc(color = semantic.riskGreen, startAngle = 180f, sweepAngle = 64f, useCenter = false, topLeft = topLeft, size = arcSize, style = stroke)
+        drawArc(color = semantic.riskYellow, startAngle = 252f, sweepAngle = 36f, useCenter = false, topLeft = topLeft, size = arcSize, style = stroke)
+        drawArc(color = semantic.riskRed, startAngle = 296f, sweepAngle = 64f, useCenter = false, topLeft = topLeft, size = arcSize, style = stroke)
+
+        val pivot = Offset(size.width / 2f, size.height - pad)
+        val radius = diameter / 2f - strokeWidth * 0.7f
+        val rad = Math.toRadians(angle.toDouble())
+        val tip = Offset(
+            x = pivot.x + (cos(rad) * radius).toFloat(),
+            y = pivot.y + (sin(rad) * radius).toFloat(),
+        )
+        drawLine(color = needleColor, start = pivot, end = tip, strokeWidth = 2.5.dp.toPx(), cap = StrokeCap.Round)
+        drawCircle(color = needleColor, radius = 3.5.dp.toPx(), center = pivot)
+    }
+}
+
+private data class AllocationSegment(
+    val key: String,
+    val label: String,
+    val amount: Double,
+)
+
+@Composable
+private fun SegmentedAllocationBar(
+    segments: List<AllocationSegment>,
+    selectedKey: String?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val total = segments.sumOf { it.amount }
+    if (segments.size < 2 || total <= 0.0) return
+    val view = LocalView.current
+    val semantic = LocalBankSemanticColors.current
+    val scheme = MaterialTheme.colorScheme
+    val palette = remember(semantic, scheme) {
+        listOf(
+            scheme.primary,
+            scheme.secondary,
+            semantic.chartBenchmark,
+            scheme.tertiary,
+            semantic.riskGreen,
+            semantic.chartPrimary,
+        )
+    }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(12.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(scheme.surfaceContainerHighest),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            segments.forEachIndexed { index, segment ->
+                val weight = (segment.amount / total).toFloat().coerceAtLeast(0.05f)
+                val isSelected = selectedKey == segment.key
+                val alpha = if (selectedKey == null || isSelected) 1f else 0.38f
+                Box(
+                    modifier = Modifier
+                        .weight(weight)
+                        .fillMaxHeight()
+                        .background(palette[index % palette.size].copy(alpha = alpha))
+                        .clickable(role = Role.Button) {
+                            BankHaptics.tick(view)
+                            onSelect(if (isSelected) null else segment.key)
+                        },
+                )
+            }
+        }
+        val active = segments.firstOrNull { it.key == selectedKey }
+        if (active != null) {
+            val pct = (active.amount / total) * 100.0
+            Text(
+                "${active.label} · ${money(active.amount)}（${"%.1f".format(Locale.CHINA, pct)}%）",
+                style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
+                color = scheme.primary,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    }
+}
+
 private val WEALTH_PRODUCT_TYPES = setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE")
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -102,11 +232,14 @@ private fun WealthProducts(data: Map<String, Any?>, type: String?) {
     val products = data.children("data")
     if (products.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        ResultCardTitle(when (type) {
-            "WEALTH_RECOMMEND" -> "与您匹配的产品"
-            "WEALTH_COMPARE" -> "产品对比"
-            else -> "在售理财产品"
-        }, BankIconKind.Chart)
+        ResultCardTitle(
+            when (type) {
+                "WEALTH_RECOMMEND" -> "与您匹配的产品"
+                "WEALTH_COMPARE" -> "产品对比"
+                else -> "在售理财产品"
+            },
+            BankIconKind.Chart,
+        )
         products.forEach { product ->
             val name = product.text("name") ?: return@forEach
             ReplyPanel {
@@ -136,17 +269,43 @@ private fun WealthProducts(data: Map<String, Any?>, type: String?) {
 }
 
 /** One panel per holding: product, code, principal and indicative value. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun WealthHoldings(data: Map<String, Any?>) {
     val holdings = data.children("data")
     if (holdings.isEmpty()) return
+    var selectedHoldingKey by remember { mutableStateOf<String?>(null) }
+    val segments = remember(holdings) {
+        holdings.mapIndexedNotNull { idx, h ->
+            val principal = h.number("principal") ?: return@mapIndexedNotNull null
+            if (principal <= 0.0) return@mapIndexedNotNull null
+            val key = h.text("holding_id") ?: h.text("product_id") ?: "$idx"
+            val label = h.text("product_name") ?: h.text("product_id") ?: "持仓 ${idx + 1}"
+            AllocationSegment(key = key, label = label, amount = principal)
+        }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ResultCardTitle("我的理财持仓", BankIconKind.Wallet)
         holdings.mapNotNull { it.number("principal") }.takeIf { it.isNotEmpty() }?.let { principals ->
             ReplyValueHero("本金合计", money(principals.sum()))
         }
-        holdings.forEach { holding ->
-            ReplyPanel {
+        if (segments.size >= 2) {
+            SegmentedAllocationBar(
+                segments = segments,
+                selectedKey = selectedHoldingKey,
+                onSelect = { selectedHoldingKey = it },
+            )
+        }
+        holdings.forEachIndexed { idx, holding ->
+            val key = holding.text("holding_id") ?: holding.text("product_id") ?: "$idx"
+            val isHighlighted = selectedHoldingKey != null && selectedHoldingKey == key
+            ReplyPanel(
+                modifier = if (isHighlighted) {
+                    Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
+                } else {
+                    Modifier
+                },
+            ) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     holding.text("product_id")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
                     holding.text("holding_id")?.let { BankStatusChip("持仓 $it", BankSemanticStatus.Neutral) }
@@ -157,8 +316,11 @@ private fun WealthHoldings(data: Map<String, Any?>) {
                     holding.money("estimated_value")?.let { Metric("参考市值", it, Modifier.weight(1f)) }
                 }
                 holding.text("purchased_at")?.take(10)?.let {
-                    Text("申购于 $it · 市值为演示估算，以产品结算为准", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "申购于 $it · 市值为演示估算，以产品结算为准",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -220,8 +382,12 @@ private fun Metric(label: String, value: String, modifier: Modifier = Modifier) 
     Surface(modifier, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
@@ -232,8 +398,24 @@ private fun CategoryBars(facts: Map<String, Any?>) {
     val largest = rows.mapNotNull { it.number("amount") }.maxOrNull() ?: return
     if (largest <= 0.0) return
     val motion = LocalBankMotionEnabled.current
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    val segments = remember(rows) {
+        rows.mapNotNull { row ->
+            val cat = row.text("category") ?: return@mapNotNull null
+            val amt = row.number("amount") ?: return@mapNotNull null
+            if (amt <= 0.0) return@mapNotNull null
+            AllocationSegment(key = cat, label = cat, amount = amt)
+        }
+    }
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionTitle("分类占比")
+        if (segments.size >= 2) {
+            SegmentedAllocationBar(
+                segments = segments,
+                selectedKey = selectedCategory,
+                onSelect = { selectedCategory = it },
+            )
+        }
         rows.forEach { row ->
             val category = row.text("category") ?: return@forEach
             val amount = row.number("amount") ?: return@forEach
@@ -245,19 +427,27 @@ private fun CategoryBars(facts: Map<String, Any?>) {
                 animationSpec = tween(if (motion) 380 else 0),
                 label = "categoryBar",
             )
+            val isHighlighted = selectedCategory == category
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(category, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Text(
+                    category,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (isHighlighted) FontWeight.Bold else FontWeight.Medium,
+                    color = if (isHighlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
                 Text(
                     buildString {
                         append(money(amount))
                         if (share != null) append("（${"%.1f".format(Locale.CHINA, share * 100)}%）")
                     },
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Box(Modifier.fillMaxWidth().height(8.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape)) {
-                    Box(Modifier.fillMaxWidth(fraction).fillMaxHeight()
-                        .background(LocalBankSemanticColors.current.brandGradient, CircleShape))
+                    Box(
+                        Modifier.fillMaxWidth(fraction).fillMaxHeight()
+                            .background(LocalBankSemanticColors.current.brandGradient, CircleShape),
+                    )
                 }
             }
         }
@@ -379,7 +569,7 @@ private fun FactRow(label: String, value: String, monetary: Boolean = false, ide
     val valueStyle = MaterialTheme.typography.bodyMedium.copy(
         fontWeight = if (monetary) FontWeight.SemiBold else FontWeight.Normal,
         fontFamily = if (identifier) FontFamily.Monospace else null,
-        fontFeatureSettings = if (monetary) "tnum" else null,
+        fontFeatureSettings = "tnum",
     )
     val valueColor = if (monetary) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface
     BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {

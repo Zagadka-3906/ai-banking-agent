@@ -3,8 +3,8 @@ package com.aibanking.agent.ui.chat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,21 +21,28 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.BankHaptics
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonRow
@@ -46,6 +53,10 @@ import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.BankPalette
 import com.aibanking.agent.ui.theme.BankSpacing
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.YearMonth
+import java.util.Locale
+import kotlin.math.abs
 
 /** Contact destinations share the app-level message host. */
 @Composable
@@ -80,6 +91,7 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
+    val view = LocalView.current
     val headerIndices = remember(sections) {
         buildMap {
             var index = 0
@@ -202,7 +214,10 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
                         if (sections.size > 1) {
                             AlphabetRail(
                                 letters = sections.map { it.letter },
-                                onSelect = { letter -> headerIndices[letter]?.let { index -> scope.launch { listState.animateScrollToItem(index) } } },
+                                onSelect = { letter ->
+                                    BankHaptics.tick(view)
+                                    headerIndices[letter]?.let { index -> scope.launch { listState.animateScrollToItem(index) } }
+                                },
                                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 8.dp),
                             )
                         }
@@ -311,9 +326,12 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 modifier = Modifier.widthIn(max = BankSpacing.contentMaxWidth).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer,
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier,
-                    border = null) {
+                    border = null,
+                ) {
                     Column(
                         Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -373,7 +391,14 @@ private fun DetailRow(label: String, value: String, mono: Boolean = false, divid
 @Composable
 private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
     val focus = LocalFocusManager.current
+    val view = LocalView.current
     val save = { focus.clearFocus(); viewModel.addContact() }
+    var showDateWheel by remember { mutableStateOf(false) }
+
+    val phoneDigits = state.contactPhone.filter(Char::isDigit)
+    val phoneError = state.contactPhone.isNotEmpty() && phoneDigits.length < 5
+    val birthdayError = state.contactBirthday.isNotBlank() && !isValidContactBirthday(state.contactBirthday)
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -410,6 +435,17 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                             value = state.contactPhone,
                             onValueChange = { viewModel.onContactFormChange(phone = it) },
                             label = { Text("电话") },
+                            isError = phoneError,
+                            supportingText = if (phoneError) {
+                                {
+                                    Text(
+                                        "请输入至少 5 位数字的电话号码（当前 ${phoneDigits.length} 位）",
+                                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                    )
+                                }
+                            } else {
+                                null
+                            },
                             singleLine = true,
                             enabled = !state.panelBusy,
                             shape = RoundedCornerShape(16.dp),
@@ -427,7 +463,10 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                                 val selected = state.contactRelationship == option
                                 BankFilterChip(
                                     selected = selected,
-                                    onClick = { viewModel.onContactFormChange(relationship = option) },
+                                    onClick = {
+                                        BankHaptics.tick(view)
+                                        viewModel.onContactFormChange(relationship = option)
+                                    },
                                     enabled = !state.panelBusy,
                                     label = { Text(option) },
                                     leadingIcon = if (selected) ({ BankIcon(BankIconKind.Check, Modifier.size(16.dp)) }) else null,
@@ -441,7 +480,29 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                             onValueChange = { viewModel.onContactFormChange(birthday = it) },
                             label = { Text("生日（可选）") },
                             placeholder = { Text("YYYY-MM-DD") },
-                            supportingText = { Text("例如 1995-08-16") },
+                            isError = birthdayError,
+                            supportingText = {
+                                if (birthdayError) {
+                                    Text(
+                                        "请填写有效的历史日期（1900-01-01 至今日）",
+                                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                    )
+                                } else {
+                                    Text("例如 1995-08-16，或点右侧「滚轮选择」")
+                                }
+                            },
+                            trailingIcon = {
+                                TextButton(
+                                    onClick = {
+                                        focus.clearFocus()
+                                        showDateWheel = true
+                                    },
+                                    enabled = !state.panelBusy,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                ) {
+                                    Text("滚轮选择", style = MaterialTheme.typography.labelMedium)
+                                }
+                            },
                             singleLine = true,
                             enabled = !state.panelBusy,
                             shape = RoundedCornerShape(16.dp),
@@ -460,6 +521,274 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 )
                 Text("电话命中本行账户将直接关联；否则会开立收款账户，保存后即可转账。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+
+    if (showDateWheel) {
+        BankDateWheelPickerSheet(
+            initialBirthday = state.contactBirthday,
+            onDismiss = { showDateWheel = false },
+            onClear = {
+                viewModel.onContactFormChange(birthday = "")
+                showDateWheel = false
+            },
+            onConfirm = { formatted ->
+                viewModel.onContactFormChange(birthday = formatted)
+                showDateWheel = false
+            },
+        )
+    }
+}
+
+/**
+ * Computes the maximum valid month (1..12) for [year] bounded by [today].
+ */
+internal fun maxBirthdayMonth(year: Int, today: LocalDate = LocalDate.now()): Int =
+    if (year >= today.year) today.monthValue else 12
+
+/**
+ * Computes the maximum valid day of month (1..31) for [year] and [month],
+ * respecting leap years and clamping to [today] when in the current year/month.
+ */
+internal fun daysInBirthdayMonth(year: Int, month: Int, today: LocalDate = LocalDate.now()): Int {
+    val safeYear = year.coerceIn(1900, today.year)
+    val safeMonth = month.coerceIn(1, maxBirthdayMonth(safeYear, today))
+    val length = YearMonth.of(safeYear, safeMonth).lengthOfMonth()
+    return if (safeYear == today.year && safeMonth == today.monthValue) {
+        minOf(length, today.dayOfMonth)
+    } else {
+        length
+    }
+}
+
+/**
+ * Clamps any (year, month, day) triple into a valid historical [LocalDate] in [1900-01-01, today].
+ */
+internal fun clampBirthdayDate(year: Int, month: Int, day: Int, today: LocalDate = LocalDate.now()): LocalDate {
+    val safeYear = year.coerceIn(1900, today.year)
+    val safeMonth = month.coerceIn(1, maxBirthdayMonth(safeYear, today))
+    val safeDay = day.coerceIn(1, daysInBirthdayMonth(safeYear, safeMonth, today))
+    return LocalDate.of(safeYear, safeMonth, safeDay)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BankDateWheelPickerSheet(
+    initialBirthday: String,
+    onDismiss: () -> Unit,
+    onClear: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val today = remember { LocalDate.now() }
+    val initialDate = remember(initialBirthday, today) {
+        val parsed = runCatching { LocalDate.parse(initialBirthday) }.getOrNull()
+        if (parsed != null && parsed.year in 1900..today.year && !parsed.isAfter(today)) {
+            parsed
+        } else {
+            clampBirthdayDate(1995, 8, 16, today)
+        }
+    }
+    var selectedYear by remember { mutableIntStateOf(initialDate.year) }
+    var selectedMonth by remember { mutableIntStateOf(initialDate.monthValue) }
+    var selectedDay by remember { mutableIntStateOf(initialDate.dayOfMonth) }
+
+    val years = remember(today) { (1900..today.year).toList() }
+    val maxMonth = maxBirthdayMonth(selectedYear, today)
+    val months = remember(maxMonth) { (1..maxMonth).toList() }
+    LaunchedEffect(maxMonth) {
+        if (selectedMonth > maxMonth) selectedMonth = maxMonth
+    }
+    val maxDay = daysInBirthdayMonth(selectedYear, selectedMonth, today)
+    val days = remember(maxDay) { (1..maxDay).toList() }
+    LaunchedEffect(maxDay) {
+        if (selectedDay > maxDay) selectedDay = maxDay
+    }
+
+    val clamped = clampBirthdayDate(selectedYear, selectedMonth, selectedDay, today)
+    val formatted = String.format(Locale.CHINA, "%04d-%02d-%02d", clamped.year, clamped.monthValue, clamped.dayOfMonth)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("选择生日", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        formatted,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                TextButton(onClick = onClear) {
+                    Text("清除", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(156.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                ) {}
+
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WheelColumn(
+                        items = years,
+                        selectedItem = selectedYear,
+                        label = { "${it}年" },
+                        onItemSelected = { selectedYear = it },
+                        modifier = Modifier.weight(1.2f),
+                    )
+                    WheelColumn(
+                        items = months,
+                        selectedItem = selectedMonth.coerceIn(1, maxMonth),
+                        label = { "%02d月".format(Locale.CHINA, it) },
+                        onItemSelected = { selectedMonth = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                    WheelColumn(
+                        items = days,
+                        selectedItem = selectedDay.coerceIn(1, maxDay),
+                        label = { "%02d日".format(Locale.CHINA, it) },
+                        onItemSelected = { selectedDay = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                BankSecondaryButton(
+                    text = "取消",
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                )
+                BankPrimaryButton(
+                    text = "确认",
+                    onClick = { onConfirm(formatted) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun <T> WheelColumn(
+    items: List<T>,
+    selectedItem: T,
+    label: (T) -> String,
+    onItemSelected: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (items.isEmpty()) return
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    val initialIndex = remember(items) { items.indexOf(selectedItem).coerceAtLeast(0) }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    val flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+
+    // Keep list scrolled if external clamping changes selectedItem while idle.
+    LaunchedEffect(selectedItem, items) {
+        val targetIdx = items.indexOf(selectedItem)
+        if (targetIdx >= 0 && !listState.isScrollInProgress && listState.firstVisibleItemIndex != targetIdx) {
+            listState.scrollToItem(targetIdx)
+        }
+    }
+
+    val centeredIndex by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val visible = layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) {
+                0
+            } else {
+                val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+                visible.minByOrNull { abs((it.offset + it.size / 2) - viewportCenter) }?.index ?: 0
+            }
+        }
+    }
+
+    var firstTickSkipped by remember { mutableStateOf(false) }
+    LaunchedEffect(centeredIndex, items) {
+        val bounded = centeredIndex.coerceIn(0, items.lastIndex)
+        val item = items[bounded]
+        if (item != selectedItem) {
+            onItemSelected(item)
+            if (firstTickSkipped) {
+                BankHaptics.tick(view)
+            }
+        }
+        firstTickSkipped = true
+    }
+
+    LazyColumn(
+        state = listState,
+        flingBehavior = flingBehavior,
+        contentPadding = PaddingValues(vertical = 54.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.fillMaxHeight(),
+    ) {
+        itemsIndexed(items) { index, item ->
+            val distance = abs(index - centeredIndex)
+            val isCenter = distance == 0
+            val alpha = when (distance) {
+                0 -> 1f
+                1 -> 0.5f
+                else -> 0.25f
+            }
+            val scale = if (isCenter) 1f else 0.9f
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .graphicsLayer {
+                        this.alpha = alpha
+                        this.scaleX = scale
+                        this.scaleY = scale
+                    }
+                    .clickable {
+                        scope.launch { listState.animateScrollToItem(index) }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label(item),
+                    style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                    fontWeight = if (isCenter) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isCenter) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
     }

@@ -1,6 +1,8 @@
 package com.aibanking.agent.ui.chat
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,23 +18,29 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.aibanking.agent.ui.UiTags
+import com.aibanking.agent.ui.anim.BankConversationMotion
+import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
+import com.aibanking.agent.ui.anim.LocalCountUpAllowed
+import com.aibanking.agent.ui.anim.riseIn
 import com.aibanking.agent.ui.components.BankGradientMark
 import com.aibanking.agent.ui.components.BankIcon
 import com.aibanking.agent.ui.components.BankIconKind
-import com.aibanking.agent.ui.components.BankTextButton
 import com.aibanking.agent.ui.components.BankSecondaryButton
 import com.aibanking.agent.ui.components.BankSemanticStatus
 import com.aibanking.agent.ui.components.BankStatusChip
-import com.aibanking.agent.ui.UiTags
-import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
-import com.aibanking.agent.ui.anim.BankConversationMotion
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.snap
+import com.aibanking.agent.ui.components.BankTextButton
 
 /** A readable reply with financial facts kept separate from support metadata. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier, onReconcile: () -> Unit = {}, onOutcome: () -> Unit = {}) {
+internal fun AgentReplyCard(
+    message: ChatMessage,
+    modifier: Modifier = Modifier,
+    freshReveal: Boolean = false,
+    onReconcile: () -> Unit = {},
+    onOutcome: () -> Unit = {},
+) {
     if (message.streaming) {
         Box(modifier.fillMaxWidth().testTag("reply_card_${message.id}")) {
             ThinkingReply(message.stages.orEmpty())
@@ -43,90 +51,115 @@ internal fun AgentReplyCard(message: ChatMessage, modifier: Modifier = Modifier,
     val colors = MaterialTheme.colorScheme
     val motion = LocalBankMotionEnabled.current
     // Assistant turns sit directly on the canvas, led by the gradient brand mark.
-    Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("reply_card_${message.id}"),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        BankGradientMark(Modifier.padding(top = 2.dp).size(26.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            val risk = when {
-                message.approvalPreview -> "待您确认" to BankSemanticStatus.RiskYellow
-                else -> when (message.riskLevel?.uppercase()) {
-                    "GREEN" -> "绿 · 只读" to BankSemanticStatus.RiskGreen
-                    "YELLOW" -> "黄 · 确认操作" to BankSemanticStatus.RiskYellow
-                    "RED" -> "红 · 强验证" to BankSemanticStatus.RiskRed
-                    else -> null
+    CompositionLocalProvider(LocalCountUpAllowed provides freshReveal) {
+        Row(
+            modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("reply_card_${message.id}"),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            BankGradientMark(Modifier.padding(top = 2.dp).size(26.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val risk = when {
+                    message.approvalPreview -> "待您确认" to BankSemanticStatus.RiskYellow
+                    else -> when (message.riskLevel?.uppercase()) {
+                        "GREEN" -> "绿 · 只读" to BankSemanticStatus.RiskGreen
+                        "YELLOW" -> "黄 · 确认操作" to BankSemanticStatus.RiskYellow
+                        "RED" -> "红 · 强验证" to BankSemanticStatus.RiskRed
+                        else -> null
+                    }
                 }
-            }
-            if (risk != null || message.businessStatus != null) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    risk?.let { (label, status) -> BankStatusChip(label, status) }
-                    message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
+                if (risk != null || message.businessStatus != null) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        risk?.let { (label, status) -> BankStatusChip(label, status) }
+                        message.businessStatus?.let { ReplyStatusChip(it, businessStatusLabel(it)) }
+                    }
                 }
-            }
-            SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    AgentMarkdown(message.text)
-                    ResultExtras(message.result)
-                    message.response?.workflowPlan?.let { plan ->
-                        ReplyPanel {
-                            Text("任务进度 · ${plan.currentStep}/${plan.steps.size}", style = MaterialTheme.typography.titleSmall)
-                            plan.steps.forEach { step ->
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("${step.index}. ${step.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                    ReplyStatusChip(step.status, businessStatusLabel(step.status))
+                SelectionContainer {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        AgentMarkdown(message.text, animateReveal = freshReveal)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .riseIn(animate = freshReveal, delayMillis = 120, rise = 6.dp, durationMillis = 260),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            ResultExtras(message.result)
+                        }
+                        message.response?.workflowPlan?.let { plan ->
+                            ReplyPanel {
+                                Text("任务进度 · ${plan.currentStep}/${plan.steps.size}", style = MaterialTheme.typography.titleSmall)
+                                plan.steps.forEach { step ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("${step.index}. ${step.label}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                        ReplyStatusChip(step.status, businessStatusLabel(step.status))
+                                    }
                                 }
                             }
                         }
-                    }
-                    if (message.businessStatus == "PENDING_RECONCILIATION") {
-                        message.reconciliationError?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall) }
-                        if (!message.reconciling) Text("暂未取得回执，可再次核对。", style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant)
-                        if (message.hasReconciliationTarget()) {
-                            BankSecondaryButton(if (message.reconciling) "正在核对结果…" else "核对结果", onReconcile,
-                                enabled = !message.reconciling, modifier = Modifier.fillMaxWidth().testTag("reconcile_${message.id}"))
-                        } else {
-                            Text("缺少核对编号，请查看现有回执和账户记录，勿重复办理。", style = MaterialTheme.typography.bodySmall)
+                        if (message.businessStatus == "PENDING_RECONCILIATION") {
+                            message.reconciliationError?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall) }
+                            if (!message.reconciling) Text(
+                                "暂未取得回执，可再次核对。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                            )
+                            if (message.hasReconciliationTarget()) {
+                                BankSecondaryButton(
+                                    if (message.reconciling) "正在核对结果…" else "核对结果",
+                                    onReconcile,
+                                    enabled = !message.reconciling,
+                                    modifier = Modifier.fillMaxWidth().testTag("reconcile_${message.id}"),
+                                )
+                            } else {
+                                Text("缺少核对编号，请查看现有回执和账户记录，勿重复办理。", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
+                        if (message.businessStatus == null && !message.stages.isNullOrEmpty()) WorkflowProgress(message.stages)
                     }
-                    if (message.businessStatus == null && !message.stages.isNullOrEmpty()) WorkflowProgress(message.stages)
                 }
-            }
-            // Queries are answered here; only tasks get a result page.
-            outcomeFor(message)?.takeIf { isTaskOutcome(message) }?.let { outcome ->
-                BankSecondaryButton(when (outcome.tone) {
-                    OutcomeTone.SUCCESS -> "查看办理结果"
-                    OutcomeTone.FAILURE -> "查看原因与下一步"
-                    else -> "查看操作状态"
-                }, onOutcome, modifier = Modifier.fillMaxWidth().testTag(UiTags.outcomeEntry(message.id)))
-            }
-            message.traceId?.takeIf { it.isNotBlank() }?.let { traceId ->
-                Column {
-                    ReplyDivider()
-                    BankTextButton(
-                        onClick = { showDetails = !showDetails },
-                        modifier = Modifier.testTag("reply_details_${message.id}"),
-                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp),
-                        colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurfaceVariant),
-                    ) {
-                        Text(if (showDetails) "收起详情" else "回复详情", style = MaterialTheme.typography.labelMedium)
-                        Spacer(Modifier.width(6.dp))
-                        BankIcon(if (showDetails) BankIconKind.Close else BankIconKind.More, Modifier.size(16.dp))
-                    }
-                    AnimatedVisibility(
-                        visible = showDetails,
-                        enter = fadeIn(if (motion) tween(BankConversationMotion.FeedbackMillis) else snap()) +
-                            expandVertically(if (motion) tween(BankConversationMotion.DisclosureMillis) else snap()),
-                        exit = fadeOut(if (motion) tween(BankConversationMotion.FeedbackMillis) else snap()) +
-                            shrinkVertically(if (motion) tween(BankConversationMotion.DisclosureMillis) else snap()),
-                    ) {
-                        ReplyPanel {
-                            message.stages?.takeIf { it.isNotEmpty() }?.let { WorkflowProgress(it, showTimings = true) }
-                            Text("回复编号", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                            SelectionContainer {
-                                Text(traceId, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Medium, color = colors.onSurfaceVariant)
+                // Queries are answered here; only tasks get a result page.
+                outcomeFor(message)?.takeIf { isTaskOutcome(message) }?.let { outcome ->
+                    BankSecondaryButton(
+                        when (outcome.tone) {
+                            OutcomeTone.SUCCESS -> "查看办理结果"
+                            OutcomeTone.FAILURE -> "查看原因与下一步"
+                            else -> "查看操作状态"
+                        },
+                        onOutcome,
+                        modifier = Modifier.fillMaxWidth().testTag(UiTags.outcomeEntry(message.id)),
+                    )
+                }
+                message.traceId?.takeIf { it.isNotBlank() }?.let { traceId ->
+                    Column {
+                        ReplyDivider()
+                        BankTextButton(
+                            onClick = { showDetails = !showDetails },
+                            modifier = Modifier.testTag("reply_details_${message.id}"),
+                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp),
+                            colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurfaceVariant),
+                        ) {
+                            Text(if (showDetails) "收起详情" else "回复详情", style = MaterialTheme.typography.labelMedium)
+                            Spacer(Modifier.width(6.dp))
+                            BankIcon(if (showDetails) BankIconKind.Close else BankIconKind.More, Modifier.size(16.dp))
+                        }
+                        AnimatedVisibility(
+                            visible = showDetails,
+                            enter = fadeIn(if (motion) tween(BankConversationMotion.FeedbackMillis) else snap()) +
+                                expandVertically(if (motion) tween(BankConversationMotion.DisclosureMillis) else snap()),
+                            exit = fadeOut(if (motion) tween(BankConversationMotion.FeedbackMillis) else snap()) +
+                                shrinkVertically(if (motion) tween(BankConversationMotion.DisclosureMillis) else snap()),
+                        ) {
+                            ReplyPanel {
+                                message.stages?.takeIf { it.isNotEmpty() }?.let { WorkflowProgress(it, showTimings = true) }
+                                Text("回复编号", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                                SelectionContainer {
+                                    Text(
+                                        traceId,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Medium,
+                                        color = colors.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }

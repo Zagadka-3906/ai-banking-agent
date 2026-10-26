@@ -143,6 +143,7 @@ fun ChatViewModel.addContact() {
 
 fun ChatViewModel.removeContact(contactId: String) {
     val principal = _state.value.principal
+    val removed = _state.value.contacts.firstOrNull { it.contactId == contactId }
     _state.update { it.copy(panelBusy = true, error = null) }
     sessionWork.launch {
         try {
@@ -152,11 +153,48 @@ fun ChatViewModel.removeContact(contactId: String) {
                     panelBusy = false,
                     contactsScreen = ContactsScreen.LIST,
                     selectedContactId = null,
-                    notice = "联系人已删除",
+                    recentlyDeletedContact = removed,
+                    notice = if (removed != null) "联系人 ${removed.name} 已删除" else "联系人已删除",
                 )
             }
             refreshContacts()
         } catch (failure: GatewayException) {
+            check()
+            applyPanelFailure(failure)
+        }
+    }
+}
+
+/** Restores the most recently deleted contact when the user taps "撤销" in the snackbar. */
+fun ChatViewModel.undoRemoveContact() {
+    val deleted = _state.value.recentlyDeletedContact ?: return
+    val principal = _state.value.principal
+    _state.update { it.copy(recentlyDeletedContact = null, panelBusy = true, error = null) }
+    sessionWork.launch {
+        try {
+            io {
+                contacts.add(
+                    principal = principal,
+                    sessionToken = credential().orEmpty(),
+                    name = deleted.name,
+                    phone = deleted.phone,
+                    relationship = deleted.relationshipLabel.ifBlank { deleted.relationship },
+                    birthday = deleted.birthday?.takeIf { it.isNotBlank() },
+                    idempotencyKey = java.util.UUID.randomUUID().toString(),
+                )
+            }
+            _state.update {
+                it.copy(
+                    panelBusy = false,
+                    notice = "已恢复联系人 ${deleted.name}",
+                )
+            }
+            refreshContacts()
+        } catch (failure: GatewayException) {
+            check()
+            applyPanelFailure(failure)
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
             check()
             applyPanelFailure(failure)
         }

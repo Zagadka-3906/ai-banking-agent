@@ -13,6 +13,7 @@ import com.aibanking.agent.data.ReplyResponse
 import com.aibanking.agent.data.StageProgress
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.util.UUID
 
 enum class ChatRole { USER, ASSISTANT }
@@ -143,6 +144,7 @@ data class ChatUiState(
     val contactPhone: String = "",
     val contactRelationship: String = "朋友",
     val contactBirthday: String = "",
+    val recentlyDeletedContact: ContactView? = null,
     val panelBusy: Boolean = false,
     /**
      * Why the last panel load failed, if it did.
@@ -178,5 +180,12 @@ data class ChatUiState(
     val canAddContact: Boolean
         get() = contactName.isNotBlank() &&
             contactPhone.filter(Char::isDigit).length in 5..20 &&
-            (contactBirthday.isBlank() || contactBirthday.matches(Regex("""\d{4}-\d{2}-\d{2}""")))
+            (contactBirthday.isBlank() || isValidContactBirthday(contactBirthday))
+}
+
+/** Validates that a non-blank birthday is an actual calendar date in [1900-01-01, today]. */
+internal fun isValidContactBirthday(birthday: String, today: LocalDate = LocalDate.now()): Boolean {
+    if (!birthday.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) return false
+    val parsed = runCatching { LocalDate.parse(birthday) }.getOrNull() ?: return false
+    return parsed.year >= 1900 && !parsed.isAfter(today)
 }

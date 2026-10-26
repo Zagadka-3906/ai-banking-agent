@@ -81,6 +81,7 @@ data class BankSemanticColors(
 )
 
 private val BrandStops = listOf(BankPalette.GradientBlue, BankPalette.GradientViolet, BankPalette.GradientRose)
+private val DarkBrandStops = listOf(Color(0xFF669DF6), Color(0xFFB388FF), Color(0xFFF07B86))
 
 private val LightSemanticColors = BankSemanticColors(
     inputFocus = BankPalette.DeepPurple,
@@ -129,8 +130,8 @@ private val DarkSemanticColors = BankSemanticColors(
     cardVirtual = Color(0xFFE8DEF8),
     positiveGradient = Brush.horizontalGradient(listOf(Color(0xFFF6AEA9), Color(0xFFF28B82))),
     primaryGradient = Brush.linearGradient(listOf(Color(0xFF0842A0), Color(0xFF4A3A6B))),
-    brandGradient = Brush.linearGradient(BrandStops),
-    brandGradientColors = BrandStops,
+    brandGradient = Brush.linearGradient(DarkBrandStops),
+    brandGradientColors = DarkBrandStops,
 )
 
 val LocalBankSemanticColors = staticCompositionLocalOf { LightSemanticColors }
