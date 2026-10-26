@@ -225,6 +225,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
     if (showAdd) {
         AddCardSheet(
             visible = true,
+            formError = state.cardFormError,
             busy = state.panelBusy,
             cardType = state.cardType,
             label = state.cardLabel,
@@ -405,6 +406,7 @@ private fun AddCardSheet(
     onFieldChange: (String?, String?) -> Unit,
     onAdd: (String, String) -> Unit,
     onDismiss: () -> Unit,
+    formError: String? = null,
 ) {
     if (!visible) return
     // 弹层窗口不接收焦点，系统返回会落到 Activity 上直接退出应用；这里接管返回，
@@ -427,7 +429,7 @@ private fun AddCardSheet(
                 val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
                 recognizer.process(InputImage.fromBitmap(bitmap, 0)).addOnSuccessListener { result ->
                     val found = extractCardNumber(result.text)
-                    if (found != null) { number = found; source = "OCR"; confirmed = false }
+                    if (found != null) { number = found; source = "OCR"; confirmed = false; error = null; onFieldChange(null, null) }
                     else error = "未识别到有效卡号，请手动输入"
                 }.addOnFailureListener { error = "拍照识别失败，请手动输入" }.addOnCompleteListener { recognizer.close() }
             }
@@ -449,8 +451,12 @@ private fun AddCardSheet(
             OutlinedTextField(
                 colors = bankTextFieldColors(),
                 value = number,
-                onValueChange = { number = it; source = "MANUAL"; confirmed = false; error = null },
+                onValueChange = { number = it; source = "MANUAL"; confirmed = false; error = null; onFieldChange(null, null) },
                 label = { Text("卡号（必填）") },
+                isError = number.isNotBlank() && extractCardNumber(number) == null,
+                supportingText = if (number.isNotBlank() && extractCardNumber(number) == null) {
+                    { BankFormError("请输入通过校验的 12–19 位银行卡号") }
+                } else null,
                 enabled = !busy,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true,
@@ -491,6 +497,7 @@ private fun AddCardSheet(
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(),
             )
+            BankFormError(formError)
             BankButton(
                 onClick = { onAdd(number, source) },
                 enabled = !busy && confirmed && extractCardNumber(number) != null,

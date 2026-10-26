@@ -40,12 +40,14 @@ internal fun ApprovalCard(
     onReject: () -> Unit,
     onApprove: () -> Unit,
     onBiometricApprove: () -> Unit,
+    error: String? = null,
 ) {
     val isRed = approval.mfaRequired
     val semantic = LocalBankSemanticColors.current
     val riskColor = if (isRed) semantic.riskRed else semantic.riskYellow
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val otpError = if (otp.isNotEmpty() && !otp.matches(Regex("[0-9]{6}"))) "请输入 6 位数字验证码" else null
     fun secondsLeft(): Int = ((deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999L).div(1_000L).toInt()
     var remainingSeconds by remember(approval.approvalId, deadlineMillis) { mutableIntStateOf(secondsLeft()) }
     LaunchedEffect(approval.approvalId, deadlineMillis) {
@@ -110,6 +112,8 @@ internal fun ApprovalCard(
                 OutlinedTextField(
                     colors = bankTextFieldColors(),
                     value = otp,
+                    isError = otpError != null || error?.contains("验证码") == true,
+                    supportingText = if (otpError != null) { { BankFormError(otpError) } } else null,
                     onValueChange = onOtpChange,
                     label = { Text("短信验证码（6 位）") },
                     singleLine = true,
@@ -126,6 +130,7 @@ internal fun ApprovalCard(
                     )
                 }
             }
+            BankFormError(error)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 BankPrimaryButton(
                     text = if (isRed) "验证并确认办理" else "确认本次操作",
@@ -137,7 +142,7 @@ internal fun ApprovalCard(
                             if (isRed) onBiometricApprove() else onApprove()
                         }
                     },
-                    enabled = !busy && remainingSeconds > 0 && (!isRed || (canPromptBiometric && otp.length == 6 && otp.all(Char::isDigit))),
+                    enabled = !busy && remainingSeconds > 0 && (!isRed || (canPromptBiometric && otp.matches(Regex("[0-9]{6}")))),
                     loading = busy,
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
                 )

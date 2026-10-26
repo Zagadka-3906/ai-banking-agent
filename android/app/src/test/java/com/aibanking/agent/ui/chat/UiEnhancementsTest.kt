@@ -64,6 +64,25 @@ class UiEnhancementsTest {
     }
 
     @Test
+    fun purchaseSteps_respect_real_minimums_and_keep_decimal_precision() {
+        val product = ProductView(productId = "LX00118", name = "现金管理", minAmount = 1.0)
+        assertEquals("1", purchaseMinimumText(product))
+        assertEquals("1", stepPurchaseAmount("50", -100.0, 1.0))
+        assertEquals("101.01", stepPurchaseAmount("1.01", 100.0, 1.0))
+        assertEquals("0.01", stepPurchaseAmount("0.02", -100.0, 0.01))
+        assertEquals("1000000000.01", stepPurchaseAmount("999999900.01", 100.0, 1.0))
+        assertNull(wealthAmountError(product, "1.01"))
+        assertTrue(wealthAmountError(product, "0.50")!!.contains("¥0.50"))
+        assertNotNull(wealthAmountError(product, "1.001"))
+    }
+
+    @Test
+    fun estimatedFee_rounds_decimal_half_cent_explicitly() {
+        val product = ProductView(productId = "test", name = "test", minAmount = 1.0, feeRate = 0.5)
+        assertTrue(wealthLivePurchaseSummary(product, "1")!!.contains("¥0.01"))
+    }
+
+    @Test
     fun composerAutocomplete_matchesTransferPrefixesWithoutDigits() {
         val contacts = listOf(
             ContactView(contactId = "c1", name = "张三", phone = "13800000001"),

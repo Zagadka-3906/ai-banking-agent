@@ -61,6 +61,8 @@ class ConversationComponentsUiTest {
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().assertIsNotEnabled()
         ui.runOnIdle { otp.value = "1234567" }
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).assertIsNotEnabled()
+        ui.runOnIdle { otp.value = "１２３４５６" }
+        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).assertIsNotEnabled()
         ui.runOnIdle { otp.value = "123456" }
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).assertIsEnabled().performClick()
         ui.runOnIdle { assertEquals(0, ordinary); assertEquals(1, biometric) }

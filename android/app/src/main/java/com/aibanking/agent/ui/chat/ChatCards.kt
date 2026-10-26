@@ -36,7 +36,7 @@ fun ChatViewModel.refreshCards() {
 }
 
 fun ChatViewModel.onCardFormChange(cardType: String? = null, label: String? = null) {
-    _state.update { it.copy(cardType = cardType ?: it.cardType, cardLabel = label?.take(40) ?: it.cardLabel) }
+    _state.update { it.copy(cardType = cardType ?: it.cardType, cardLabel = label?.take(40) ?: it.cardLabel, cardFormError = null) }
 }
 
 /** 自行绑定银行卡：黄色操作，需用户明确确认并计入审计。 */
@@ -49,7 +49,7 @@ fun ChatViewModel.addCard(cardNumber: String, source: String) {
     val digest = MessageDigest.getInstance("SHA-256").digest("${form.cardType}\u0000${form.cardLabel.trim()}\u0000$cardNumber".toByteArray()).joinToString("") { "%02x".format(it) }
     val attempt = CreateAttempt.of(cardCreateAttempt, digest)
     cardCreateAttempt = attempt
-    _state.update { it.copy(panelBusy = true, error = null) }
+    _state.update { it.copy(panelBusy = true, error = null, cardFormError = null) }
     sessionWork.launch {
         try {
             val created = io {
@@ -71,12 +71,12 @@ fun ChatViewModel.addCard(cardNumber: String, source: String) {
             refreshCards()
         } catch (failure: GatewayException) {
             check()
-            applyPanelFailure(failure)
+            applyFormFailure(failure, BankForm.CARD)
         } catch (failure: Exception) {
             if (failure is CancellationException) throw failure
             check()
             // 失败必须收尾：panelBusy 留在 true 会让添加表单永远停在“开卡中…”。
-            applyPanelFailure(failure)
+            applyFormFailure(failure, BankForm.CARD)
         }
     }
 }

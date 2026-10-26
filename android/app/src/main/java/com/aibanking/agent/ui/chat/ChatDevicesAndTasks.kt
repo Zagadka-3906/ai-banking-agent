@@ -119,7 +119,7 @@ fun ChatViewModel.refreshTasks() {
         try {
             val rows = io { tasks.list(principal, credential().orEmpty()) }
             val splits = io { tasks.splitInbox(principal, credential().orEmpty()) }
-            _state.update { it.copy(tasks = rows, splitRequests = splits, panelBusy = false) }
+            _state.update { it.copy(tasks = rows, splitRequests = splits, panelBusy = false, panelError = null) }
         } catch (failure: GatewayException) {
             check()
             applyPanelFailure(failure)
@@ -150,7 +150,7 @@ fun ChatViewModel.takeoverTask(taskId: String, reason: String) {
     if (_state.value.panelBusy || reason.isBlank() || reason.length > 300) return
     if (_state.value.tasks.none { it.taskId == taskId && it.status in setOf("PENDING", "WAITING_USER", "FAILED") }) return
     val principal = _state.value.principal
-    _state.update { it.copy(panelBusy = true, error = null) }
+    _state.update { it.copy(panelBusy = true, error = null, panelError = null) }
     sessionWork.launch {
         try {
             io { tasks.takeover(taskId, reason.trim(), principal, credential().orEmpty()) }
@@ -184,3 +184,5 @@ fun ChatViewModel.declineSplit(splitId: String) {
         }
     }
 }
+
+fun ChatViewModel.clearPanelError() = _state.update { it.copy(panelError = null) }

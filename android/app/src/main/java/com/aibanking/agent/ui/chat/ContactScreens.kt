@@ -247,11 +247,11 @@ private fun SectionHeader(letter: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    BankCard(
+    Surface(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        color = MaterialTheme.colorScheme.background,
     ) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
@@ -297,7 +297,6 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
     var lastRendered by remember { mutableStateOf<ContactView?>(null) }
     SideEffect { if (contact != null) lastRendered = contact }
     val rendered = if (state.contactsScreen == ContactsScreen.DETAIL) contact else lastRendered
-    var confirmDelete by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -308,7 +307,8 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
                     IconButton(onClick = viewModel::backToContactList) { BankIcon(BankIconKind.ArrowBack, contentDescription = "返回列表") }
                 },
                 actions = {
-                    IconButton(onClick = { confirmDelete = true }, enabled = rendered != null && !state.panelBusy) {
+                    IconButton(onClick = { rendered?.contactId?.let(viewModel::removeContact) }, enabled = rendered != null && !state.panelBusy,
+                        modifier = Modifier.testTag(UiTags.CONTACT_REMOVE)) {
                         Icon(Icons.Default.Delete, contentDescription = "删除联系人", tint = MaterialTheme.colorScheme.error)
                     }
                 },
@@ -361,21 +361,7 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
             }
         }
     }
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            icon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
-            title = { Text("删除联系人") },
-            text = { Text("确定删除「${rendered?.name ?: ""}」吗？删除后可重新添加。") },
-            confirmButton = {
-                BankTextButton(
-                    onClick = { confirmDelete = false; rendered?.contactId?.let(viewModel::removeContact) },
-                    modifier = Modifier.testTag(UiTags.CONTACT_REMOVE),
-                ) { Text("删除", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { BankTextButton(onClick = { confirmDelete = false }) { Text("取消") } },
-        )
-    }
+
 }
 
 @Composable
@@ -394,9 +380,11 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
     val view = LocalView.current
     val save = { focus.clearFocus(); viewModel.addContact() }
     var showDateWheel by remember { mutableStateOf(false) }
+    var nameEdited by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var phoneEdited by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     val phoneDigits = state.contactPhone.filter(Char::isDigit)
-    val phoneError = state.contactPhone.isNotEmpty() && phoneDigits.length < 5
+    val phoneError = (phoneEdited || state.contactPhone.isNotEmpty()) && phoneDigits.length < 5
     val birthdayError = state.contactBirthday.isNotBlank() && !isValidContactBirthday(state.contactBirthday)
 
     Scaffold(
@@ -421,8 +409,12 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                         OutlinedTextField(
                             colors = bankTextFieldColors(),
                             value = state.contactName,
-                            onValueChange = { viewModel.onContactFormChange(name = it) },
+                            onValueChange = { nameEdited = true; viewModel.onContactFormChange(name = it) },
                             label = { Text("姓名") },
+                            isError = nameEdited && state.contactName.isBlank(),
+                            supportingText = if (nameEdited && state.contactName.isBlank()) {
+                                { BankFormError("请输入联系人姓名") }
+                            } else null,
                             singleLine = true,
                             enabled = !state.panelBusy,
                             shape = RoundedCornerShape(16.dp),
@@ -433,7 +425,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                         OutlinedTextField(
                             colors = bankTextFieldColors(),
                             value = state.contactPhone,
-                            onValueChange = { viewModel.onContactFormChange(phone = it) },
+                            onValueChange = { phoneEdited = true; viewModel.onContactFormChange(phone = it) },
                             label = { Text("电话") },
                             isError = phoneError,
                             supportingText = if (phoneError) {
@@ -512,6 +504,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                         )
                     }
                 }
+                BankFormError(state.contactFormError)
                 BankPrimaryButton(
                     text = if (state.panelBusy) "保存中…" else "保存",
                     onClick = save,

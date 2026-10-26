@@ -76,28 +76,9 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
-    LaunchedEffect(state.error, state.notice) {
-        // Background session/device setup does not need a notification over the editor.
-        val notice = state.notice?.takeUnless {
-            it.startsWith("会话有效期") || it == "本机设备已注册，高风险操作可用"
-        }
-        val message = state.error ?: notice
-        val canUndoContactDelete = state.error == null && notice != null &&
-            state.recentlyDeletedContact != null && notice.contains("已删除")
-        if (state.error != null || state.notice != null) {
-            viewModel.dismissMessages()
-        }
-        if (message != null) {
-            val result = snackbar.showSnackbar(
-                message = message,
-                actionLabel = if (canUndoContactDelete) "撤销" else null,
-                duration = SnackbarDuration.Short,
-            )
-            if (canUndoContactDelete && result == SnackbarResult.ActionPerformed) {
-                viewModel.undoRemoveContact()
-            }
-        }
-    }
+    ChatMessageEffects(state.error, state.notice,
+        state.contactUndoId?.let { state.pendingContactDeletions[it] },
+        snackbar, viewModel::consumeMessages, viewModel::undoRemoveContact, owner = state.principal)
     // The deadline survives destination changes and Activity recreation.
     val approvalDeadlineMillis = rememberSaveable(state.pending?.approvalId) {
         state.pending?.let { SystemClock.elapsedRealtime() + it.expiresIn.coerceAtLeast(0) * 1_000L } ?: 0L
@@ -217,6 +198,8 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             busy = state.panelBusy,
             onCancel = viewModel::cancelTask,
             onTakeover = viewModel::takeoverTask,
+            error = state.panelError,
+            onClearError = viewModel::clearPanelError,
             onPaySplit = viewModel::prepareSplitPayment,
             onDeclineSplit = viewModel::declineSplit,
             onDismiss = viewModel::dismissPanels,
@@ -416,6 +399,7 @@ private fun ChatHome(
                             deadlineMillis = requireNotNull(approvalDeadlineMillis),
                             otp = state.otp,
                             busy = state.busy,
+                            error = state.approvalError,
                             onOtpChange = viewModel::onOtpChange,
                             onRequestOtp = viewModel::requestDemoOtp,
                             onReject = viewModel::reject,
@@ -867,174 +851,6 @@ private fun DevicePanel(
             }
         }
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TaskPanel(
-    tasks: List<TaskView>,
-    splitRequests: List<SplitRequestView>,
-    busy: Boolean,
-    onCancel: (String) -> Unit,
-    onTakeover: (String, String) -> Unit,
-    onPaySplit: (SplitRequestView) -> Unit,
-    onDeclineSplit: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var takeoverId by remember { mutableStateOf<String?>(null) }
-    var takeoverReason by remember { mutableStateOf("") }
-    if (takeoverId != null) {
-        AlertDialog(
-            onDismissRequest = { takeoverId = null },
-            title = { Text("请求人工处理") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("将暂停本任务及关联的待执行步骤。已完成操作不会撤销，已锁定资金不会自动释放。本机演示没有在线客服。")
-                    OutlinedTextField(
-                        value = takeoverReason,
-                        onValueChange = { takeoverReason = it.take(300) },
-                        label = { Text("处理原因") },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 4,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
-                    enabled = !busy && takeoverReason.isNotBlank(),
-                    onClick = {
-                        takeoverId?.let { onTakeover(it, takeoverReason) }
-                        takeoverId = null
-                    },
-                ) { Text("确认暂停") }
-            },
-            dismissButton = {
-                TextButton(
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
-                    onClick = { takeoverId = null },
-                ) { Text("返回") }
-            },
-        )
-    }
-    // The sheet window never takes focus, so system Back reaches the Activity
-    // dispatcher and would finish the app instead of closing the panel.
-    BackHandler(enabled = true) { onDismiss() }
-    BankBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
-    ) {
-        LazyColumn(
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            item { BankScreenHeading("待办任务", subtitle = "计划有序，生活从容", eyebrow = "任务安排") }
-            if (busy) item { BankLoadingState(message = "正在更新任务…") }
-            if (!busy && tasks.isEmpty() && splitRequests.isEmpty()) item { BankEmptyState("当前没有任务。") }
-            if (splitRequests.isNotEmpty()) item { Text("AA 收款请求", style = MaterialTheme.typography.titleMedium) }
-            items(splitRequests, key = { "split:${it.splitId}" }) { request ->
-                BankSectionCard(modifier = Modifier.animateItem()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("${request.fromName} 向您收取 ¥${"%.2f".format(request.share)}", style = MaterialTheme.typography.titleMedium)
-                        request.target?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                        Text(if (request.status == "PENDING") "等待您决定；不会自动扣款" else "状态：${request.status}", style = MaterialTheme.typography.bodySmall)
-                        if (request.status == "PENDING") {
-                            BankSecondaryButton("查看并付款", { onPaySplit(request) }, enabled = !busy, modifier = Modifier.fillMaxWidth())
-                            BankSecondaryButton("拒绝付款", { onDeclineSplit(request.splitId) }, enabled = !busy, modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                }
-            }
-            items(tasks, key = { it.taskId }) { task ->
-                BankSectionCard(modifier = Modifier.animateItem()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            BankIcon(BankIconKind.Check, Modifier.size(26.dp), tint = MaterialTheme.colorScheme.secondary)
-                            Text(taskTypeLabel(task.taskType), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                            BankStatusChip(
-                                taskStatusLabel(task.status),
-                                when (task.status) {
-                                    "COMPLETED", "SUCCESS", "SUCCEEDED" -> BankSemanticStatus.RiskGreen
-                                    "FAILED" -> BankSemanticStatus.RiskRed
-                                    "WAITING_USER" -> BankSemanticStatus.RiskYellow
-                                    else -> BankSemanticStatus.Neutral
-                                },
-                            )
-                        }
-                        taskSummary(task)?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                        Text("任务编号 · ${task.taskId}", style = MaterialTheme.typography.bodySmall)
-                        task.dependsOn.forEach { dependency ->
-                            val prerequisite = tasks.firstOrNull { it.taskId == dependency }
-                            Text("依赖 · ${prerequisite?.let { taskTypeLabel(it.taskType) } ?: dependency}：${prerequisite?.let { taskStatusLabel(it.status) } ?: "待核对"}", style = MaterialTheme.typography.bodySmall)
-                        }
-                        task.error?.takeIf { it.isNotBlank() }?.let { Text("原因 · $it", style = MaterialTheme.typography.bodySmall) }
-                        if (task.status == "HUMAN_TAKEOVER") {
-                            SelectionContainer { Text("已暂停，待人工处理。请将任务编号和原因交给演示负责人核对；本应用不会自动恢复执行。", style = MaterialTheme.typography.bodySmall) }
-                        }
-                        if (task.status == "FAILED" && task.compensation != null) {
-                            Text("存在待核对的补偿事项，请核对账本与回执；此处不代表已退款或已释放资金。", style = MaterialTheme.typography.bodySmall)
-                        }
-                        formatLocalTimestamp(task.runAt)?.let { Text("计划时间 · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        if (task.status in CANCELLABLE_TASK_STATUSES) {
-                            BankSecondaryButton(
-                                "取消",
-                                { onCancel(task.taskId) },
-                                enabled = !busy,
-                                modifier = Modifier.fillMaxWidth().testTag(UiTags.TASK_CANCEL),
-                            )
-                            BankSecondaryButton(
-                                "请求人工处理",
-                                { takeoverId = task.taskId; takeoverReason = "" },
-                                enabled = !busy,
-                                modifier = Modifier.fillMaxWidth().testTag("task_takeover"),
-                            )
-                        }
-                    }
-                }
-            }
-            item {
-                Text(
-                    "到期需要资金的任务会先暂停并显示在任务列表，确认后才会执行。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-            }
-        }
-    }
-}
-
-private fun taskStatusLabel(status: String): String = when (status) {
-    "PENDING" -> "待执行"
-    "WAITING_USER" -> "待您确认"
-    "RUNNING" -> "执行中"
-    "HUMAN_TAKEOVER" -> "转人工处理"
-    "COMPLETED", "SUCCESS", "SUCCEEDED" -> "已完成"
-    "FAILED" -> "未完成"
-    "CANCELLED", "CANCELED" -> "已取消"
-    else -> status
-}
-
-private fun taskTypeLabel(type: String): String = when (type.uppercase()) {
-    "TRANSFER", "SCHEDULED_TRANSFER" -> "预约转账"
-    "REMINDER", "BIRTHDAY_REMINDER" -> "日程提醒"
-    "PAYMENT", "BILL_PAYMENT" -> "账单支付"
-    "SUBSCRIPTION", "SUBSCRIPTION_RENEWAL", "RENEWAL_REMINDER" -> "订阅续费"
-    "ORDER_DRAFT" -> "购物计划"
-    "FUND_RESERVATION" -> "资金预留"
-    else -> type
-}
-
-/** Only tasks that have not settled yet may be cancelled from the phone. */
-private val CANCELLABLE_TASK_STATUSES = setOf("PENDING", "WAITING_USER", "FAILED")
-
-private fun taskSummary(task: TaskView): String? {
-    (task.payload["message"] as? String)?.takeIf { it.isNotBlank() }?.let { return it }
-    val subject = (task.payload["merchant"] as? String) ?: (task.payload["item"] as? String)
-    val amount = task.payload["amount"]
-    val parts = listOfNotNull(subject, amount?.let { "¥$it" })
-    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
 private fun formatEpochSeconds(epochSeconds: Long): String =

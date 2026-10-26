@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -74,6 +75,8 @@ import com.aibanking.agent.ui.components.BankTextButton
 import com.aibanking.agent.ui.components.bankTextFieldColors
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
 import java.util.Locale
+import java.math.BigDecimal
+import java.math.RoundingMode
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
@@ -283,7 +286,7 @@ internal fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
                 }
             }
 
-            // 4. 风格特征 (2x2 四宫格卡片)
+            // 4. 风格特征：单个信息组内使用行与分隔线。
             BankCard(
                 modifier = Modifier.fillMaxWidth().testTag(UiTags.WEALTH_PROFILE),
                 shape = RoundedCornerShape(16.dp),
@@ -304,33 +307,24 @@ internal fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
                     if (rendered.analysisMetrics.isEmpty()) {
                         Text("暂无分析指标")
                     } else {
-                        rendered.analysisMetrics.chunked(2).forEachIndexed { rowIdx, pair ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                pair.forEachIndexed { colIdx, metric ->
-                                    val barColor = when (rowIdx * 2 + colIdx) {
-                                        0 -> MaterialTheme.colorScheme.primary
-                                        1 -> WealthRiskYellow
-                                        2 -> WealthNegative
-                                        else -> WealthPositive
-                                    }
-                                    BankCard(
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                    ) {
-                                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            Text(metric.label.ifBlank { "未命名指标" }, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                            Text(metric.value ?: metric.score?.let { "$it/5" } ?: "未提供", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface)
-                                            Text(metric.description ?: "暂无说明", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            metric.score?.takeIf { it in 0..5 }?.let { score ->
-                                                Box(Modifier.fillMaxWidth().height(3.dp).background(barColor.copy(alpha = 0.25f), RoundedCornerShape(2.dp))) {
-                                                    Box(Modifier.fillMaxWidth(score / 5f).height(3.dp).background(barColor, RoundedCornerShape(2.dp)))
-                                                }
-                                            }
-                                        }
-                                    }
+                        rendered.analysisMetrics.forEachIndexed { index, metric ->
+                            if (index > 0) androidx.compose.material3.HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val largeText = LocalDensity.current.fontScale > 1.3f
+                                FlowRow(Modifier.fillMaxWidth(), maxItemsInEachRow = if (largeText) 1 else 2,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(metric.label.ifBlank { "未命名指标" }, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                    Text(metric.value ?: metric.score?.let { "$it/5" } ?: "未提供", Modifier.weight(1f),
+                                        textAlign = if (largeText) TextAlign.Start else TextAlign.End,
+                                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                                 }
-                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                                Text(metric.description ?: "暂无说明", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                metric.score?.takeIf { it in 0..5 }?.let { score ->
+                                    androidx.compose.material3.LinearProgressIndicator(progress = { score / 5f },
+                                        modifier = Modifier.fillMaxWidth().height(3.dp), drawStopIndicator = {})
+                                }
                             }
                         }
                     }
@@ -590,7 +584,7 @@ internal fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
     }
 }
 @Composable
-private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: ProductView) {
+internal fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: ProductView) {
     val profile = state.riskProfile
     val view = LocalView.current
     val eligible = profile != null && (profileRank(profile.riskProfile) ?: 0) >= productRank(product.riskLevel)
@@ -616,6 +610,7 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                 }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("查看推荐", style = MaterialTheme.typography.labelMedium) }
             }
             if (eligible) {
+                val amountError = state.purchaseAmountError ?: wealthAmountError(product, state.buyAmount)
                 val liveSummary = remember(state.buyAmount, product) {
                     wealthLivePurchaseSummary(product, state.buyAmount)
                 }
@@ -623,12 +618,13 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                     value = state.buyAmount,
                     onValueChange = viewModel::onBuyAmountChange,
                     label = { Text("申购金额") },
-                    placeholder = { Text("起购 ¥%,.0f".format(Locale.CHINA, product.minAmount)) },
+                    placeholder = { Text("起购 ¥${purchaseMinimumText(product)}") },
                     prefix = { Text("¥") },
-                    supportingText = if (liveSummary != null) {
+                    isError = amountError != null,
+                    supportingText = if (amountError != null || liveSummary != null) {
                         {
                             Text(
-                                liveSummary,
+                                amountError ?: liveSummary.orEmpty(),
                                 style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
                                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                             )
@@ -661,10 +657,10 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
                         selected = false,
                         onClick = {
                             BankHaptics.tick(view)
-                            viewModel.onBuyAmountChange("%.0f".format(Locale.ROOT, product.minAmount.coerceAtLeast(100.0)))
+                            viewModel.onBuyAmountChange(purchaseMinimumText(product))
                         },
                         enabled = !state.panelBusy,
-                        label = { Text("起购 ¥%,.0f".format(Locale.CHINA, product.minAmount.coerceAtLeast(100.0)), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum")) },
+                        label = { Text("起购 ¥${purchaseMinimumText(product)}", style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum")) },
                     )
                     BankFilterChip(
                         selected = false,
@@ -724,18 +720,22 @@ private fun PurchaseBar(state: ChatUiState, viewModel: ChatViewModel, product: P
  * Steps the purchase amount input by [delta] while respecting [minAmount] as a floor.
  */
 internal fun stepPurchaseAmount(currentRaw: String, delta: Double, minAmount: Double): String {
-    val floor = minAmount.coerceAtLeast(100.0)
-    val current = parseAmountInput(currentRaw)?.toDouble() ?: floor
-    val next = if (currentRaw.isBlank() && delta > 0) {
-        floor + delta
-    } else {
-        (current + delta).coerceAtLeast(floor)
-    }
-    return if (next % 1.0 == 0.0) {
-        "%.0f".format(Locale.ROOT, next)
-    } else {
-        "%.2f".format(Locale.ROOT, next)
-    }
+    val floor = BigDecimal.valueOf(minAmount.coerceAtLeast(0.0))
+    val current = parseAmountInput(currentRaw) ?: floor
+    return (current + BigDecimal.valueOf(delta)).max(floor).stripTrailingZeros().toPlainString()
+}
+
+internal fun purchaseMinimumText(product: ProductView): String =
+    BigDecimal.valueOf(product.minAmount).stripTrailingZeros().toPlainString()
+
+internal fun wealthAmountError(product: ProductView, rawAmount: String): String? {
+    if (rawAmount.isBlank()) return null
+    val amount = parseAmountInput(rawAmount) ?: return "请输入合法的数字金额（最多两位小数）"
+    if (amount.signum() <= 0) return "申购金额需大于 0 元"
+    if (amount < BigDecimal.valueOf(product.minAmount))
+        return "距起购金额还差 ¥%,.2f（起购 ¥${purchaseMinimumText(product)}）".format(Locale.CHINA,
+            BigDecimal.valueOf(product.minAmount) - amount)
+    return null
 }
 
 /**
@@ -745,16 +745,12 @@ internal fun stepPurchaseAmount(currentRaw: String, delta: Double, minAmount: Do
  */
 internal fun wealthLivePurchaseSummary(product: ProductView, rawAmount: String): String? {
     if (rawAmount.isBlank()) return null
-    val parsed = parseAmountInput(rawAmount)?.toDouble() ?: return "请输入合法的数字金额（最多两位小数）"
-    if (parsed <= 0.0) return "申购金额需大于 0 元"
-    if (parsed < product.minAmount) {
-        val diff = (product.minAmount - parsed).coerceAtLeast(0.0)
-        return "距起购金额还差 ¥%,.2f（起购 ¥%,.0f）".format(Locale.CHINA, diff, product.minAmount)
-    }
+    wealthAmountError(product, rawAmount)?.let { return it }
+    val parsed = parseAmountInput(rawAmount) ?: return null
     val ratePct = listOf(product.discountFeeRate, product.feeRate, product.originalFeeRate)
         .firstOrNull { it != null && it.isFinite() && it >= 0.0 }
     val feePart = if (ratePct != null) {
-        val estFee = parsed * (ratePct / 100.0)
+        val estFee = (parsed * BigDecimal.valueOf(ratePct)).divide(BigDecimal(100)).setScale(2, RoundingMode.HALF_UP)
         "预估买入费用 ¥%,.2f".format(Locale.CHINA, estFee)
     } else {
         "买入费率以产品说明书为准"

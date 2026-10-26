@@ -68,6 +68,9 @@ data class ChatMessage(
 
 data class QuizOptionUi(val key: String, val label: String)
 
+/** The original row stays on the server throughout the undo window. */
+data class PendingContactDeletion(val contact: ContactView, val index: Int, val deadlineMillis: Long)
+
 data class QuizQuestionUi(val number: Int, val text: String, val options: List<QuizOptionUi>)
 
 /** 逐题作答的问卷组件状态：answers.size 即当前题号。 */
@@ -98,6 +101,7 @@ data class ChatUiState(
     /** Non-null while the conversation is waiting for a human decision. */
     val pending: ApprovalView? = null,
     val otp: String = "",
+    val approvalError: String? = null,
     /** Revealed only once the server has actually asked for a login SMS code. */
     val otpRequiredAtLogin: Boolean = false,
     val error: String? = null,
@@ -126,6 +130,7 @@ data class ChatUiState(
     val cards: List<CardView> = emptyList(),
     val cardType: String = "借记卡",
     val cardLabel: String = "",
+    val cardFormError: String? = null,
     /** 理财页：银行风格产品超市 → 详情。 */
     val showWealth: Boolean = false,
     val wealthScreen: WealthScreen = WealthScreen.LIST,
@@ -134,6 +139,7 @@ data class ChatUiState(
     val riskProfile: RiskProfileView? = null,
     val selectedProductId: String? = null,
     val buyAmount: String = "",
+    val purchaseAmountError: String? = null,
     /** 联系人簿：全屏通讯录式界面（列表 → 详情 → 新增）。 */
     val showContacts: Boolean = false,
     val contactsScreen: ContactsScreen = ContactsScreen.LIST,
@@ -144,7 +150,10 @@ data class ChatUiState(
     val contactPhone: String = "",
     val contactRelationship: String = "朋友",
     val contactBirthday: String = "",
-    val recentlyDeletedContact: ContactView? = null,
+    val contactFormError: String? = null,
+    val pendingContactDeletions: Map<String, PendingContactDeletion> = emptyMap(),
+    val removedContactIds: Set<String> = emptySet(),
+    val contactUndoId: String? = null,
     val panelBusy: Boolean = false,
     /**
      * Why the last panel load failed, if it did.

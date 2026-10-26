@@ -20,10 +20,10 @@ fun ChatViewModel.openWealth() {
 fun ChatViewModel.closeWealth() = _state.update { it.copy(showWealth = false) }
 
 fun ChatViewModel.showProductDetail(productId: String) =
-    _state.update { it.copy(wealthScreen = WealthScreen.DETAIL, selectedProductId = productId, buyAmount = "") }
+    _state.update { it.copy(wealthScreen = WealthScreen.DETAIL, selectedProductId = productId, buyAmount = "", purchaseAmountError = null) }
 
 fun ChatViewModel.backToWealthList() =
-    _state.update { it.copy(wealthScreen = WealthScreen.LIST, selectedProductId = null, buyAmount = "") }
+    _state.update { it.copy(wealthScreen = WealthScreen.LIST, selectedProductId = null, buyAmount = "", purchaseAmountError = null) }
 
 /**
  * 申购金额只接受合法十进制文本：最多一个小数点、小数最多两位。
@@ -36,9 +36,9 @@ fun ChatViewModel.backToWealthList() =
 fun ChatViewModel.onBuyAmountChange(value: String) =
     _state.update {
         if (AMOUNT_INPUT.matches(value)) {
-            it.copy(buyAmount = value)
+            it.copy(buyAmount = value, purchaseAmountError = null)
         } else {
-            it
+            it.copy(purchaseAmountError = "请输入合法金额，最多两位小数")
         }
     }
 
