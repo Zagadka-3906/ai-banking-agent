@@ -79,7 +79,7 @@ def ambiguous_target(text: str) -> bool:
         names.update(name.strip() for name in re.split(r"或(?:者)?|还是|和|与|、", reference) if name.strip())
     if len(names) > 1:
         return True
-    if re.fullmatch(r"(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})(?:或(?:者)?|还是)(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})", source.strip()) and not re.search(r"元|块", source):
+    if re.fullmatch(r"(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})(?:或(?:者)?|还是)(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})", source.strip()) and not re.search(r"元|块|[吗么?？]|是否|是不是|现在|仍", source):
         return True
     return bool(re.search(r"不是(?:给|向|转给)|收款人[^，,。]*(?:不对|错了)", source))
 

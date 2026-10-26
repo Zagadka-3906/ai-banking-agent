@@ -74,22 +74,35 @@ def render_holdings(data: Mapping[str, Any]) -> str:
 
 
 def render_subscriptions(data: Mapping[str, Any]) -> str:
+    from datetime import date
+    from bank_agent.query_focus import banking_today, charge_description
+
     rows = data.get("data") or []
+    focus = data.get("query_focus", "list")
+    today = date.fromisoformat(data["as_of"]) if data.get("as_of") else banking_today()
+    if not rows and data.get("query_target"):
+        return f"本人已确认的订阅记录中没有找到“{data['query_target']}”，本次未查询到该会员的金额、状态或扣款日期。"
+    if focus != "list" and rows:
+        answers = []
+        for item in rows:
+            merchant = item["merchant"]
+            if focus == "amount":
+                answers.append(f"{merchant}登记的每期扣款金额为 ¥{float(item['amount']):,.2f}。")
+            elif focus == "status":
+                status = {"ACTIVE": "生效中", "CANCELLED": "已取消", "CANDIDATE": "疑似周期扣费，待核实"}[item['status']]
+                answers.append(f"{merchant}在本系统的登记状态为{status}；登记状态不等于已核实真实商户会员权益或扣款结果。")
+            else:
+                answers.append(f"{merchant}：{charge_description(item, today)}。")
+        return "\n".join(answers)
     lines = [f"🔁 订阅/代扣共 {len(rows)} 项："]
     for item in rows:
         status = str(item.get("status") or "")
         status_label = {"ACTIVE": "生效中", "CANCELLED": "已取消", "CANDIDATE": "疑似周期扣费，待核实"}.get(status, status)
-        charge_label = "预计下次扣款" if status == "CANDIDATE" else ("下次扣款" if status == "ACTIVE" else "原计划扣款")
         lines.append(
             f"- {item.get('merchant')} ｜ 每期 ¥{float(item.get('amount') or 0):,.2f} ｜ "
-            f"{charge_label} {item.get('next_charge')} ｜ 状态 {status_label}"
+            f"{charge_description(item, today)} ｜ 状态 {status_label}"
         )
-    active_rows = [item for item in rows if item.get("status") == "ACTIVE"]
-    if active_rows:
-        merchant = str(active_rows[0].get("merchant") or "")
-        subscription_name = merchant if merchant.endswith("订阅") else f"{merchant} 订阅"
-        lines.append(f'> 如需停用，可以说“取消 {subscription_name}”，取消前会请您确认。')
-    else:
+    if not any(item.get("status") == "ACTIVE" for item in rows):
         lines.append("- 当前没有进行中的订阅。")
     return "\n".join(lines)
 

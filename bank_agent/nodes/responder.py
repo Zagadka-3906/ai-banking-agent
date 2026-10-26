@@ -188,10 +188,15 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                     valid = item.get("text") == known[item["id"]]["text"] and item.get("source") == known[item["id"]]["source"]
                 else:
                     valid = bool(re.fullmatch(r"context\.[a-z_.0-9]+", item["id"]) and item.get("source") == "core://assistant/context"
-                                 or re.fullmatch(r"read\.(balance|cards|disputes|transactions)\.\d+", item["id"])
+                                 or re.fullmatch(r"read\.(balance|cards|disputes|transactions|contacts)\.\d+", item["id"])
                                  and item.get("source") == "core://" + item["id"].split(".")[1])
                 if not valid:
                     return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
+            if data.get("topic") == "contacts":
+                from bank_agent.query_focus import needs_contact_records
+
+                if needs_contact_records(str(state.get("user_input") or "")) and not any(item["id"].startswith("read.contacts.") for item in documents):
+                    return {"business_status": "FAILED", "final_response": "本次未能读取并核验你的联系人簿，尚不能确认是否已保存。可以在 App 侧边栏 → 联系人中核对。"}
         return {"final_response": "\n".join(str(item) for item in facts)}
     if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") in {"OVERSEAS_TRANSACTION", "SUSPICIOUS_TRANSACTIONS", "TRANSACTION_REFERENCE"}:
         kind = {"SUSPICIOUS_TRANSACTIONS": "可疑交易线索", "TRANSACTION_REFERENCE": "所指交易"}.get(str(result.get("specific_query")), "境外交易")

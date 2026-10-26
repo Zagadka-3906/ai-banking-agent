@@ -29,6 +29,10 @@ INTENT_DESCRIPTIONS = DESCRIPTIONS
 
 
 def help_topic(text: str) -> str:
+    from bank_agent.query_focus import contact_question
+
+    if contact_question(text):
+        return "contacts"
     if re.search(r"生日|跨场景|订花|订.*花|预订.*花|鲜花|蛋糕", text):
         return "cross_scene"
     if re.search(r"限额|额度|上限", text) and not re.search(r"验证|为什么|原因", text):
@@ -37,7 +41,7 @@ def help_topic(text: str) -> str:
         return "dispute"
     for topic, pattern in (("dispute", _DISPUTE), ("transfer", re.compile(r"转账|到账|预约")),
                            ("card", re.compile(r"卡|挂失|冻结|解冻")), ("wealth", re.compile(r"理财|申购|赎回|测评")),
-                           ("subscription", re.compile(r"订阅|代扣|续费")), ("security", re.compile(r"验证|确认|审批|密码|口令|安全")),
+                           ("subscription", re.compile(r"订阅|代扣|续费|会员")), ("security", re.compile(r"验证|确认|审批|密码|口令|安全")),
                            ("tasks", re.compile(r"待办|任务页|人工处理"))):
         if pattern.search(text):
             return topic
@@ -51,6 +55,10 @@ def inquiry_route(text: str) -> Optional[tuple[str, dict[str, Any]]]:
     Existing records, procedures and time estimates never imply a new write.
     """
     directive = bool(_DIRECT.search(text))
+    if help_topic(text) == "contacts" and not directive and not action_request_clause(text):
+        return Intent.BANKING_HELP.value, {"help_topic": "contacts"}
+    if re.search(r"扣款失败|续费失败|扣费失败", text) and not directive:
+        return Intent.BANKING_HELP.value, {"help_topic": "subscription"}
     if (not directive and not action_request_clause(text)
             and re.search(r"(?:可用|能用|可支配)(?:余额|资金|的钱)?(?:还)?(?:有|是)?(?:多少钱|多少)", text)):
         return Intent.BALANCE_QUERY.value, {}
@@ -104,7 +112,7 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
             result["slots"] = {"help_topic": help_topic(text)}
             result["parse_meta"]["dialogue_act"] = "EXPLAIN"
             act = "EXPLAIN"
-    if act == "UNSUPPORTED" and route and route[1].get("help_topic") in {"cross_scene", "limits"}:
+    if act == "UNSUPPORTED" and route and route[1].get("help_topic") in {"cross_scene", "limits", "contacts"}:
         # Explain the genuine nearby capability without opening a write flow.
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
         act = "EXPLAIN"
@@ -122,7 +130,7 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         intent, slots = route
         if intent == Intent.BANKING_HELP.value:
             selected = (result.get("slots") or {}).get("help_topic")
-            mandatory_topic = bool(re.search(r"取消.{0,6}(?:限额|额度)|无限|不限额|(?:撤销|撤回|取消|删除).{0,8}(?:工单|争议)", text))
+            mandatory_topic = slots.get("help_topic") == "contacts" or bool(re.search(r"取消.{0,6}(?:限额|额度)|无限|不限额|(?:撤销|撤回|取消|删除).{0,8}(?:工单|争议)|扣款失败|续费失败|扣费失败", text))
             if (selected in TOPICS and selected != "general" and
                     (slots.get("help_topic") == "general" or act in {"QUERY", "EXPLAIN"} and not mandatory_topic)):
                 slots = {**slots, "help_topic": selected}
@@ -130,7 +138,9 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         # A generic procedure keyword must not replace a model's grounded
         # request for actual card/account/product state with a help brochure.
         read_understood = act in {"QUERY", "EXPLAIN"} or act is None and bool(re.search(r"为什么|为何", text))
-        if (intent == Intent.BANKING_HELP.value and read_understood and previous in READ_INTENTS - {Intent.BANKING_HELP.value}
+        if (intent == Intent.BANKING_HELP.value and read_understood and previous in (READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}) - {Intent.BANKING_HELP.value}
+                and slots.get("help_topic") != "contacts"
+                and not re.search(r"扣款失败|续费失败|扣费失败", text)
                 and not (_DISPUTE.search(text) and re.search(r"撤销|撤回|取消|删除", text))):
             return result
         if intent == Intent.BILL_QUERY.value and previous in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and not slots:

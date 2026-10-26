@@ -242,6 +242,7 @@ def _execute_subscription_query(state: BankingAgentState) -> dict[str, Any]:
     if not core_success(envelope, nested_status="QUERIED", required=("subscriptions", "candidates", "renewal_reminders")) or not isinstance(data, dict):
         return response_validation_failure(state, "SUBSCRIPTION_QUERY_RECEIPT_INVALID")
     slots = state.get("slots") or {}
+    result: dict[str, Any]
     if slots.get("renewal_reminder") is True:
         # Reminders are created only after the confirmed query succeeded.
         params = {"days_before": slots.get("days_before", 2)}
@@ -255,6 +256,13 @@ def _execute_subscription_query(state: BankingAgentState) -> dict[str, Any]:
         result = {"type": intent, "data": {"code": 200, "data": data["candidates"], "renewal_reminders": data["renewal_reminders"]}}
     else:
         result = {"type": intent, "data": {"code": 200, "data": data["subscriptions"]}}
+    if result.get("type") == intent:
+        from bank_agent.query_focus import subscription_view
+        from bank_agent.verification import valid_subscription_collection
+
+        if not valid_subscription_collection(result["data"]):
+            return response_validation_failure(state, "READ_COLLECTION_INVALID")
+        result["data"] = subscription_view(result["data"], state)
     return {"execution_result": result, "plan": advance_plan(state, intent, outcome="SUCCESS", data={"status": "QUERIED"})}
 
 

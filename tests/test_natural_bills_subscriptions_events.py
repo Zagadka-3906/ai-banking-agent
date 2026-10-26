@@ -567,7 +567,7 @@ def test_gateway_cancelled_subscriptions_show_historical_dates_and_active_only_s
     else:
         video_line = next(line for line in reply.splitlines() if line.startswith("- 视频会员"))
         assert "生效中" in video_line and "下次扣款" in video_line
-        assert "取消 视频会员 订阅" in reply
+        assert "取消 视频会员 订阅" not in reply and "如需停用" not in reply
         assert main.SUBSCRIPTIONS[PRINCIPAL][1]["status"] == "ACTIVE"
     assert main.ACCOUNTS[PRINCIPAL]["balance"] == 15000.0
 
