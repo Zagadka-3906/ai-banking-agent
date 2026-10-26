@@ -10,7 +10,7 @@ import main
 from bank_agent import runtime
 from bank_agent.answering import _validate_draft, compose_answer
 from bank_agent.parsing import local_parse
-from bank_agent.query_focus import charge_description, contact_documents, contact_question
+from bank_agent.query_focus import charge_description, contact_documents, contact_question, literal_records, subscription_view
 from bank_agent.understanding import enforce_inquiry
 from test_agent_gateway import _headers, _send, gateway  # noqa: F401
 from test_inquiry_boundaries import financial_state
@@ -98,6 +98,37 @@ def test_understood_subscription_queries_survive_generic_inquiry_rules(text):
                               'parse_meta': {'dialogue_act': 'QUERY', 'scope': 'IN_SCOPE'}}, text)
     assert result['intent'] == 'SUBSCRIPTION_QUERY' and result['target'] == '视频会员'
     assert not (local_parse(text).get('slots') or {}).get('target_ambiguous')
+
+
+@pytest.mark.parametrize('text', ['视频会员下次什么时候扣款', '那视频会员现在还是生效中吗', '视频会员每期扣多少钱'])
+def test_literal_subscription_target_survives_an_omitted_model_slot(gateway, monkeypatch, text):  # noqa: F811
+    client, _ = gateway
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'SUBSCRIPTION_QUERY', 'target': None, 'dialogue_act': 'QUERY', 'scope': 'IN_SCOPE', 'confidence': .99}))))
+    pending = _send(client, text, conversation_id='missing-model-merchant')
+    assert pending['approval'] and '视频会员' in pending['approval']['summary']
+    reply = client.post('/api/v1/agent/approvals/' + pending['approval']['approval_id'],
+                        headers=_headers(), json={'decision': 'approve'}).json()
+    assert len(reply['result']['execution_result']['data']['data']) == 1 and 'Apple' not in reply['reply']
+
+
+def test_verified_merchant_records_win_over_a_missing_or_wrong_model_target():
+    rows = {'code': 200, 'data': [{'subscription_id': 'SUB-TEST', 'merchant': '云端存储', 'amount': 19.9},
+                                {'subscription_id': 'SUB-OTHER', 'merchant': '其他服务', 'amount': 1}]}
+    view = subscription_view(rows, {'user_input': '云端存储每期多少钱', 'target': '其他服务'})
+    assert view['data'] == rows['data'][:1] and view['query_focus'] == 'amount'
+
+
+@pytest.mark.parametrize('question,expected', [('查陈测试甲', ['陈测试甲']), ('陈测试和陈测试甲是否保存', ['陈测试', '陈测试甲'])])
+def test_named_entities_are_not_confused_with_longer_names(question, expected):
+    rows = [{'name': '陈测试'}, {'name': '陈测试甲'}]
+    assert [row['name'] for row in literal_records(rows, question, ('name',))] == expected
+
+
+def test_subscription_names_are_matched_as_literals_not_substrings():
+    rows = {'code': 200, 'data': [{'merchant': '云存储', 'subscription_id': 'SUB-A'}, {'merchant': '企业云存储', 'subscription_id': 'SUB-B'}]}
+    view = subscription_view(rows, {'user_input': '企业云存储每期多少钱'})
+    assert view['data'] == rows['data'][1:]
 
 
 @pytest.mark.parametrize('text', ['给李四还是王美转100元', '李四还是王美'])

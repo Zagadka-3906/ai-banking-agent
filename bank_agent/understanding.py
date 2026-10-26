@@ -55,6 +55,11 @@ def inquiry_route(text: str) -> Optional[tuple[str, dict[str, Any]]]:
     Existing records, procedures and time estimates never imply a new write.
     """
     directive = bool(_DIRECT.search(text))
+    from bank_agent.query_focus import subscription_subject
+
+    if (subscription_subject(text) and re.search(r"下次|何时|什么时候|每期|多少钱|扣多少|生效|状态|还在", text)
+            and not re.search(r"失败|为什么|为何|怎么(?:样)?|如何|取消|关闭|退订|提醒|流水|账单", text)):
+        return Intent.SUBSCRIPTION_QUERY.value, {}
     if help_topic(text) == "contacts" and not directive and not action_request_clause(text):
         return Intent.BANKING_HELP.value, {"help_topic": "contacts"}
     if re.search(r"扣款失败|续费失败|扣费失败", text) and not directive:
@@ -103,6 +108,12 @@ def fraud_action_requested(text: str) -> bool:
 def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     route = inquiry_route(text)
     result = dict(parsed)
+    if result.get('intent') == Intent.SUBSCRIPTION_QUERY.value:
+        from bank_agent.query_focus import subscription_subject
+
+        literal = subscription_subject(text)
+        if literal:
+            result['target'] = literal
     act = (result.get("parse_meta") or {}).get("dialogue_act")
     constraint = execution_constraint(text)
     if constraint:
@@ -146,6 +157,10 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         if intent == Intent.BILL_QUERY.value and previous in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and not slots:
             return result
         result.update(intent=intent, target=None, amount=None, participants=[], product_ids=[])
+        if intent == Intent.SUBSCRIPTION_QUERY.value:
+            from bank_agent.query_focus import subscription_subject
+
+            result['target'] = subscription_subject(text) or parsed.get('target')
         if intent == Intent.BANKING_HELP.value:
             result["confidence"] = None
         result["slots"] = {**(result.get("slots") or {}), **slots}
