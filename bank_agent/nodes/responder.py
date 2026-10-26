@@ -171,10 +171,11 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
         if data.get("version") != 1 or not isinstance(facts, list) or not facts or any(not valid_text_field(item, max_length=400) for item in facts):
             return response_validation_failure(state, "SERVICE_GUIDE_INVALID")
         if "documents" in data:
-            from banking_knowledge import KNOWLEDGE_VERSION, TOPICS, knowledge_documents
+            from banking_knowledge import KNOWLEDGE_VERSION
+            from banking_rules import rule_documents
 
             documents = data["documents"]
-            known = {item["id"]: item for topic in TOPICS for item in knowledge_documents(topic)}
+            known = {item["id"]: item for item in rule_documents()}
             if (data.get("knowledge_version") != KNOWLEDGE_VERSION or not isinstance(documents, list)
                     or len(documents) != len(facts) or len(documents) > 80):
                 return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
@@ -197,7 +198,8 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
 
                 if needs_contact_records(str(state.get("user_input") or "")) and not any(item["id"].startswith("read.contacts.") for item in documents):
                     return {"business_status": "FAILED", "final_response": "本次未能读取并核验你的联系人簿，尚不能确认是否已保存。可以在 App 侧边栏 → 联系人中核对。"}
-        return {"final_response": "\n".join(str(item) for item in facts)}
+        visible = [item['text'] for item in data['documents'] if not item.get('context_only')] if 'documents' in data else facts
+        return {"final_response": "\n".join(str(item) for item in visible)}
     if rtype in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value} and result.get("specific_query") in {"OVERSEAS_TRANSACTION", "SUSPICIOUS_TRANSACTIONS", "TRANSACTION_REFERENCE"}:
         kind = {"SUSPICIOUS_TRANSACTIONS": "可疑交易线索", "TRANSACTION_REFERENCE": "所指交易"}.get(str(result.get("specific_query")), "境外交易")
         rows = result.get("records")

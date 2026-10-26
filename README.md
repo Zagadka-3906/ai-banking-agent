@@ -60,6 +60,8 @@ flowchart LR
 4. **回执与核对**：回执使用 `response.version=1` 协议，区分对话状态与业务状态。资金操作丢失回执时，按操作编号只读核对，不会重复提交。配置账本文件时，账本、任务和支持持久回执的操作编号一起保存后才返回成功；写盘失败返回 503 并回滚本次业务变更，需重新确认办理。
 5. **按问题回答**：只读咨询可组合版本化业务知识与授权账户证据，自然解释步骤、原因、影响和能力边界。金额使用服务端绑定值，回答发出前独立检查事实、范围及是否回答当前问题；写操作回执由 Core 校验结果生成。待审批期间可先咨询或查询，原审批保持不变。设计与限制见 [Agent 架构](docs/Agent架构.md)。
 
+业务规则提供[人读说明](docs/银行业务规则说明.md)和[机器 JSON](docs/银行业务规则.json)，覆盖 30 项能力及数据源、对象绑定、确认、时效与失败语义。模型在理解前检索相关条款，咨询可继续按自然语言查询；规则与本人实时记录分别取证。两份文件从同源目录生成，CI 检查与代码是否一致。
+
 详细设计见[技术文档](docs/技术文档.md)，安全边界见[安全自评报告](docs/安全自评报告.md)。
 
 理财货架上是 5 款虚构产品，从低到高覆盖 R1–R5 五个风险等级，产品、管理人、托管行和持仓名称都是编造的：
@@ -129,6 +131,7 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ## 测试
 
 ```powershell
+.\.venv\Scripts\python.exe scripts/export_banking_rules.py --check
 .\.venv\Scripts\python.exe -m pytest -q --cov        # 后端全量，分支覆盖率低于 82% 失败
 .\.venv\Scripts\python.exe -m ruff check . --ignore E402
 .\.venv\Scripts\python.exe -m mypy

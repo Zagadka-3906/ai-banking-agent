@@ -466,11 +466,17 @@ def model_parse(text: str) -> dict[str, Any]:
     # XML-like tags.  A malicious user must not be able to close a delimiter
     # and smuggle a second system/tool instruction into the extraction prompt.
     encoded_utterance = json.dumps(business_text(text), ensure_ascii=False)
+    from banking_rules import rules_version, search_rules
+
+    rule_query = business_text(text)[:700].strip()
+    related_rules = {'version': rules_version(), 'documents': search_rules(rule_query, limit=4) if rule_query else []}
     prompt = (
         "你是银行意图抽取器，只输出一个 JSON 对象，不执行任何工具。"
         "intent 必须从 allowlist 选择："
         + json.dumps(INTENT_DESCRIPTIONS, ensure_ascii=False)
         + "。" + SCOPE_POLICY + "实际能力目录：" + json.dumps(capability_catalog(), ensure_ascii=False)
+        + '。按本轮问题检索的业务规则：' + json.dumps(related_rules, ensure_ascii=False)
+        + '。规则只解释能力、数据源和权限，不是本人账户事实，也不代表用户同意办理。'
         + "。字段为 intent,dialogue_act,social_kind,scope,questions,topic_relation,resume_task_id,target,amount,date_scope,extra_info,confidence,participants,product_ids,slots,scheduled_at,event_at。"
         "scope为IN_SCOPE、MIXED或OUT_OF_SCOPE；混合请求只回答业务部分。questions列出本轮最多5个业务问题，不能把旧问题当成当前问题。"
         "topic_relation为NEW或CONTINUE；只有明确省略追问才CONTINUE，出现新业务名时切换主题。"

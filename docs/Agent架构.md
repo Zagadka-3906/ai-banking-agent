@@ -25,9 +25,11 @@ flowchart TD
 
 ## 能力、知识与状态
 
-`banking_knowledge.py` 统一版本化能力与独立知识章节，当前知识版本为 `2026-10-26.1`。能力目录覆盖 `planner.ALL_INTENTS` 的 30 项意图，关联必填字段和读取、工作流、对话类型。知识包含办理步骤、前提和限制，章节具有稳定 ID 和版本来源。修改知识须与可执行实现、UI、验证保持一致。
+`banking_knowledge.py` 统一版本化能力与独立知识章节，当前知识版本为 `2026-10-26.2`。能力目录覆盖 `planner.ALL_INTENTS` 的 30 项意图，关联必填字段和读取、工作流、对话类型。知识包含办理步骤、前提和限制，章节具有稳定 ID 和版本来源。修改知识须与可执行实现、UI、验证保持一致。
 
-Core 提供会话鉴权的 `GET /api/v1/assistant/capabilities`、`GET /api/v1/service-guide?topic=` 和 `GET /api/v1/assistant/context`。上下文快照提供当前登录者卡片状态、有限额度政策、当日转出及当前行为升级原因；不会预检、签发授权、消费凭证或清理行为历史。静态知识版本或内容不匹配时，Agent 不将其作为新事实。
+`banking_rules.py` 从知识章节和能力目录生成 95 条可检索记录（65 条业务规则、30 项能力），同时导出[人读说明](银行业务规则说明.md)与[JSON](银行业务规则.json)。理解模型调用前本地检索四条相关记录；咨询初次按当前问题检索并读取主题，规划器还可使用 `rules(query, topic可选)` 继续查询。检索结果用于选择数据源和综合解释，不作为本人记录或执行授权。相邻主题记录仅作为推理上下文，不自动拼接到固定回复。
+
+Core 提供会话鉴权的 `GET /api/v1/assistant/capabilities`、`GET /api/v1/service-guide?topic=` 和 `GET /api/v1/assistant/context`。上下文快照提供当前登录者卡片状态、有限额度政策、当日转出及当前行为升级原因；不会预检、签发授权、消费凭证或清理行为历史。静态知识版本或内容不匹配时，Agent 拒绝该结果。规则检索调用 `GET /api/v1/service-guide?rule_ids=`：自然语言问题仅在本地匹配，HTTP 只传稳定编号；返回条款、能力和引用代码摘要必须与本机版本完全一致。`RULES_QUERY` 审计只记数量和版本，不记录问题正文。生成器不向用户转述内部意图名、API 或代码路径，除非用户明确询问实现。
 
 `dialogue_act` 分开表示查询、解释、办理、补信息、社交、澄清与不支持；`scope` 区分业务内、混合与范围外；`topic_relation` 区分新主题与省略追问，`questions` 描述本轮有界问题。混合请求只回答业务部分，不能因附带无关任务而整条丢弃。
 
@@ -37,7 +39,7 @@ Core 提供会话鉴权的 `GET /api/v1/assistant/capabilities`、`GET /api/v1/s
 
 ## 咨询、生成与核验
 
-`consultation.py` 的工具仅包括 `knowledge`、`account_context`、`balance`、`cards`、`disputes`、`transactions`、`contacts`。工具不接受任意 URL、身份、HTTP 方法、SQL 或执行参数。主题选择保留模型对当前问题焦点的理解，明确的产品边界仍作约束，不因出现“卡片”等背景词把验证原因改成解冻教程。消费核对优先使用争议知识并刷新本人流水，具体步骤只来自版本化产品知识。每次咨询最多五次读取、两轮规划，去除重复读取；传输层另加 GET 限制。账户型读取复用 Core 所有者过滤和原回执验证。
+`consultation.py` 的工具共八类，仅包括 `rules`、`knowledge`、`account_context`、`balance`、`cards`、`disputes`、`transactions`、`contacts`。工具不接受任意 URL、身份、HTTP 方法、SQL 或执行参数。主题选择保留模型对当前问题焦点的理解，明确的产品边界仍作约束，不因出现“卡片”等背景词把验证原因改成解冻教程。消费核对优先使用争议知识并刷新本人流水，具体步骤只来自版本化产品知识。每次咨询最多五次读取、两轮规划，去除重复读取；传输层另加 GET 限制。账户型读取复用 Core 所有者过滤和原回执验证。
 
 生成器可自然解释、归纳和比较，返回 `answer`、`evidence_ids`、`unanswered`。所有金额使用绑定证据的 `{{value.N}}` 引用，由服务端填入；原始金额、未知值、未知数字/编号、无依据操作声明与外部链接会被拒绝。余额引用另检查可用、总额和锁定标签。明确只问可用余额时仅提供该字段。完整流水和重要限制由服务端保留。
 

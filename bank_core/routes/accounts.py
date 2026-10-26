@@ -63,8 +63,22 @@ def get_disputes(case_id: Optional[str] = None, transaction_id: Optional[str] = 
 
 @router.get("/api/v1/service-guide")
 def service_guide(topic: str = "general", x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-                  x_request_id: Optional[str] = Header(None, alias="X-Request-Id")):
-    actor = get_actor(x_user_id, x_user_id, action="BANKING_HELP", request_id=server_request_id(x_request_id))
+                  x_request_id: Optional[str] = Header(None, alias="X-Request-Id"), rule_ids: Optional[str] = None):
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(x_user_id, x_user_id, action="BANKING_HELP", request_id=request_id)
+    if rule_ids is not None:
+        from banking_rules import rules_version, select_rules
+
+        if len(rule_ids) > 2000:
+            raise HTTPException(400, {'code': 'INVALID_RULE_IDS', 'message': '规则编号超过限制'})
+        try:
+            documents = select_rules(rule_ids.split(','))
+        except ValueError as exc:
+            raise HTTPException(400, {'code': str(exc), 'message': '请使用有效规则编号'}) from exc
+        audit_event('RULES_QUERY', user_id=actor, request_id=request_id, risk_level='GREEN', decision='ALLOW', outcome='SUCCESS',
+                    metadata={'count': len(documents), 'knowledge_version': KNOWLEDGE_VERSION})
+        return {'code': 200, 'user_id': actor, 'version': 1, 'knowledge_version': KNOWLEDGE_VERSION,
+                'rules_version': rules_version(), 'documents': documents, 'facts': [item['text'] for item in documents]}
     safe_topic = topic if topic in TOPICS else "general"
     documents = knowledge_documents(safe_topic)
     return {"code": 200, "user_id": actor, "topic": safe_topic, "facts": [item["text"] for item in documents], "version": 1,
