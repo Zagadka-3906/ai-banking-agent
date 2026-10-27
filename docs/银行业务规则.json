@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-27.2",
-  "rules_version": "a5dc8174b54eb0c8ed6e0abed86b461e36c6228006b8c4ccdfbdf371f75c25d1",
+  "rules_version": "3659e6999c9c6f5a5af753f9d2ece48a55391731b05258a80123609fe52af78c",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "bd9ca2128c6d69f19e66d99ffb6990ca82c10aca1a655971041cd2c9803c9a60",
@@ -19,7 +19,7 @@
     "bank_agent/nodes/executor.py": "d67e70f01a81e3a18c373f92d74204ea96483e97653bb63ba32aeb3b1bcbc5d4",
     "bank_agent/nodes/intent.py": "22f4f4da6d0f49a1c4144b8d2ba747a492c5d06fee38ec9c9fea1e4d32673a25",
     "bank_agent/nodes/responder.py": "9bd3e973f31289b4242ad5469f520561c732a9b5eef0513962446d759eb6d0ef",
-    "bank_agent/parsing.py": "03207d96fc04addb5a29a94705df02278e615d1ffc7e3440078d18f61ea00b42",
+    "bank_agent/parsing.py": "6a7ec4782fc5b827373b6be0a2b7336d9043287e244c6c7c3b8f80b95ea921d6",
     "bank_agent/pending_questions.py": "8fcacd7a0468794092f7f9afdf2f331699865d3f1aab82cbb119491c52d8f36f",
     "bank_agent/prompt_preferences.py": "abe306c5a36b06818aebd51fa75873226415dd54996877a44cccccc915f156ce",
     "bank_agent/query_focus.py": "fc5aa2abd3ca35736343002dd5dfd66d64a4907f578a5067f64257a0fadffc13",
@@ -44,7 +44,7 @@
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "ec43dee39cc85f14d9836e0e02872b70e48dbf542085705d93e9cea56196e61c",
     "banking_rules.py": "c0793bb7b4e7ea2f76075ede3a4068f80b85d0f35be2a2f744aafd1b4b63aea4",
-    "intent_language.py": "ed147d91217b5cf2d1418eadf871074f4d7f0254b215692f9a7863e36829e964",
+    "intent_language.py": "4a5a4dbd9d112cb1bd476f039a08643a6c1a03ad8c17a94a487c0953da965867",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f"
   },
   "rules": [

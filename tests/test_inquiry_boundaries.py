@@ -149,6 +149,45 @@ def test_risk_boundary_independently_refuses_an_inquiry_disguised_as_a_write(mon
         assert result["auth_token"] is None and result["business_status"] == "NEEDS_INPUT"
 
 
+@pytest.mark.parametrize('text', [
+    '我不冻结了，放弃冻结卡片，不用再往下办了。',
+    '放弃这次给李四转账', '我不申购了', '暂缓修改限额',
+    '停止办理取消Apple订阅', '我不转账了', '不用再往下办了',
+])
+def test_withdrawal_cannot_create_approval_even_when_model_requests_a_freeze(gateway, monkeypatch, text):  # noqa: F811
+    client, _ = gateway
+    wrong_model(monkeypatch, 'CARD_FREEZE')
+    before = financial_state()
+    calls = []
+    original = runtime._http
+    def track(method, path, **kwargs):
+        calls.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', track)
+    reply = _send(client, text, conversation_id='withdrawal')
+    assert reply['approval'] is None
+    assert financial_state() == before
+    assert all(method == 'GET' for method, _ in calls), calls
+
+
+@pytest.mark.parametrize('text', [
+    '我不冻结了，放弃冻结卡片，不用再往下办了。',
+    '放弃给李四转账', '我不申购了', '暂停调额', '不办了',
+])
+def test_risk_boundary_rechecks_withdrawal_without_obtaining_a_nonce(monkeypatch, text):
+    def forbidden(*args, **kwargs):
+        raise AssertionError('A withdrawn operation must not obtain an authorization nonce')
+    monkeypatch.setattr(runtime, '_http', forbidden)
+    result = risk_checker_node({'intent': 'CARD_FREEZE', 'user_id': 'user_zhang', 'user_input': text})
+    assert result['auth_token'] is None and result['business_status'] == 'NEEDS_INPUT'
+
+
+@pytest.mark.parametrize('text', ['先不确认，给李四转300元', '取消Apple订阅', '帮我冻结CARD-001'])
+def test_withdrawal_boundary_does_not_turn_proposals_or_service_cancellation_into_refusal(text):
+    from intent_language import execution_constraint
+    assert execution_constraint(text) is None
+
+
 def test_dialogue_memory_is_bounded_credential_free_and_not_shared_between_users():
     state = {"user_id": "alice", "user_input": "密码：secret"}
     for index in range(10):

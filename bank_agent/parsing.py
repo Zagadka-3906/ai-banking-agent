@@ -517,6 +517,7 @@ def model_parse(text: str) -> dict[str, Any]:
         "‘我想给李四转点钱，先看看怎么办理’先提出了办理目标，选TRANSFER/ACTION并追问缺少金额；不是引用或否定。"
         "‘如何给李四转账’仅问步骤，选BANKING_HELP/EXPLAIN。‘先别管转账，解释生日联动’只回答新咨询，保留原待补信息任务。"
         "‘先不确认’不等于取消办理目标：明确提出对象和金额时可展示待确认提案，不能自动确认或执行。"
+        "明确放弃或否定办理不能映射为被否定的写操作，即使没有已有任务也不能新建审批；有对应讨论任务才用CANCEL。"
         "SOCIAL 时必须在顶层填写 social_kind：问候选 greeting，致谢选 thanks，告别选 goodbye，问能力选 capabilities；其他模式填 null。"
         "‘查这笔转账记录’是 BILL_QUERY；‘我的卡是不是冻结了’是 CARD_QUERY；‘冻结后有什么影响’是 BANKING_HELP。"
         "‘那5笔’须结合已核验观察理解是哪组交易；可在 slots.read_reference 指定 anomalies 或 listed_transactions，不能编造编号。"
