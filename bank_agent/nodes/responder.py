@@ -189,7 +189,7 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                     valid = item.get("text") == known[item["id"]]["text"] and item.get("source") == known[item["id"]]["source"]
                 else:
                     valid = bool(re.fullmatch(r"context\.[a-z_.0-9]+", item["id"]) and item.get("source") == "core://assistant/context"
-                                 or re.fullmatch(r"read\.(balance|cards|disputes|transactions|contacts)\.\d+", item["id"])
+                                 or re.fullmatch(r"read\.(balance|cards|disputes|transactions|contacts|wealth_products|wealth_holdings|risk_profile|tasks|subscriptions)\.\d+", item["id"])
                                  and item.get("source") == "core://" + item["id"].split(".")[1])
                 if not valid:
                     return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")

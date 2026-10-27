@@ -147,13 +147,13 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         return {**empty_state(final_response="一次最多办理 8 项任务，请分成两条消息。"), "context": {}, "request_id": state["request_id"]}
     if 2 <= len(parts) <= 8:
         payloads = [validate_intent_payload(local_parse(part)) for part in parts]
-        if all(item.get("intent") != Intent.UNKNOWN.value for item in payloads) and any(item["intent"] not in GREEN_INTENTS or item["intent"] in RISK_QUIZ_INTENTS for item in payloads):
+        if all(item.get("intent") != Intent.UNKNOWN.value for item in payloads) and any(item["intent"] not in GREEN_INTENTS | {Intent.SUBSCRIPTION_QUERY.value} or item["intent"] in RISK_QUIZ_INTENTS or (item.get('slots') or {}).get('renewal_reminder') is True for item in payloads):
             compound = {"id": f"flow_{uuid.uuid4().hex[:12]}", "index": 0,
                         "steps": [{"text": part, "payload": item, "status": "PENDING"} for part, item in zip(parts, payloads)],
                         "results": [], "summaries": []}
             text = parts[0]
     active_quiz = prior_context.get("risk_quiz") if isinstance(prior_context.get("risk_quiz"), dict) else None
-    if active_quiz is None and not compound and _RISK_LEVEL_QUERY.search(text) and not _RISK_QUIZ_START.search(text):
+    if runtime.llm is None and active_quiz is None and not compound and _RISK_LEVEL_QUERY.search(text) and not _RISK_QUIZ_START.search(text):
         return _risk_level_answer(state, prior_context)
     new_request =(local_parse(text).get("intent") if active_quiz is not None and not compound
                    and not is_quiz_reply(text, active_quiz) else Intent.UNKNOWN.value)
@@ -185,7 +185,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             resumed.update({"profile_result": quiz_result["profile_result"], "risk_quiz": {"active": False}})
             return resumed
         return quiz_result
-    if prior_context.get("intent") == Intent.CROSS_SCENE_LOCK.value and re.search(r"(?:花|蛋糕).*(?:买好|买了吗|下单|订好|已经买)|^(?:已经|都|那)?(?:买好|买了吗|订好|下单)[了了吗呢？?]*$", text.strip()):
+    if runtime.llm is None and prior_context.get("intent") == Intent.CROSS_SCENE_LOCK.value and re.search(r"(?:花|蛋糕).*(?:买好|买了吗|下单|订好|已经买)|^(?:已经|都|那)?(?:买好|买了吗|订好|下单)[了了吗呢？?]*$", text.strip()):
         return {**empty_state(final_response="尚未购买鲜花或蛋糕。这里只会预留资金、建立提醒和待确认的订单草稿，不会替您向商家付款下单。"),
                 "context": prior_context, "request_id": state.get("request_id") or f"gw_{uuid.uuid4().hex}"}
     try:
@@ -256,17 +256,24 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             return start_risk_quiz({**state, "context": {**prior_context, "compound_workflow": compound}}, retake=has_profile)
     # Several read-only asks in one sentence become one ordered sub-task DAG.
     sub_requests = split_read_requests(text)
+    from bank_planning.requests import request_goals, read_only_goals
+    semantic_goals = request_goals(parsed)
     consultation = (parsed.get("intent") == Intent.BANKING_HELP.value
                     and (parsed.get("parse_meta") or {}).get("dialogue_act") in {"QUERY", "EXPLAIN"})
-    semantic_read = (parsed.get("intent") in GREEN_INTENTS - RISK_QUIZ_INTENTS
+    semantic_read = (parsed.get("intent") in (GREEN_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}) - RISK_QUIZ_INTENTS
                      and (parsed.get("parse_meta") or {}).get("dialogue_act") in {"QUERY", "EXPLAIN"})
-    if consultation:
+    if semantic_read and read_only_goals(semantic_goals):
+        # Amount alternatives constrain an executable payment, not a read-only
+        # comparison. Date and entity ambiguity keep their own checks.
+        parsed['slots'] = {key: value for key, value in (parsed.get('slots') or {}).items()
+                           if key not in {'amount_ambiguous', 'target_ambiguous', 'request_ambiguous'}}
+    if consultation or read_only_goals(semantic_goals):
         sub_requests = []
     if len(split_parts(text)) > 1 and not compound and not sub_requests and not consultation and not semantic_read:
         return {**empty_state(final_response="这条消息包含多项业务，其中有尚未明确的请求。请逐项补充业务、对象和金额，或分开办理。"), "context": {}, "request_id": state["request_id"]}
     # A compound request that also contains a mutating part is never split and
     # never silently half-answered: the user is asked to handle it in steps.
-    mixed_write = has_mutating_part(text) and not sub_requests and not compound and not consultation
+    mixed_write = has_mutating_part(text) and not sub_requests and not compound and not consultation and not read_only_goals(semantic_goals)
     # Resolve only explicit conversational references.  A prior recipient is
     # never silently used for a fresh request; the user must say “同一位/他”
     # and the operation remains behind the normal approval gate.
@@ -284,6 +291,10 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     else:
         plan = build_task_plan(parsed, plan_id=f"plan_{uuid.uuid4().hex[:12]}")
     clarification = needs_clarification(parsed) if not sub_requests else False
+    if parsed.get('intent') == Intent.BANKING_HELP.value and semantic_read and read_only_goals(semantic_goals):
+        # A read can answer known goals and clarify only the unclear goals;
+        # global operation confidence must not suppress the whole response.
+        clarification = False
     if mixed_write:
         clarification = True
     # Remember exactly what is still missing so a bare answer on the next turn
@@ -433,8 +444,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         "reminder_at": None,
         "sub_requests": sub_requests or None,
     }
-    audit_meta = {key: value for key, value in (parsed.get("parse_meta") or {}).items() if key != "questions"}
-    audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence"), "parse_meta": audit_meta, "sub_intents": [item.get("intent") for item in sub_requests] or None})
+    audit_meta = {key: value for key, value in (parsed.get("parse_meta") or {}).items() if key not in {"questions", "goals"}}
+    audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence"), "parse_meta": audit_meta, "goal_count": len(semantic_goals), "sub_intents": [item.get("intent") for item in sub_requests] or None})
     return result
 
 

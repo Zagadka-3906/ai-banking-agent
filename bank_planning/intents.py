@@ -226,6 +226,13 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             parse_meta["resume_task_id"] = str(meta["resume_task_id"])
         if isinstance(meta.get("questions"), list):
             parse_meta["questions"] = [str(value)[:300] for value in meta["questions"][:5] if isinstance(value, str)]
+        if 'goals' in meta:
+            from bank_planning.requests import validated_goals
+            parse_meta['goals'] = validated_goals(meta['goals'])
+        if meta.get('goal_error') == 'INVALID_REQUEST_GOALS':
+            parse_meta['goal_error'] = 'INVALID_REQUEST_GOALS'
+        if isinstance(meta.get('parameter_sources'), list):
+            parse_meta['parameter_sources'] = [key for key in meta['parameter_sources'] if key in {'amount', 'scheduled_at'}]
     # Renewal scheduling is opt-in and only meaningful for subscription reads.
     # Never let truthy strings or unrestricted day offsets create reminders.
     if intent == Intent.SUBSCRIPTION_QUERY.value and slots.get("renewal_reminder") is True:

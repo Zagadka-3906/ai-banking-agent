@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from banking_knowledge import KNOWLEDGE_VERSION, TOPICS, capability_catalog, followup_catalog, knowledge_documents
+from bank_planning.requests import RESOURCES, STATUSES
 
 TOPIC_NAMES = {'general': '通用对话与事实', 'contacts': '联系人与收款人', 'transfer': '转账、预约与AA',
                'card': '卡片管理', 'limits': '卡片额度', 'security': '身份、确认与验证', 'cross_scene': '生日联动',
@@ -85,6 +86,8 @@ def rule_documents() -> list[dict[str, Any]]:
 def implementation_manifest() -> dict[str, str]:
     root = Path(__file__).resolve().parent
     files = {'banking_rules.py', 'banking_knowledge.py', 'bank_planning/intents.py',
+             'bank_planning/requests.py', 'bank_agent/parsing.py', 'bank_agent/consultation.py',
+             'bank_agent/evidence.py', 'bank_agent/evidence_session.py', 'bank_agent/goal_answering.py', 'bank_agent/nodes/intent.py',
              *(path for paths in REFERENCES.values() for path in paths)}
     return {path: hashlib.sha256((root / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest() for path in sorted(files)}
 
@@ -139,7 +142,8 @@ def search_rules(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
 
 def export_rules() -> dict[str, Any]:
     return {'schema_version': 1, 'knowledge_version': KNOWLEDGE_VERSION, 'rules_version': rules_version(),
-            'implementation': implementation_manifest(), 'rules': rule_documents(), 'followups': followup_catalog()}
+            'implementation': implementation_manifest(), 'rules': rule_documents(), 'followups': followup_catalog(),
+            'request_protocol': {'version': 1, 'resources': RESOURCES, 'coverage_statuses': sorted(STATUSES)}}
 
 
 def render_rulebook() -> str:
@@ -153,6 +157,11 @@ def render_rulebook() -> str:
              '- 规则未覆盖的内容应说明缺口；动态额度、验证升级、产品限制及账户状态以当前 Core 记录或审批为准。',
              '- 修改规则或能力后运行 `python scripts/export_banking_rules.py`，提交前运行同一命令加 `--check`。生成一致只证明同源，不能代替语义审查和执行测试。', '',
              '- 摘要同时覆盖条款、能力目录及引用实现文件；JSON 记录实现摘要。代码变化后须重新生成并复核条款是否仍与实现一致。', '',
+             '## 多诉求查询与补查', '',
+             '理解模型输出最多五项本轮诉求，分别记录行为、资源、知识主题、对象及字段；对象须来自原文或同主体已核验实体。查询和解释走共享取证与逐项核验。', '',
+             '通用咨询有十二类固定只读工具，新增产品、持仓、测评档案和本人任务读取；不开放任意 URL、身份、HTTP 方法或免确认订阅入口。', '',
+             '多诉求读取预算按数量计算，上限十次读取，初次与修复共用；最多三轮取证规划、三次作答。缺证据和核验反馈可以驱动补查，重复读取去重，预算耗尽保留逐项缺口。旧协议兼容路径仍为五次读取、两轮规划。', '',
+             '逐项状态区分已回答、缺数据、需澄清、需确认、不支持和工具失败；部分完成不标为全部成功。金额继续引用绑定字段，订阅实际记录仍需原确认，资金回执不由生成器改写。', '',
              '## 当前能力目录', '', '下表是解析字段提示，不是完整办理条件。空缺项不表示可以直接执行；多卡、测评、余额、产品适当性与授权条件仍由主题规则和 Core 校验。风险测评优先使用问卷，旧字段仅用于兼容路径。', '',
              '| 意图 | 能力 | 解析字段提示 | 权限基线 |', '| --- | --- | --- | --- |']
     for item in capability_catalog():

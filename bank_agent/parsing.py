@@ -470,6 +470,7 @@ def model_parse(text: str) -> dict[str, Any]:
 
     rule_query = business_text(text)[:700].strip()
     related_rules = {'version': rules_version(), 'documents': search_rules(rule_query, limit=4) if rule_query else []}
+    from bank_planning.requests import RESOURCES, normalize_goals, read_only_goals, needs_record
     prompt = (
         "你是银行意图抽取器，只输出一个 JSON 对象，不执行任何工具。"
         "intent 必须从 allowlist 选择："
@@ -477,6 +478,20 @@ def model_parse(text: str) -> dict[str, Any]:
         + "。" + SCOPE_POLICY + "实际能力目录：" + json.dumps(capability_catalog(), ensure_ascii=False)
         + '。按本轮问题检索的业务规则：' + json.dumps(related_rules, ensure_ascii=False)
         + '。规则只解释能力、数据源和权限，不是本人账户事实，也不代表用户同意办理。'
+        + '。必须另输出goals数组，逐项描述本轮最多5个诉求。每项为'
+        '{"act":"QUERY或EXPLAIN或ACTION或UNSUPPORTED或UNCLEAR","resource":"下列资源名",'
+        '"question":"本轮具体问题","fields":["所问字段"],"subject":"原文或已核验实体名称；无对象则null","topic":"知识主题"}。'
+        '比较多个对象用subjects数组分别填写对象，不把几个人或产品拼成一个subject。'
+        '可另写requires_record布尔值：QUERY默认true；EXPLAIN默认false。解释ACTIVE含义、规则、假设或日期含义不需要个人记录，fields仅表示涉及字段。'
+        '若解释本人的实际情况确实需读取，再设requires_record=true；不能仅因提及字段名而索要查询确认。'
+        'topic用于政策咨询，应匹配实际业务主题；可用general,contacts,transfer,card,limits,security,tasks,dispute,wealth,subscription,cross_scene。'
+        'QUERY用于本人当前记录，EXPLAIN用于规则；解释实际状态原因时fields列出需读取字段。'
+        '一条消息中的状态、金额、原因等独立问题分别列出，不用历史问题替代本轮。'
+        '资源和可读字段：' + json.dumps(RESOURCES, ensure_ascii=False)
+        + '。订阅实际记录必须先确认；本轮含订阅记录查询时顶层intent使用SUBSCRIPTION_QUERY，确认后再回答全部查询和解释。'
+        '多项安全查询/解释可用BANKING_HELP，统一按goals取证；操作goals不产生授权。'
+        '金额、日期如需帮助定位，可另给parameter_evidence={"amount":{"text":"原文片段","value":数值},'
+        '"scheduled_at":{"text":"原文日期时间片段","value":"规范日期时间"}}；服务端独立解析核对，不能覆盖已有值或多值歧义。'
         + "。字段为 intent,dialogue_act,social_kind,scope,questions,topic_relation,resume_task_id,target,amount,date_scope,extra_info,confidence,participants,product_ids,slots,scheduled_at,event_at。"
         "scope为IN_SCOPE、MIXED或OUT_OF_SCOPE；混合请求只回答业务部分。questions列出本轮最多5个业务问题，不能把旧问题当成当前问题。"
         "topic_relation为NEW或CONTINUE；只有明确省略追问才CONTINUE，出现新业务名时切换主题。"
@@ -537,6 +552,14 @@ def model_parse(text: str) -> dict[str, Any]:
             merged["parse_meta"]["topic_relation"] = parsed["topic_relation"]
         if isinstance(parsed.get("questions"), list):
             merged["parse_meta"]["questions"] = [_safe_text(value, 300) for value in parsed["questions"][:5] if isinstance(value, str)]
+        if 'goals' in parsed:
+            try:
+                goals = normalize_goals(parsed['goals'], business_text(text), model_context())
+                for goal in goals:
+                    goal['question'] = _safe_text(goal['question'], 300)
+                merged['parse_meta']['goals'] = goals
+            except ValueError:
+                merged['parse_meta']['goal_error'] = 'INVALID_REQUEST_GOALS'
         known_tasks = {task.get("id") for task in (model_context().get("discussion") or {}).get("tasks") or []}
         if isinstance(parsed.get("resume_task_id"), str) and parsed["resume_task_id"] in known_tasks:
             merged["parse_meta"]["resume_task_id"] = parsed["resume_task_id"]
@@ -624,8 +647,35 @@ def model_parse(text: str) -> dict[str, Any]:
             if stated(transaction_id, identifier=True) or known_read:
                 slots["transaction_id"] = str(transaction_id).strip()
         merged["slots"] = slots
+        proofs = parsed.get('parameter_evidence')
+        if isinstance(proofs, dict):
+            from bank_agent.verification import finite_number
+            for key, decoder in (('amount', amount_from_text), ('scheduled_at', scheduled_at_from_text)):
+                proof = proofs.get(key)
+                if merged.get(key) is not None or (local.get('slots') or {}).get(key + '_ambiguous'):
+                    continue
+                if not isinstance(proof, dict) or set(proof) != {'text', 'value'}:
+                    continue
+                span = proof['text']
+                if not isinstance(span, str) or not 1 <= len(span) <= 120 or span not in source:
+                    continue
+                verified = decoder(span)
+                valid = (finite_number(verified, nonnegative=True) and finite_number(proof['value'], nonnegative=True)
+                         and float(verified) == float(proof['value'])) if key == 'amount' else verified is not None and verified == proof['value']
+                if valid:
+                    merged[key] = verified
+                    merged['parse_meta']['parameter_sources'] = [*(merged['parse_meta'].get('parameter_sources') or []), key]
         if merged["intent"] == Intent.CROSS_SCENE_LOCK.value:
-            merged["event_at"] = local.get("scheduled_at")
+            merged["event_at"] = merged.get("scheduled_at")
+        goals = merged['parse_meta'].get('goals') or []
+        if merged['intent'] == Intent.BANKING_HELP.value and read_only_goals(goals) and act == 'SLOT_REPLY':
+            act = 'EXPLAIN' if all(goal['act'] == 'EXPLAIN' for goal in goals) else 'QUERY'
+            merged['parse_meta']['dialogue_act'] = act
+        if read_only_goals(goals) and act in {'QUERY', 'EXPLAIN'}:
+            if any(goal['resource'] == 'subscriptions' and needs_record(goal) for goal in goals):
+                merged['intent'] = Intent.SUBSCRIPTION_QUERY.value
+            elif merged['intent'] == Intent.SUBSCRIPTION_QUERY.value or len(goals) > 1 or any(goal['resource'] in {'tasks', 'risk_profile'} for goal in goals):
+                merged['intent'] = Intent.BANKING_HELP.value
         return enforce_inquiry(merged, business_text(text))
     except Exception:
         # A model outage must degrade to the conservative local parser, never

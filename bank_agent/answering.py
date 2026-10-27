@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from decimal import Decimal
 from typing import Any, Mapping
 
 from security import audit_event
@@ -81,9 +82,9 @@ def answer_facts(state: Mapping[str, Any], response: Mapping[str, Any]) -> list[
     return facts
 
 
-_MONEY = re.compile(r"[¥￥]\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元|块钱|万元)")
+_MONEY = re.compile(r"[¥￥]\s*-?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元|块钱|万元)")
 _NUMBER = re.compile(r"\d+(?:[,.]\d+)*")
-_IDENTIFIER = re.compile(r"(?i)(?:TXN?[A-Z0-9-]{3,}|CASE-[A-Z0-9-]+|CARD-[A-Z0-9-]+)")
+_IDENTIFIER = re.compile(r"(?i)(?:TXN?[A-Z0-9-]{3,}|CASE-[A-Z0-9-]+|CARD-[A-Z0-9-]+|TSK[A-Z0-9]{10,}|[A-Z]{2,8}-?\d{3,}[A-Z0-9]*)")
 _WRITE_CLAIM = re.compile(r"(?:已|已经|成功)(?:为您|帮您|替您|完成了|完成)?(?:冻结|解冻|挂失|转账|退款|扣款|调额|撤销|下单|创建.{0,6}工单)")
 
 
@@ -122,9 +123,9 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
     for stale in re.findall(r"(\d{4}-\d{2}-\d{2})[^。\n]{0,8}已过期", evidence):
         if re.search(r"(?:下次|下一次).{0,4}扣款[^。；\n]{0,15}" + re.escape(stale), rendered):
             raise ValueError("STALE_SCHEDULE_CLAIM")
-    numbers = {value.replace(",", "") for value in _NUMBER.findall(evidence)}
+    numbers = {Decimal(value.replace(',', '')).normalize() for value in _NUMBER.findall(evidence)}
     numeric_text = re.sub(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?(?:[1-9](?:\.(?!\d)|[、)）])|[（(][1-9][）)])(?:\*\*)?\s*", "", rendered)
-    if any(value.replace(",", "") not in numbers for value in _NUMBER.findall(numeric_text)):
+    if any(Decimal(value.replace(',', '')).normalize() not in numbers for value in _NUMBER.findall(numeric_text)):
         raise ValueError("UNKNOWN_NUMBER")
     if any(value not in evidence for value in _IDENTIFIER.findall(rendered)):
         raise ValueError("UNKNOWN_IDENTIFIER")
@@ -132,6 +133,9 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
                       "balance.locked_amount": r"锁定|预留"}
     for match in re.finditer(r"\{\{(value\.\d+)\}\}", text):
         field = anchors[match.group(1)]["evidence_id"]
+        bound_fields = known[field].get('fields') or []
+        if known[field].get('source') == 'core://balance' and len(bound_fields) == 1:
+            field = 'balance.' + bound_fields[0]
         if field in balance_labels:
             prefix = re.split(r"[。；;\n]", text[:match.start()])[-1][-24:]
             labels = [(found.start(), name) for name, pattern in balance_labels.items() for found in re.finditer(pattern, prefix)]
@@ -177,6 +181,11 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
     result = state.get("execution_result")
     if response.get("business_status") in {"FAILED", "BLOCKED"} or state.get("business_status") in {"FAILED", "BLOCKED"}:
         return response
+    from bank_planning.requests import request_goals, read_only_goals
+    if (read_only_goals(request_goals(state)) and not state.get('final_response') and isinstance(result, dict)
+            and result.get('type') in READ_INTENTS | {'BALANCE', 'SUBSCRIPTION_QUERY'}):
+        from bank_agent.goal_answering import compose_goal_answer
+        return compose_goal_answer(state, response)
     if (isinstance(result, dict) and result.get("type") == "SUBSCRIPTION_QUERY"
             and response.get("business_status") not in {"FAILED", "BLOCKED"}):
         # A confirmed read has already been validated and projected onto the

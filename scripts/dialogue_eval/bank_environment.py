@@ -37,6 +37,10 @@ class BankEnvironment:
         elif task.setup == "recent_limit_change":
             import security
             security.record_behavior_signal("user_zhang", "CARD_LIMIT_CHANGE")
+        elif task.setup == 'mixed_tasks':
+            from scheduler import TASK_STORE
+            TASK_STORE.create('user_zhang', 'SCHEDULED_TRANSFER', {'amount': 40}, run_at='2099-01-01T09:00:00+08:00')
+            TASK_STORE.create('user_li', 'ORDER_DRAFT', {'amount': 9999, 'name': '其他用户私有订单'})
         from bank_core.payments import card_daily_spent, daily_spent
         # Warm deterministic day buckets before the baseline; cache initialization
         # is not a user business action and must not distort delta assertions.
@@ -62,6 +66,10 @@ class BankEnvironment:
         transport = LocalSession()
 
         def http(method, path, *, state, json_body=None, headers=None):
+            if task.setup == 'tasks_read_outage' and path == 'tasks':
+                import httpx
+                self.calls.append({'method': method, 'path': '/api/v1/tasks'})
+                return httpx.Response(503, json={'code': 503})
             if runtime._READ_ONLY.get() and method.upper() != "GET":
                 self.calls.append({"method": method.upper(), "path": "/blocked-read-only"})
                 raise RuntimeError("A read-only consultation attempted a write")
@@ -154,10 +162,12 @@ class BankEnvironment:
         reply = envelope.get("reply", "")
         answer_kind = ("APPROVAL_OR_RECEIPT" if approval or phase.action in {"confirm", "reject"} else
                        "GENERATED_REVIEWED" if mode == "GENERATED_REVIEWED" else
-                       "SAFE_FALLBACK" if reply.startswith("本次未能生成通过核验的完整解释") else
+                       "SAFE_FALLBACK" if mode == 'FIELD_FALLBACK' or reply.startswith("本次未能生成通过核验的完整解释") else
                        "SCOPE_OR_CLARIFICATION" if envelope.get("intent") == "UNKNOWN" else "CANONICAL")
         # No tokens, opaque handles, internal parsed state or raw account snapshots in transcripts.
         return {"reply": reply, "intent": envelope.get("intent"), "mode": mode, "answer_kind": answer_kind,
+                'coverage': [{'goal_id': row.get('goal_id'), 'status': row.get('status')}
+                             for row in ((envelope.get('result') or {}).get('answer_presentation') or {}).get('coverage', [])],
                 "core_calls": deepcopy(self.calls[first_call:]),
                 "approval": {key: approval[key] for key in ("summary", "risk_level") if key in approval} if approval else None,
                 "checks": checks, "elapsed_ms": round((time.monotonic() - start) * 1000)}
@@ -198,13 +208,22 @@ class BankEnvironment:
 
     def evidence(self, task):
         from banking_knowledge import knowledge_documents
+        from bank_core.wealth_data import WEALTH_PRODUCTS
+        from bank_core.routes.wealth import risk_profile_view
         return {"knowledge": knowledge_documents(task.topic), "security_knowledge": knowledge_documents("security"),
                 "balances": {key: {"balance": value["balance"], "locked": value.get("locked_amount", 0)}
                              for key, value in self.main.ACCOUNTS.items()},
                 "own_cards": [{key: card.get(key) for key in ("status", "daily_limit")} for card in self.main.CARDS["user_zhang"]],
                 "own_dispute_count": sum(case.get("user_id") == "user_zhang" for case in self.main.DISPUTE_CASES),
                 "synthetic_setup": task.setup,
-                "own_transactions": [{key: row.get(key) for key in ("tx_id", "amount", "merchant", "category", "direction")}
+                'own_tasks': [{**{key: row.get(key) for key in ('task_id', 'task_type', 'status', 'run_at')},
+                               'amount': (row.get('payload') or {}).get('amount')}
+                              for row in self.snapshot()['tasks'] if isinstance(row, dict) and row.get('owner_id') == 'user_zhang'],
+                'own_holdings': self.main.WEALTH_HOLDINGS.get('user_zhang', []),
+                'own_risk_profile': risk_profile_view(self.main.WEALTH_RISK_PROFILES.get('user_zhang')),
+                'wealth_products': [{key: row.get(key) for key in ('product_id', 'name', 'risk_level', 'min_amount', 'liquidity')}
+                                    for row in WEALTH_PRODUCTS],
+                "own_transactions": [{key: row.get(key) for key in ("tx_id", "amount", "merchant", "category", "direction", "time")}
                                      for row in self.main.TRANSACTIONS if row.get("account_id") == "user_zhang"]}
 
     def close(self):

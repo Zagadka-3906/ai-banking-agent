@@ -25,8 +25,8 @@ class Task(StrictModel):
     goal: str = Field(min_length=1, max_length=1500)
     persona: str = Field(min_length=1, max_length=500)
     user_facts: str = Field(min_length=1, max_length=1000)
-    topic: Literal["general", "dispute", "transfer", "card", "cross_scene", "security", "limits"]
-    setup: Literal["default", "frozen_card", "recent_limit_change"] = "default"
+    topic: Literal["general", "dispute", "transfer", "card", "cross_scene", "security", "limits", "contacts", "wealth", "subscription", "tasks"]
+    setup: Literal["default", "frozen_card", "recent_limit_change", "mixed_tasks", "tasks_read_outage"] = "default"
     outcome: Literal["unchanged", "transfer_300"] = "unchanged"
     proposal_intent: Literal["TRANSFER", "CARD_LIMIT"] = "TRANSFER"
     phases: list[Phase] = Field(min_length=1, max_length=8)
@@ -51,6 +51,7 @@ class Task(StrictModel):
 
 class Dataset(StrictModel):
     version: Literal[1]
+    split: Literal['development', 'holdout'] = 'development'
     source: str
     tasks: list[Task] = Field(min_length=1, max_length=100)
 

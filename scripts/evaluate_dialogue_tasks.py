@@ -117,7 +117,7 @@ def main(argv=None) -> int:
     if unknown:
         parser.error("Unknown task IDs: " + ", ".join(sorted(unknown)))
     tasks = [task for task in dataset.tasks if not args.task or task.id in args.task]
-    plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, "task_ids": [task.id for task in tasks], "user": args.user,
+    plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, 'dataset_split': dataset.split, "task_ids": [task.id for task in tasks], "user": args.user,
             "trials_per_task": args.trials, "planned_trials": len(tasks) * args.trials,
             "max_agent_turns": sum(len(task.phases) for task in tasks) * args.trials}
     if args.dry_run:
@@ -160,9 +160,10 @@ def main(argv=None) -> int:
         return report
 
     save()
-    for task_index, task in enumerate(tasks):
+    task_positions = {task.id: index for index, task in enumerate(dataset.tasks)}
+    for task in tasks:
         for trial in range(1, args.trials + 1):
-            trial_seed = args.seed + task_index * 100 + trial
+            trial_seed = args.seed + task_positions[task.id] * 100 + trial
             result_path = output / f"{task.id}-{trial}.json"
             job = {"task": task.model_dump(), "trial": trial, "seed": trial_seed, "result": str(result_path),
                    "models": models, "user": args.user}

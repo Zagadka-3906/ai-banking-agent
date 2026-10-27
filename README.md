@@ -6,7 +6,7 @@
 安言由三部分组成：
 
 - **Android 客户端**（Kotlin + Jetpack Compose）：Gemini 风格对话界面，支持端侧语音输入。
-- **Agent Gateway**（`:8100`）：分开管理对话与办理任务，以受限只读规划获取证据，生成并独立核验自然回答；LangGraph 管理办理、审批和流式进度。
+- **Agent Gateway**（`:8100`）：分开管理对话与办理任务，把本轮问题拆成有界目标，以受限只读规划获取证据，逐项核验并补查后生成自然回答；LangGraph 管理办理、审批和流式进度。
 - **Mock Core**（`:8000`）：持有虚构账本，独立执行授权、风控、设备签名与审计。
 
 另外可选接入飞书机器人私聊，仅支持只读查询。
@@ -142,7 +142,7 @@ cd ..
 .\.venv\Scripts\python.exe scripts/run_android_regression.py --serial emulator-5580 --output-dir build/device-acceptance
 ```
 
-最新后端、设备、真实模型与服务器验收见[验证记录](docs/验证记录.md)顶部，按实际运行版本分别记录。本轮修复前置规则跳过模型、咨询话题被背景词覆盖、待补金额的收款人回指、额度单值补槽与聚焦余额回退；原审批与 Core 的确认、强验证和持久提交边界保持独立。
+最新后端、设备、真实模型与服务器验收见[验证记录](docs/验证记录.md)顶部，按实际运行版本分别记录。本轮加入多目标协议、十二类固定只读工具、共享补查预算、逐项覆盖核验和主体绑定的追问刷新；原审批与 Core 的确认、强验证和持久提交边界保持独立。
 
 70 项设备回归用 `scripts/run_android_regression.py` 运行：它会创建隔离服务和账本文件，同时核对 JUnit XML 与两份 protobuf 的实际执行数量及持久化健康状态。普通 Debug 包可加 `--variant debug --test-class <类名> --minimum-tests 1` 单独验证自动填码。
 

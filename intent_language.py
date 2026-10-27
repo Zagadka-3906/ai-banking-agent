@@ -102,7 +102,7 @@ def action_request_clause(text: str) -> str | None:
         clause = clause.strip()
         if re.search(r"如何|怎么|怎样|为什么|为何|多久|多长|何时|什么时候|进度|流程|步骤|时效|规则|影响|费用|需要|假设|如果|要是|若是|能否|能不能|是否|什么|不要|别|不必|不想|不打算|[吗么“”\"‘’]", clause):
             continue
-        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)|请|麻烦|帮我|替我|给我)?\s*(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设))", clause):
+        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)|请|麻烦|帮我|替我|给我)?\s*(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
             return clause
     return None
 
@@ -112,7 +112,9 @@ def finite_limit_change(text: str) -> bool:
     for clause in re.split(r"[，,。；;!?！？]", business_text(text)):
         if re.search(r"如何|怎么|怎样|假设|如果|要是|能否|能不能|是否|多少|[吗么？?]|不要|不必|不想|不能|取消|无限|不限额", clause):
             continue
-        if re.search(r"(?:限额|额度).{0,8}(?:改|调|设)(?:成|为|到|至|置为)?\s*[¥￥]?\s*\d|(?:那|就|直接)?(?:改成|改为|调到|设为)\s*[¥￥]?\s*\d", clause):
+        if re.search(r"(?:限额|额度).{0,8}(?:改|调|设|补充|明确)(?:成|为|到|至|置为)?\s*[¥￥]?\s*\d|(?:那|就|直接)?(?:改成|改为|调到|设为)\s*[¥￥]?\s*\d", clause):
+            return True
+        if re.search(r'(?:按|为|到)\s*(?:每日|每天|日)?\s*[¥￥]?\d[\d,]*(?:\.\d+)?\s*(?:元|块)?[^，,。；;]{0,12}(?:额度|限额)[^，,。；;]{0,8}(?:改|调|设)', clause):
             return True
     return False
 
@@ -135,6 +137,9 @@ def execution_constraint(text: str) -> str | None:
 def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str, Any] | None:
     """Resolve stated local calendar bounds; inclusive start and end dates."""
     source = business_text(text)
+    # Monetary decimals and percentages are quantities, not calendar atoms.
+    # Keep actual date expressions intact, including dotted month/day ranges.
+    source = re.sub(r'(?:[¥￥]\s*)?-?\d[\d,]*(?:\.\d+)?\s*(?:万元|元|块钱|块|%)', ' ', source)
     current = now or datetime.now(timezone(timedelta(hours=8)))
     if current.tzinfo is not None:
         current = current.astimezone(timezone(timedelta(hours=8)))

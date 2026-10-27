@@ -30,6 +30,10 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
     selected = (state.get("slots") or {}).get("help_topic")
     if (topic == "general" or intent == "BANKING_HELP") and selected:
         topic = selected
+    from bank_planning.requests import request_goals
+    goal_topics = {goal['topic'] for goal in request_goals(state) if goal['act'] != 'UNSUPPORTED'}
+    if intent == 'BANKING_HELP' and len(goal_topics) == 1:
+        topic = next(iter(goal_topics))
     relation = (state.get("parse_meta") or {}).get("topic_relation")
     if topic == "general" and relation == "CONTINUE":
         topic = view.get("active_topic", "general")

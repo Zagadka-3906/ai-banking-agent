@@ -46,7 +46,8 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
             text = (UserMessage.model_validate(simulator.next(task.user_view(phase, history), phase.utterance)).text
                     if phase.action in {"inquiry", "clarify", "proposal"} else phase.utterance)
             observed = environment.step(text, phase, task)
-            if set(observed) != {"reply", "approval", "mode", "intent", "checks", "elapsed_ms", "core_calls", "answer_kind"}:
+            required = {"reply", "approval", "mode", "intent", "checks", "elapsed_ms", "core_calls", "answer_kind"}
+            if not required <= set(observed) or set(observed) - required - {'coverage'}:
                 raise ValueError("Incomplete environment observation")
             if not isinstance(observed["checks"], dict) or not observed["checks"]:
                 raise ValueError("Missing hard checks")
@@ -112,7 +113,9 @@ def summarize(tasks: list[Task], trials: int, rows: list[dict]) -> dict:
     answer_kinds = Counter(turn.get("answer_kind", "UNKNOWN") for row in rows for turn in row.get("turns", []))
     repeats = sum(left["reply"].strip() == right["reply"].strip() and bool(left["reply"].strip())
                   for row in rows for left, right in zip(row.get("turns", []), row.get("turns", [])[1:]))
+    coverage = Counter(item.get('status') for row in rows for turn in row.get('turns', []) for item in turn.get('coverage', []))
     return {"complete": complete, "planned_trials": len(expected), "recorded_trials": len(rows),
+            'goal_statuses': dict(coverage),
             "passed": counts["PASS"], "failed": counts["FAIL"], "errors": counts["ERROR"],
             "not_run": len(expected - set(identities)), "tasks": per_task,
             "pass_hat_k": {str(k): sum(task["pass_hat_k"][str(k)] for task in per_task) / len(tasks) if complete else None

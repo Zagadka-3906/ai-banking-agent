@@ -168,4 +168,4 @@ def test_rules_do_not_contain_live_account_assertions_or_fake_capabilities():
     assert '需确认' in docs['capability.SUBSCRIPTION_QUERY']['text']
     assert '关闭渠道需确认' in docs['capability.CARD_CHANNEL']['text']
     assert '档案' in docs['capability.WEALTH_RISK_ASSESSMENT']['text']
-    assert '未接入' in docs['guide.tasks.source']['text']
+    assert 'tasks' in docs['guide.tasks.source']['text'] and '本人归属' in docs['guide.tasks.source']['text']

@@ -106,6 +106,7 @@ def fraud_action_requested(text: str) -> bool:
 
 
 def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
+    from bank_planning.requests import read_only_goals
     route = inquiry_route(text)
     result = dict(parsed)
     if result.get('intent') == Intent.SUBSCRIPTION_QUERY.value:
@@ -118,7 +119,8 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     constraint = execution_constraint(text)
     if constraint:
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "execution_constraint": constraint}
-        if result.get("intent") not in READ_INTENTS and act not in {"SOCIAL", "UNSUPPORTED"}:
+        subscription_read = result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and read_only_goals((result.get('parse_meta') or {}).get('goals') or [])
+        if result.get("intent") not in READ_INTENTS and not subscription_read and act not in {"SOCIAL", "UNSUPPORTED"}:
             result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
             result["slots"] = {"help_topic": help_topic(text)}
             result["parse_meta"]["dialogue_act"] = "EXPLAIN"
@@ -137,6 +139,13 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     if act in {"QUERY", "EXPLAIN"} and result.get("intent") not in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}:
         result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
         result["slots"] = {"help_topic": help_topic(text)}
+    goals = (result.get('parse_meta') or {}).get('goals') or []
+    if (read_only_goals(goals) and act in {'QUERY', 'EXPLAIN'}
+            and (result.get('parse_meta') or {}).get('source') == 'model'
+            and result.get('intent') in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}):
+        # Keep semantic read planning. Hard constraints above still forbid
+        # mutations; a keyword route must not replace a validated read plan.
+        return result
     if route:
         intent, slots = route
         if intent == Intent.BANKING_HELP.value:
@@ -198,6 +207,9 @@ def understanding_context(state: Mapping[str, Any]) -> Iterator[None]:
     pending = (state.get("context") or {}).get("pending_clarification") or {}
     value: dict[str, Any] = {"recent_turns": history[-6:], "recent_observations": list(observations.values())[-4:],
              "pending_question": {"intent": pending.get("intent"), "missing": pending.get("missing") or []}}
+    from bank_agent.extraction import PRODUCT_ALIASES
+    value['grounded_aliases'] = {alias: code for alias, code in PRODUCT_ALIASES.items()
+                                 if alias in str(state.get('user_input') or '')}
     view = dialogue_view(state)
     value["discussion"] = {"active_topic": view.get("active_topic"), "tasks": [
         {"id": task.get("id"), "intent": task.get("intent"), "missing": (task.get("pending") or {}).get("missing")}
@@ -305,6 +317,28 @@ def remember_reply(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
             cases = [data["dispute_case"]]
         observation["case_ids"] = [row["case_id"] for row in cases if isinstance(row, dict) and isinstance(row.get("case_id"), str)][:20]
     observations = dict(state.get("observations") or {}) if same_user else {}
+    if isinstance(envelope, dict) and isinstance(envelope.get('data'), list):
+        observation['entity_names'] = list(dict.fromkeys(str(row[key]) for row in envelope['data'] if isinstance(row, dict)
+                                                       for key in ('merchant', 'name', 'product_id', 'card_id', 'task_id')
+                                                       if isinstance(row.get(key), str)))[:30]
+    supporting = result.get('supporting_evidence') or (envelope if isinstance(envelope, dict) else {})
+    if isinstance(supporting, dict):
+        observed_entities = [name for row in supporting.get('documents', []) if isinstance(row, dict)
+                             for name in row.get('entity_names', []) if isinstance(name, str) and len(name) <= 120]
+        observation['entity_names'] = list(dict.fromkeys([*observation.get('entity_names', []), *observed_entities]))[:30]
+        resource_entities: dict[str, list[str]] = {}
+        for row in supporting.get('documents', []):
+            if (isinstance(row, dict) and not row.get('derived')
+                    and str(row.get('source', '')).startswith('core://')):
+                resource = row['source'].removeprefix('core://')
+                resource_entities.setdefault(resource, [])
+                if isinstance(row.get('entity_id'), str) and row['entity_id'] not in resource_entities[resource]:
+                    resource_entities[resource].append(row['entity_id'])
+        observation['resource_entities'] = {key: values[:20] for key, values in resource_entities.items()}
+        from bank_agent.consultation import valid_read_step
+        observation['read_requests'] = [dict(step) for step in (supporting.get('read_budget') or {}).get('completed', [])
+                                        if isinstance(step, dict) and step.get('tool') not in {'rules', 'knowledge', 'account_context', 'subscriptions'}
+                                        and valid_read_step(step)][:5]
     key = str(state.get("intent") or "UNKNOWN")
     observations.pop(key, None)
     observations[key] = observation
