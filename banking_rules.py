@@ -89,6 +89,7 @@ def implementation_manifest() -> dict[str, str]:
              'intent_language.py', 'bank_agent/extraction.py', 'bank_agent/dialogue_state.py', 'bank_agent/dialogue.py', 'bank_agent/pending_questions.py',
              'bank_planning/requests.py', 'bank_agent/parsing.py', 'bank_agent/consultation.py',
              'bank_agent/evidence.py', 'bank_agent/evidence_session.py', 'bank_agent/goal_answering.py',
+             'bank_agent/dialogue_commands.py', 'bank_agent/computations.py', 'bank_agent/answer_repair.py', 'bank_agent/prompt_preferences.py',
              'bank_agent/nodes/intent.py', 'bank_agent/nodes/responder.py', 'bank_agent/nodes/executor.py',
              *(path for paths in REFERENCES.values() for path in paths)}
     return {path: hashlib.sha256((root / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest() for path in sorted(files)}
@@ -145,7 +146,9 @@ def search_rules(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
 def export_rules() -> dict[str, Any]:
     return {'schema_version': 1, 'knowledge_version': KNOWLEDGE_VERSION, 'rules_version': rules_version(),
             'implementation': implementation_manifest(), 'rules': rule_documents(), 'followups': followup_catalog(),
-            'request_protocol': {'version': 1, 'resources': RESOURCES, 'coverage_statuses': sorted(STATUSES)}}
+            'request_protocol': {'version': 1, 'resources': RESOURCES, 'coverage_statuses': sorted(STATUSES),
+                                 'calculation_operations': ['difference', 'sum', 'count'],
+                                 'discussion_commands': ['RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL']}}
 
 
 def render_rulebook() -> str:

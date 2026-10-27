@@ -152,7 +152,23 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     compound = prior_context.get("compound_workflow") if state.get("continue_workflow") or prior_context.get("pending_clarification") or prior_context.get("risk_quiz") else None
     if compound and compound["steps"][compound["index"]].get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
         compound = None
+    from bank_planning.requests import request_goals, read_only_goals
     parts = split_parts(text)
+    transition = None
+    if understood is not None:
+        from bank_agent.dialogue_commands import apply_command
+        transition = apply_command(state, understood, text)
+        if transition:
+            understood, prior_context = transition['parsed'], transition['context']
+            state = {**state, 'context': prior_context, 'dialogue_state': transition['view']}
+            audit_event('DIALOGUE_TRANSITION', user_id=state.get('user_id'), request_id=state.get('request_id'),
+                        decision='DISCUSSION_ONLY', outcome=transition['type'], metadata={'fields': transition['updated_fields']})
+            if transition['proposal_input']:
+                parts = [text]
+            elif not request_goals(understood):
+                return {**empty_state(final_response='已暂停当前待补信息任务，尚未执行操作。' if transition['type'] == 'PAUSE' else '已取消当前待补信息任务，尚未执行操作。'),
+                        'request_id': state.get('request_id'), 'context': prior_context, 'dialogue_state': transition['view'],
+                        'business_status': 'CANCELLED' if transition['type'] == 'CANCEL' else 'NEEDS_INPUT'}
     if understood is not None:
         from bank_planning.requests import request_goals, read_only_goals
         from bank_agent.dialogue_state import resume_task
@@ -218,8 +234,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         parsed["confidence"] = None
     from bank_agent.dialogue_state import resume_task
 
-    resumed_slot = False
-    restored = resume_task(state, parsed, text)
+    resumed_slot = bool(transition and transition['proposal_input'])
+    restored = None if transition else resume_task(state, parsed, text)
     if restored:
         verified_amount = restored.pop('_verified_slot_resume', None)
         if verified_amount is not None:
@@ -425,6 +441,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         pending_clarification = pending
     result = {
         **parsed,
+        'dialogue_state': state.get('dialogue_state') or {},
         "request_id": state.get("request_id") or f"agent_{uuid.uuid4().hex}",
         "risk_level": None,
         "auth_token": None,
@@ -466,7 +483,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         "reminder_at": None,
         "sub_requests": sub_requests or None,
     }
-    audit_meta = {key: value for key, value in (parsed.get("parse_meta") or {}).items() if key not in {"questions", "goals"}}
+    audit_meta = {key: value for key, value in (parsed.get("parse_meta") or {}).items() if key not in {"questions", "goals", 'task_command'}}
     audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence"), "parse_meta": audit_meta, "goal_count": len(semantic_goals), "sub_intents": [item.get("intent") for item in sub_requests] or None})
     return result
 

@@ -25,7 +25,7 @@ from scripts.dialogue_eval.schema import Task, load_dataset
 
 
 def source_fingerprints() -> dict[str, str]:
-    files = [*ROOT.glob("*.py"), Path(__file__)]
+    files = [*ROOT.glob("*.py"), Path(__file__), ROOT/'scripts/optimize_dialogue_prompts.py']
     for directory in ("bank_agent", "bank_core", "bank_security", "bank_planning", "scripts/dialogue_eval"):
         files.extend((ROOT / directory).rglob("*.py"))
     return {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(set(files))}
@@ -51,6 +51,8 @@ def worker(job_path: Path) -> int:
         raise RuntimeError("Worker requires a fresh isolated process")
     job = json.loads(job_path.read_text(encoding="utf-8"))
     task = Task.model_validate(job["task"])
+    from bank_agent.prompt_preferences import install_for_evaluation
+    install_for_evaluation(job.get('instructions', {}))
     with tempfile.TemporaryDirectory(prefix="anyan-task-eval-") as temporary:
         os.environ.update(isolated_settings(Path(temporary)))
         from langchain_openai import ChatOpenAI
@@ -104,6 +106,7 @@ def main(argv=None) -> int:
     parser.add_argument("--seed", type=int, default=20261025)
     parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--user", choices=["model", "scripted"], default="model")
+    parser.add_argument('--prompt-bundle', type=Path, help='Offline-only JSON instruction candidate; never changes production')
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--_worker", type=Path, help=argparse.SUPPRESS)
@@ -113,11 +116,15 @@ def main(argv=None) -> int:
     if not 1 <= args.trials <= 10:
         parser.error("--trials must be between 1 and 10")
     dataset, digest = load_dataset(args.cases)
+    from bank_agent.prompt_preferences import validate_instructions
+    bundle_bytes = args.prompt_bundle.read_bytes() if args.prompt_bundle else b'{}'
+    instructions = validate_instructions(json.loads(bundle_bytes))
     unknown = set(args.task) - {task.id for task in dataset.tasks}
     if unknown:
         parser.error("Unknown task IDs: " + ", ".join(sorted(unknown)))
     tasks = [task for task in dataset.tasks if not args.task or task.id in args.task]
-    plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, 'dataset_split': dataset.split, "task_ids": [task.id for task in tasks], "user": args.user,
+    plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, 'dataset_split': dataset.split,
+            'prompt_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(), "task_ids": [task.id for task in tasks], "user": args.user,
             "trials_per_task": args.trials, "planned_trials": len(tasks) * args.trials,
             "max_agent_turns": sum(len(task.phases) for task in tasks) * args.trials}
     if args.dry_run:
@@ -166,12 +173,14 @@ def main(argv=None) -> int:
             trial_seed = args.seed + task_positions[task.id] * 100 + trial
             result_path = output / f"{task.id}-{trial}.json"
             job = {"task": task.model_dump(), "trial": trial, "seed": trial_seed, "result": str(result_path),
-                   "models": models, "user": args.user}
+                   "models": models, "user": args.user, 'instructions': instructions}
             job_path = output / "worker-job.json"
             job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
             try:
                 if source_fingerprints() != metadata["source_sha256"] or hashlib.sha256(args.cases.read_bytes()).hexdigest() != digest:
                     raise RuntimeError("Candidate sources or dataset changed during evaluation")
+                if args.prompt_bundle and args.prompt_bundle.read_bytes() != bundle_bytes:
+                    raise RuntimeError('Instruction candidate changed during evaluation')
                 process = subprocess.run([sys.executable, "-m", "scripts.evaluate_dialogue_tasks", "--_worker", str(job_path)],
                                          cwd=ROOT, env=child_env, capture_output=True, timeout=600)
                 if process.returncode != 0 or not result_path.exists():

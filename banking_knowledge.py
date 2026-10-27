@@ -9,7 +9,7 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-10-27.1"
+KNOWLEDGE_VERSION = "2026-10-27.2"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits", "contacts"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、联系人与收款人、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
@@ -50,6 +50,10 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
         ("dialogue", "不想、不要、先别、假设或只问操作步骤均不授权办理。先区分查询事实、解释规则、实际办理、补充信息、切换话题与不支持；引用和条件陈述不能当作新变更；当前问题优先于历史话题，插问不自动取消或恢复原办理。不要把普通语气词或谓词误当业务对象二选一。"),
         ("objects", "用户明确写出的对象和编号优先，并与本人已核验记录匹配；不能因模型漏填而改成查询全部，也不能用名称前缀误选另一人或商户。历史只帮助解释明确指代，不为新办理补造收款人、金额或预算；真正缺项或多义时针对该字段追问。"),
         ("balance", "余额字段分别表示总余额、锁定金额和可用余额，可用余额为总余额减锁定金额。只问可用余额就回答该字段，不能用总余额替代；金额来自本人余额接口，不能由模型或规则文本推算当前账户值。"),
+        ("period_balance", "期间消费合计统计所选时间范围内的支出，当前可用余额是当前时点能动用的资金。两者不是同一口径，不应直接相等；余额还受期初资金、收入、其他支出及锁定金额等影响。具体合计与余额需分别核对同一查询期间的流水和当前余额，不能仅凭支出数推断全部资金变动。"),
+        ("task_frames", "讨论任务按本人、对象和缺失字段分别保存，插问可暂停原任务，恢复、补充和纠正通过已验证的任务命令处理。命令片段必须来自本轮原文，金额和对象重新核对；讨论状态不包含授权，不恢复已消费或过期的审批，完整办理仍生成新的确认提案。"),
+        ("arithmetic", "差额、合计和数量使用显式计算目标，绑定原始资源、字段及对象。程序只对本次已核验字段计算，并保留操作数证据；不能用用户猜测、过期结果、缺失对象或截断列表计算金额。计数可使用完整集合的服务端统计，不从展示条数推断总数。只列原始金额不能算完成计算目标，计算证据不授予任何写权限。"),
+        ("repair_feedback", "修复反馈须绑定本轮目标并区分补数据、补计算、改写和澄清。保留审核指出的具体缺口；金额占位或数字格式错误只改写，不重复取数。原始读取、失败重试和补查共用预算，同一失败读取最多重试一次；预算耗尽后准确报告部分完成。"),
         ("answer_focus", "直接回答当前问题所指对象和字段。不要附带无关的全量流水、其他订阅或取消建议；解释必须区分登记状态、计划日期和已执行结果。证据缺失应指出具体缺口，不能用通用能力介绍代替答案。"),
         ("commit", "审批、确认、验证通过或 HTTP 请求已发出，都不等于业务成功。配置持久化后，业务及回执保存成功才可发布成功；写盘失败则返回失败并回滚业务，已消耗的授权不恢复。结果不确定时查询原操作回执，不自动以新请求重做付款。"),
         ("coverage", "一轮包含多项查询和解释时应分别识别对象、所问字段与数据源，再合并回答；当前问题优先于历史话题。每项本人状态必须有对应读取记录，规则不能替代；意图、goals、历史与推荐都不能授予办理权限。"),
@@ -133,7 +137,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
 def knowledge_documents(topic: str) -> list[dict[str, str]]:
     selected = topic if topic in TOPICS else "general"
     return [{"id": f"guide.{selected}.{key}", "topic": selected, "text": text,
-             "audience": "model" if selected == 'general' and key in {'data_sources', 'coverage', 'repair'} else "user",
+             "audience": "model" if selected == 'general' and key in {'data_sources', 'coverage', 'repair', 'task_frames', 'arithmetic', 'repair_feedback'} else "user",
              "source": f"product://{KNOWLEDGE_VERSION}/{selected}/{key}"} for key, text in DOCUMENTS[selected]]
 
 

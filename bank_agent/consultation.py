@@ -90,12 +90,18 @@ def read_evidence(state: Mapping[str, Any], step: Mapping[str, Any]) -> list[dic
         ids = list(dict.fromkeys(ids))
         if not ids:
             return []
-        expected = select_rules(ids)
-        data = _get(state, 'service-guide?' + urlencode({'rule_ids': ','.join(ids)}))
-        if (data.get('knowledge_version') != KNOWLEDGE_VERSION or data.get('rules_version') != rules_version()
-                or data.get('documents') != expected):
-            raise ValueError('Rule version/content mismatch')
-        return [{**item, 'required': False, 'context_only': item['id'] not in base_ids} for item in expected]
+        if len(ids) > 40:
+            raise ValueError('Rule batch limit exceeded')
+        documents = []
+        for offset in range(0, len(ids), 20):
+            batch = ids[offset:offset+20]
+            expected = select_rules(batch)
+            data = _get(state, 'service-guide?' + urlencode({'rule_ids': ','.join(batch)}))
+            if (data.get('knowledge_version') != KNOWLEDGE_VERSION or data.get('rules_version') != rules_version()
+                    or data.get('documents') != expected):
+                raise ValueError('Rule version/content mismatch')
+            documents += expected
+        return [{**item, 'required': False, 'context_only': item['id'] not in base_ids} for item in documents]
     if tool == "knowledge":
         topic = step.get("topic")
         if topic not in TOPICS:
@@ -119,6 +125,8 @@ def read_evidence(state: Mapping[str, Any], step: Mapping[str, Any]) -> list[dic
             for row in docs:
                 result_docs.append({**row, 'id': f'read.contacts.{len(result_docs)}', 'fields': ['records', 'name', 'saved'],
                                     'subject': selector, 'entity_names': names[:30]})
+            if selector is None and result_docs:
+                result_docs[0].update(collection_size=len(names), selection=[], complete=True)
         return result_docs
     if tool in {'wealth_products', 'wealth_holdings', 'risk_profile', 'tasks'}:
         from bank_agent.evidence import project_records

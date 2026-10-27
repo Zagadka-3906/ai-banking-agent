@@ -59,6 +59,37 @@ def test_simulator_view_cannot_see_private_oracle_or_fixed_answers():
     assert item.phases[0].criteria not in messages[-1].content
 
 
+def test_intermediate_read_and_coverage_milestones_cannot_be_overruled_by_judge():
+    item=task().model_copy(deep=True)
+    item.phases[0].required_reads=['contacts']
+    item.phases[0].answered_goals=1
+    item.phases[0].goal_shift=True
+    row=run_trial(item,Environment(),SimpleNamespace(next=lambda view,utterance:{'text':utterance}),
+                  SimpleNamespace(assess=lambda partial,*args:verdict(partial)),seed=1,trial=1)
+    assert row['status']=='FAIL'
+    failed=[check['id'] for check in row['checks'] if not check['passed']]
+    assert 'phase_1.milestone.read.contacts' in failed and 'phase_1.milestone.answered_goals' in failed
+    summary=summarize([item],1,[row])
+    assert summary['intermediate_milestones']['failed']==2
+    assert summary['goal_shifts']=={'observed':1,'answered_in_same_turn':0}
+
+
+def test_evaluation_counts_repeated_reads_and_actual_turn_latency():
+    item=task()
+    env=Environment()
+    original=env.step
+    def observed(*args):
+        result=original(*args)
+        result['core_calls']=[{'method':'GET','path':'/api/v1/cards/user_zhang'}]*2
+        result['elapsed_ms']=40
+        return result
+    env.step=observed
+    row=run(item,env)
+    summary=summarize([item],1,[row])
+    assert summary['within_turn_duplicate_gets']==len(item.phases)
+    assert summary['turn_latency_ms']=={'median':40,'p95':40}
+
+
 @pytest.mark.parametrize("mutate", [
     lambda value: value.update(checks=[]),
     lambda value: value["checks"].append(value["checks"][0]),

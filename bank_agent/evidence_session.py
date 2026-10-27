@@ -51,7 +51,9 @@ class EvidenceSession:
             step.pop('subjects', None)
             if selection:
                 step['subjects'] = selection
-        if not valid_read_step(step) or step in self.completed or len(self.completed) >= self.maximum:
+        retries = sum(previous == step for previous in self.completed)
+        failed = any(item['tool'] == step.get('tool') for item in self.failures)
+        if not valid_read_step(step) or retries >= (2 if failed else 1) or len(self.completed) >= self.maximum:
             return False
         self.completed.append(step)
         try:
@@ -139,6 +141,8 @@ class EvidenceSession:
                    'context': context, 'feedback': feedback, 'read_failures': self.failures, 'evidence': list(self.documents.values()),
                    'tools': sorted(TOOLS), 'resources': RESOURCES, 'completed_reads': self.completed,
                    'remaining_reads': self.maximum - len(self.completed)}
+        from bank_agent.prompt_preferences import suffix
+        prompt += suffix('planning')
         try:
             answer = invoke_model(runtime.llm, [runtime.SystemMessage(content=prompt), runtime.HumanMessage(content=json.dumps(payload, ensure_ascii=False))])
             plan = extract_json(answer.content)
@@ -151,6 +155,19 @@ class EvidenceSession:
             return changed
         except Exception:
             return False
+
+    def repair(self, feedback: list[dict[str, Any]]) -> bool:
+        """Re-read only data gaps. A formatting/coverage rewrite costs no reads."""
+        reads = [item for item in feedback if item.get('action', 'READ') in {'READ', 'CALCULATE'}]
+        if not reads:
+            return False
+        changed = False
+        for item in reads:
+            goal = next((goal for goal in self.goals if goal['id'] == item.get('goal_id')), None)
+            step = goal_read(goal) if goal else None
+            if step:
+                changed = self.read(step) or changed
+        return self.plan(reads) or changed
 
     def result(self) -> dict[str, Any]:
         rows = self.facts()
@@ -166,5 +183,8 @@ class EvidenceSession:
     def facts(self) -> list[dict[str, Any]]:
         # Preserve requested records and material limitations before optional
         # adjacent rules, rather than dropping later domains at the size cap.
-        return sorted(self.documents.values(), key=lambda row: (
+        from bank_agent.computations import calculation_evidence
+        documents = [row for row in self.documents.values() if not row.get('source', '').startswith('calculation://')]
+        documents += calculation_evidence(self.goals, documents)
+        return sorted(documents, key=lambda row: (
             0 if row.get('required') else 1 if row['id'].startswith('read.') else 3 if row.get('context_only') else 2))[:80]

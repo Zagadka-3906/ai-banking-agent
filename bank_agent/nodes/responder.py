@@ -180,6 +180,9 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                     or len(documents) != len(facts) or len(documents) > 80):
                 return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
             ids = set()
+            from bank_agent.computations import calculation_evidence
+            from bank_planning.requests import request_goals
+            calculations = {row['id']: row for row in calculation_evidence(request_goals(state), documents)}
             for index, item in enumerate(documents):
                 if (not isinstance(item, dict) or not valid_text_field(item.get("id"), max_length=100)
                         or item["id"] in ids or item.get("text") != facts[index]):
@@ -187,6 +190,8 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                 ids.add(item["id"])
                 if item["id"] in known:
                     valid = item.get("text") == known[item["id"]]["text"] and item.get("source") == known[item["id"]]["source"]
+                elif item['id'] in calculations:
+                    valid = item == calculations[item['id']]
                 else:
                     valid = bool(re.fullmatch(r"context\.[a-z_.0-9]+", item["id"]) and item.get("source") == "core://assistant/context"
                                  or re.fullmatch(r"read\.(balance|cards|disputes|transactions|contacts|wealth_products|wealth_holdings|risk_profile|tasks|subscriptions)\.\d+", item["id"])

@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from enum import Enum
 import math
+import re
 from typing import Any, Mapping, Optional
 
 try:  # security.py is available in the application, but keep this module reusable.
@@ -224,6 +225,18 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             parse_meta["topic_relation"] = str(meta["topic_relation"])
         if meta.get("resume_task_id") in ALL_INTENTS:
             parse_meta["resume_task_id"] = str(meta["resume_task_id"])
+        command = meta.get('task_command')
+        if (isinstance(command, dict) and set(command) == {'type', 'task_id', 'evidence'}
+                and command.get('type') in {'RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL'}
+                and isinstance(command.get('task_id'), str) and re.fullmatch(r'[A-Za-z0-9:_-]{1,80}', command['task_id'])
+                and isinstance(command.get('evidence'), str) and 1 <= len(command['evidence']) <= 300):
+            # Principal, task existence and literal provenance are checked by
+            # the discussion manager against this turn, never by this schema.
+            parse_meta['task_command'] = dict(command)
+        if meta.get('task_transition') in {'RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL'}:
+            parse_meta['task_transition'] = meta['task_transition']
+        if meta.get('command_error') == 'INVALID_DIALOGUE_COMMAND':
+            parse_meta['command_error'] = meta['command_error']
         if isinstance(meta.get("questions"), list):
             parse_meta["questions"] = [str(value)[:300] for value in meta["questions"][:5] if isinstance(value, str)]
         if 'goals' in meta:

@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from collections import Counter
-from math import comb
+from math import comb, ceil
+from statistics import median
 import time
 from typing import Any
 
@@ -25,6 +26,19 @@ class Judgement(StrictModel):
     checks: list[CommunicationCheck]
     simulator_faithful: bool
     naturalness: int = Field(ge=1, le=5)
+
+
+def milestone_checks(phase, observed: dict) -> dict[str, bool]:
+    """Check observable intermediate facts without fixing a reasoning trace."""
+    routes = {'balance': '/balance', 'cards': '/cards/', 'transactions': '/transactions',
+              'contacts': '/book', 'wealth_products': '/wealth/products', 'wealth_holdings': '/wealth/holdings',
+              'risk_profile': '/wealth/risk-profile', 'tasks': '/tasks', 'disputes': '/disputes'}
+    calls = observed['core_calls']
+    checks = {'milestone.read.' + resource: any(call['method'] == 'GET' and routes[resource] in call['path'] for call in calls)
+              for resource in phase.required_reads}
+    if phase.answered_goals is not None:
+        checks['milestone.answered_goals'] = sum(item.get('status') == 'ANSWERED' for item in observed.get('coverage', [])) >= phase.answered_goals
+    return checks
 
 
 def evaluate_judgement(raw: dict, task: Task) -> dict:
@@ -53,7 +67,8 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
                 raise ValueError("Missing hard checks")
             if any(type(value) is not bool for value in observed["checks"].values()):
                 raise ValueError("Hard checks must be booleans")
-            result["turns"].append({"phase": index, "user": text, **observed})
+            observed['checks'] = {**observed['checks'], **milestone_checks(phase, observed)}
+            result["turns"].append({"phase": index, "user": text, 'goal_shift': phase.goal_shift, **observed})
             history.extend([{"role": "user", "text": text}, {"role": "assistant", "text": observed["reply"],
                             "approval": observed["approval"]}])
             result["checks"].extend({"id": f"phase_{index}.{key}", "passed": value} for key, value in observed["checks"].items())
@@ -114,7 +129,20 @@ def summarize(tasks: list[Task], trials: int, rows: list[dict]) -> dict:
     repeats = sum(left["reply"].strip() == right["reply"].strip() and bool(left["reply"].strip())
                   for row in rows for left, right in zip(row.get("turns", []), row.get("turns", [])[1:]))
     coverage = Counter(item.get('status') for row in rows for turn in row.get('turns', []) for item in turn.get('coverage', []))
+    turns = [turn for row in rows for turn in row.get('turns', [])]
+    latencies = sorted(turn['elapsed_ms'] for turn in turns if isinstance(turn.get('elapsed_ms'), (int, float)))
+    duplicate_gets = 0
+    for turn in turns:
+        paths = [call['path'] for call in turn.get('core_calls', []) if call['method'] == 'GET']
+        duplicate_gets += len(paths) - len(set(paths))
+    shifts = [(row, turn) for row in rows for turn in row.get('turns', []) if turn.get('goal_shift')]
+    recovered = sum(all(turn['checks'].values()) and any(check['id'] == f'phase_{turn["phase"]}' and check['passed']
+                    for check in (row.get('communication') or {}).get('checks', [])) for row, turn in shifts)
     return {"complete": complete, "planned_trials": len(expected), "recorded_trials": len(rows),
+            'intermediate_milestones': dict(Counter('passed' if check['passed'] else 'failed' for row in rows for check in row.get('checks', []) if '.milestone.' in check['id'])),
+            'goal_shifts': {'observed': len(shifts), 'answered_in_same_turn': recovered},
+            'within_turn_duplicate_gets': duplicate_gets,
+            'turn_latency_ms': {'median': median(latencies) if latencies else None, 'p95': latencies[max(0, ceil(.95 * len(latencies))-1)] if latencies else None},
             'goal_statuses': dict(coverage),
             "passed": counts["PASS"], "failed": counts["FAIL"], "errors": counts["ERROR"],
             "not_run": len(expected - set(identities)), "tasks": per_task,

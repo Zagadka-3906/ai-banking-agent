@@ -62,7 +62,8 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
         if not valid_balance_payload(data):
             raise ValueError('BALANCE_FIELDS_INVALID')
         keys = ['total_balance', 'available_balance', 'locked_amount'] if 'records' in selected else selected
-        return [_document(resource, index, f'{LABELS[key]}为¥{float(data[key]):,.2f}。', [key]) for index, key in enumerate(keys)]
+        return [{**_document(resource, index, f'{LABELS[key]}为¥{float(data[key]):,.2f}。', [key]),
+                 'values': {key: str(Decimal(str(data[key])))}} for index, key in enumerate(keys)]
     if resource == 'risk_profile':
         profile = data.get('data')
         if profile is None:
@@ -98,14 +99,15 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
             return [_document(resource, index, f'已读取本人当前{RESOURCE_NAMES[resource]}记录，未找到“{name}”的匹配记录。',
                               ['records', *keys], name) for index, name in enumerate(missing_selectors)]
         return [_document(resource, 0, f'已读取本人当前{RESOURCE_NAMES[resource]}记录，匹配共0条，未找到' + (f'“{subject}”的匹配记录。' if subject else '记录。'),
-                          ['records', *keys], subject)]
-    documents: list[dict[str, Any]] = [_document(resource, 0, f'本次本人{RESOURCE_NAMES[resource]}匹配共{len(rows)}条。', ['records'], subject)]
+                          ['records', *keys], subject) | {'collection_size': 0, 'selection': list(selectors), 'complete': True}]
+    documents: list[dict[str, Any]] = [{**_document(resource, 0, f'本次本人{RESOURCE_NAMES[resource]}匹配共{len(rows)}条。', ['records'], subject),
+                                       'collection_size': len(rows), 'selection': list(selectors), 'complete': len(rows) <= 12}]
     for row in rows[:12]:
         identity = next((str(row[key]) for key in ('subscription_id', 'task_id', 'holding_id', 'case_id', 'tx_id', 'product_id', 'card_id') if row.get(key)), resource)
         record_id = identity
         if resource == 'subscriptions':
             identity = str(row['merchant']) + '（' + identity + '）'
-        parts, available = [], []
+        parts, available, numeric_values = [], [], {}
         for key in keys:
             value = row.get(key)
             if resource == 'tasks' and key == 'amount':
@@ -128,6 +130,7 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
                     raise ValueError('EVIDENCE_NUMBER_INVALID')
                 label = '每期金额' if resource == 'subscriptions' and key == 'amount' else LABELS[key]
                 parts.append(f'{label}¥{float(value):,.2f}')
+                numeric_values[key] = str(Decimal(str(value)))
             elif key == 'annualized_yield':
                 if not finite_number(value, nonnegative=True):
                     raise ValueError('EVIDENCE_NUMBER_INVALID')
@@ -144,7 +147,7 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
             entities += [alias for alias, product_id in PRODUCT_ALIASES.items() if row.get('product_id') == product_id]
             documents.append({**_document(resource, len(documents), identity + '：' + '；'.join(parts) + '。', ['records', *available],
                                           subject or row.get('merchant') or row.get('name') or row.get('product_id')),
-                              'entity_names': entities, 'entity_id': record_id})
+                              'entity_names': entities, 'entity_id': record_id, 'values': numeric_values})
     for name in missing_selectors:
         documents.append(_document(resource, len(documents), f'已读取本人当前{RESOURCE_NAMES[resource]}记录，未找到“{name}”的匹配记录。', ['records', *keys], name))
     if len(selectors) == 2 and len(rows) == 2 and not missing_selectors:

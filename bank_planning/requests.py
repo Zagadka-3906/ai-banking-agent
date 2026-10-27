@@ -19,6 +19,7 @@ RESOURCES: dict[str, dict[str, Any]] = {
 }
 ACTS = {'QUERY', 'EXPLAIN', 'ACTION', 'UNSUPPORTED', 'UNCLEAR'}
 STATUSES = {'ANSWERED', 'NEEDS_DATA', 'NEEDS_CLARIFICATION', 'NEEDS_CONFIRMATION', 'UNSUPPORTED', 'TOOL_FAILED'}
+CALCULABLE_FIELDS = {'total_balance', 'available_balance', 'locked_amount', 'amount', 'principal', 'estimated_value', 'min_amount', 'daily_limit'}
 
 
 def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -31,7 +32,7 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
                 if isinstance(name, str)]
     goals = []
     for index, item in enumerate(value):
-        if (not isinstance(item, dict) or set(item) - {'act', 'resource', 'question', 'fields', 'subject', 'subjects', 'topic', 'requires_record'}
+        if (not isinstance(item, dict) or set(item) - {'act', 'resource', 'question', 'fields', 'subject', 'subjects', 'topic', 'requires_record', 'calculation'}
                 or item.get('act') not in ACTS or item.get('resource') not in RESOURCES):
             raise ValueError('INVALID_REQUEST_GOAL')
         question, fields, subject = item.get('question'), item.get('fields', []), item.get('subject')
@@ -40,6 +41,17 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
             raise ValueError('INVALID_GOAL_SUBJECTS')
         if item.get('requires_record') is not None and type(item['requires_record']) is not bool:
             raise ValueError('INVALID_RECORD_REQUIREMENT')
+        calculation = item.get('calculation')
+        if calculation is not None:
+            if (not isinstance(calculation, dict) or set(calculation) != {'operation', 'field'}
+                    or calculation.get('operation') not in {'difference', 'sum', 'count'}
+                    or calculation.get('field') not in RESOURCES[item['resource']]['fields']
+                    or item['resource'] == 'general' or item['act'] not in {'QUERY', 'EXPLAIN'}):
+                raise ValueError('INVALID_CALCULATION')
+            if calculation['operation'] != 'count' and calculation['field'] not in CALCULABLE_FIELDS:
+                raise ValueError('INVALID_CALCULATION_FIELD')
+            if calculation['operation'] == 'count' and calculation['field'] != 'records':
+                raise ValueError('INVALID_CALCULATION_FIELD')
         topic = item.get('topic', RESOURCES[item['resource']]['topic'])
         if topic not in TOPICS:
             raise ValueError('INVALID_GOAL_TOPIC')
@@ -56,6 +68,8 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
             if 2 <= len(parts) <= 5 and all(part in known for part in parts):
                 subjects, subject = [*subjects, *parts], None
         subjects = list(dict.fromkeys([*subjects, *([subject] if subject else [])]))
+        if calculation and calculation['operation'] == 'difference' and len(subjects) != 2:
+            raise ValueError('CALCULATION_OPERANDS_REQUIRED')
         resolved, unclear_reference = [], False
         for name in subjects:
             if re.fullmatch(r'(?:这|那|该|上述|刚才)(?:一|个|张|笔|项|款)?(?:的)?(?:卡|卡片|银行卡|产品|交易|流水|任务|预约|工单|订阅|会员|联系人|收款人)?', name):
@@ -78,8 +92,12 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
                       'topic': topic,
                       'subject': subject.strip() if subject and bound else None,
                       'subjects': subjects if bound else [],
-                      'requires_record': item['act'] == 'QUERY' or item.get('requires_record') is True,
+                      'requires_record': item['act'] == 'QUERY' or item.get('requires_record') is True or calculation is not None,
                       'needs_subject': not bound})
+        if calculation is not None:
+            goals[-1]['calculation'] = dict(calculation)
+            if calculation['field'] not in fields:
+                goals[-1]['fields'] = [*fields, calculation['field']]
     return goals
 
 
@@ -96,10 +114,13 @@ def validated_goals(value: Any) -> list[dict[str, Any]]:
         raise ValueError('INVALID_REQUEST_GOALS')
     result = []
     for index, item in enumerate(value):
-        if (not isinstance(item, dict) or set(item) != {'id', 'act', 'resource', 'question', 'fields', 'subject', 'subjects', 'needs_subject', 'topic', 'requires_record'}
+        required = {'id', 'act', 'resource', 'question', 'fields', 'subject', 'subjects', 'needs_subject', 'topic', 'requires_record'}
+        if (not isinstance(item, dict) or not required <= set(item) or set(item) - required - {'calculation'}
                 or item.get('id') != f'q{index + 1}' or type(item.get('needs_subject')) is not bool):
             raise ValueError('INVALID_NORMALIZED_GOAL')
         raw = {key: item[key] for key in ('act', 'resource', 'question', 'fields', 'subject', 'subjects', 'topic', 'requires_record')}
+        if 'calculation' in item:
+            raw['calculation'] = item['calculation']
         normalized = normalize_goals([raw], ' '.join(item['subjects']), {})[0]
         result.append({**normalized, 'id': item['id'], 'needs_subject': item['needs_subject']})
     return result

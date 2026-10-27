@@ -18,7 +18,9 @@ def dialogue_view(state: Mapping[str, Any]) -> dict[str, Any]:
     value = state.get("dialogue_state")
     if not isinstance(value, dict) or value.get("principal") != state.get("user_id"):
         return {"version": 1, "principal": state.get("user_id"), "active_topic": "general", "tasks": []}
-    return {**value, "tasks": list(value.get("tasks") or [])[-4:]}
+    turn = value.get('turn', 0)
+    return {**value, "tasks": [task for task in list(value.get("tasks") or [])[-4:]
+                                if isinstance(task, dict) and task.get('expires_at', turn) >= turn]}
 
 
 def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:
@@ -28,14 +30,24 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
     context = state.get("context") or {}
     pending = context.get("pending_clarification")
     tasks = list(view["tasks"])
+    turn = int(view.get('turn', 0)) + 1
     intent = state.get("intent")
     if isinstance(pending, dict):
-        tasks = [task for task in tasks if task.get("intent") != pending.get("intent")]
         payload = {key: value for key, value in (pending.get("payload") or {}).items()
                    if key in {"intent", "target", "amount", "date_scope", "date_range", "participants", "product_ids", "slots", "scheduled_at", "event_at"}}
-        tasks.append({"id": str(pending.get("intent")), "intent": pending.get("intent"), "pending": {**pending, "payload": payload}})
+        selected = ((state.get('parse_meta') or {}).get('task_command') or {}).get('task_id')
+        existing = next((task for task in tasks if task.get('id') == selected or task.get('intent') == pending.get('intent')
+                         and ((task.get('pending') or {}).get('payload') or {}).get('target') == payload.get('target')), None)
+        frame_id = existing['id'] if existing else str(pending.get('intent'))
+        if not existing and any(task['id'] == frame_id for task in tasks):
+            frame_id += ':' + str(turn)
+        tasks = [task for task in tasks if task.get('id') != frame_id]
+        tasks.append({'id': frame_id, 'intent': pending.get('intent'), 'status': 'WAITING_INPUT' if intent == pending.get('intent') else 'PAUSED',
+                      'pending': {**pending, 'payload': payload}})
     if state.get("business_status") in {"SUCCEEDED", "CANCELLED"} or response.get("business_status") in {"SUCCEEDED", "CANCELLED"}:
-        tasks = [task for task in tasks if task.get("intent") != intent]
+        selected = ((state.get('parse_meta') or {}).get('task_command') or {}).get('task_id')
+        tasks = [task for task in tasks if not (task.get('id') == selected or task.get('intent') == intent
+                 and ((task.get('pending') or {}).get('payload') or {}).get('target') == state.get('target'))]
     topic = help_topic(str(state.get("user_input") or ""))
     selected = (state.get("slots") or {}).get("help_topic")
     if (topic == "general" or intent == "BANKING_HELP") and selected:
@@ -47,7 +59,7 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
     relation = (state.get("parse_meta") or {}).get("topic_relation")
     if topic == "general" and relation == "CONTINUE":
         topic = view.get("active_topic", "general")
-    result = {**view, "active_topic": topic, "question": _safe_text(state.get("user_input"), 500), "tasks": tasks[-4:]}
+    result = {**view, 'version': 2, 'turn': turn, "active_topic": topic, "question": _safe_text(state.get("user_input"), 500), "tasks": tasks[-4:]}
     # A finite-limit explanation can ask for a value without pretending that
     # a write was requested. This typed, principal-bound input expires on the
     # next topic/turn; the value itself must be stated anew, then re-approved.
@@ -69,6 +81,16 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
         elif len(cards) > 1 or re.search(r"尾号|末四位|后四位|那张|这张", text):
             # A bare amount must not silently choose a different primary card.
             result["next_input"] = None
+    # A policy explanation offers an input type, not an executable request.
+    # It expires after the immediate next turn and stores no previous amount.
+    if result['next_input']:
+        option = result['next_input']
+        frame_id = 'option:' + option['intent']
+        result['tasks'] = [task for task in result['tasks'] if task['id'] != frame_id]
+        result['tasks'].append({'id': frame_id, 'intent': option['intent'], 'status': 'OFFERED', 'expires_at': turn,
+                                'pending': {'intent': option['intent'], 'missing': [option['field']],
+                                            'payload': {'intent': option['intent'], 'target': option.get('target')}}})
+        result['tasks'] = result['tasks'][-4:]
     return result
 
 

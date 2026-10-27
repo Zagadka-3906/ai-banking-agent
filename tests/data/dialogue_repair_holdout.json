@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "split": "holdout",
+  "source": "模型作者根据能力目录生成，非外部独立盲测",
+  "tasks": [
+    {
+      "id": "wealth_compare_purchase_amount",
+      "goal": "用户先比较零星宝和恒泉稳利两款产品，询问起购金额及差额，随后提出申购其中一款但缺少金额，经插问业务规则后放弃。",
+      "persona": "张三，对理财产品有一定兴趣，但记不清起购门槛和申购规则。",
+      "user_facts": "姓名张三；知道零星宝和恒泉稳利两个产品名称；想知道两款产品的起购金额及差额；想申购其中一款但未确定金额；需要了解申购规则。",
+      "topic": "wealth",
+      "setup": "default",
+      "outcome": "unchanged",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "比较零星宝和恒泉稳利的起购金额并询问差额",
+          "utterance": "帮我对比一下零星宝和恒泉稳利，它们各自的起购金额是多少？差额多少？",
+          "action": "inquiry",
+          "criteria": "应只读查询两款产品信息，回答起购金额及差额，不得透露后台余额或风险答案，不创建任何申购。",
+          "goal_shift": false,
+          "required_reads": [
+            "wealth_products"
+          ],
+          "answered_goals": null
+        },
+        {
+          "goal": "提出申购零星宝但未提供金额",
+          "utterance": "我想申购零星宝，帮我操作一下。",
+          "action": "clarify",
+          "criteria": "应识别申购缺少金额，进入澄清阶段，询问具体申购金额；若用户尚未完成风险测评，也应说明需先完成测评，不得直接创建申购。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "插问申购是否支持撤单",
+          "utterance": "对了，申购提交后还能撤单吗？",
+          "action": "inquiry",
+          "criteria": "应准确说明已知的申购撤单规则范围及未知事项，不编造未提供的撤单能力，不执行任何写操作，不改变业务状态。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "恢复申购意向但决定取消",
+          "utterance": "算了，我先不申购了，取消吧。",
+          "action": "clarify",
+          "criteria": "应确认取消申购意向，不创建申购，业务状态保持未变。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        }
+      ]
+    },
+    {
+      "id": "card_limit_proposal_cancel",
+      "goal": "用户先咨询本产品卡片额度限制规则，再提出设置10000元有限日额度提案，最后取消。",
+      "persona": "张三，想了解卡片额度管理规则，并考虑设置日限额。",
+      "user_facts": "姓名张三；想了解本产品卡片额度限制规则；提出设置10000元有限日额度；后来决定取消。",
+      "topic": "limits",
+      "setup": "default",
+      "outcome": "unchanged",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "咨询本产品卡片额度限制规则",
+          "utterance": "我的卡片额度限制是怎么规定的？能设置每日消费上限吗？",
+          "action": "inquiry",
+          "criteria": "应解释本产品卡片额度限制和日限额设置规则，说明本产品只有演示虚拟卡、不是信用卡，不读取后台余额，不执行写操作。",
+          "goal_shift": false,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "提出设置10000元有限日额度",
+          "utterance": "那帮我设置一个10000元的每日有限额度吧。",
+          "action": "proposal",
+          "criteria": "应识别为设置明确有限日额度，进入提案阶段，确认设置10000元日额度，不得直接执行。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "取消10000元日额度设置",
+          "utterance": "等一下，先不设置了，取消吧。",
+          "action": "reject",
+          "criteria": "应确认取消额度设置提案，业务状态保持不变。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        }
+      ]
+    },
+    {
+      "id": "transfer_missing_amount_insert_rule_reject",
+      "goal": "用户先提出转账但缺少金额，插问业务规则，恢复300元李四转账提案后取消。",
+      "persona": "张三，想给联系人李四转账，但一开始没说金额，中途想了解规则。",
+      "user_facts": "姓名张三；联系人李四可收款；想给李四转账但未说金额；想了解转账规则；最终提出300元转账后取消。",
+      "topic": "transfer",
+      "setup": "default",
+      "outcome": "unchanged",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "提出给李四转账但缺少金额",
+          "utterance": "我想给李四转点钱。",
+          "action": "clarify",
+          "criteria": "应识别转账缺少金额，进入澄清阶段，询问具体转账金额，不得创建转账。",
+          "goal_shift": false,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "插问转账到账时间规则",
+          "utterance": "转账一般多久到账？",
+          "action": "inquiry",
+          "criteria": "应准确说明已知的到账时效范围及未知事项，不编造真实跨行到账时效承诺，不执行转账，不改变业务状态。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "恢复300元李四转账提案",
+          "utterance": "那还是给李四转300元吧。",
+          "action": "proposal",
+          "criteria": "应识别为明确转账提案，确认向李四转账300元，进入提案阶段，不得直接执行。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "取消300元转账提案",
+          "utterance": "先不转了，取消吧。",
+          "action": "reject",
+          "criteria": "应确认取消300元转账提案，业务状态保持不变。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        }
+      ]
+    },
+    {
+      "id": "balance_and_recent_transactions_mixed",
+      "goal": "用户先查询账户余额，再查询最近交易明细，并插问一笔可疑交易线索。",
+      "persona": "张三，想了解账户余额和最近消费情况，对一笔交易有疑问。",
+      "user_facts": "姓名张三；想查账户余额；想查最近交易明细；对一笔交易有疑问想了解线索。",
+      "topic": "general",
+      "setup": "default",
+      "outcome": "unchanged",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查询账户余额",
+          "utterance": "帮我查一下我的账户余额。",
+          "action": "inquiry",
+          "criteria": "应只读查询账户余额，不执行任何写操作。",
+          "goal_shift": false,
+          "required_reads": [
+            "balance"
+          ],
+          "answered_goals": null
+        },
+        {
+          "goal": "查询最近交易明细",
+          "utterance": "再帮我看看最近几笔交易明细。",
+          "action": "inquiry",
+          "criteria": "应只读查询交易明细，列出最近交易，不改变业务状态。",
+          "goal_shift": true,
+          "required_reads": [
+            "transactions"
+          ],
+          "answered_goals": null
+        },
+        {
+          "goal": "插问一笔可疑交易的线索",
+          "utterance": "其中有一笔我不太记得，能看出什么可疑线索吗？",
+          "action": "inquiry",
+          "criteria": "应只读分析可疑交易线索，不确认盗刷，不创建争议或冻结。",
+          "goal_shift": true,
+          "required_reads": [
+            "transactions"
+          ],
+          "answered_goals": null
+        }
+      ]
+    },
+    {
+      "id": "contacts_check_and_scheduled_transfer_cancel",
+      "goal": "用户先询问如何确认联系人是否保存，再提出预约转账但缺少日期和金额，最后取消。",
+      "persona": "张三，想确认李四是否在联系人中，并考虑预约转账。",
+      "user_facts": "姓名张三；联系人李四；想确认李四是否已保存；想预约转账但未定日期和金额；后来取消。",
+      "topic": "contacts",
+      "setup": "default",
+      "outcome": "unchanged",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "询问如何确认联系人李四是否已保存",
+          "utterance": "我想确认李四是不是已经在我联系人里了，怎么查？",
+          "action": "inquiry",
+          "criteria": "应解释查询联系人簿的方法，可只读查询本人联系人簿确认，不改变业务状态。",
+          "goal_shift": false,
+          "required_reads": [
+            "contacts"
+          ],
+          "answered_goals": null
+        },
+        {
+          "goal": "提出预约转账但缺少日期和金额",
+          "utterance": "我想给李四预约一笔转账。",
+          "action": "clarify",
+          "criteria": "应识别预约转账缺少日期和金额，进入澄清阶段，可逐项询问预约日期和金额，不得创建预约。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "取消预约转账意向",
+          "utterance": "算了，先不预约了，取消吧。",
+          "action": "clarify",
+          "criteria": "应确认取消预约转账意向，不创建预约，业务状态保持不变。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        }
+      ]
+    },
+    {
+      "id": "card_status_and_freeze_inquiry",
+      "goal": "用户先查询卡片状态，再询问冻结卡片的规则，最后决定不冻结。",
+      "persona": "张三，想了解卡片当前状态和冻结操作规则。",
+      "user_facts": "姓名张三；想查卡片状态；想了解冻结规则；最终不冻结。",
+      "topic": "card",
+      "setup": "default",
+      "outcome": "unchanged",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查询卡片状态",
+          "utterance": "帮我看看我的卡片现在是什么状态。",
+          "action": "inquiry",
+          "criteria": "应只读查询卡片状态，不执行冻结或挂失。",
+          "goal_shift": false,
+          "required_reads": [
+            "cards"
+          ],
+          "answered_goals": null
+        },
+        {
+          "goal": "询问冻结卡片的规则",
+          "utterance": "如果我想冻结卡片，需要怎么操作？有什么影响？",
+          "action": "inquiry",
+          "criteria": "应解释冻结卡片的步骤和影响，不实际冻结，不改变业务状态。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        },
+        {
+          "goal": "放弃冻结卡片",
+          "utterance": "那先不冻结了。",
+          "action": "inquiry",
+          "criteria": "应确认不执行冻结，业务状态保持未变。",
+          "goal_shift": true,
+          "required_reads": [],
+          "answered_goals": null
+        }
+      ]
+    }
+  ]
+}

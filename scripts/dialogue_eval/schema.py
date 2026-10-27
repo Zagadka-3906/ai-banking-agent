@@ -18,6 +18,9 @@ class Phase(StrictModel):
     utterance: str = Field(min_length=1, max_length=500)
     action: Literal["inquiry", "clarify", "proposal", "confirm", "reject"] = "inquiry"
     criteria: str = Field(min_length=1, max_length=1500)
+    goal_shift: bool = False
+    required_reads: list[Literal['balance', 'cards', 'transactions', 'contacts', 'wealth_products', 'wealth_holdings', 'risk_profile', 'tasks', 'disputes']] = Field(default_factory=list, max_length=5)
+    answered_goals: int | None = Field(default=None, ge=1, le=5)
 
 
 class Task(StrictModel):
