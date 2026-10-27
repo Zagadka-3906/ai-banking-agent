@@ -339,6 +339,7 @@ def remember_reply(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
         observation['read_requests'] = [dict(step) for step in (supporting.get('read_budget') or {}).get('completed', [])
                                         if isinstance(step, dict) and step.get('tool') not in {'rules', 'knowledge', 'account_context', 'subscriptions'}
                                         and valid_read_step(step)][:5]
+        observation['read_contexts'] = dict((supporting.get('read_budget') or {}).get('contexts') or {})
     key = str(state.get("intent") or "UNKNOWN")
     observations.pop(key, None)
     observations[key] = observation

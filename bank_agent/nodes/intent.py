@@ -139,10 +139,26 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     prior_context = state.get("context")
     if not isinstance(prior_context, dict):
         prior_context = {}
+    # Understand the whole utterance before a local conjunction splitter can
+    # turn a background clause into the active task. Reuse this parse below.
+    full_text = text
+    understood = None
+    if not prior_context.get('risk_quiz') and not state.get('continue_workflow'):
+        try:
+            with understanding_context(state):
+                understood = validate_intent_payload(model_parse(text))
+        except Exception:
+            understood = None
     compound = prior_context.get("compound_workflow") if state.get("continue_workflow") or prior_context.get("pending_clarification") or prior_context.get("risk_quiz") else None
     if compound and compound["steps"][compound["index"]].get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
         compound = None
     parts = split_parts(text)
+    if understood is not None:
+        from bank_planning.requests import request_goals, read_only_goals
+        from bank_agent.dialogue_state import resume_task
+        if ((understood.get('parse_meta') or {}).get('dialogue_act') in {'QUERY', 'EXPLAIN'}
+                or read_only_goals(request_goals(understood)) or resume_task(state, understood, text)):
+            parts = [text]
     if len(parts) > 8:
         return {**empty_state(final_response="一次最多办理 8 项任务，请分成两条消息。"), "context": {}, "request_id": state["request_id"]}
     if 2 <= len(parts) <= 8:
@@ -190,7 +206,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                 "context": prior_context, "request_id": state.get("request_id") or f"gw_{uuid.uuid4().hex}"}
     try:
         with understanding_context(state):
-            parsed = validate_intent_payload(model_parse(text))
+            parsed = understood if understood is not None and text == full_text else validate_intent_payload(model_parse(text))
     except Exception as exc:
         audit_event("INTENT_PARSE", user_id=state.get("user_id"), request_id=state["request_id"], decision="BLOCK", outcome="FAILURE", reason="INVALID_MODEL_OUTPUT", metadata={"error_type": type(exc).__name__})
         return {**empty_state(final_response="暂时无法安全解析这条指令，请补充业务类型、收款人或金额后重试。"), "request_id": state["request_id"]}
@@ -202,8 +218,14 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         parsed["confidence"] = None
     from bank_agent.dialogue_state import resume_task
 
+    resumed_slot = False
     restored = resume_task(state, parsed, text)
     if restored:
+        verified_amount = restored.pop('_verified_slot_resume', None)
+        if verified_amount is not None:
+            resumed_slot = True
+            parsed = validate_intent_payload({**restored['payload'], 'amount': verified_amount, 'confidence': None,
+                'parse_meta': {'source': 'rules_context', 'dialogue_act': 'SLOT_REPLY', 'resolution': 'verified_task_slot', 'fast_path_eligible': False}})
         prior_context = {**prior_context, "pending_clarification": restored}
         state = {**state, "context": prior_context}
     pending = prior_context.get("pending_clarification")
@@ -269,11 +291,11 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                            if key not in {'amount_ambiguous', 'target_ambiguous', 'request_ambiguous'}}
     if consultation or read_only_goals(semantic_goals):
         sub_requests = []
-    if len(split_parts(text)) > 1 and not compound and not sub_requests and not consultation and not semantic_read:
+    if len(parts) > 1 and not compound and not sub_requests and not consultation and not semantic_read:
         return {**empty_state(final_response="这条消息包含多项业务，其中有尚未明确的请求。请逐项补充业务、对象和金额，或分开办理。"), "context": {}, "request_id": state["request_id"]}
     # A compound request that also contains a mutating part is never split and
     # never silently half-answered: the user is asked to handle it in steps.
-    mixed_write = has_mutating_part(text) and not sub_requests and not compound and not consultation and not read_only_goals(semantic_goals)
+    mixed_write = has_mutating_part(text) and not sub_requests and not compound and not consultation and not read_only_goals(semantic_goals) and not resumed_slot
     # Resolve only explicit conversational references.  A prior recipient is
     # never silently used for a fresh request; the user must say “同一位/他”
     # and the operation remains behind the normal approval gate.

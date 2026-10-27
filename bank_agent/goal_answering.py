@@ -51,6 +51,8 @@ def _bind_literal_values(plan: dict[str, Any], facts: list[dict[str, Any]], anch
 
 def _matching(goal: Mapping[str, Any], facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = [row for row in facts if str(row['id']).startswith('read.' + str(goal['resource']) + '.')]
+    if goal['resource'] == 'general':
+        rows += [row for row in facts if row.get('source') == 'approval://current' and row['id'] in {'pending.operation', 'pending.status', 'pending.verification'}]
     selectors = goal.get('subjects') or ([goal['subject']] if goal.get('subject') else [])
     if selectors:
         rows = [row for row in rows if any(row.get('subject') == name or name in row.get('entity_names', []) for name in selectors)]
@@ -124,16 +126,21 @@ def _fallback(goals: list[dict[str, Any]], session: EvidenceSession) -> tuple[st
 
 
 def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[str, Any]:
-    from bank_agent.answering import _anchored_facts, _validate_draft
+    from bank_agent.answering import _anchored_facts, _validate_draft, answer_facts
     goals = request_goals(state)
     original = state.get('execution_result') or {}
     session = EvidenceSession(state, original)
+    for fact in answer_facts(state, response) if state.get('pending_operation') else []:
+        if fact['id'] in {'pending.operation', 'pending.status', 'pending.verification'}:
+            session.documents[fact['id']] = {**fact, 'source': 'approval://current', 'fields': ['records', 'status']}
     if original.get('type') != 'BANKING_HELP':
         resource = PRIMARY_RESOURCES.get(str(original.get('type')))
         if resource:
-            fields = list(dict.fromkeys(field for goal in goals if goal['resource'] == resource for field in goal['fields'])) or ['records']
+            resource_goals = [goal for goal in goals if goal['resource'] == resource and needs_record(goal)]
+            fields = list(dict.fromkeys(field for goal in resource_goals for field in goal['fields'])) or ['records']
+            subjects = list(dict.fromkeys(name for goal in resource_goals for name in goal.get('subjects', []))) if resource_goals and all(goal.get('subjects') for goal in resource_goals) else []
             data = original.get('data') or {'code': 200, 'data': original.get('records')}
-            seed = project_records(resource, data, state, fields=[field for field in fields if field != 'analysis'] or ['records'])
+            seed = project_records(resource, data, state, fields=[field for field in fields if field != 'analysis'] or ['records'], subjects=subjects)
             if resource == 'transactions' and 'analysis' in fields:
                 seed += [{'id': f'read.transactions.{len(seed) + index}', 'text': line, 'source': 'core://transactions',
                           'fields': ['analysis'], 'required': False}

@@ -71,8 +71,13 @@ def ambiguous_amount(text: str) -> bool:
     return len(values) > 1 or bool(values and chinese) or len(set(chinese)) > 1
 
 
+def recipient_source(text: str) -> str:
+    """Separate an instruction to the assistant from a payment recipient."""
+    return re.sub(r'(?:给|向)我(?=(?:核对|看(?:看|一下)|展示|解释|说明|查(?:询|看)?|列出|显示))', '请', business_text(text))
+
+
 def ambiguous_target(text: str) -> bool:
-    source = business_text(text)
+    source = recipient_source(text)
     references = re.findall(r"(?:转账给|转给|汇给|打给|给|向|收款人(?:改成|改为|换成|是|为))\s*(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*([一-龥A-Za-z0-9·_-]{1,24}?)(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))", source)
     names: set[str] = set()
     for reference in references:

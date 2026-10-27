@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
-from intent_language import ambiguous_amount, ambiguous_target, normalize_money_separators, split_tasks
+from intent_language import ambiguous_amount, ambiguous_target, normalize_money_separators, split_tasks, recipient_source
 
 
 _CHINESE_DIGITS = {
@@ -85,7 +85,7 @@ def amount_from_text(text: str) -> Optional[float]:
     if match:
         multiplier = {"万": 10000, "千": 1000}.get(match.group(2), 1)
     if not match:
-        match = re.search(r"(?:¥|￥)\s*" + number + r"(?![\d.,])", money_text)
+        match = re.search(r"(?:¥|￥)\s*" + number + r"(?!\d|[.,]\d)", money_text)
     if not match and re.search(
         # A bare number is money only next to a money verb.  The measure word
         # 笔 and the limit verbs 调到/调至/限额 are part of that context: users
@@ -94,7 +94,7 @@ def amount_from_text(text: str) -> Optional[float]:
         r"|转\s*[+\-]?\d|(?:一|1)?笔\s*[+\-]?\d",
         money_text,
     ):
-        match = re.search(r"(?<![A-Za-z0-9.,+\-])" + number + r"(?![A-Za-z0-9.,])", money_text)
+        match = re.search(r"(?<![A-Za-z0-9.,+\-])" + number + r"(?![A-Za-z0-9]|[.,]\d)", money_text)
     if match:
         # Do not reinterpret the positive suffix of a signed/approximate value.
         if re.search(r"(?:负|-|约|大致)\s*$", money_text[:match.start()]):
@@ -146,7 +146,7 @@ def target_from_text(text: str) -> Optional[str]:
     # the alias table, otherwise "冻结卡片 CARD-002" parses to no target at all and
     # the core, seeing an empty card_id, applies the operation to whichever card
     # it lists first - freezing the salary card when the user pointed at another.
-    text = re.split(r"备注|附言", text, maxsplit=1)[0]
+    text = recipient_source(text)
     if len(split_tasks(text)) == 1 and ambiguous_target(text):
         return None
     card = re.search(r"(?i)(?<![A-Za-z0-9])(card-[0-9a-z]{2,})(?![A-Za-z0-9])", text)

@@ -231,6 +231,8 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             parse_meta['goals'] = validated_goals(meta['goals'])
         if meta.get('goal_error') == 'INVALID_REQUEST_GOALS':
             parse_meta['goal_error'] = 'INVALID_REQUEST_GOALS'
+        if meta.get('goal_repair') in {'REPAIRED', 'FAILED'}:
+            parse_meta['goal_repair'] = meta['goal_repair']
         if isinstance(meta.get('parameter_sources'), list):
             parse_meta['parameter_sources'] = [key for key in meta['parameter_sources'] if key in {'amount', 'scheduled_at'}]
     # Renewal scheduling is opt-in and only meaningful for subscription reads.

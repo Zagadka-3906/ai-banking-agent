@@ -23,9 +23,10 @@ class EvidenceSession:
         self.completed: list[dict[str, Any]] = list(budget.get('completed') or [])
         self.failures: list[dict[str, str]] = list(budget.get('failures') or [])
         self.rounds = int(budget.get('rounds') or 0)
+        self.contexts: dict[str, dict[str, Any]] = dict(budget.get('contexts') or {})
         self.counter = len(self.documents)
 
-    def read(self, step: Mapping[str, Any]) -> bool:
+    def read(self, step: Mapping[str, Any], *, date_context: Mapping[str, Any] | None = None) -> bool:
         from bank_agent.consultation import read_evidence, valid_read_step
         step = dict(step)
         selection = step.get('subjects') or ([step['subject']] if step.get('subject') else [])
@@ -58,7 +59,14 @@ class EvidenceSession:
                 observations = dict(self.state.get('observations') or {}) if self.state.get('memory_principal') == self.state.get('user_id') else {}
                 observations['current_reads'] = {'entity_names': list(dict.fromkeys(name for row in self.documents.values() for name in row.get('entity_names', [])))[:100]}
                 read_state = {**self.state, 'memory_principal': self.state.get('user_id'), 'observations': observations}
+                if date_context and step['tool'] == 'transactions':
+                    from bank_planning.intents import validate_intent_payload
+                    dates = validate_intent_payload({'intent': 'BILL_QUERY', 'date_scope': date_context.get('date_scope'), 'date_range': date_context.get('date_range')})
+                    if (dates.get('slots') or {}).get('date_range_ambiguous'):
+                        raise ValueError('INVALID_READ_DATE_CONTEXT')
+                    read_state.update(date_scope=dates.get('date_scope'), date_range=dates.get('date_range'))
                 rows = read_evidence(read_state, step)
+                self.contexts[str(step['tool'])] = {'date_scope': read_state.get('date_scope'), 'date_range': read_state.get('date_range')}
             # A refreshed read replaces earlier facts for this resource. Keep
             # IDs unique so a repaired answer cannot cite a stale value.
             if step['tool'] in RESOURCES:
@@ -98,17 +106,20 @@ class EvidenceSession:
                         grouped[key]['subjects'] = list(dict.fromkeys([*old, *new]))
                 else:
                     grouped[key] = step
-        for step in grouped.values():
-            self.read(step)
-        if ((self.state.get('parse_meta') or {}).get('topic_relation') == 'CONTINUE'
-                and all(goal['act'] == 'EXPLAIN' for goal in self.goals)
+        if (all(goal['act'] == 'EXPLAIN' for goal in self.goals)
                 and self.state.get('memory_principal') == self.state.get('user_id')):
             previous = list((self.state.get('observations') or {}).values())[-1:]
             for observation in previous:
-                for step in observation.get('read_requests', [])[:3]:
-                    # Re-read the fixed owner-bound source; past answer prose
-                    # and past amounts never become current evidence.
-                    self.read(step)
+                steps = observation.get('read_requests', [])[:3]
+                related = {step['tool'] for step in steps} & {goal['resource'] for goal in self.goals}
+                if related or (self.state.get('parse_meta') or {}).get('topic_relation') == 'CONTINUE':
+                    for step in steps:
+                        # Keep the earlier period only when no new calendar
+                        # bound is stated. Values are always read again.
+                        dates = None if self.state.get('date_range') or self.state.get('date_scope') not in {None, 'ALL'} else (observation.get('read_contexts') or {}).get(step['tool'], observation)
+                        self.read(step, date_context=dates)
+        for step in grouped.values():
+            self.read(step)
         self.plan([])
 
     def plan(self, feedback: list[dict[str, Any]]) -> bool:
@@ -150,7 +161,7 @@ class EvidenceSession:
         return {'type': 'BANKING_HELP', 'data': {'code': 200, 'user_id': self.state.get('user_id'), 'version': 1,
                 'knowledge_version': KNOWLEDGE_VERSION, 'topic': next(iter(topics)) if len(topics) == 1 else 'general', 'documents': rows,
                 'facts': [row['text'] for row in rows], 'read_failures': len(self.failures),
-                'read_budget': {'maximum': self.maximum, 'completed': self.completed, 'failures': self.failures, 'rounds': self.rounds}}}
+                'read_budget': {'maximum': self.maximum, 'completed': self.completed, 'failures': self.failures, 'rounds': self.rounds, 'contexts': self.contexts}}}
 
     def facts(self) -> list[dict[str, Any]]:
         # Preserve requested records and material limitations before optional

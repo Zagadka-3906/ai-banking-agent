@@ -431,3 +431,124 @@ def test_verified_entity_memory_is_scoped_by_resource_and_principal(gateway,monk
     assert remembered['observations']['BANKING_HELP']['resource_entities']=={'cards':['CARD-001']}
     with understanding_context({**state,**remembered,'user_id':'user_li'}):
         assert model_context()['recent_observations']==[]
+
+
+def test_confirmed_single_subscription_exposes_only_requested_merchant_to_answer_model(gateway,monkeypatch):  # noqa: F811
+    client,_=gateway
+    calls=model(monkeypatch,[goal('subscriptions',['amount'],'视频会员每期金额',subject='视频会员')])
+    before=financial_state()
+    proposal=_send(client,'视频会员每期金额是多少？',conversation_id='subscription-evidence-minimized')
+    assert proposal['approval']
+    response=client.post('/api/v1/agent/approvals/'+proposal['approval']['approval_id'],headers=_headers('user_zhang'),json={'decision':'approve'})
+    assert response.status_code==200
+    payloads=[payload for system,payload in calls if '银行业务解答助手' in system]
+    assert payloads and all('Apple' not in json.dumps(payload['facts'],ensure_ascii=False) for payload in payloads)
+    assert financial_state()[:4]==before[:4]
+
+
+def test_explanation_refresh_keeps_previous_period_when_model_calls_it_a_new_topic(gateway,monkeypatch):  # noqa: F811
+    from bank_agent.evidence_session import EvidenceSession
+    monkeypatch.setattr(runtime,'llm',None)
+    state={'user_id':'user_zhang','memory_principal':'user_zhang','user_input':'消费合计与余额为何不同','date_scope':'ALL',
+           'parse_meta':{'topic_relation':'NEW','goals':normalize_goals([goal('balance',[],'消费合计与余额为何不同',act='EXPLAIN')],'消费合计与余额为何不同',{})},
+           'observations':{'BANKING_HELP':{'read_requests':[{'tool':'transactions','fields':['analysis']},{'tool':'balance','fields':['available_balance']}],
+                                         'read_contexts':{'transactions':{'date_scope':'MONTH','date_range':None}}}}}
+    session=EvidenceSession(state)
+    session.bootstrap()
+    assert session.contexts['transactions']['date_scope']=='MONTH'
+    assert any(row['source']=='core://transactions' for row in session.facts())
+    assert any(row['source']=='core://balance' for row in session.facts())
+
+
+def test_pending_question_can_cite_the_original_approval_without_reprechecking(gateway,monkeypatch):  # noqa: F811
+    client,_=gateway
+    original=_send(client,'给李四转300元',conversation_id='pending-source-proof')
+    before=financial_state()
+    model(monkeypatch,[goal('general',[],'这笔待确认转账目前要求哪些验证')])
+    reply=_send(client,'这笔待确认转账目前要求哪些验证',conversation_id='pending-source-proof')
+    assert reply['approval']['approval_id']==original['approval']['approval_id']
+    assert '300.00' in reply['reply'] and '只需用户确认' in reply['reply']
+    assert financial_state()==before
+
+
+def test_explicit_resume_with_one_stored_target_and_verified_amount_survives_unclear_classification(gateway,monkeypatch):  # noqa: F811
+    client,_=gateway
+    cid='resume-despite-unclear'
+    _send(client,'给李四转一点钱',conversation_id=cid)
+    model(monkeypatch,[goal('general',[],'生日联动机制',act='EXPLAIN')])
+    _send(client,'先放下转账，解释生日联动规则',conversation_id=cid)
+    monkeypatch.setattr(runtime,'llm',SimpleNamespace(invoke=lambda messages:SimpleNamespace(content=json.dumps({
+        'intent':'UNKNOWN','dialogue_act':'UNCLEAR','scope':'IN_SCOPE'}))))
+    before=financial_state()
+    proposal=_send(client,'生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。',conversation_id=cid)
+    assert proposal['approval'] and '李四' in proposal['approval']['summary'] and '300.00' in proposal['approval']['summary'], proposal['reply']
+    assert financial_state()[:4]==before[:4]
+
+
+def test_explaining_or_ambiguous_amount_cannot_auto_resume_a_stored_operation():
+    from bank_agent.dialogue_state import resume_task
+    state={'user_id':'user_zhang','dialogue_state':{'principal':'user_zhang','tasks':[{
+        'id':'TRANSFER','pending':{'intent':'TRANSFER','missing':['amount'],'payload':{'intent':'TRANSFER','target':'李四'}}}]}}
+    for text in ('继续解释李四300元转账的规则','接着给李四转300元或500元','如果接着给李四转300元会怎样',
+                 '接着给王五转300元，备注李四','李四的事先放下，接着给王五转300元'):
+        assert resume_task(state,{'intent':'UNKNOWN'},text) is None
+
+
+def test_general_topic_cannot_erase_a_specific_limit_input_and_polite_payee_is_not_a_card(gateway,monkeypatch):  # noqa: F811
+    client,_=gateway
+    cid='specific-limit-input'
+    model(monkeypatch,[goal('general',[],'能否取消卡片限额',act='EXPLAIN')])
+    _send(client,'先问问能不能取消卡片限额，暂时不用修改',conversation_id=cid)
+    import conversation
+    state=conversation.get_graph().get_state({'configurable':{'thread_id':conversation.conversation_thread_id('user_zhang',cid)}}).values
+    assert (state.get('dialogue_state') or {}).get('next_input')
+    monkeypatch.setattr(runtime,'llm',SimpleNamespace(invoke=lambda messages:SimpleNamespace(content=json.dumps({'intent':'UNKNOWN','dialogue_act':'UNCLEAR'}))))
+    before=financial_state()
+    reply=_send(client,'先不取消。我希望把卡片日限额改成10000，暂时不确认，你先把要确认的内容给我看看。',conversation_id=cid)
+    assert reply['approval'] and '10000.00' in reply['approval']['summary'].replace(',',''), reply['reply']
+    assert '看看' not in reply['approval']['summary']
+    assert financial_state()[:4]==before[:4]
+
+
+def test_product_names_cannot_be_promoted_to_product_identifiers(monkeypatch):
+    from bank_agent.parsing import model_parse
+    monkeypatch.setattr(runtime,'llm',SimpleNamespace(invoke=lambda messages:SimpleNamespace(content=json.dumps({
+        'intent':'WEALTH_COMPARE','dialogue_act':'QUERY','product_ids':['零宝','HQ30060']}))))
+    parsed=model_parse('比较零宝和恒泉稳利的风险等级')
+    assert parsed['product_ids']==['HQ30060']
+
+
+@pytest.mark.parametrize('text,expected',[
+    ('给李四转300,先展示确认信息',300),('给李四转300，先展示确认信息',300),
+    ('日限额改成10000,暂时不确认',10000),('给李四转¥300.50,先不要确认',300.5),
+    ('转300.然后展示确认信息',300),('给李四转300,00',None),
+    ('给李四转300.500',None),('给李四转300,500.50',300500.5),
+    ('给李四转300,或者500',None),
+])
+def test_amount_punctuation_boundary_does_not_truncate_malformed_money(text,expected):
+    from bank_agent.extraction import amount_from_text
+    from security import sanitize_text
+    assert amount_from_text(sanitize_text(text,field='用户指令',max_length=2000))==expected
+
+
+def test_showing_details_to_the_user_does_not_add_another_payment_recipient():
+    from intent_language import ambiguous_target
+    from bank_agent.extraction import target_from_text
+    text='给李四转300元，麻烦你先把转账信息展示给我核对一下。'
+    assert not ambiguous_target(text) and target_from_text(text)=='李四'
+    assert ambiguous_target('给李四转300元，或者给我转300元')
+    assert ambiguous_target('给李四转300元，收款人改为王五')
+
+
+def test_declared_goal_protocol_gets_one_bounded_repair_when_goals_are_missing(monkeypatch):
+    from bank_agent.parsing import model_parse
+    calls=[]
+    def invoke(messages):
+        calls.append(messages)
+        value={'goals':[goal('balance',['available_balance'],'可用余额')]} if len(calls)==2 else {
+            'request_protocol':1,'intent':'BALANCE_QUERY','dialogue_act':'QUERY'}
+        return SimpleNamespace(content=json.dumps(value,ensure_ascii=False))
+    monkeypatch.setattr(runtime,'llm',SimpleNamespace(invoke=invoke))
+    parsed=model_parse('查询可用余额')
+    assert len(calls)==2 and parsed['parse_meta']['goal_repair']=='REPAIRED'
+    assert parsed['parse_meta']['goals'][0]['resource']=='balance'

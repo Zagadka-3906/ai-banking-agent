@@ -32,7 +32,7 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
         topic = selected
     from bank_planning.requests import request_goals
     goal_topics = {goal['topic'] for goal in request_goals(state) if goal['act'] != 'UNSUPPORTED'}
-    if intent == 'BANKING_HELP' and len(goal_topics) == 1:
+    if intent == 'BANKING_HELP' and len(goal_topics) == 1 and (goal_topics != {'general'} or topic == 'general'):
         topic = next(iter(goal_topics))
     relation = (state.get("parse_meta") or {}).get("topic_relation")
     if topic == "general" and relation == "CONTINUE":
@@ -68,6 +68,19 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
     # The model may identify a known task, never manufacture its stored slots.
     # Resuming a discussion is not resuming/approving a transaction nonce.
     task_id = (parsed.get("parse_meta") or {}).get("resume_task_id")
+    if not task_id and parsed.get('intent') == 'UNKNOWN' and re.search(r'继续|接着|恢复|回到', text):
+        from bank_agent.extraction import amount_from_text, target_from_text
+        from intent_language import ambiguous_amount, ambiguous_target, execution_constraint, business_text
+        source = business_text(text)
+        value = amount_from_text(source)
+        recipient = target_from_text(source)
+        candidates = [task for task in dialogue_view(state)['tasks'] if isinstance(task.get('pending'), dict)
+                      and task['pending'].get('missing') == ['amount']
+                      and isinstance((task['pending'].get('payload') or {}).get('target'), str)
+                      and task['pending']['payload']['target'] == recipient]
+        if (len(candidates) == 1 and value is not None and value > 0 and not ambiguous_amount(text) and not ambiguous_target(text)
+                and not execution_constraint(text) and not re.search(r'解释|说明|查询|核对|查看|分析|了解|为什么|为何|怎么|如何|是否|是不是|[吗？?]', text)):
+            return {**candidates[0]['pending'], '_verified_slot_resume': value}
     if not task_id or not re.search(r"继续|接着|恢复|刚才|之前|上次", text):
         return None
     for task in dialogue_view(state)["tasks"]:
