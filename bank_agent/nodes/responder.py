@@ -195,8 +195,11 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                     return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
             if data.get("topic") == "contacts":
                 from bank_agent.query_focus import needs_contact_records
+                from bank_planning.requests import request_goals, needs_record
 
-                if needs_contact_records(str(state.get("user_input") or "")) and not any(item["id"].startswith("read.contacts.") for item in documents):
+                goals = request_goals(state)
+                requires_book = any(goal['resource'] == 'contacts' and needs_record(goal) for goal in goals) if goals else needs_contact_records(str(state.get("user_input") or ""))
+                if requires_book and not any(item["id"].startswith("read.contacts.") for item in documents):
                     return {"business_status": "FAILED", "final_response": "本次未能读取并核验你的联系人簿，尚不能确认是否已保存。可以在 App 侧边栏 → 联系人中核对。"}
         visible = [item['text'] for item in data['documents'] if not item.get('context_only') and known.get(item['id'], item).get('audience') != 'model'] if 'documents' in data else facts
         return {"final_response": "\n".join(str(item) for item in visible)}

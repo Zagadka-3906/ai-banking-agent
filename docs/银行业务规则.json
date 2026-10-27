@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-27.1",
-  "rules_version": "577046331dca51a10e86f43d91e865c1279dc2bded9a21bedae4cad2ede0c7a7",
+  "rules_version": "e3b9487bb502c8b6bf06e2542ddf8f2eefbc2fb7340bc563f8752ffc9777a1cb",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answering.py": "8a49b7843d03a69efc3d8bb0f919245942b326731ebae6bd4024e4e3e44bf257",
@@ -13,7 +13,9 @@
     "bank_agent/evidence_session.py": "5e1afcde4c85322d52629c56c6d7b5eb0760a7e608f5ea456ebe03707ba92305",
     "bank_agent/extraction.py": "61444d841f14a5d37a6a99558ef4d0dbc43ed182c501203cfb7c6b9277915c3f",
     "bank_agent/goal_answering.py": "987a55aabe41a33c1109e0ea4546525de3fece1631fce17ce5bbbbd286b21fc9",
+    "bank_agent/nodes/executor.py": "d67e70f01a81e3a18c373f92d74204ea96483e97653bb63ba32aeb3b1bcbc5d4",
     "bank_agent/nodes/intent.py": "ee23349f937281e9bbe5525a8219bc62c4e335b53219e9c023a39ca03734a699",
+    "bank_agent/nodes/responder.py": "2b561b731654b5f0418dcac5f17f71709fad6e1000a9c91f1b99bb8a3c1115a1",
     "bank_agent/parsing.py": "1e3b21293ba5840b14849a144eeb785becb7e6c5798621e2befb7368eed0210f",
     "bank_agent/pending_questions.py": "8fcacd7a0468794092f7f9afdf2f331699865d3f1aab82cbb119491c52d8f36f",
     "bank_agent/query_focus.py": "fc5aa2abd3ca35736343002dd5dfd66d64a4907f578a5067f64257a0fadffc13",
@@ -37,7 +39,7 @@
     "bank_security/authorization.py": "652fe51c1fd7d96fbc580661f4352a2ceaafc00fb2cd85cb1aa5c47387ac48c7",
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "e6330c0b74a7780fb283b44c85a4be5fb7e881066ce586c2e3210225a3530b3f",
-    "banking_rules.py": "91a7cf735138c17e35ad2073f802f7a1c85f67dd252388e5d50ec787ba5b88b0",
+    "banking_rules.py": "0feb22a8d4fd5fb82cb0e31ea6e55a9703b354aedd75b9390a8558f211e57914",
     "intent_language.py": "ed147d91217b5cf2d1418eadf871074f4d7f0254b215692f9a7863e36829e964",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f"
   },

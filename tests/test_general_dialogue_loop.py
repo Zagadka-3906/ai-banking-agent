@@ -573,3 +573,22 @@ def test_internal_planning_rules_are_not_pasted_into_customer_fallback():
     session.documents={row['id']:row for row in knowledge_documents('general') if row['id'] in {'guide.general.coverage','guide.general.repair','guide.general.data_sources'}}
     text,coverage=_fallback(goals,session)
     assert '读取预算' not in text and 'goals' not in text and coverage[0]['status']=='NEEDS_DATA'
+
+
+def test_contact_field_meaning_and_navigation_do_not_require_personal_contact_records(gateway,monkeypatch):  # noqa: F811
+    client,_=gateway
+    def draft(payload):
+        rows=[row for row in payload['facts'] if row['id'].startswith('guide.contacts.') and ('保存' in row['text'] or '侧边栏' in row['text'])]
+        ids=[row['id'] for row in rows]
+        return dict(answer='\n'.join(row['text'] for row in rows),evidence_ids=ids,unanswered=[],coverage=[
+            dict(goal_id='q1',status='ANSWERED',evidence_ids=ids,reason='字段含义和真实入口来自产品规则')])
+    model(monkeypatch,[goal('contacts',['saved'],'联系人页保存状态含义及入口',act='EXPLAIN')],draft=draft)
+    original=runtime._http
+    def no_book(method,path,**kwargs):
+        assert not path.startswith('contacts/'), 'A policy question must not read the contact book'
+        return original(method,path,**kwargs)
+    monkeypatch.setattr(runtime,'_http',no_book)
+    before=financial_state()
+    reply=_send(client,'不办理转账，联系人页面的保存状态是什么意思，在App哪里打开？',conversation_id='contact-policy-no-book')
+    assert reply['business_status']=='SUCCEEDED' and '侧边栏' in reply['reply'] and '未能读取' not in reply['reply']
+    assert financial_state()==before
