@@ -4,6 +4,16 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+def _refine_topic(current: str, proposed: str) -> str:
+    """A broader label cannot erase an already identified policy subtopic."""
+    parent = current
+    while parent != 'general':
+        parent = {'limits': 'card'}.get(parent, 'general')
+        if proposed == parent:
+            return current
+    return proposed
+
+
 def dialogue_view(state: Mapping[str, Any]) -> dict[str, Any]:
     value = state.get("dialogue_state")
     if not isinstance(value, dict) or value.get("principal") != state.get("user_id"):
@@ -29,11 +39,11 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
     topic = help_topic(str(state.get("user_input") or ""))
     selected = (state.get("slots") or {}).get("help_topic")
     if (topic == "general" or intent == "BANKING_HELP") and selected:
-        topic = selected
+        topic = _refine_topic(topic, selected)
     from bank_planning.requests import request_goals
     goal_topics = {goal['topic'] for goal in request_goals(state) if goal['act'] != 'UNSUPPORTED'}
-    if intent == 'BANKING_HELP' and len(goal_topics) == 1 and (goal_topics != {'general'} or topic == 'general'):
-        topic = next(iter(goal_topics))
+    if intent == 'BANKING_HELP' and len(goal_topics) == 1:
+        topic = _refine_topic(topic, next(iter(goal_topics)))
     relation = (state.get("parse_meta") or {}).get("topic_relation")
     if topic == "general" and relation == "CONTINUE":
         topic = view.get("active_topic", "general")
@@ -68,13 +78,18 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
     # The model may identify a known task, never manufacture its stored slots.
     # Resuming a discussion is not resuming/approving a transaction nonce.
     task_id = (parsed.get("parse_meta") or {}).get("resume_task_id")
-    if not task_id and parsed.get('intent') == 'UNKNOWN' and re.search(r'继续|接着|恢复|回到', text):
+    resume = re.search(r'继续|接着|恢复|回到', text)
+    if not task_id and resume and (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED'}:
         from bank_agent.extraction import amount_from_text, target_from_text
         from intent_language import ambiguous_amount, ambiguous_target, execution_constraint, business_text
+        from bank_agent.parsing import local_parse
         source = business_text(text)
+        active = source[resume.end():]
+        operation = local_parse(active).get('intent')
         value = amount_from_text(source)
         recipient = target_from_text(source)
         candidates = [task for task in dialogue_view(state)['tasks'] if isinstance(task.get('pending'), dict)
+                      and task['pending'].get('intent') == operation
                       and task['pending'].get('missing') == ['amount']
                       and isinstance((task['pending'].get('payload') or {}).get('target'), str)
                       and task['pending']['payload']['target'] == recipient]

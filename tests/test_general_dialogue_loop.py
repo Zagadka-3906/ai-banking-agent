@@ -471,18 +471,19 @@ def test_pending_question_can_cite_the_original_approval_without_reprechecking(g
     assert financial_state()==before
 
 
-@pytest.mark.parametrize('utterance',[
-    '生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。',
-    '好的，那先回到原来的转账，给李四的金额就按300元，先别确认，让我看一下。',
+@pytest.mark.parametrize('utterance,classified_intent',[
+    ('生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。','UNKNOWN'),
+    ('好的，那先回到原来的转账，给李四的金额就按300元，先别确认，让我看一下。','UNKNOWN'),
+    ('生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。','CROSS_SCENE_LOCK'),
 ])
-def test_explicit_resume_with_one_stored_target_and_verified_amount_survives_unclear_classification(gateway,monkeypatch,utterance):  # noqa: F811
+def test_explicit_resume_with_one_stored_target_and_verified_amount_survives_unclear_classification(gateway,monkeypatch,utterance,classified_intent):  # noqa: F811
     client,_=gateway
     cid='resume-despite-unclear'
     _send(client,'给李四转一点钱',conversation_id=cid)
     model(monkeypatch,[goal('general',[],'生日联动机制',act='EXPLAIN')])
     _send(client,'先放下转账，解释生日联动规则',conversation_id=cid)
     monkeypatch.setattr(runtime,'llm',SimpleNamespace(invoke=lambda messages:SimpleNamespace(content=json.dumps({
-        'intent':'UNKNOWN','dialogue_act':'UNCLEAR','scope':'IN_SCOPE'}))))
+        'intent':classified_intent,'dialogue_act':'UNCLEAR' if classified_intent=='UNKNOWN' else 'ACTION','scope':'IN_SCOPE'}))))
     before=financial_state()
     proposal=_send(client,utterance,conversation_id=cid)
     assert proposal['approval'] and '李四' in proposal['approval']['summary'] and '300.00' in proposal['approval']['summary'], proposal['reply']
@@ -494,7 +495,7 @@ def test_explaining_or_ambiguous_amount_cannot_auto_resume_a_stored_operation():
     state={'user_id':'user_zhang','dialogue_state':{'principal':'user_zhang','tasks':[{
         'id':'TRANSFER','pending':{'intent':'TRANSFER','missing':['amount'],'payload':{'intent':'TRANSFER','target':'李四'}}}]}}
     for text in ('继续解释李四300元转账的规则','接着给李四转300元或500元','如果接着给李四转300元会怎样',
-                 '接着给王五转300元，备注李四','李四的事先放下，接着给王五转300元'):
+                 '接着给王五转300元，备注李四','李四的事先放下，接着给王五转300元','继续生日安排，给李四锁定300元'):
         assert resume_task(state,{'intent':'UNKNOWN'},text) is None
 
 
@@ -592,3 +593,12 @@ def test_contact_field_meaning_and_navigation_do_not_require_personal_contact_re
     reply=_send(client,'不办理转账，联系人页面的保存状态是什么意思，在App哪里打开？',conversation_id='contact-policy-no-book')
     assert reply['business_status']=='SUCCEEDED' and '侧边栏' in reply['reply'] and '未能读取' not in reply['reply']
     assert financial_state()==before
+
+
+def test_a_broad_card_topic_cannot_erase_the_specific_limit_input_type():
+    from bank_agent.dialogue_state import remember_discussion
+    goals=normalize_goals([goal('cards',[],'取消限额是什么意思',act='EXPLAIN')],'取消卡片限额是什么意思',{})
+    state={'user_id':'user_zhang','intent':'BANKING_HELP','user_input':'取消卡片限额是什么意思','slots':{'help_topic':'card'},
+           'parse_meta':{'goals':goals},'execution_result':{'type':'BANKING_HELP','data':{'documents':[{'id':'guide.limits.finite'}]}}}
+    discussion=remember_discussion(state,{})
+    assert discussion['active_topic']=='limits' and discussion['next_input']['intent']=='CARD_LIMIT'

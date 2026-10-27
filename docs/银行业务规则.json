@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-27.1",
-  "rules_version": "e3b9487bb502c8b6bf06e2542ddf8f2eefbc2fb7340bc563f8752ffc9777a1cb",
+  "rules_version": "168ca6472bf7fed580a5fef6ee39aa0a31d13307d2f9d25a2ca1d1269b5d3abb",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answering.py": "8a49b7843d03a69efc3d8bb0f919245942b326731ebae6bd4024e4e3e44bf257",
     "bank_agent/consultation.py": "0ab84cdd32005e5aa3d11df3464942dda934badb2df14cdd0bb7b7afe810423a",
     "bank_agent/conversation_approvals.py": "d165fae834bdccffb449d3546d91d24e744ab84afe1b682512279db8bd58ce89",
     "bank_agent/dialogue.py": "27899dd3bd9573361d92e1a4067935e9f32f3c2b87b4875bbae12e56686c4b21",
-    "bank_agent/dialogue_state.py": "0f084ef34d4fb85b907c51e1274925f2f3b3edf8c4b429d615ee8facc605257e",
+    "bank_agent/dialogue_state.py": "adcbeef890e628b1385e1eb96491bb0fe94073ffe4d9aa7632090bc71634cbe3",
     "bank_agent/evidence.py": "317220a769dccb60bf806dcd7f5fa3a4bd29bfaefcf85e4c6640f4645b6201b3",
     "bank_agent/evidence_session.py": "5e1afcde4c85322d52629c56c6d7b5eb0760a7e608f5ea456ebe03707ba92305",
     "bank_agent/extraction.py": "61444d841f14a5d37a6a99558ef4d0dbc43ed182c501203cfb7c6b9277915c3f",
