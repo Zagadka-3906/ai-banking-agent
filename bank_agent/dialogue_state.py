@@ -16,11 +16,21 @@ def _refine_topic(current: str, proposed: str) -> str:
 
 def dialogue_view(state: Mapping[str, Any]) -> dict[str, Any]:
     value = state.get("dialogue_state")
+    owner = state.get('user_id')
+    owned = (not isinstance(value, dict) or value.get('principal') == owner) and state.get('memory_principal') in {None, owner}
     if not isinstance(value, dict) or value.get("principal") != state.get("user_id"):
-        return {"version": 1, "principal": state.get("user_id"), "active_topic": "general", "tasks": []}
+        value = {"version": 1, "principal": owner, "active_topic": "general", "tasks": []}
     turn = value.get('turn', 0)
-    return {**value, "tasks": [task for task in list(value.get("tasks") or [])[-4:]
-                                if isinstance(task, dict) and task.get('expires_at', turn) >= turn]}
+    tasks = [task for task in list(value.get("tasks") or [])[-4:]
+             if isinstance(task, dict) and task.get('expires_at', turn) >= turn]
+    quiz = (state.get('context') or {}).get('risk_quiz')
+    if owned and isinstance(quiz, dict):
+        tasks = [task for task in tasks if task.get('id') != 'quiz:WEALTH_RISK_ASSESSMENT']
+        tasks.append({'id': 'quiz:WEALTH_RISK_ASSESSMENT', 'intent': 'WEALTH_RISK_ASSESSMENT', 'kind': 'questionnaire',
+                      'status': 'WAITING_INPUT', 'quiz': {'answers': dict(quiz.get('answers') or {})},
+                      'pending': {'intent': 'WEALTH_RISK_ASSESSMENT', 'missing': ['risk_answers'],
+                                  'payload': {'intent': 'WEALTH_RISK_ASSESSMENT'}}})
+    return {**value, 'tasks': tasks[-4:]}
 
 
 def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:

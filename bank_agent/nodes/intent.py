@@ -143,7 +143,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     # turn a background clause into the active task. Reuse this parse below.
     full_text = text
     understood = None
-    if not prior_context.get('risk_quiz') and not state.get('continue_workflow'):
+    prior_quiz = prior_context.get('risk_quiz')
+    native_quiz_reply = isinstance(prior_quiz, dict) and is_quiz_reply(text, prior_quiz)
+    if not native_quiz_reply and not state.get('continue_workflow'):
         try:
             with understanding_context(state):
                 understood = validate_intent_payload(model_parse(text))
@@ -165,10 +167,20 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                         decision='DISCUSSION_ONLY', outcome=transition['type'], metadata={'fields': transition['updated_fields']})
             if transition['proposal_input']:
                 parts = [text]
-            elif not request_goals(understood):
-                return {**empty_state(final_response='已暂停当前待补信息任务，尚未执行操作。' if transition['type'] == 'PAUSE' else '已取消当前待补信息任务，尚未执行操作。'),
+            elif not request_goals(understood) or transition['type'] == 'CANCEL':
+                message = ('已暂停风险测评，答题进度保留。' if transition['type'] == 'PAUSE' else '已取消未完成的风险测评，本次答案未提交。') if transition.get('questionnaire') else (
+                    '已暂停当前待补信息任务，尚未执行操作。' if transition['type'] == 'PAUSE' else '已取消当前待补信息任务，尚未执行操作。')
+                return {**empty_state(final_response=message),
                         'request_id': state.get('request_id'), 'context': prior_context, 'dialogue_state': transition['view'],
+                        'risk_quiz': {'active': False},
                         'business_status': 'CANCELLED' if transition['type'] == 'CANCEL' else 'NEEDS_INPUT'}
+    if (isinstance(prior_quiz, dict) and not native_quiz_reply and not transition and understood is not None
+            and (understood.get('parse_meta') or {}).get('dialogue_act') in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED'}):
+        from bank_agent.dialogue_state import dialogue_view
+        view = dialogue_view(state)
+        view['tasks'] = [{**task, 'status': 'PAUSED'} if task.get('kind') == 'questionnaire' else task for task in view['tasks']]
+        prior_context = {**prior_context, 'risk_quiz': None, 'compound_workflow': None}
+        state = {**state, 'context': prior_context, 'dialogue_state': view, 'risk_quiz': {'active': False}}
     if understood is not None:
         from bank_planning.requests import request_goals, read_only_goals
         from bank_agent.dialogue_state import resume_task
@@ -442,6 +454,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     result = {
         **parsed,
         'dialogue_state': state.get('dialogue_state') or {},
+        'risk_quiz': state.get('risk_quiz'),
         "request_id": state.get("request_id") or f"agent_{uuid.uuid4().hex}",
         "risk_level": None,
         "auth_token": None,

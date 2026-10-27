@@ -62,7 +62,10 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
         if not valid_balance_payload(data):
             raise ValueError('BALANCE_FIELDS_INVALID')
         keys = ['total_balance', 'available_balance', 'locked_amount'] if 'records' in selected else selected
-        return [{**_document(resource, index, f'{LABELS[key]}为¥{float(data[key]):,.2f}。', [key]),
+        aliases = [state['user_id'], '我', '本人', '我的账户', '当前账户']
+        if valid_text_field(data.get('user_name'), max_length=120):
+            aliases.append(data['user_name'])
+        return [{**_document(resource, index, f'{LABELS[key]}为¥{float(data[key]):,.2f}。', [key]), 'entity_names': aliases,
                  'values': {key: str(Decimal(str(data[key])))}} for index, key in enumerate(keys)]
     if resource == 'risk_profile':
         profile = data.get('data')

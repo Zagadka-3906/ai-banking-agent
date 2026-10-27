@@ -53,7 +53,8 @@ def _bind_literal_values(plan: dict[str, Any], facts: list[dict[str, Any]], anch
 
 
 def _matching(goal: Mapping[str, Any], facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    rows = [row for row in facts if str(row['id']).startswith('read.' + str(goal['resource']) + '.')]
+    rows = [row for row in facts if str(row['id']).startswith('read.' + str(goal['resource']) + '.')
+            and (goal.get('calculation') or not row.get('derived'))]
     if goal['resource'] == 'general':
         rows += [row for row in facts if row.get('source') == 'approval://current' and row['id'] in {'pending.operation', 'pending.status', 'pending.verification'}]
     selectors = goal.get('subjects') or ([goal['subject']] if goal.get('subject') else [])

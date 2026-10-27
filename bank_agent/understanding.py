@@ -213,6 +213,7 @@ def understanding_context(state: Mapping[str, Any]) -> Iterator[None]:
     view = dialogue_view(state)
     value["discussion"] = {"active_topic": view.get("active_topic"), "tasks": [
         {"id": task.get("id"), "intent": task.get("intent"), "status": task.get('status', 'WAITING_INPUT'),
+         'kind': task.get('kind', 'discussion'),
          "target": _safe_text(((task.get('pending') or {}).get('payload') or {}).get('target'), 120),
          "missing": (task.get("pending") or {}).get("missing")}
         for task in view["tasks"]]}

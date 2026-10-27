@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from unicodedata import normalize
 
 from bank_agent.dialogue_state import dialogue_view
 
@@ -11,12 +12,14 @@ COMMANDS = {'RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL'}
 def normalize_command(value: Any, text: str, known_ids: set[str]) -> dict[str, str] | None:
     if value is None:
         return None
+    raw_span = value.get('evidence') if isinstance(value, dict) else None
+    span = normalize('NFKC', raw_span) if isinstance(raw_span, str) else None
     if (not isinstance(value, dict) or set(value) != {'type', 'task_id', 'evidence'}
             or value.get('type') not in COMMANDS or value.get('task_id') not in known_ids
             or not isinstance(value.get('evidence'), str) or not 1 <= len(value['evidence']) <= 300
-            or value['evidence'] not in text):
+            or span is None or span not in normalize('NFKC', text)):
         raise ValueError('INVALID_DIALOGUE_COMMAND')
-    return dict(value)
+    return {**value, 'evidence': span}
 
 
 def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
@@ -43,17 +46,34 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
     kind, intent = command['type'], pending.get('intent')
     context = dict(state.get('context') or {})
     act = (parsed.get('parse_meta') or {}).get('dialogue_act')
+    questionnaire = task.get('kind') == 'questionnaire'
     if kind in {'PAUSE', 'CANCEL'}:
         local_intent = local_parse(text).get('intent')
         # Cancelling a different named service does not cancel this discussion.
         if kind == 'CANCEL' and local_intent not in {'UNKNOWN', intent}:
-            return None
+            from bank_planning.intents import GREEN_INTENTS
+            from bank_agent.risk_quiz import RISK_QUIZ_INTENTS
+            if not questionnaire or local_intent not in GREEN_INTENTS | RISK_QUIZ_INTENTS:
+                return None
         changed = [{**item, 'status': 'PAUSED'} if item['id'] == task['id'] else item
                    for item in tasks if kind != 'CANCEL' or item['id'] != task['id']]
         if (context.get('pending_clarification') or {}).get('intent') == intent:
             context.pop('pending_clarification', None)
+        if questionnaire:
+            context.pop('risk_quiz', None)
         return {'parsed': dict(parsed), 'context': context, 'view': {**view, 'tasks': changed},
-                'type': kind, 'updated_fields': [], 'proposal_input': False}
+                'type': kind, 'updated_fields': [], 'proposal_input': False, 'questionnaire': questionnaire}
+    if questionnaire:
+        if kind != 'RESUME' or act not in {'ACTION', 'SLOT_REPLY'} or parsed.get('intent') not in {'UNKNOWN', intent}:
+            return None
+        from bank_agent.risk_quiz import RISK_QUIZ_OPTIONS
+        answers = (task.get('quiz') or {}).get('answers')
+        if (not isinstance(answers, dict) or any(key not in {str(index) for index in range(1,9)}
+                or answer not in RISK_QUIZ_OPTIONS[int(key)] for key, answer in answers.items())):
+            return None
+        context['risk_quiz'] = {'answers': dict(answers)}
+        resumed = validate_intent_payload({'intent': intent, 'parse_meta': parsed.get('parse_meta')})
+        return {'parsed': resumed, 'context': context, 'view': view, 'type': kind, 'updated_fields': [], 'proposal_input': True}
     if act not in {'ACTION', 'SLOT_REPLY'} or execution_constraint(text) or ambiguous_amount(text) or ambiguous_target(text):
         return None
     from bank_planning.requests import request_goals

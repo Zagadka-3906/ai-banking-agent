@@ -510,6 +510,7 @@ def model_parse(text: str) -> dict[str, Any]:
         "只有用户明确恢复任务时resume_task_id才选择discussion.tasks已有ID，否则null。"
         '处理已有任务统一用task_command={"type":"RESUME或FILL或CORRECT或PAUSE或CANCEL","task_id":"discussion.tasks已有ID","evidence":"本轮逐字片段"}，无命令则null。'
         'FILL补缺值、CORRECT修改讨论参数、PAUSE暂放任务后回答插问、RESUME恢复原任务；命令仅改变讨论，不确认或执行交易。'
+        'kind=questionnaire的任务可暂停后回答插问、恢复原答题进度或取消未完成测评；不能代填风险答案。'
         '补值时顶层intent保留原业务、dialogue_act为SLOT_REPLY，target/amount只能抽取本轮原文，不能猜测；暂不确认不应变成查询或取消。'
         "先判断本轮言语行为 dialogue_act：QUERY=查已有事实，EXPLAIN=问原因/规则/影响，ACTION=要求实际办理，"
         "SLOT_REPLY=补充上轮缺失信息，UNSUPPORTED=能力未提供，UNCLEAR=对象或诉求不明，SOCIAL=问候致谢或告别。不能把 QUERY/EXPLAIN 选成写操作。"
