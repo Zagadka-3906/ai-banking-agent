@@ -54,7 +54,7 @@ def answer_facts(state: Mapping[str, Any], response: Mapping[str, Any]) -> list[
             required = True
         facts.append({"id": f"fact.{index}", "text": line, "required": required})
     if kind == "BANKING_HELP" and isinstance((result.get("data") or {}).get("documents"), list):
-        facts = [{"id": item["id"], "text": item["text"], "source": item.get("source"), "required": item.get("required") is True}
+        facts = [{"id": item["id"], "text": item["text"], "source": item.get("source"), "audience": item.get('audience'), "required": item.get("required") is True}
                  for item in result["data"]["documents"]]
         if re.search(r"为什么|为何|原因", question):
             for item in facts:
@@ -276,7 +276,7 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
             keywords.append("撤回")
         ranked = sorted(documents, key=lambda item: sum(word in item["text"] for word in keywords), reverse=True)
         available = {item["id"] for item in facts}
-        selected = [item["text"] for item in ranked if item["id"] in available and any(word in item["text"] for word in keywords)][:2]
+        selected = [item["text"] for item in ranked if item["id"] in available and item.get('audience') != 'model' and any(word in item["text"] for word in keywords)][:2]
         required = [item["text"] for item in facts if item.get("required") and item["text"] not in selected]
         if any(item["id"] == "pending.verification" and item.get("required") for item in facts):
             selected = []

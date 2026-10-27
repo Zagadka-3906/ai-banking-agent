@@ -133,6 +133,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
 def knowledge_documents(topic: str) -> list[dict[str, str]]:
     selected = topic if topic in TOPICS else "general"
     return [{"id": f"guide.{selected}.{key}", "topic": selected, "text": text,
+             "audience": "model" if selected == 'general' and key in {'data_sources', 'coverage', 'repair'} else "user",
              "source": f"product://{KNOWLEDGE_VERSION}/{selected}/{key}"} for key, text in DOCUMENTS[selected]]
 
 

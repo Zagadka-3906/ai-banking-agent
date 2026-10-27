@@ -81,7 +81,7 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
         if (len(candidates) == 1 and value is not None and value > 0 and not ambiguous_amount(text) and not ambiguous_target(text)
                 and not execution_constraint(text) and not re.search(r'解释|说明|查询|核对|查看|分析|了解|为什么|为何|怎么|如何|是否|是不是|[吗？?]', text)):
             return {**candidates[0]['pending'], '_verified_slot_resume': value}
-    if not task_id or not re.search(r"继续|接着|恢复|刚才|之前|上次", text):
+    if not task_id or not re.search(r"继续|接着|恢复|回到|原来|刚才|之前|上次", text):
         return None
     for task in dialogue_view(state)["tasks"]:
         if task.get("id") == task_id and isinstance(task.get("pending"), dict):

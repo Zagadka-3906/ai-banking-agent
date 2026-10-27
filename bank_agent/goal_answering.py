@@ -115,7 +115,7 @@ def _fallback(goals: list[dict[str, Any]], session: EvidenceSession) -> tuple[st
         if goal['act'] == 'EXPLAIN' and status == 'NEEDS_DATA':
             from banking_rules import search_rules
             ranked = {row['id']: index for index, row in enumerate(search_rules(goal['question'][:700], limit=6))}
-            policies = sorted([row for row in facts if row['id'].startswith('guide.') and row['id'] in ranked],
+            policies = sorted([row for row in facts if row['id'].startswith('guide.') and row['id'] in ranked and row.get('audience') != 'model'],
                               key=lambda row: ranked[row['id']])[:2]
             if policies:
                 text = '\n'.join(row['text'] for row in policies) + '\n以上是已核验的相关规则；本次完整解释或所需记录仍未通过逐项核验。'
@@ -165,6 +165,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 '你是银行业务解答助手。' + SCOPE_POLICY +
                 '围绕用户本轮全部goals自然组织回答，先答所问字段再说明必要条件；不要拼贴知识、重复上轮或附带无关列表。'
                 '引用全部用到的字段及计数证据，不在正文输出内部goal_id、source、接口或证据编号。步骤用中文序号。'
+                'audience=model的规则只约束内部推理，除非用户明确询问实现，不向用户复述工具、协议或读取预算。'
                 '每项当前账户事实必须引用对应read资源字段，规则不能证明个人状态。无法读取、需澄清、需订阅确认和未实现要分别说明。'
                 '金额必须用values中的{{value.N}}并引用对应evidence_id，余额金额标明总余额/可用余额/锁定金额。'
                 '不编造日期、收益、状态、外部服务、UI入口或已执行操作，过期计划日期只称原计划，不推进到下一期。'

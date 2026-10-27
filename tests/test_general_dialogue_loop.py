@@ -471,7 +471,11 @@ def test_pending_question_can_cite_the_original_approval_without_reprechecking(g
     assert financial_state()==before
 
 
-def test_explicit_resume_with_one_stored_target_and_verified_amount_survives_unclear_classification(gateway,monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('utterance',[
+    '生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。',
+    '好的，那先回到原来的转账，给李四的金额就按300元，先别确认，让我看一下。',
+])
+def test_explicit_resume_with_one_stored_target_and_verified_amount_survives_unclear_classification(gateway,monkeypatch,utterance):  # noqa: F811
     client,_=gateway
     cid='resume-despite-unclear'
     _send(client,'给李四转一点钱',conversation_id=cid)
@@ -480,7 +484,7 @@ def test_explicit_resume_with_one_stored_target_and_verified_amount_survives_unc
     monkeypatch.setattr(runtime,'llm',SimpleNamespace(invoke=lambda messages:SimpleNamespace(content=json.dumps({
         'intent':'UNKNOWN','dialogue_act':'UNCLEAR','scope':'IN_SCOPE'}))))
     before=financial_state()
-    proposal=_send(client,'生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。',conversation_id=cid)
+    proposal=_send(client,utterance,conversation_id=cid)
     assert proposal['approval'] and '李四' in proposal['approval']['summary'] and '300.00' in proposal['approval']['summary'], proposal['reply']
     assert financial_state()[:4]==before[:4]
 
@@ -552,3 +556,20 @@ def test_declared_goal_protocol_gets_one_bounded_repair_when_goals_are_missing(m
     parsed=model_parse('查询可用余额')
     assert len(calls)==2 and parsed['parse_meta']['goal_repair']=='REPAIRED'
     assert parsed['parse_meta']['goals'][0]['resource']=='balance'
+
+
+def test_recipient_amount_field_is_not_part_of_the_recipient_name():
+    from bank_agent.extraction import target_from_text
+    assert target_from_text('给李四的金额就按300元')=='李四'
+    assert target_from_text('给王五的转账金额是500元')=='王五'
+
+
+def test_internal_planning_rules_are_not_pasted_into_customer_fallback():
+    from bank_agent.goal_answering import _fallback
+    from bank_agent.evidence_session import EvidenceSession
+    from banking_knowledge import knowledge_documents
+    goals=normalize_goals([goal('general',[],'证据缺口怎么补查',act='EXPLAIN')],'证据缺口怎么补查',{})
+    session=EvidenceSession({'user_id':'user_zhang','parse_meta':{'goals':goals}})
+    session.documents={row['id']:row for row in knowledge_documents('general') if row['id'] in {'guide.general.coverage','guide.general.repair','guide.general.data_sources'}}
+    text,coverage=_fallback(goals,session)
+    assert '读取预算' not in text and 'goals' not in text and coverage[0]['status']=='NEEDS_DATA'
