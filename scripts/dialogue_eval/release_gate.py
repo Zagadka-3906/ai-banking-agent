@@ -7,7 +7,7 @@ from collections import Counter
 from math import ceil
 from pathlib import Path
 
-from scripts.dialogue_eval.engine import summarize
+from scripts.dialogue_eval.engine import summarize, goal_evidence_complete
 from scripts.dialogue_eval.schema import load_dataset
 
 POLICY_VERSION = 'bank-mock-stability-v2'
@@ -65,6 +65,13 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             if sum(identity[0] == 'candidate' for identity in identities) != 1:
                 raise ValueError('MIXED_CANDIDATES')
             for row in report['trials']:
+                for turn in row.get('turns', []):
+                    task = next(task for task in tasks if task.id == row['task_id'])
+                    if type(turn.get('phase')) is not int or not 1 <= turn['phase'] <= len(task.phases):
+                        raise ValueError('INVALID_TRIAL_PHASE')
+                    phase = task.phases[turn['phase'] - 1]
+                    if phase.action == 'inquiry' and not goal_evidence_complete(turn.get('coverage', []), turn.get('read_failures', [])):
+                        blockers.append('INCOMPLETE_GOAL_EVIDENCE:' + row['task_id'])
                 if row['status'] == 'PASS':
                     task = next(task for task in tasks if task.id == row['task_id'])
                     expected_hard = {'durable_store_healthy', 'no_pending_approval'}

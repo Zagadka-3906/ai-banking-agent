@@ -141,6 +141,30 @@ def test_semantic_failure_is_distinct_from_safe_environment():
     assert all(check["passed"] for check in result["checks"])
 
 
+def test_positive_judge_cannot_make_incomplete_goal_evidence_a_completed_task():
+    environment = Environment()
+    original = environment.step
+    def incomplete(*args):
+        observed = original(*args)
+        observed['coverage'] = [{'goal_id': 'q1', 'status': 'NEEDS_DATA'}]
+        return observed
+    environment.step = incomplete
+    result = run_trial(task(), environment, SimpleNamespace(next=lambda view, utterance: {'text': utterance}),
+                       SimpleNamespace(assess=lambda partial, *args: verdict(partial)), seed=1, trial=1)
+    assert result['status'] == 'FAIL' and environment.steps == 1
+    assert result['communication']['passed']
+    assert any(check['id'].endswith('goal_evidence_complete') and check['passed'] is False for check in result['checks'])
+
+
+def test_grounded_tool_failure_remains_valid_for_an_outage_recovery_task():
+    from scripts.dialogue_eval.engine import goal_evidence_complete
+    coverage = [{'goal_id': 'q1', 'resource': 'tasks', 'status': 'TOOL_FAILED'}]
+    assert goal_evidence_complete(coverage, [{'path': '/api/v1/tasks', 'status': 503}])
+    assert not goal_evidence_complete(coverage, [{'path': '/api/v1/wealth/products', 'status': 503}])
+    assert not goal_evidence_complete(coverage, [])
+    assert not goal_evidence_complete([{**coverage[0], 'status': 'NEEDS_DATA'}], [{'path': '/api/v1/tasks', 'status': 503}])
+
+
 def test_incomplete_hard_evidence_and_provider_secrets_are_not_successful_or_serialized():
     environment = Environment()
     environment.finish = lambda item: {}
@@ -233,6 +257,20 @@ def test_real_bank_queries_and_pending_approval_are_observed_not_mocked(bank_env
     cancelled = environment.step("取消", item.phases[3], item)
     assert all(cancelled["checks"].values())
     assert all(environment.finish(item).values())
+
+
+def test_real_injected_outage_has_resource_bound_http_evidence(bank_environment, monkeypatch):
+    from test_general_dialogue_loop import model, goal
+    from scripts.dialogue_eval.engine import goal_evidence_complete
+    environment, setup = bank_environment
+    setup.setup = 'tasks_read_outage'
+    item = next(task for task in load_dataset(Path(__file__).parent/'data/dialogue_holdout.json')[0].tasks
+                if task.id == 'partial_outage_recovery')
+    model(monkeypatch, [goal('balance', ['available_balance'], '可用余额'), goal('tasks', ['status'], '待办状态')])
+    observed = environment.step('查询可用余额和待办状态', item.phases[0], item)
+    assert observed['read_failures'] and observed['read_failures'][0] == {'path': '/api/v1/tasks', 'status': 503}
+    assert any(row['resource'] == 'tasks' and row['status'] == 'TOOL_FAILED' for row in observed['coverage'])
+    assert goal_evidence_complete(observed['coverage'], observed['read_failures'])
 
 
 def test_authoritative_oracle_detects_unrelated_mutation_even_if_no_balance_changed(bank_environment):

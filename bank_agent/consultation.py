@@ -130,9 +130,11 @@ def read_evidence(state: Mapping[str, Any], step: Mapping[str, Any]) -> list[dic
             side = {**state, 'user_input': f'{selector}是否已保存联系人' if selector else '查看我的联系人列表'} if step.get('fields') else state
             docs = contact_documents(book, side)
             names = [row['name'] for row in book['data'] if not selector or selector in {row['name'], row['contact_id']}]
+            identities = [row['contact_id'] for row in book['data'] if len(names) == 1 and row['name'] == names[0]]
             for row in docs:
                 result_docs.append({**row, 'id': f'read.contacts.{len(result_docs)}', 'fields': ['records', 'name', 'saved'],
-                                    'subject': selector, 'entity_names': names[:30]})
+                                    'subject': selector, 'entity_names': names[:30],
+                                    **({'entity_id': identities[0]} if len(identities) == 1 else {})})
             if selector is None and result_docs:
                 result_docs[0].update(collection_size=len(names), selection=[], complete=True)
         return result_docs

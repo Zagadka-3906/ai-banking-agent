@@ -5,7 +5,7 @@ from typing import Any
 
 
 READ_ERRORS = {'MISSING_GOAL_RECORD', 'MISSING_SUBJECT_RECORD', 'UNGROUNDED_GOAL_ANSWER',
-               'TOOL_FAILURE_MISCLASSIFIED', 'UNREPORTED_GOAL_GAP'}
+               'TOOL_FAILURE_MISCLASSIFIED'}
 
 
 def normalize_feedback(value: Any, goals: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -33,5 +33,7 @@ def validation_feedback(reason: str, goals: list[dict[str, Any]]) -> list[dict[s
         'FINANCIAL_FIELD_MISMATCH': '按values对应字段准确标明总余额、可用余额或锁定金额，不能混用字段。',
         'MISSING_CALCULATION_EVIDENCE': '这项问题需要本次calculation结果及其全部操作数来源；只列出原始金额不算答完计算问题。',
         'GOAL_REVIEW_REJECTED': '依照逐项目标反馈重写未答内容，保留已经核验的事实，不扩展无关业务。',
+        'REQUEST_VALUE_AS_ACCOUNT_FACT': 'request.amount只能明确称为你询问的金额或拟设额度，不能写成当前余额、已生效额度或批准结果。',
+        'UNREPORTED_GOAL_GAP': 'unanswered中有未答内容时，对应coverage不能声称全部ANSWERED；具体说明缺口，将相关目标标为NEEDS_DATA或如实说明未支持部分，保留已能回答的规则和事实。',
     }.get(reason, reason[:120])
     return [{'goal_id': goal['id'], 'status': 'NEEDS_DATA', 'action': action, 'reason': advice} for goal in goals]

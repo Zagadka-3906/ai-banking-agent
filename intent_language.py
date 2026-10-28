@@ -109,9 +109,10 @@ def action_request_clause(text: str) -> str | None:
     """
     for clause in re.split(r"[，,。；;!?！？]", business_text(text)):
         clause = clause.strip()
+        clause = re.sub(r'^(?:不过|但是|那么|好的|接下来)\s*', '', clause)
         if re.search(r"如何|怎么|怎样|为什么|为何|多久|多长|何时|什么时候|进度|流程|步骤|时效|规则|影响|费用|需要|假设|如果|要是|若是|能否|能不能|是否|什么|不要|别|不必|不想|不打算|[吗么“”\"‘’]", clause):
             continue
-        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)|请|麻烦|帮我|替我|给我)?\s*(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
+        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)|请|麻烦|帮我|替我|给我)?\s*(?:先|现在|直接)?(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
             return clause
     return None
 
@@ -165,7 +166,8 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
     if current.tzinfo is not None:
         current = current.astimezone(timezone(timedelta(hours=8)))
     today = current.date()
-    if re.search(r"或(?:者)?|还是|不对", source) and re.search(r"今天|昨天|本月|上月|今年|去年|最近|近\d|\d{1,2}月|\d{4}-", source):
+    date_choice = r'今天|今日|昨天|前天|明天|本月|这个月|上月|上个月|今年|去年|最近|近\d|\d{1,2}月|\d{4}-|\d+天'
+    if re.search(r'(?:' + date_choice + r').{0,8}(?:或(?:者)?|还是|不对).{0,8}(?:' + date_choice + r')', source):
         return {"error": "DATE_RANGE_AMBIGUOUS"}
 
     def resolved(start: date, end: date):
@@ -237,10 +239,13 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
     except ValueError:
         return {"error": "DATE_RANGE_INVALID"}
     unresolved = r"过去|季度|半年|前年|半个月|(?:周|星期)[一二三四五六日天]|\d{1,2}月\d{1,2}|\d{4}[-/年]|\d+天|到.*(?:日|号)"
-    if re.search(r"最近|近期", source) and not re.search(unresolved, source):
+    recent_query = re.search(r'(?:最近|近期)(?:的|几笔|一些)?\s*(?:交易|流水|账单|消费|收支|转账|支出|明细)', source)
+    if re.search(r'今天|今日|本月|这个月|上月|上个月|今年|年度|全年', source):
+        return None
+    if recent_query and not re.search(unresolved, source):
         # A plain "最近" ("recently") is a common, not an ambiguous, request:
         # answer it for the last 30 days; the reply states the range used.
         return resolved(today - timedelta(days=29), today)
-    if re.search(r"最近|" + unresolved, source):
+    if re.search(unresolved, source):
         return {"error": "DATE_RANGE_UNRESOLVED"}
     return None

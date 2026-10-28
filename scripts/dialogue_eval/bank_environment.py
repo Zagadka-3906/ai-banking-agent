@@ -26,6 +26,7 @@ class BankEnvironment:
         self.stack = ExitStack()
         self.main, self.conversation, self.runtime, self.persistence = main, conversation, runtime, persistence
         self.calls = []
+        self.read_failures = []
         self.cid = "eval-" + uuid.uuid4().hex
         self.pending = None
         main.reset_state()
@@ -60,8 +61,11 @@ class BankEnvironment:
                 if parsed.scheme != "http" or parsed.netloc != "evaluation.invalid" or not parsed.path.startswith("/api/v1/"):
                     raise ValueError("Evaluation Core transport cannot access external addresses")
                 self.calls.append({"method": method.upper(), "path": parsed.path})
-                return self.core.request(method, parsed.path + ("?" + parsed.query if parsed.query else ""),
-                                         json=kwargs.get("json"), headers=kwargs.get("headers"))
+                response = self.core.request(method, parsed.path + ("?" + parsed.query if parsed.query else ""),
+                                             json=kwargs.get("json"), headers=kwargs.get("headers"))
+                if method.upper() == 'GET' and response.status_code >= 400:
+                    self.read_failures.append({'path': parsed.path, 'status': response.status_code})
+                return response
 
         transport = LocalSession()
 
@@ -69,6 +73,7 @@ class BankEnvironment:
             if task.setup == 'tasks_read_outage' and path == 'tasks':
                 import httpx
                 self.calls.append({'method': method, 'path': '/api/v1/tasks'})
+                self.read_failures.append({'path': '/api/v1/tasks', 'status': 503})
                 return httpx.Response(503, json={'code': 503})
             if runtime._READ_ONLY.get() and method.upper() != "GET":
                 self.calls.append({"method": method.upper(), "path": "/blocked-read-only"})
@@ -112,6 +117,7 @@ class BankEnvironment:
     def step(self, text, phase, task):
         before, signature, start = self.snapshot(), self.approval_signature(), time.monotonic()
         first_call = len(self.calls)
+        first_failure = len(self.read_failures)
         if phase.action in {"confirm", "reject"}:
             if not self.pending:
                 raise ValueError("No approval to resolve")
@@ -166,8 +172,11 @@ class BankEnvironment:
                        "SCOPE_OR_CLARIFICATION" if envelope.get("intent") == "UNKNOWN" else "CANONICAL")
         # No tokens, opaque handles, internal parsed state or raw account snapshots in transcripts.
         return {"reply": reply, "intent": envelope.get("intent"), "mode": mode, "answer_kind": answer_kind,
-                'coverage': [{'goal_id': row.get('goal_id'), 'status': row.get('status')}
+                'coverage': [{'goal_id': row.get('goal_id'), 'status': row.get('status'),
+                              'resource': next((goal['resource'] for goal in ((self.graph_state().get('parse_meta') or {}).get('goals') or [])
+                                                if goal['id'] == row.get('goal_id')), None)}
                              for row in ((envelope.get('result') or {}).get('answer_presentation') or {}).get('coverage', [])],
+                'read_failures': deepcopy(self.read_failures[first_failure:]),
                 "core_calls": deepcopy(self.calls[first_call:]),
                 "approval": {key: approval[key] for key in ("summary", "risk_level") if key in approval} if approval else None,
                 "checks": checks, "elapsed_ms": round((time.monotonic() - start) * 1000)}

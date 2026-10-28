@@ -121,6 +121,7 @@ def main(argv=None) -> int:
     tasks = [task for task in dataset.tasks if not args.task or task.id in args.task]
     plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, 'dataset_split': dataset.split,
             'evaluation_response_format': 'json_object',
+            'goal_evidence_check_version': 2,
             'prompt_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(), "task_ids": [task.id for task in tasks], "user": args.user,
             "trials_per_task": args.trials, "planned_trials": len(tasks) * args.trials,
             "max_agent_turns": sum(len(task.phases) for task in tasks) * args.trials}

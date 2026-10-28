@@ -56,8 +56,30 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
                       'pending': {**pending, 'payload': payload}})
     if state.get("business_status") in {"SUCCEEDED", "CANCELLED"} or response.get("business_status") in {"SUCCEEDED", "CANCELLED"}:
         selected = ((state.get('parse_meta') or {}).get('task_command') or {}).get('task_id')
-        tasks = [task for task in tasks if not (task.get('id') == selected or task.get('intent') == intent
-                 and ((task.get('pending') or {}).get('payload') or {}).get('target') == state.get('target'))]
+        tasks = [task for task in tasks if not (task.get('intent') == intent and
+                 (task.get('id') == selected or ((task.get('pending') or {}).get('payload') or {}).get('target') == state.get('target')))]
+    if intent == 'BANKING_HELP' and response.get('business_status') != 'FAILED':
+        from bank_agent.parsing import _local_parse_rules
+        from bank_planning.intents import missing_slots
+        from intent_language import business_text, execution_constraint
+        import re
+
+        source = business_text(str(state.get('user_input') or ''))
+        raw = _local_parse_rules(source)
+        # Remember a named, incomplete intention discussed in a consultation.
+        # It is not the active clarification or an authorization; a later turn
+        # must explicitly resume it and independently supply executable values.
+        if (raw['intent'] in {'TRANSFER', 'SCHEDULED_TRANSFER', 'WEALTH_PURCHASE', 'CARD_LIMIT'}
+                and raw.get('target') and raw.get('amount') is None and missing_slots(raw)
+                and execution_constraint(source) != 'NEGATED_ACTION'
+                and re.search(r'我想|我要|我打算|我准备|帮我|给.{1,24}(?:转|汇)', source)):
+            existing = next((task for task in tasks if task.get('intent') == raw['intent']
+                             and ((task.get('pending') or {}).get('payload') or {}).get('target') == raw['target']), None)
+            if existing is None:
+                payload = {key: raw.get(key) for key in ('intent', 'target', 'amount', 'slots', 'scheduled_at', 'product_ids')}
+                tasks.append({'id': 'discussed:' + raw['intent'] + ':' + str(turn), 'intent': raw['intent'],
+                              'status': 'PAUSED', 'kind': 'discussed_intention',
+                              'pending': {'intent': raw['intent'], 'missing': missing_slots(raw), 'payload': payload}})
     topic = help_topic(str(state.get("user_input") or ""))
     selected = (state.get("slots") or {}).get("help_topic")
     if (topic == "general" or intent == "BANKING_HELP") and selected:
@@ -110,14 +132,15 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
     # The model may identify a known task, never manufacture its stored slots.
     # Resuming a discussion is not resuming/approving a transaction nonce.
     task_id = (parsed.get("parse_meta") or {}).get("resume_task_id")
-    resume = re.search(r'继续|接着|恢复|回到', text)
-    if resume and (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED'}:
+    resume = re.search(r'继续|接着|恢复|回到|补(?:上|充|全)|填(?:写|上|入)', text)
+    if resume and (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'SOCIAL', 'UNSUPPORTED'}:
         from bank_agent.extraction import amount_from_text, target_from_text
         from intent_language import ambiguous_amount, ambiguous_target, execution_constraint, business_text
         from bank_agent.parsing import local_parse
         source = business_text(text)
         active = source[resume.end():]
-        operation = local_parse(active).get('intent')
+        filling = bool(re.fullmatch(r'补(?:上|充|全)|填(?:写|上|入)', resume.group()))
+        operation = local_parse(source if filling else active).get('intent')
         value = amount_from_text(source)
         recipient = target_from_text(source)
         candidates = [task for task in dialogue_view(state)['tasks'] if isinstance(task.get('pending'), dict)
@@ -125,9 +148,13 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
                       and task['pending'].get('intent') == operation
                       and task['pending'].get('missing') == ['amount']
                       and isinstance((task['pending'].get('payload') or {}).get('target'), str)
-                      and task['pending']['payload']['target'] == recipient]
+                      and (task['pending']['payload']['target'] == recipient
+                           or recipient is None and (filling or re.search(r'刚才|原来|之前|上次', source)))]
+        siblings = [task for task in dialogue_view(state)['tasks'] if (task.get('pending') or {}).get('intent') == operation]
+        if len(siblings) > 1 and recipient is None and not (task_id and task_id in source):
+            return None
         if (len(candidates) == 1 and value is not None and value > 0 and not ambiguous_amount(text) and not ambiguous_target(text)
-                and not execution_constraint(text) and not re.search(r'解释|说明|查询|核对|查看|分析|了解|为什么|为何|怎么|如何|是否|是不是|[吗？?]', text)):
+                and not execution_constraint(text) and not re.search(r'解释|说明|查询|核对|查看|分析|了解|为什么|为何|怎么|如何|是否|是不是|能否|能不能|可不可以|行不行|多少|费用|手续费|会怎样|[吗？?]', text)):
             return {**candidates[0]['pending'], '_verified_slot_resume': value}
     if not task_id or not re.search(r"继续|接着|恢复|回到|原来|刚才|之前|上次", text):
         return None

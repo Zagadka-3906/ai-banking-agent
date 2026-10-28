@@ -140,6 +140,21 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
         result["slots"] = {"help_topic": help_topic(text)}
     goals = (result.get('parse_meta') or {}).get('goals') or []
+    if read_only_goals(goals) and act in {'QUERY', 'EXPLAIN'}:
+        from bank_planning.requests import needs_record
+        # A mentioned monetary value is a read filter, never an operation amount.
+        # Only a goal for actual subscription records enters that confirmation.
+        subscription_records = any(goal['resource'] == 'subscriptions' and needs_record(goal) for goal in goals)
+        if result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and not subscription_records:
+            result['intent'] = Intent.BANKING_HELP.value
+        result.update(amount=None, participants=[])
+    elif result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and route and route[0] == Intent.BILL_QUERY.value:
+        # Compatibility with older parsers: a transaction clue is still a ledger
+        # read when the merchant happens to describe a subscription.
+        result.update(intent=Intent.BILL_QUERY.value, amount=None, target=None)
+        result['slots'] = dict(route[1])
+    elif result.get('intent') == Intent.SUBSCRIPTION_QUERY.value:
+        result['amount'] = None
     if (read_only_goals(goals) and act in {'QUERY', 'EXPLAIN'}
             and (result.get('parse_meta') or {}).get('source') == 'model'
             and result.get('intent') in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}):
@@ -304,6 +319,12 @@ def remember_reply(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
         return remembered
     observation: dict[str, Any] = {"intent": state.get("intent"), "date_scope": state.get("date_scope"),
                                    "date_range": state.get("date_range")}
+    from bank_planning.requests import request_goals
+    requested_subjects: dict[str, list[str]] = {}
+    for goal in request_goals(state):
+        requested_subjects.setdefault(goal['resource'], [])
+        requested_subjects[goal['resource']] = list(dict.fromkeys([*requested_subjects[goal['resource']], *goal.get('subjects', [])]))[:5]
+    observation['requested_subjects'] = requested_subjects
     facts = result.get("facts") or {}
     observation["suspicious_transaction_ids"] = [row["tx_id"] for row in facts.get("anomalies", [])
                                                 if isinstance(row, dict) and isinstance(row.get("tx_id"), str)][:50]

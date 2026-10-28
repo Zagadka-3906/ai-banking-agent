@@ -1,0 +1,225 @@
+"""Resource and period boundaries survive legacy slots, follow-ups and repair."""
+from copy import deepcopy
+from datetime import datetime, timezone, timedelta
+
+import pytest
+
+from bank_agent.parsing import local_parse, _local_parse_rules
+from bank_agent.dialogue_state import resume_task
+from bank_agent.entities import bind_payee
+from bank_agent.evidence_session import EvidenceSession
+from bank_agent.understanding import enforce_inquiry
+from bank_planning.requests import normalize_goals
+from intent_language import requested_date_range
+from test_agent_gateway import gateway, _send  # noqa: F401
+from test_dialogue_commands import pending_state
+from test_general_dialogue_loop import model, goal
+from test_inquiry_boundaries import financial_state
+from test_feasibility_and_entity_binding import responses
+
+
+@pytest.mark.parametrize('text', ['那就按10000元给我设置日限额', '帮我把日限额设置为10000元', '请给我冻结卡片'])
+def test_card_input_never_uses_the_payee_grammar_as_its_card_identifier(text):
+    assert _local_parse_rules(text)['target'] is None
+    assert local_parse(text)['target'] is None
+    assert local_parse(text+'，指定CARD-001')['target'] == 'CARD-001'
+
+
+def test_action_after_limit_consultation_uses_the_owned_card_instead_of_a_verb_phrase(gateway):  # noqa: F811
+    client, _ = gateway
+    _send(client, '卡片日额度规则是什么', conversation_id='typed-card')
+    result = _send(client, '那就按10000元给我设置日限额，并把待确认的内容展示出来', conversation_id='typed-card')
+    assert result['approval'] and 'CARD-001' in result['approval']['summary']
+    assert '10,000' in result['approval']['summary']
+
+
+@pytest.mark.parametrize('text', ['查本人账单哪些交易可疑，最近总担心误扣款', '解释本月消费与余额的区别，我最近有点担心'])
+def test_recent_background_does_not_invent_a_query_period(text):
+    assert requested_date_range(text) is None
+    assert local_parse(text)['date_scope'] == ('MONTH' if '本月' in text else 'ALL')
+
+
+def test_recent_query_has_a_bounded_period_and_explicit_calendar_scope_wins():
+    now = datetime(2026, 10, 28, tzinfo=timezone(timedelta(hours=8)))
+    assert requested_date_range('查最近几笔交易', now=now) == {'start': '2026-09-29', 'end': '2026-10-28'}
+    assert requested_date_range('查本月消费类别，最近总感觉余额不对', now=now) is None
+
+
+def test_one_explicitly_resumed_task_keeps_its_known_payee_without_repetition():
+    state = pending_state()
+    parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'SLOT_REPLY'}}
+    result = resume_task(state, parsed, '那回到刚才的转账，金额是300元，先不确认')
+    assert result and result['_verified_slot_resume'] == 300 and result['payload']['target'] == '李四'
+    state['dialogue_state']['tasks'].append(deepcopy(state['dialogue_state']['tasks'][0]) | {'id': 'second'})
+    assert resume_task(state, parsed, '那回到刚才的转账，金额是300元，先不确认') is None
+
+
+def test_successful_side_question_cannot_consume_the_paused_task_named_by_its_pause_command():
+    from bank_agent.dialogue_state import remember_discussion
+    state = {**pending_state(), 'intent': 'BANKING_HELP', 'user_input': '转账先放着，生日联动怎么做',
+             'parse_meta': {'task_command': {'type': 'PAUSE', 'task_id': 'TRANSFER', 'evidence': '转账先放着'}}}
+    result = remember_discussion(state, {'business_status': 'SUCCEEDED'})
+    assert len(result['tasks']) == 1 and result['tasks'][0]['pending']['payload']['target'] == '李四'
+
+
+@pytest.mark.parametrize('act', ['QUERY', 'EXPLAIN', 'SLOT_REPLY'])
+def test_literal_resume_amount_is_verified_independently_of_the_model_act(act):
+    result = resume_task(pending_state(), {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': act}},
+                         '回到刚才的转账，金额就按原来的300元。')
+    assert result and result['_verified_slot_resume'] == 300
+    assert resume_task(pending_state(), {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': act}},
+                       '回到刚才的转账，300元的手续费是多少') is None
+
+
+def test_explicitly_filling_the_transfer_amount_can_resume_one_paused_discussion():
+    parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'SLOT_REPLY', 'resume_task_id': 'TRANSFER'}}
+    state = pending_state()
+    result = resume_task(state, parsed, '好，那转账金额补上300元，先别确认。')
+    assert result and result['_verified_slot_resume'] == 300 and result['payload']['target'] == '李四'
+    state['dialogue_state']['tasks'].append(deepcopy(state['dialogue_state']['tasks'][0]) | {'id': 'another'})
+    assert resume_task(state, parsed, '好，那转账金额补上300元，先别确认。') is None
+
+
+def test_consulted_incomplete_intention_can_be_explicitly_resumed_without_turning_the_question_into_a_proposal(gateway, monkeypatch):  # noqa: F811
+    from bank_agent import runtime
+    client, _ = gateway
+    model(monkeypatch, [goal('general', [], '如何给李四转账', act='EXPLAIN')])
+    before = financial_state()
+    first = _send(client, '我想给李四转一点钱，先了解怎么转', conversation_id='consulted-intention')
+    assert first['approval'] is None and financial_state() == before
+    monkeypatch.setattr(runtime, 'llm', None)
+    _send(client, '先问一下生日联动怎么弄', conversation_id='consulted-intention')
+    final = _send(client, '那回到刚才的转账，金额300元，帮我继续转账，先不确认', conversation_id='consulted-intention')
+    assert final['approval'] and '李四' in final['approval']['summary'] and '300' in final['approval']['summary']
+    assert financial_state()[:4] == before[:4]
+
+
+def test_discussed_intention_does_not_make_a_bare_amount_an_action(gateway, monkeypatch):  # noqa: F811
+    from bank_agent import runtime
+    client, _ = gateway
+    model(monkeypatch, [goal('general', [], '如何给李四转账', act='EXPLAIN')])
+    _send(client, '我想给李四转一点钱，先了解怎么转', conversation_id='consulted-bare-number')
+    monkeypatch.setattr(runtime, 'llm', None)
+    before = financial_state()
+    reply = _send(client, '300元', conversation_id='consulted-bare-number')
+    assert reply['approval'] is None and financial_state() == before
+
+
+def test_payee_pronoun_is_bound_to_one_verified_contact_and_rechecked_against_core(monkeypatch):
+    responses(monkeypatch, [{'name': '李四', 'contact_id': 'CT-LI', 'account_id': 'user_li'}],
+              [{'display_name': '李四', 'contact_id': 'user_li'}])
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang',
+             'observations': {'BANKING_HELP': {'resource_entities': {'contacts': ['CT-LI']}}}}
+    text = '我想给他办一笔预约转账'
+    parsed = local_parse(text)
+    assert bind_payee(state, parsed, text)['target'] == '李四'
+    state['memory_principal'] = 'user_li'
+    assert bind_payee(state, parsed, text)['target'] is None
+    state['memory_principal'] = 'user_zhang'
+    state['observations']['BANKING_HELP']['resource_entities']['contacts'].append('CT-OTHER')
+    assert bind_payee(state, parsed, text)['target'] is None
+
+
+def test_real_contact_label_wins_even_when_it_looks_like_a_pronoun_and_verb(monkeypatch):
+    responses(monkeypatch, [{'name': '他办一笔', 'contact_id': 'CT-REAL', 'account_id': 'real-user'}], [])
+    text = '给他办一笔预约转账'
+    assert bind_payee({'user_id': 'user_zhang'}, local_parse(text), text)['target'] == '他办一笔'
+
+
+def test_unsaved_discussed_name_requires_fresh_allowed_payee_evidence(monkeypatch):
+    responses(monkeypatch, [], [{'display_name': '李四', 'contact_id': 'user_li'}])
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'observations': {
+        'BANKING_HELP': {'resource_entities': {'contacts': []}, 'requested_subjects': {'contacts': ['李四']}}}}
+    text = '我想给他办一笔预约转账'
+    assert bind_payee(state, local_parse(text), text)['target'] == '李四'
+    responses(monkeypatch, [], [])
+    assert bind_payee(state, local_parse(text), text)['target'] is None
+
+
+def test_a_discussion_noun_after_a_name_is_repaired_only_with_current_core_evidence(monkeypatch):
+    text = '给李四的事，金额补300元，先不确认'
+    parsed = {'intent': 'TRANSFER', 'target': '李四的事', 'amount': 300}
+    responses(monkeypatch, [], [{'display_name': '李四', 'contact_id': 'user_li'}])
+    assert bind_payee({'user_id': 'user_zhang'}, parsed, text)['target'] == '李四'
+    responses(monkeypatch, [{'name': '李四的事', 'account_id': 'actual-full-name'}], [{'display_name': '李四', 'contact_id': 'user_li'}])
+    assert bind_payee({'user_id': 'user_zhang'}, parsed, text)['target'] == '李四的事'
+
+
+def test_wrong_subscription_classifier_cannot_send_a_transaction_goal_to_precheck(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    model(monkeypatch, [goal('transactions', ['records', 'merchant', 'amount'], '云端存储这笔扣款的线索', subject='云端存储')],
+          intent='SUBSCRIPTION_QUERY')
+    before = financial_state()
+    result = _send(client, '我看到云端存储代扣19.90元，查这笔交易线索', conversation_id='read-contract')
+    assert result['approval'] is None and result['intent'] == 'BANKING_HELP'
+    assert financial_state() == before and '不接受金额' not in result['reply']
+
+
+def test_legacy_transaction_route_is_not_overridden_by_subscription_merchant_keyword():
+    parsed = {'intent': 'SUBSCRIPTION_QUERY', 'amount': 19.9, 'slots': {}, 'parse_meta': {'dialogue_act': 'QUERY'}}
+    assert enforce_inquiry(parsed, '查询这笔订阅代扣交易的线索')['intent'] == 'BILL_QUERY'
+    assert enforce_inquiry(parsed, '视频会员每期扣多少钱')['intent'] == 'SUBSCRIPTION_QUERY'
+    assert enforce_inquiry(parsed, '视频会员每期扣25元吗')['amount'] is None
+
+
+def test_self_labels_do_not_make_owned_singleton_queries_ambiguous():
+    goals = normalize_goals([goal('balance', ['available_balance'], '当前可用余额', subject='当前账户')],
+                            '我只想知道可用的钱是多少', {})
+    assert goals[0]['act'] == 'QUERY' and not goals[0]['subjects'] and not goals[0]['needs_subject']
+    other = normalize_goals([goal('balance', ['available_balance'], '他人余额', subject='不存在的姓名')],
+                            '查一下余额', {})
+    assert other[0]['act'] == 'UNCLEAR' and other[0]['needs_subject']
+
+
+def test_product_comparison_goals_do_not_reenter_the_legacy_product_id_clarification(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    model(monkeypatch, [goal('wealth_products', ['min_amount'], '比较起购金额') | {'subjects': ['零星宝', '恒泉稳利']}],
+          intent='WEALTH_COMPARE')
+    result = _send(client, '对比零星宝和恒泉稳利起购金额', conversation_id='typed-product-goals')
+    assert result['intent'] == 'BANKING_HELP' and '提供产品编号' not in result['reply']
+    assert '1,000.00' in result['reply']
+
+
+def test_generic_shelf_description_is_not_an_unbound_product_name(gateway):  # noqa: F811
+    goals = normalize_goals([goal('wealth_products', [], '货架产品起购条件', act='EXPLAIN', subject='在售理财产品')],
+                            '货架产品起购条件是什么', {})
+    assert goals[0]['act'] == 'EXPLAIN' and not goals[0]['subjects']
+    session = EvidenceSession({'user_id': 'user_zhang', 'user_input': '货架产品起购条件是什么', 'parse_meta': {'goals': goals}})
+    session.bootstrap()
+    assert any(row['source'] == 'core://wealth_products' and 'min_amount' in row.get('fields', []) for row in session.facts())
+
+
+def test_explicit_incomplete_action_is_not_lost_in_background_rule_words(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    model(monkeypatch, [goal('general', [], '申购规则', act='EXPLAIN')])
+    reply = _send(client, '我记不太清零星宝的申购规则，不过我想先申购零星宝，金额我还没定。', conversation_id='incomplete-action')
+    assert reply['approval'] is None and '金额' in reply['reply']
+    assert reply['result']['risk_quiz']['active']
+
+
+@pytest.mark.parametrize('text', ['我想先了解申购零星宝是否可行', '如果我想先申购零星宝，会怎样',
+                                '请解释怎么申购零星宝', '我想先申购零星宝，但只想了解可行性'])
+def test_consultation_and_hypothesis_still_do_not_start_purchase_or_quiz(gateway, monkeypatch, text):  # noqa: F811
+    client, _ = gateway
+    model(monkeypatch, [goal('general', [], '申购规则', act='EXPLAIN')])
+    before = financial_state()
+    reply = _send(client, text, conversation_id='keep-consultation')
+    assert reply['approval'] is None and financial_state() == before
+    assert not (reply['result'].get('risk_quiz') or {}).get('active')
+
+
+def test_refreshed_explanation_and_repair_keep_one_period(gateway):  # noqa: F811
+    goals = normalize_goals([goal('transactions', ['amount'], '解释消费金额', act='EXPLAIN') | {'requires_record': True}],
+                            '解释消费金额', {})
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'date_scope': 'ALL',
+             'user_input': '解释消费金额', 'parse_meta': {'goals': goals, 'topic_relation': 'CONTINUE'},
+             'observations': {'BANKING_HELP': {'read_requests': [{'tool': 'transactions', 'fields': ['amount']}],
+                 'read_contexts': {'transactions': {'date_scope': 'MONTH', 'date_range': None}}}}}
+    session = EvidenceSession(state)
+    session.bootstrap()
+    session.read({'tool': 'transactions', 'fields': ['amount', 'card_id']})
+    assert session.contexts['transactions']['date_scope'] == 'MONTH'
+    assert sum('entity_id' in row for row in session.facts()) == 2
+    session.read({'tool': 'transactions', 'fields': ['amount']}, date_context={'date_scope': 'ALL', 'date_range': None})
+    assert session.contexts['transactions']['date_scope'] == 'ALL'
+    assert sum('entity_id' in row for row in session.facts()) == 8

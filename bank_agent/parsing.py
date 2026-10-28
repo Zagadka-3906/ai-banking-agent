@@ -95,7 +95,7 @@ def parsed_payload(
 
     return {
         "intent": intent,
-        "target": target,
+        "target": target if not intent.startswith('CARD_') or isinstance(target, str) and re.fullmatch(r'(?i)CARD-[0-9a-z]{2,}', target) else None,
         "amount": amount,
         "date_scope": scope,
         "extra_info": text,
@@ -353,7 +353,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     event_at = scheduled_at if intent == Intent.CROSS_SCENE_LOCK.value else None
     return {
         "intent": intent,
-        "target": target,
+        "target": target if not intent.startswith('CARD_') or isinstance(target, str) and re.fullmatch(r'(?i)CARD-[0-9a-z]{2,}', target) else None,
         "amount": amount,
         "date_scope": scope,
         "extra_info": text,
@@ -489,6 +489,7 @@ def model_parse(text: str) -> dict[str, Any]:
         '{"act":"QUERY或EXPLAIN或ACTION或UNSUPPORTED或UNCLEAR","resource":"下列资源名",'
         '"question":"本轮具体问题","fields":["所问字段"],"subject":"原文或已核验实体名称；无对象则null","topic":"知识主题"}。'
         '比较多个对象用subjects数组分别填写对象，不把几个人或产品拼成一个subject。'
+        '查询整个集合时subject为null，不把“在售产品”“我的持仓”“我的卡片”等集合描述当作具体实体名称。'
         '金额差额、合计和数量也是独立目标，resource指向原始记录而非general；'
         '必须添加calculation={"operation":"difference或sum或count","field":"实际字段名"}。'
         'difference的subjects必须有两个原文或已核验对象；字段不能来自用户猜测的金额。'
@@ -498,6 +499,8 @@ def model_parse(text: str) -> dict[str, Any]:
         '若解释本人的实际情况确实需读取，再设requires_record=true；不能仅因提及字段名而索要查询确认。'
         'topic用于政策咨询，应匹配实际业务主题；可用general,contacts,transfer,card,limits,security,tasks,dispute,wealth,subscription,cross_scene。'
         'QUERY用于本人当前记录，EXPLAIN用于规则；解释实际状态原因时fields列出需读取字段。'
+        '查看整体明细或列表只需fields=["records"]；不要把用户未明确要求的可选列都列为必需字段。'
+        '问一个拟设数值是否可行是EXPLAIN，回答规则和必要条件；不能改成仅查询当前数值。当前值也被明确询问时才另列QUERY。'
         '一条消息中的状态、金额、原因等独立问题分别列出，不用历史问题替代本轮。'
         '资源和可读字段：' + json.dumps(RESOURCES, ensure_ascii=False)
         + '。订阅实际记录必须先确认；本轮含订阅记录查询时顶层intent使用SUBSCRIPTION_QUERY，确认后再回答全部查询和解释。'
@@ -731,11 +734,26 @@ def model_parse(text: str) -> dict[str, Any]:
         if read_only_goals(goals) and act in {'QUERY', 'EXPLAIN'}:
             if any(goal['resource'] == 'subscriptions' and needs_record(goal) for goal in goals):
                 merged['intent'] = Intent.SUBSCRIPTION_QUERY.value
-            elif merged['intent'] == Intent.SUBSCRIPTION_QUERY.value or len(goals) > 1 or any(goal['resource'] in {'tasks', 'risk_profile'} for goal in goals):
+            elif merged['intent'] in {Intent.SUBSCRIPTION_QUERY.value, Intent.WEALTH_COMPARE.value} or len(goals) > 1 or any(goal['resource'] in {'tasks', 'risk_profile'} for goal in goals):
                 merged['intent'] = Intent.BANKING_HELP.value
         from bank_agent.dialogue_commands import atomic_action_input
         merged = atomic_action_input(merged, text) or merged
-        return enforce_inquiry(merged, business_text(text))
+        merged = enforce_inquiry(merged, business_text(text))
+        from intent_language import action_request_clause
+        from bank_planning.intents import missing_slots
+        clause = action_request_clause(text)
+        if (clause and act in {'QUERY', 'EXPLAIN'} and not execution_constraint(text)
+                and re.match(r'^(?:那|就|现在)?(?:我(?:想|要|需要)|请|麻烦|帮我|替我|给我)', clause)
+                and (merged.get('parse_meta') or {}).get('scope') != 'OUT_OF_SCOPE'
+                and not re.search(r'查询|解释|说明|怎么|如何|是否|能否|能不能|想知道|想了解|想咨询|想问|[？?]', business_text(text))):
+            literal = _local_parse_rules(clause)
+            if literal['intent'] in {'TRANSFER', 'SCHEDULED_TRANSFER', 'WEALTH_PURCHASE', 'WEALTH_REDEEM', 'CARD_LIMIT'} and missing_slots(literal):
+                # Only recover an explicitly stated, incomplete action. This
+                # cannot turn a question into a complete executable proposal.
+                meta = {key: value for key, value in merged['parse_meta'].items() if key not in {'goals', 'task_command'}}
+                merged = {**literal, 'extra_info': text, 'parse_meta': {**meta, 'dialogue_act': 'ACTION',
+                          'resolution': 'literal_incomplete_action', 'fast_path_eligible': False}}
+        return merged
     except Exception as error:
         # A model outage must degrade to the conservative local parser, never
         # to a fabricated success response.

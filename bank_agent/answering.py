@@ -125,6 +125,12 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
             raise ValueError("STALE_SCHEDULE_CLAIM")
     numbers = {Decimal(value.replace(',', '')).normalize() for value in _NUMBER.findall(evidence)}
     numeric_text = re.sub(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?(?:[1-9](?:\.(?!\d)|[、)）])|[（(][1-9][）)])(?:\*\*)?\s*", "", rendered)
+    # Names are identity evidence, not numeric attributes. A verified product
+    # called "60天持有" can be named without proving a separate 60-day term.
+    entity_labels = {label for key in ids for label in [known[key].get('subject'), *known[key].get('entity_names', [])]
+                     if isinstance(label, str) and label and not label.isdecimal()}
+    if entity_labels:
+        numeric_text = re.sub('|'.join(re.escape(label) for label in sorted(entity_labels, key=len, reverse=True)), '', numeric_text)
     if any(Decimal(value.replace(',', '')).normalize() not in numbers for value in _NUMBER.findall(numeric_text)):
         raise ValueError("UNKNOWN_NUMBER")
     if any(value not in evidence for value in _IDENTIFIER.findall(rendered)):
@@ -134,6 +140,11 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
     for match in re.finditer(r"\{\{(value\.\d+)\}\}", text):
         field = anchors[match.group(1)]["evidence_id"]
         bound_fields = known[field].get('fields') or []
+        if known[field].get('source') == 'user://current-request':
+            prefix = re.split(r'[，,。；;\n]', text[:match.start()])[-1][-32:]
+            if (not re.search(r'你(?:本轮)?(?:提到|询问|想设|希望|拟|提出)|用户(?:本轮)?(?:提出|询问)|拟(?:设|申请)|申请(?:的)?(?:金额|数值)', prefix)
+                    or re.search(r'当前|余额|已生效|已批准|已设置|设好|已办理', prefix)):
+                raise ValueError('REQUEST_VALUE_AS_ACCOUNT_FACT')
         if known[field].get('source') == 'core://balance' and len(bound_fields) == 1:
             field = 'balance.' + bound_fields[0]
         if field in balance_labels:

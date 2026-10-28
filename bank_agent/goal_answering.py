@@ -48,6 +48,9 @@ def _bind_literal_values(plan: dict[str, Any], facts: list[dict[str, Any]], anch
         if labels:
             field = max(labels)[1]
             candidates = [(key, row) for key, row in candidates if field in known[row['evidence_id']].get('fields', [])]
+        elif re.search(r'你(?:本轮)?(?:提到|询问|想设|希望|拟|提出)|拟(?:设|申请)', prefix):
+            inputs = [(key, row) for key, row in candidates if known[row['evidence_id']].get('source') == 'user://current-request']
+            candidates = inputs or candidates
         return '{{' + candidates[0][0] + '}}' if candidates else match.group()
     return {**plan, 'answer': _MONEY.sub(encode, text)}
 
@@ -170,6 +173,11 @@ def _fallback(goals: list[dict[str, Any]], session: EvidenceSession) -> tuple[st
             if policies:
                 text = (text + '\n' if rows else '') + '\n'.join(row['text'] for row in policies) + '\n以上是已核验的相关规则；本次完整解释或所需记录仍未通过逐项核验。'
                 ids = [*ids, *[row['id'] for row in policies]]
+        if goal['act'] == 'EXPLAIN' and status == 'ANSWERED':
+            # A field projection proves the values, not that the explanation
+            # answered the question. Only reviewed prose can complete it.
+            status = 'NEEDS_DATA'
+            text += '\n以上是已核实的相关记录；本轮问题的完整解释仍未完成。'
         lines.append(goal['question'] + '：\n' + text)
         coverage.append({'goal_id': goal['id'], 'status': status, 'evidence_ids': ids, 'reason': text[:300]})
     return '\n\n'.join(lines), coverage
@@ -198,13 +206,21 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
             for row in seed:
                 session.documents[row['id']] = row
             session.completed.append({'tool': resource, 'fields': fields})
+            if resource == 'transactions':
+                session.contexts[resource] = {key: state.get(key) for key in ('date_scope', 'date_range')}
+                session.transaction_dates = session.contexts[resource]
         session.bootstrap()
     with understanding_context(state):
         context = model_context()
     feedback: list[dict[str, Any]] = []
     final_text, final_coverage, generated = '', [], False
+    from bank_agent.extraction import amount_from_text
+    requested_amount = amount_from_text(str(state.get('user_input') or ''))
+    request_facts = ([{'id': 'request.amount', 'source': 'user://current-request', 'fields': ['requested_amount'],
+                      'text': f'你本轮询问的金额为¥{requested_amount:,.2f}；只是用户询问参数，不是账户余额、已生效额度或批准结果。'}]
+                     if requested_amount is not None else [])
     for attempt in range(3 if runtime.llm and os.getenv('BANK_ANSWER_PLANNING', '1') != '0' else 0):
-        facts = session.facts()
+        facts = [*session.facts(), *request_facts]
         if not facts:
             break
         masked, anchors = _anchored_facts(facts)
@@ -217,6 +233,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 '引用全部用到的字段及计数证据，不在正文输出内部goal_id、source、接口或证据编号。步骤用中文序号。'
                 'audience=model的规则只约束内部推理，除非用户明确询问实现，不向用户复述工具、协议或读取预算。'
                 '每项当前账户事实必须引用对应read资源字段，规则不能证明个人状态。无法读取、需澄清、需订阅确认和未实现要分别说明。'
+                'request.amount仅为本轮用户询问数值，若复述必须明确称“你询问的金额”或“拟设额度”，不能作余额、已生效额度或批准结果；对应占位符同样必须引用。'
                 '金额必须用values中的{{value.N}}并引用对应evidence_id，余额金额标明总余额/可用余额/锁定金额。'
                 '带calculation的目标必须引用服务器calculation证据，不自行算金额；引用计算结果即包含其操作数来源。'
                 '不编造日期、收益、状态、外部服务、UI入口或已执行操作，过期计划日期只称原计划，不推进到下一期。'
@@ -252,6 +269,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 '你是独立银行回答核验器。' + SCOPE_POLICY +
                 '逐项对照原始问题与goals，检查有没有漏问、问题被改写、无关展开、重复、错误主体或无依据状态。'
                 '每项个人事实必须来自对应读取源；规则不能当账户事实。核验金额字段、过期日期、订阅登记与真实权益区别。'
+                'user://current-request仅证明用户本轮提出的询问参数，不能证明实际余额、已生效额度、批准或办理结果。'
                 '不能因引用事实就认定答到点。若证据不足，feedback列出goal_id、status=NEEDS_DATA、reason；系统可补查。'
                 '另逐项返回coverage，每项goal_id、status、evidence_ids、reason，字段协议与候选相同。任何未答项不能改称已答。'
                 'feedback每项必须指明goal_id、reason；可写action=READ补数据/CALCULATE补计算/REWRITE改写/CLARIFY澄清。'

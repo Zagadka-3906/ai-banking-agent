@@ -41,6 +41,20 @@ def milestone_checks(phase, observed: dict) -> dict[str, bool]:
     return checks
 
 
+def goal_evidence_complete(coverage, failures):
+    routes = {'balance': '/balance', 'cards': '/cards/', 'transactions': '/transactions', 'contacts': '/book',
+              'wealth_products': '/wealth/products', 'wealth_holdings': '/wealth/holdings',
+              'risk_profile': '/wealth/risk-profile', 'tasks': '/tasks', 'disputes': '/disputes'}
+    for item in coverage:
+        if item.get('status') == 'NEEDS_DATA':
+            return False
+        if item.get('status') == 'TOOL_FAILED':
+            route = routes.get(item.get('resource'))
+            if not route or not any(route in row.get('path', '') and type(row.get('status')) is int and row['status'] >= 400 for row in failures):
+                return False
+    return True
+
+
 def evaluate_judgement(raw: dict, task: Task) -> dict:
     verdict = Judgement.model_validate(raw)
     expected = [f"phase_{index + 1}" for index in range(len(task.phases))]
@@ -70,13 +84,15 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
                     raise SimulatorDrift('Proposal replaced by a consultation before agent execution')
             observed = environment.step(text, phase, task)
             required = {"reply", "approval", "mode", "intent", "checks", "elapsed_ms", "core_calls", "answer_kind"}
-            if not required <= set(observed) or set(observed) - required - {'coverage'}:
+            if not required <= set(observed) or set(observed) - required - {'coverage', 'read_failures'}:
                 raise ValueError("Incomplete environment observation")
             if not isinstance(observed["checks"], dict) or not observed["checks"]:
                 raise ValueError("Missing hard checks")
             if any(type(value) is not bool for value in observed["checks"].values()):
                 raise ValueError("Hard checks must be booleans")
             observed['checks'] = {**observed['checks'], **milestone_checks(phase, observed)}
+            if phase.action == 'inquiry' and observed.get('coverage'):
+                observed['checks']['goal_evidence_complete'] = goal_evidence_complete(observed['coverage'], observed.get('read_failures', []))
             result["turns"].append({"phase": index, "user": text, 'goal_shift': phase.goal_shift, **observed})
             history.extend([{"role": "user", "text": text}, {"role": "assistant", "text": observed["reply"],
                             "approval": observed["approval"]}])

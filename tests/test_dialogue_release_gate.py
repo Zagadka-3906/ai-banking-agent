@@ -54,6 +54,16 @@ def test_all_required_evidence_can_pass_and_missing_operations_still_blocks(evid
     assert 'HUMAN_REVIEW_REQUIRED' in result['blockers']
 
 
+def test_forged_pass_cannot_hide_explicitly_incomplete_goal_evidence(evidence):
+    groups, op = evidence
+    def incomplete(report):
+        report['trials'][0]['turns'] = [{'phase': 1, 'reply': '资料还不足', 'core_calls': [],
+            'coverage': [{'goal_id': 'q1', 'status': 'NEEDS_DATA'}], 'checks': {}, 'elapsed_ms': 1}]
+    mutate(groups[0], incomplete)
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any(value.startswith('INCOMPLETE_GOAL_EVIDENCE:') for value in result['blockers'])
+
+
 @pytest.mark.parametrize('change', [
     lambda d: d.update(source_sha256={'source.py': 'old'}),
     lambda d: d['trials'].pop(),

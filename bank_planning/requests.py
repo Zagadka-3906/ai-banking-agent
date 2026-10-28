@@ -68,6 +68,16 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
             if 2 <= len(parts) <= 5 and all(part in known for part in parts):
                 subjects, subject = [*subjects, *parts], None
         subjects = list(dict.fromkeys([*subjects, *([subject] if subject else [])]))
+        self_names = ({'我', '本人', '账户', '我的账户', '当前账户', '本人账户', '我的银行账户', '当前登录账户'}
+                      if item['resource'] == 'balance' else {'我', '本人', '本人档案', '我的风险档案', '我的风险测评', '当前风险档案'}
+                      if item['resource'] == 'risk_profile' else {'我的持仓', '本人持仓', '当前持仓'}
+                      if item['resource'] == 'wealth_holdings' else {'产品货架', '当前货架', '在售产品', '在售理财产品', '理财产品', '所有产品', '货架', '当前在售产品'}
+                      if item['resource'] == 'wealth_products' else {'我的卡片', '我的银行卡', '本人卡片', '银行卡', '卡片'}
+                      if item['resource'] == 'cards' else {'我的待办', '本人任务', '我的任务', '待办任务'}
+                      if item['resource'] == 'tasks' else set())
+        # These singleton resources always use the authenticated principal;
+        # a generic self label is not a separately selected person or account.
+        subjects = [name for name in subjects if name not in self_names]
         if calculation and calculation['operation'] == 'difference' and len(subjects) != 2:
             raise ValueError('CALCULATION_OPERANDS_REQUIRED')
         resolved, unclear_reference = [], False
