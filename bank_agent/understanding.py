@@ -155,6 +155,16 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
                 result.update(date_scope='CUSTOM', date_range=None if bounds.get('error') else bounds)
                 if bounds.get('error'):
                     result['slots'] = {**(result.get('slots') or {}), 'date_range_ambiguous': True}
+        else:
+            # A legacy UNKNOWN parse may see a product duration as an unclear
+            # calendar range. Only the transaction reader uses this range;
+            # validated goals for other resources cannot inherit that gate.
+            result.update(date_scope='ALL', date_range=None)
+            result['slots'] = {key: value for key, value in (result.get('slots') or {}).items()
+                               if key != 'date_range_ambiguous'}
+            result['parse_meta'] = {**(result.get('parse_meta') or {}),
+                                   'reason_codes': [reason for reason in (result.get('parse_meta') or {}).get('reason_codes', [])
+                                                    if not reason.startswith('DATE_RANGE_')]}
     elif result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and route and route[0] == Intent.BILL_QUERY.value:
         # Compatibility with older parsers: a transaction clue is still a ledger
         # read when the merchant happens to describe a subscription.

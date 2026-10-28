@@ -68,6 +68,21 @@ def test_suffix_is_bound_to_a_real_unique_core_payee(monkeypatch):
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize('verb', ['办', '办理', '安排'])
+def test_payee_business_verb_suffix_uses_current_unique_identity(monkeypatch, verb):
+    responses(monkeypatch, [], [{'display_name': '李四', 'contact_id': 'user_li'}])
+    text = '给李四' + verb + '预约转账，金额和日期没想好'
+    parsed = {'intent': 'SCHEDULED_TRANSFER', 'target': '李四' + verb, 'parse_meta': {'dialogue_act': 'ACTION'}}
+    result = bind_payee({'user_id': 'user_zhang'}, parsed, text)
+    assert result['target'] == '李四' and result['parse_meta']['target_binding']['entity_id'] == 'user_li'
+
+
+def test_actual_full_payee_label_wins_over_business_verb_suffix(monkeypatch):
+    responses(monkeypatch, [{'name': '李四办', 'account_id': 'long-label'}], [{'display_name': '李四', 'contact_id': 'user_li'}])
+    parsed = {'intent': 'SCHEDULED_TRANSFER', 'target': '李四办', 'parse_meta': {'dialogue_act': 'ACTION'}}
+    assert bind_payee({'user_id': 'user_zhang'}, parsed, '给李四办预约转账') == parsed
+
+
 def test_exact_real_label_wins_over_a_shorter_name_with_particle(monkeypatch):
     responses(monkeypatch, [{'name': '李四吧', 'account_id': 'actual-long-name'}], [{'display_name': '李四', 'contact_id': 'user_li'}])
     text = '给李四吧转300元'

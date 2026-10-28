@@ -167,6 +167,7 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
     source = business_text(text)
     # Monetary decimals and percentages are quantities, not calendar atoms.
     # Keep actual date expressions intact, including dotted month/day ranges.
+    source = re.sub(r'[¥￥]\s*[+-]?\d[\d,]*(?:\.\d+)?(?:\s*(?:万元|元|块钱|块))?', ' ', source)
     source = re.sub(r'(?:[¥￥]\s*)?-?\d[\d,]*(?:\.\d+)?\s*(?:万元|元|块钱|块|%)', ' ', source)
     current = now or datetime.now(timezone(timedelta(hours=8)))
     if current.tzinfo is not None:

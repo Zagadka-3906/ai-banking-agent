@@ -11,6 +11,35 @@ from test_general_dialogue_loop import goal, model
 from test_inquiry_boundaries import financial_state
 
 
+@pytest.mark.parametrize('money', ['¥19.90', '￥999.00', '¥1,500.50', '¥-19.90'])
+def test_currency_prefixed_amount_is_not_a_calendar_range(money):
+    from intent_language import requested_date_range
+    assert requested_date_range(f'帮我查这笔金额{money}的交易线索') is None
+    assert requested_date_range(f'查2026-10-01到2026-10-28金额{money}的交易') == {'start': '2026-10-01', 'end': '2026-10-28'}
+
+
+def test_non_transaction_goals_do_not_inherit_a_product_duration_calendar_error():
+    from bank_agent.parsing import local_parse
+    from bank_agent.understanding import enforce_inquiry
+    text = '确认零星宝·活钱管家1元起购和恒泉稳利·60天持有1000元起购是否准确'
+    parsed = local_parse(text)
+    goals = normalize_goals([goal('wealth_products', ['min_amount'], '确认两种产品最低起购金额')], text, {})
+    parsed.update(intent='WEALTH_QUERY', parse_meta={**parsed['parse_meta'], 'source': 'model', 'dialogue_act': 'QUERY', 'goals': goals})
+    assert parsed['slots']['date_range_ambiguous']
+    result = enforce_inquiry(parsed, text)
+    assert not result['slots'].get('date_range_ambiguous') and result['date_scope'] == 'ALL' and result['date_range'] is None
+    assert not any(reason.startswith('DATE_RANGE_') for reason in result['parse_meta']['reason_codes'])
+
+
+@pytest.mark.parametrize('selector', ['尾号3082', '末四位：3082', '后四位3082的卡', '尾号 3082 的银行卡'])
+def test_card_tail_selector_is_exact_and_resource_bound(selector):
+    from bank_agent.evidence import selector_matches_record
+    row = {'card_id': 'CARD-001', 'last4': '3082'}
+    assert selector_matches_record(selector, row, 'cards')
+    assert not selector_matches_record(selector, {**row, 'last4': '3083'}, 'cards')
+    assert not selector_matches_record(selector, row, 'transactions')
+
+
 def test_answer_context_does_not_repeat_unread_historical_account_values(gateway, monkeypatch):  # noqa: F811
     client, _ = gateway
     model(monkeypatch, [goal('balance', ['locked_amount'], '锁定金额')], intent='BALANCE_QUERY')

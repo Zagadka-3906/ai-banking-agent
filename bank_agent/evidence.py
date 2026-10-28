@@ -57,6 +57,10 @@ def selector_matches_record(selector: str, row: Mapping[str, Any], resource: str
     value = normalize('NFKC', selector).strip().casefold()
     if value in known:
         return True
+    if resource == 'cards':
+        tail = re.fullmatch(r'(?:尾号|末四位|后四位)\s*[:：]?\s*(\d{4})(?:\s*的?\s*(?:银行卡|卡片|卡))?', value)
+        if tail and tail.group(1) == row.get('last4'):
+            return True
     pair = re.fullmatch(r'([^()]+?)\s*\(([^()]+)\)', value)
     return bool(pair and all(part.strip() in known for part in pair.groups()))
 
