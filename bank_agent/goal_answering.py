@@ -7,7 +7,7 @@ import os
 from typing import Any, Mapping
 
 from bank_agent import runtime
-from bank_agent.evidence import project_records
+from bank_agent.evidence import LABELS, project_records
 from bank_agent.evidence_session import EvidenceSession
 from bank_agent.computations import calculation_for, expand_calculation_citations
 from bank_agent.answer_repair import normalize_feedback, validation_feedback
@@ -61,6 +61,39 @@ def _matching(goal: Mapping[str, Any], facts: list[dict[str, Any]]) -> list[dict
     if selectors:
         rows = [row for row in rows if any(row.get('subject') == name or name in row.get('entity_names', []) for name in selectors)]
     return rows
+
+
+def _missing_record_fields(goal: Mapping[str, Any], rows: list[dict[str, Any]]) -> set[str]:
+    required = set(goal['fields'] or ['records'])
+    missing = required - {field for row in rows for field in row.get('fields', [])}
+    for selector in goal.get('subjects') or []:
+        missing |= required - {field for row in rows if row.get('subject') == selector or selector in row.get('entity_names', [])
+                               for field in row.get('fields', [])}
+    return missing
+
+
+def _field_names(fields: set[str]) -> str:
+    labels = {'records': '匹配记录', 'analysis': '分析', 'channels': '交易渠道', 'next_charge': '原计划扣款日期'}
+    return '、'.join(dict.fromkeys(LABELS.get(field, labels.get(field, '所问字段')) for field in sorted(fields)))
+
+
+def _record_gap_feedback(goals: list[dict[str, Any]], session: EvidenceSession) -> list[dict[str, Any]]:
+    result = []
+    facts = session.facts()
+    for goal in goals:
+        if not needs_record(goal):
+            continue
+        rows = _matching(goal, facts)
+        missing = _missing_record_fields(goal, rows)
+        if not missing:
+            continue
+        requested = any(step.get('tool') == goal['resource'] and set(goal['fields'] or ['records']) <= set(step.get('fields') or ['records'])
+                        for step in session.completed)
+        result.append({'goal_id': goal['id'], 'status': 'NEEDS_DATA',
+                       'action': 'REWRITE' if rows and requested else 'READ',
+                       'reason': f'该项缺少证据字段：{_field_names(missing)}。保留已核实的信息，明确缺项并标为NEEDS_DATA；'
+                                 '缺少字段不等于没有记录，不能把部分回答声称为全部完成。'})
+    return result
 
 
 def _validate_coverage(value: Any, goals: list[dict[str, Any]], facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -118,6 +151,9 @@ def _fallback(goals: list[dict[str, Any]], session: EvidenceSession) -> tuple[st
               and all(set(goal['fields']) <= {field for row in rows if row.get('subject') == selector or selector in row.get('entity_names', [])
                                              for field in row.get('fields', [])} for selector in goal.get('subjects') or [])):
             status, text, ids = 'ANSWERED', '\n'.join(row['text'] for row in rows[:12]), [row['id'] for row in rows[:12]]
+        elif needs_record(goal) and rows and goal['resource'] not in failed_tools:
+            status, text, ids = 'NEEDS_DATA', '\n'.join(row['text'] for row in rows[:12]), [row['id'] for row in rows[:12]]
+            text += '\n以上为已核实的信息；仍缺少所问字段：' + _field_names(_missing_record_fields(goal, rows)) + '，不能推断缺失值。'
         elif needs_record(goal) and goal['resource'] == 'subscriptions' and not rows:
             status, text, ids = 'NEEDS_CONFIRMATION', '该项需要先完成订阅查询确认，当前没有可使用的已确认订阅记录。', []
         elif goal['resource'] in failed_tools:
@@ -132,8 +168,8 @@ def _fallback(goals: list[dict[str, Any]], session: EvidenceSession) -> tuple[st
             policies = sorted([row for row in facts if row['id'].startswith('guide.') and row['id'] in ranked and row.get('audience') != 'model'],
                               key=lambda row: ranked[row['id']])[:2]
             if policies:
-                text = '\n'.join(row['text'] for row in policies) + '\n以上是已核验的相关规则；本次完整解释或所需记录仍未通过逐项核验。'
-                ids = [row['id'] for row in policies]
+                text = (text + '\n' if rows else '') + '\n'.join(row['text'] for row in policies) + '\n以上是已核验的相关规则；本次完整解释或所需记录仍未通过逐项核验。'
+                ids = [*ids, *[row['id'] for row in policies]]
         lines.append(goal['question'] + '：\n' + text)
         coverage.append({'goal_id': goal['id'], 'status': status, 'evidence_ids': ids, 'reason': text[:300]})
     return '\n\n'.join(lines), coverage
@@ -241,7 +277,8 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
             # Preserve a reviewer's specific diagnosis instead of replacing it
             # with an opaque rejection code. Reads are reserved for data gaps.
             if reason != 'GOAL_REVIEW_REJECTED' or not feedback:
-                feedback = validation_feedback(reason, goals)
+                feedback = ((_record_gap_feedback(goals, session) if reason in {'MISSING_GOAL_RECORD', 'MISSING_SUBJECT_RECORD'} else [])
+                            or validation_feedback(reason, goals))
                 session.repair(feedback)
     if not generated:
         final_text, final_coverage = _fallback(goals, session)
