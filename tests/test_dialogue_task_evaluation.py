@@ -59,6 +59,16 @@ def test_simulator_view_cannot_see_private_oracle_or_fixed_answers():
     assert item.phases[0].criteria not in messages[-1].content
 
 
+def test_v3_proposal_simulator_cannot_replace_action_with_feasibility_consultation():
+    item = load_dataset(DATASET)[0].tasks[-1]
+    env = Environment()
+    messages = iter(['能取消卡片限额吗', '先了解设置10000元是否可行'])
+    result = run_trial(item, env, SimpleNamespace(next=lambda *args: {'text': next(messages)}),
+                       SimpleNamespace(assess=lambda *args: verdict(item)), seed=1, trial=1, rubric_version='v3')
+    assert result['status'] == 'ERROR' and result['error_type'] == 'SimulatorDrift'
+    assert env.steps == 1 and result['simulator_drift']['phase'] == 2
+
+
 def test_intermediate_read_and_coverage_milestones_cannot_be_overruled_by_judge():
     item=task().model_copy(deep=True)
     item.phases[0].required_reads=['contacts']

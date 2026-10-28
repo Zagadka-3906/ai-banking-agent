@@ -27,7 +27,7 @@ def dialogue_view(state: Mapping[str, Any]) -> dict[str, Any]:
     if owned and isinstance(quiz, dict):
         tasks = [task for task in tasks if task.get('id') != 'quiz:WEALTH_RISK_ASSESSMENT']
         tasks.append({'id': 'quiz:WEALTH_RISK_ASSESSMENT', 'intent': 'WEALTH_RISK_ASSESSMENT', 'kind': 'questionnaire',
-                      'status': 'WAITING_INPUT', 'quiz': {'answers': dict(quiz.get('answers') or {})},
+                      'status': 'WAITING_INPUT', 'quiz': {**quiz, 'answers': dict(quiz.get('answers') or {})},
                       'pending': {'intent': 'WEALTH_RISK_ASSESSMENT', 'missing': ['risk_answers'],
                                   'payload': {'intent': 'WEALTH_RISK_ASSESSMENT'}}})
     return {**value, 'tasks': tasks[-4:]}

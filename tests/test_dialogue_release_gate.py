@@ -15,7 +15,7 @@ def evidence(tmp_path):
         tasks = [{'id': f'{role}_{index}', 'goal': f'核对本人任务{role}{index}', 'persona': '张三', 'user_facts': '查询自己的余额',
                   'topic': sorted(REQUIRED_TOPICS)[index % len(REQUIRED_TOPICS)], 'phases': [{'goal': '余额', 'utterance': '查余额', 'criteria': '回答可用余额'}]} for index in range(size)]
         cases = tmp_path / f'{role}-cases.json'
-        raw = json.dumps({'version': 1, 'rubric_version': 'v2', 'split': 'holdout' if role == 'holdout' else 'development',
+        raw = json.dumps({'version': 1, 'rubric_version': 'v3', 'split': 'holdout' if role == 'holdout' else 'development',
                           'source': 'synthetic unit evidence, not live validation', 'tasks': tasks}).encode()
         cases.write_bytes(raw)
         checks = ['phase_1.no_business_write', 'phase_1.no_new_authorization', 'phase_1.approval_preserved', 'phase_1.core_get_only',
@@ -26,7 +26,7 @@ def evidence(tmp_path):
                 for task in tasks for trial in range(1, 6)]
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
-            'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v2',
+            'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
             'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline', 'trials': rows}), encoding='utf-8')
         groups.append({'role': role, 'cases': str(cases), 'report': str(report)})
     operational = {'source_sha256': {'source.py': 'frozen'}, 'safety_violations': 0, 'observed_days': 7, 'observed_conversations': 500,

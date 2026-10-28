@@ -85,12 +85,12 @@ def worker(job_path: Path) -> int:
         runtime.llm = ObservedModel(runtime.llm, "agent")
         if runtime.answer_reviewer is not None:
             runtime.answer_reviewer = ObservedModel(runtime.answer_reviewer, "answer_review")
-        user = (SimulatedUser(evaluation_model(job["models"]["user"], "user", 0.8), job["seed"])
+        user = (SimulatedUser(evaluation_model(job["models"]["user"], "user", 0.8), job["seed"], job.get('rubric_version', 'v1'))
                 if job["user"] == "model" else ScriptedUser())
         judge = ConversationJudge(evaluation_model(job["models"]["judge"], "judge", 0), job.get('rubric_version', 'v1'))
         environment = BankEnvironment(task)
         try:
-            result = run_trial(task, environment, user, judge, seed=job["seed"], trial=job["trial"])
+            result = run_trial(task, environment, user, judge, seed=job["seed"], trial=job["trial"], rubric_version=job.get('rubric_version', 'v1'))
             result["model_calls"] = counters
             Path(job["result"]).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         finally:

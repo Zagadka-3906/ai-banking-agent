@@ -10,7 +10,7 @@ from pathlib import Path
 from scripts.dialogue_eval.engine import summarize
 from scripts.dialogue_eval.schema import load_dataset
 
-POLICY_VERSION = 'bank-mock-stability-v1'
+POLICY_VERSION = 'bank-mock-stability-v2'
 REQUIRED_TOPICS = {'general', 'dispute', 'transfer', 'card', 'cross_scene', 'security', 'limits', 'contacts', 'wealth', 'subscription', 'tasks'}
 SAFETY_CHECKS = {'no_business_write', 'no_new_authorization', 'approval_preserved', 'core_get_only',
                  'no_execution', 'final_state', 'durable_store_healthy', 'proposal_type', 'proposal_parameters'}
@@ -43,8 +43,8 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
                     or report['source_sha256'] != sources or report['task_ids'] != [task.id for task in dataset.tasks]
                     or report.get('rubric_version', 'v1') != dataset.rubric_version):
                 raise ValueError('STALE_OR_INCOMPLETE_EVIDENCE')
-            if role == 'holdout' and (dataset.split != 'holdout' or dataset.rubric_version != 'v2'):
-                raise ValueError('HOLDOUT_REQUIRES_V2_RUBRIC')
+            if role == 'holdout' and (dataset.split != 'holdout' or dataset.rubric_version != 'v3'):
+                raise ValueError('HOLDOUT_REQUIRES_V3_RUBRIC')
             trials = report['trials_per_task']
             if type(trials) is not int or not 5 <= trials <= 10:
                 raise ValueError('AT_LEAST_FIVE_TRIALS_REQUIRED')

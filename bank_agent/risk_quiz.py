@@ -193,7 +193,10 @@ def start_risk_quiz(state: BankingAgentState, retake: bool = False) -> dict[str,
         if retake
         else "您首次咨询理财业务，请先完成风险评估"
     )
-    result = _quiz_result(state, f"【风险测评】{lead}（共 8 题），逐题选择即可；完成后将为您更新匹配的产品。", {"answers": {}})
+    origin = state.get('intent') if state.get('intent') in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value} else None
+    missing = '申购金额还未确定，完成测评后请补充具体金额。' if origin == Intent.WEALTH_PURCHASE.value and state.get('amount') is None else ''
+    result = _quiz_result(state, f"【风险测评】{lead}（共 8 题），逐题选择即可；完成后将为您更新匹配的产品。" + missing,
+                          {"answers": {}, 'origin_intent': origin, 'origin_target': state.get('target') if origin else None})
     audit_event("RISK_QUIZ", user_id=state.get("user_id"), decision="CHALLENGE", outcome="STARTED", request_id=result["request_id"], metadata={"retake": retake})
     # 顶层载荷：渠道信封据此在输入框上方打开逐题作答组件。
     result["risk_quiz"] = RISK_QUIZ_PAYLOAD

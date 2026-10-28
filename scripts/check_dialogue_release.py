@@ -27,7 +27,7 @@ def main():
     # The caller cannot manufacture a green regression suite by omitting
     # previously exposed failures. The repository owns this required inventory.
     required = set()
-    for name in ['dialogue_tasks', 'dialogue_holdout', 'dialogue_generalization', 'dialogue_repair_regression_v2']:
+    for name in ['dialogue_tasks_v3', 'dialogue_holdout', 'dialogue_generalization', 'dialogue_repair_regression_v3']:
         required.update(task.id for task in load_dataset(ROOT / 'tests/data' / (name + '.json'))[0].tasks)
     supplied = set()
     for group in manifest['groups']:

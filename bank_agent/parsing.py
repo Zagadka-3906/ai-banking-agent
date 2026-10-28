@@ -519,6 +519,7 @@ def model_parse(text: str) -> dict[str, Any]:
         "‘先不确认’不等于取消办理目标：明确提出对象和金额时可展示待确认提案，不能自动确认或执行。"
         "明确放弃或否定办理不能映射为被否定的写操作，即使没有已有任务也不能新建审批；有对应讨论任务才用CANCEL。"
         "本轮只表达放弃/暂停办理且没有查询问题时，dialogue_act=WITHDRAW、intent=UNKNOWN；这是有效的对话行为，不是能力未接入。"
+        "用户明确说先了解可行性或先问行不行时，本轮先回答可行性和已知条件，不生成办理提案；之后明确要求办理才进入审批。暂不确认本身不撤销已明确的办理目标。"
         "SOCIAL 时必须在顶层填写 social_kind：问候选 greeting，致谢选 thanks，告别选 goodbye，问能力选 capabilities；其他模式填 null。"
         "‘查这笔转账记录’是 BILL_QUERY；‘我的卡是不是冻结了’是 CARD_QUERY；‘冻结后有什么影响’是 BANKING_HELP。"
         "‘那5笔’须结合已核验观察理解是哪组交易；可在 slots.read_reference 指定 anomalies 或 listed_transactions，不能编造编号。"

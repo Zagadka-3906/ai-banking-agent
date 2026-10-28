@@ -132,11 +132,15 @@ def execution_constraint(text: str) -> str | None:
     """Restrict executable actions without preventing read-only understanding."""
     source = business_text(text)
     mutation = r"执行|操作|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定|调额|修改限额"
+    if (re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下|核对|看看)[^。；;!?！？]{0,40}(?:行不行|可行|能否|是否|能不能|可以吗|可不可以)', source)
+            or re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下)[^。；;!?！？]{0,16}可行性', source)):
+        return 'FEASIBILITY_QUESTION'
     # A withdrawal can mention the operation affirmatively in a later clause
     # ("不冻结了，放弃冻结卡片"). Never let that mention become a new request.
     # Keep this restriction at the execution boundary, so a negated operation
     # can still accompany a genuine read or explanation in the same turn.
     if (re.search(r"(?:放弃|暂停|暂缓|停止|搁置)[^，,。；;!?！？]{0,12}(?:" + mutation + r"|办理)", source)
+            or re.search(r'取消(?:这次|这个|本次|当前|刚才)?的?(?:申购|转账|调额|冻结)(?:意向|计划|讨论|提案|办理)', source)
             or re.search(r"不(?:再|会|继续)?(?:帮我|替我|实际|真的)?(?:" + mutation + r")", source)
             or re.search(r"(?:不办了|不做了|不用(?:再)?(?:往下|继续)(?:办|处理))", source)):
         return "NEGATED_ACTION"

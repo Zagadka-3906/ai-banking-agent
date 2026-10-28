@@ -49,7 +49,11 @@ def evaluate_judgement(raw: dict, task: Task) -> dict:
     return {**verdict.model_dump(), "passed": verdict.simulator_faithful and all(check.passed for check in verdict.checks)}
 
 
-def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed: int, trial: int) -> dict:
+class SimulatorDrift(ValueError):
+    pass
+
+
+def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed: int, trial: int, rubric_version: str = 'v1') -> dict:
     """Each environment is a fresh process. Never infer success from a reply."""
     started = time.monotonic()
     result: dict = {"task_id": task.id, "trial": trial, "seed": seed, "status": "ERROR", "turns": [], "checks": []}
@@ -59,6 +63,11 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
             # Confirm/reject are explicit harness actions, never model-controlled tools.
             text = (UserMessage.model_validate(simulator.next(task.user_view(phase, history), phase.utterance)).text
                     if phase.action in {"inquiry", "clarify", "proposal"} else phase.utterance)
+            if phase.action == 'proposal' and rubric_version == 'v3':
+                from intent_language import execution_constraint
+                if execution_constraint(text) == 'FEASIBILITY_QUESTION':
+                    result['simulator_drift'] = {'phase': index, 'user': text, 'reason': 'PROPOSAL_REPLACED_BY_FEASIBILITY'}
+                    raise SimulatorDrift('Proposal replaced by a consultation before agent execution')
             observed = environment.step(text, phase, task)
             required = {"reply", "approval", "mode", "intent", "checks", "elapsed_ms", "core_calls", "answer_kind"}
             if not required <= set(observed) or set(observed) - required - {'coverage'}:

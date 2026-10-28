@@ -49,8 +49,19 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
     questionnaire = task.get('kind') == 'questionnaire'
     if kind in {'PAUSE', 'CANCEL'}:
         local_intent = local_parse(text).get('intent')
+        from bank_agent.parsing import _local_parse_rules
+        raw = _local_parse_rules(business_text(text))
+        origin = (task.get('quiz') or {}).get('origin_intent') if questionnaire else None
+        withdrawing = (act == 'WITHDRAW' and execution_constraint(text) == 'NEGATED_ACTION'
+                       and raw.get('intent') in {'UNKNOWN', intent, origin})
+        saved_target = pending['payload'].get('target') or (task.get('quiz') or {}).get('origin_target')
+        if kind == 'CANCEL' and raw.get('target') and saved_target and raw['target'] != saved_target:
+            return None
+        siblings = [item for item in tasks if (item.get('pending') or {}).get('intent') == intent and item.get('status') != 'OFFERED']
+        if kind == 'CANCEL' and len(siblings) > 1 and not raw.get('target'):
+            return None
         # Cancelling a different named service does not cancel this discussion.
-        if kind == 'CANCEL' and local_intent not in {'UNKNOWN', intent}:
+        if kind == 'CANCEL' and local_intent not in {'UNKNOWN', intent} and not withdrawing:
             from bank_planning.intents import GREEN_INTENTS
             from bank_agent.risk_quiz import RISK_QUIZ_INTENTS
             if not questionnaire or local_intent not in GREEN_INTENTS | RISK_QUIZ_INTENTS:
@@ -62,7 +73,8 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
         if questionnaire:
             context.pop('risk_quiz', None)
         return {'parsed': dict(parsed), 'context': context, 'view': {**view, 'tasks': changed},
-                'type': kind, 'updated_fields': [], 'proposal_input': False, 'questionnaire': questionnaire}
+                'type': kind, 'updated_fields': [], 'proposal_input': False, 'questionnaire': questionnaire,
+                'origin_intent': (task.get('quiz') or {}).get('origin_intent') if questionnaire else None}
     if questionnaire:
         if kind != 'RESUME' or act not in {'ACTION', 'SLOT_REPLY'} or parsed.get('intent') not in {'UNKNOWN', intent}:
             return None
@@ -71,7 +83,7 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
         if (not isinstance(answers, dict) or any(key not in {str(index) for index in range(1,9)}
                 or answer not in RISK_QUIZ_OPTIONS[int(key)] for key, answer in answers.items())):
             return None
-        context['risk_quiz'] = {'answers': dict(answers)}
+        context['risk_quiz'] = {**(task.get('quiz') or {}), 'answers': dict(answers)}
         resumed = validate_intent_payload({'intent': intent, 'parse_meta': parsed.get('parse_meta')})
         return {'parsed': resumed, 'context': context, 'view': view, 'type': kind, 'updated_fields': [], 'proposal_input': True}
     if act not in {'ACTION', 'SLOT_REPLY'} or execution_constraint(text) or ambiguous_amount(text) or ambiguous_target(text):
@@ -126,3 +138,24 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
     return {'parsed': payload, 'context': context, 'view': {**view, 'tasks': [
         {**item, 'status': 'WAITING_INPUT'} if item['id'] == task['id'] else item for item in tasks]},
             'type': kind, 'updated_fields': sorted(updates), 'proposal_input': True}
+
+
+def withdraw_known_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
+    """An unambiguous abandoned discussion need not have a model-supplied ID."""
+    from bank_agent.parsing import _local_parse_rules
+    from intent_language import business_text, execution_constraint
+    if (parsed.get('parse_meta') or {}).get('dialogue_act') != 'WITHDRAW' or execution_constraint(text) != 'NEGATED_ACTION':
+        return None
+    raw = _local_parse_rules(business_text(text))
+    candidates = []
+    for task in dialogue_view(state)['tasks']:
+        pending = task.get('pending') or {}
+        origin = (task.get('quiz') or {}).get('origin_intent')
+        target = pending.get('payload', {}).get('target') or (task.get('quiz') or {}).get('origin_target')
+        if (task.get('status') != 'OFFERED' and raw.get('intent') in {'UNKNOWN', pending.get('intent'), origin}
+                and (not raw.get('target') or not target or raw['target'] == target)):
+            candidates.append(task)
+    if len(candidates) != 1:
+        return None
+    return apply_command(state, {**parsed, 'parse_meta': {**(parsed.get('parse_meta') or {}),
+        'task_command': {'type': 'CANCEL', 'task_id': candidates[0]['id'], 'evidence': business_text(text)[:300]}}}, text)

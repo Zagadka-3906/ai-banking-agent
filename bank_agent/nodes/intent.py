@@ -164,8 +164,10 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     parts = split_parts(text)
     transition = None
     if understood is not None:
-        from bank_agent.dialogue_commands import apply_command
+        from bank_agent.dialogue_commands import apply_command, withdraw_known_task
         transition = apply_command(state, understood, text)
+        if not transition:
+            transition = withdraw_known_task(state, understood, text)
         if transition:
             understood, prior_context = transition['parsed'], transition['context']
             state = {**state, 'context': prior_context, 'dialogue_state': transition['view']}
@@ -176,6 +178,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             elif not request_goals(understood) or transition['type'] == 'CANCEL':
                 message = ('已暂停风险测评，答题进度保留。' if transition['type'] == 'PAUSE' else '已取消未完成的风险测评，本次答案未提交。') if transition.get('questionnaire') else (
                     '已暂停当前待补信息任务，尚未执行操作。' if transition['type'] == 'PAUSE' else '已取消当前待补信息任务，尚未执行操作。')
+                if transition.get('origin_intent') == 'WEALTH_PURCHASE' and transition['type'] == 'CANCEL':
+                    message = '已停止本轮申购意向，并退出未完成的风险测评；没有提交本轮测评答案或申购。'
                 return {**empty_state(final_response=message),
                         'request_id': state.get('request_id'), 'context': prior_context, 'dialogue_state': transition['view'],
                         'risk_quiz': {'active': False},
@@ -315,7 +319,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
             attempts = (profile_response or {}).get("attempts") or {}
             if has_profile and attempts.get("allowed") is False:
                 return empty_state(final_response=attempts.get("message") or "风险测评次数已达上限，请稍后再试。")
-            return start_risk_quiz({**state, "context": {**prior_context, "compound_workflow": compound}}, retake=has_profile)
+            return start_risk_quiz({**state, 'intent': parsed['intent'], 'target': parsed.get('target'), 'amount': parsed.get('amount'),
+                                   "context": {**prior_context, "compound_workflow": compound}}, retake=has_profile)
     # Several read-only asks in one sentence become one ordered sub-task DAG.
     sub_requests = split_read_requests(text)
     from bank_planning.requests import request_goals, read_only_goals
@@ -345,6 +350,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         if parsed.get("amount") in (None, 0) and prior.get("amount") and any(word in text for word in ("同样金额", "一样多", "刚才金额")):
             parsed["amount"] = prior.get("amount")
     parsed["extra_info"] = parsed.get("extra_info") or text
+    from bank_agent.entities import bind_payee
+    parsed = bind_payee(state, parsed, text)
     if sub_requests:
         # One utterance, several read-only asks: compile them into a single
         # dependency-ordered DAG and answer them in sequence.
@@ -508,7 +515,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         "reminder_at": None,
         "sub_requests": sub_requests or None,
     }
-    audit_meta = {key: value for key, value in (parsed.get("parse_meta") or {}).items() if key not in {"questions", "goals", 'task_command'}}
+    audit_meta = {key: value for key, value in (parsed.get("parse_meta") or {}).items() if key not in {"questions", "goals", 'task_command', 'target_binding'}}
     audit_event("INTENT_PARSE", user_id=state.get("user_id"), decision="CLARIFY" if clarification else "ALLOW", outcome="PARSED", request_id=result["request_id"], metadata={"intent": parsed["intent"], "confidence": parsed.get("confidence"), "parse_meta": audit_meta, "goal_count": len(semantic_goals), "sub_intents": [item.get("intent") for item in sub_requests] or None})
     return result
 
