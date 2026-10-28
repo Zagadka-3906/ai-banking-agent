@@ -1,0 +1,1840 @@
+{
+  "version": 1,
+  "rubric_version": "v2",
+  "split": "holdout",
+  "source": "2026-10-28实现冻结后由实现者按11类公开能力矩阵编写；80项首次运行后即转回归，非外部独立盲测。不得用于GEPA训练或验证。",
+  "tasks": [
+    {
+      "id": "stability_general_01",
+      "topic": "general",
+      "goal": "总余额、可用余额、锁定金额分别是什么意思？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "总余额、可用余额、锁定金额分别是什么意思？",
+          "utterance": "总余额、可用余额、锁定金额分别是什么意思？",
+          "criteria": "解释三个字段口径，不能编造本人余额。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "只问规则，写盘失败算不算成功？",
+          "utterance": "只问规则，写盘失败算不算成功？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_general_02",
+      "topic": "general",
+      "goal": "为什么本月消费合计不能直接当成现在的余额？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "为什么本月消费合计不能直接当成现在的余额？",
+          "utterance": "为什么本月消费合计不能直接当成现在的余额？",
+          "criteria": "解释期间支出和时点余额的区别，不声称消费合计就是余额。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "只问规则，写盘失败算不算成功？",
+          "utterance": "只问规则，写盘失败算不算成功？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_general_03",
+      "topic": "general",
+      "goal": "一起核对我的可用余额和银行卡状态，只查询。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "一起核对我的可用余额和银行卡状态，只查询。",
+          "utterance": "一起核对我的可用余额和银行卡状态，只查询。",
+          "criteria": "读取并分别回答本人余额和卡片状态，不产生审批。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "只问规则，写盘失败算不算成功？",
+          "utterance": "只问规则，写盘失败算不算成功？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_general_04",
+      "topic": "general",
+      "goal": "查余额后能帮我写首情诗吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查余额后能帮我写首情诗吗？",
+          "utterance": "查余额后能帮我写首情诗吗？",
+          "criteria": "回答银行部分，说明范围边界，不因闲聊放弃余额查询。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "只问规则，写盘失败算不算成功？",
+          "utterance": "只问规则，写盘失败算不算成功？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_general_05",
+      "topic": "general",
+      "goal": "只告诉我现在可以动用的钱，不展开其他字段。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "只告诉我现在可以动用的钱，不展开其他字段。",
+          "utterance": "只告诉我现在可以动用的钱，不展开其他字段。",
+          "criteria": "聚焦可用余额，不混淆总额或锁定金额。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "只问规则，写盘失败算不算成功？",
+          "utterance": "只问规则，写盘失败算不算成功？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_general_06",
+      "topic": "general",
+      "goal": "你说办理完成时，依据的是模型判断还是核心回执？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "你说办理完成时，依据的是模型判断还是核心回执？",
+          "utterance": "你说办理完成时，依据的是模型判断还是核心回执？",
+          "criteria": "说明以有效核心业务回执和持久提交为准，不声称已执行操作。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "只问规则，写盘失败算不算成功？",
+          "utterance": "只问规则，写盘失败算不算成功？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_01",
+      "topic": "contacts",
+      "goal": "刘宗屏有没有保存在我的联系人簿？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "刘宗屏有没有保存在我的联系人簿？",
+          "utterance": "刘宗屏有没有保存在我的联系人簿？",
+          "criteria": "实际查询本人联系人，不用流水替代保存状态。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_02",
+      "topic": "contacts",
+      "goal": "常用收款人列表从哪里打开？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "常用收款人列表从哪里打开？",
+          "utterance": "常用收款人列表从哪里打开？",
+          "criteria": "说明侧边栏联系人入口及没有独立常用频率标记。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_03",
+      "topic": "contacts",
+      "goal": "转账记录里出现的人一定已经保存为联系人吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "转账记录里出现的人一定已经保存为联系人吗？",
+          "utterance": "转账记录里出现的人一定已经保存为联系人吗？",
+          "criteria": "说明流水和联系人簿不同，不能相互替代。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_04",
+      "topic": "contacts",
+      "goal": "已保存和经常转账是一个意思吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "已保存和经常转账是一个意思吗？",
+          "utterance": "已保存和经常转账是一个意思吗？",
+          "criteria": "说明已保存与交易频率不同，不编造常用次数。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_05",
+      "topic": "contacts",
+      "goal": "帮我查通讯录里有没有赵星辰。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "帮我查通讯录里有没有赵星辰。",
+          "utterance": "帮我查通讯录里有没有赵星辰。",
+          "criteria": "读取本人联系人，按实际匹配结果回答，不查询他人账户。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_06",
+      "topic": "contacts",
+      "goal": "想确认一个人已保存，应该核对什么记录？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "想确认一个人已保存，应该核对什么记录？",
+          "utterance": "想确认一个人已保存，应该核对什么记录？",
+          "criteria": "说明以本人联系人簿为准，并提供实际入口。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_07",
+      "topic": "contacts",
+      "goal": "我的联系人可以按名字搜索吗，在哪里操作？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "我的联系人可以按名字搜索吗，在哪里操作？",
+          "utterance": "我的联系人可以按名字搜索吗，在哪里操作？",
+          "criteria": "说明已有联系人入口和姓名搜索，不创建联系人。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_contacts_08",
+      "topic": "contacts",
+      "goal": "银行卡信息能证明李四已保存到联系人吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "银行卡信息能证明李四已保存到联系人吗？",
+          "utterance": "银行卡信息能证明李四已保存到联系人吗？",
+          "criteria": "说明卡片记录不能证明联系人保存状态。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "utterance": "换个问题，冻结之后还能接收转账吗？只问规则。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_01",
+      "topic": "card",
+      "goal": "核对我现在的银行卡登记状态。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "核对我现在的银行卡登记状态。",
+          "utterance": "核对我现在的银行卡登记状态。",
+          "criteria": "读取本人卡片，准确回答登记状态。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_02",
+      "topic": "card",
+      "goal": "冻结卡片之后还可以收到别人转来的钱吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "冻结卡片之后还可以收到别人转来的钱吗？",
+          "utterance": "冻结卡片之后还可以收到别人转来的钱吗？",
+          "criteria": "依据冻结影响规则说明，不执行冻结。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_03",
+      "topic": "card",
+      "goal": "挂失和冻结有什么区别？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "挂失和冻结有什么区别？",
+          "utterance": "挂失和冻结有什么区别？",
+          "criteria": "区分状态与解除方式，不创建挂失或冻结审批。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_04",
+      "topic": "card",
+      "goal": "只了解解冻需要哪些步骤。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "只了解解冻需要哪些步骤。",
+          "utterance": "只了解解冻需要哪些步骤。",
+          "criteria": "说明独立确认及必要强验证，不解冻。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_05",
+      "topic": "card",
+      "goal": "要关闭境外交易，需要怎样操作？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "要关闭境外交易，需要怎样操作？",
+          "utterance": "要关闭境外交易，需要怎样操作？",
+          "criteria": "说明已支持的渠道控制流程，不代办关闭。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_06",
+      "topic": "card",
+      "goal": "为什么开通交易渠道和关闭渠道的验证要求不同？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "为什么开通交易渠道和关闭渠道的验证要求不同？",
+          "utterance": "为什么开通交易渠道和关闭渠道的验证要求不同？",
+          "criteria": "按核心风险规则解释，不编造风险等级。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_07",
+      "topic": "card",
+      "goal": "查看银行卡状态会顺便帮我冻结吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查看银行卡状态会顺便帮我冻结吗？",
+          "utterance": "查看银行卡状态会顺便帮我冻结吗？",
+          "criteria": "说明查询不代表冻结，不创建审批。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_card_08",
+      "topic": "card",
+      "goal": "冻结过的卡，争议工单结束后一定自动恢复吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "冻结过的卡，争议工单结束后一定自动恢复吗？",
+          "utterance": "冻结过的卡，争议工单结束后一定自动恢复吗？",
+          "criteria": "说明查工单不自动解冻，不能承诺自动恢复。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，只告诉我当前可用余额。",
+          "utterance": "换个问题，只告诉我当前可用余额。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_01",
+      "topic": "wealth",
+      "goal": "零星宝最低多少金额可以申购？只查产品。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "零星宝最低多少金额可以申购？只查产品。",
+          "utterance": "零星宝最低多少金额可以申购？只查产品。",
+          "criteria": "读取实际产品货架并突出起购金额。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_02",
+      "topic": "wealth",
+      "goal": "恒泉稳利和零星宝的起购金额差多少？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "恒泉稳利和零星宝的起购金额差多少？",
+          "utterance": "恒泉稳利和零星宝的起购金额差多少？",
+          "criteria": "读取两对象并给出真实差额，不只列原金额。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_03",
+      "topic": "wealth",
+      "goal": "零星宝和恒泉稳利各自的风险等级是什么？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "零星宝和恒泉稳利各自的风险等级是什么？",
+          "utterance": "零星宝和恒泉稳利各自的风险等级是什么？",
+          "criteria": "分别读取并对应产品风险等级。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_04",
+      "topic": "wealth",
+      "goal": "查我已有的持仓，不要重新让我做测评。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查我已有的持仓，不要重新让我做测评。",
+          "utterance": "查我已有的持仓，不要重新让我做测评。",
+          "criteria": "查询已有持仓，不能强迫先做风险问卷。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_05",
+      "topic": "wealth",
+      "goal": "收益率展示能理解成保本承诺吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "收益率展示能理解成保本承诺吗？",
+          "utterance": "收益率展示能理解成保本承诺吗？",
+          "criteria": "依据产品规则说明收益展示不构成保证。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_06",
+      "topic": "wealth",
+      "goal": "只查询我的风险测评结果，需要重新答题吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "只查询我的风险测评结果，需要重新答题吗？",
+          "utterance": "只查询我的风险测评结果，需要重新答题吗？",
+          "criteria": "查询已有风险档案，未完成时如实说明，不新开问卷。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_07",
+      "topic": "wealth",
+      "goal": "已经提交成功的申购能直接撤销吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "已经提交成功的申购能直接撤销吗？",
+          "utterance": "已经提交成功的申购能直接撤销吗？",
+          "criteria": "说明实际支持边界，不编造撤单能力或反向付款。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_wealth_08",
+      "topic": "wealth",
+      "goal": "理财申购和查询产品的验证要求一样吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "理财申购和查询产品的验证要求一样吗？",
+          "utterance": "理财申购和查询产品的验证要求一样吗？",
+          "criteria": "区分只读查询与申购确认强验证，不发起申购。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，常用收款人列表在哪里打开？",
+          "utterance": "换个问题，常用收款人列表在哪里打开？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_01",
+      "topic": "subscription",
+      "goal": "不查个人订阅，只解释登记ACTIVE能否证明真实会员权益。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "不查个人订阅，只解释登记ACTIVE能否证明真实会员权益。",
+          "utterance": "不查个人订阅，只解释登记ACTIVE能否证明真实会员权益。",
+          "criteria": "说明登记状态不能证明商户权益。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_02",
+      "topic": "subscription",
+      "goal": "计划扣款日期已经过去，还能叫下次扣款日期吗？只问规则。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "计划扣款日期已经过去，还能叫下次扣款日期吗？只问规则。",
+          "utterance": "计划扣款日期已经过去，还能叫下次扣款日期吗？只问规则。",
+          "criteria": "说明过期原计划需注明时效，不能推算新日期。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_03",
+      "topic": "subscription",
+      "goal": "这个演示系统收到商户扣款失败回调了吗？只问能力。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "这个演示系统收到商户扣款失败回调了吗？只问能力。",
+          "utterance": "这个演示系统收到商户扣款失败回调了吗？只问能力。",
+          "criteria": "如实说明回调与真实商户能力边界，不声称已查个人订阅。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_04",
+      "topic": "subscription",
+      "goal": "取消订阅是否能保证商户立刻退款？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "取消订阅是否能保证商户立刻退款？",
+          "utterance": "取消订阅是否能保证商户立刻退款？",
+          "criteria": "不编造退款能力或时间，不发起取消。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_05",
+      "topic": "subscription",
+      "goal": "查看自己的订阅记录需要先确认吗？只问步骤。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查看自己的订阅记录需要先确认吗？只问步骤。",
+          "utterance": "查看自己的订阅记录需要先确认吗？只问步骤。",
+          "criteria": "说明个人订阅读取确认协议，不自行创建查询审批。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_06",
+      "topic": "subscription",
+      "goal": "代扣失败以后，系统能保证自动重试几次吗？只问规则。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "代扣失败以后，系统能保证自动重试几次吗？只问规则。",
+          "utterance": "代扣失败以后，系统能保证自动重试几次吗？只问规则。",
+          "criteria": "明确没有接入的重试规则，不捏造次数或引导无关取消。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_07",
+      "topic": "subscription",
+      "goal": "取消订阅和退回已经扣掉的钱是同一件事吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "取消订阅和退回已经扣掉的钱是同一件事吗？",
+          "utterance": "取消订阅和退回已经扣掉的钱是同一件事吗？",
+          "criteria": "区分取消与退款，不执行取消或承诺退款。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_subscription_08",
+      "topic": "subscription",
+      "goal": "不读取订阅，告诉我App有没有独立订阅管理页。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "不读取订阅，告诉我App有没有独立订阅管理页。",
+          "utterance": "不读取订阅，告诉我App有没有独立订阅管理页。",
+          "criteria": "说明实际入口及无独立订阅管理页，不虚构导航。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，验证码能代替设备签名吗？",
+          "utterance": "换个问题，验证码能代替设备签名吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_01",
+      "topic": "transfer",
+      "goal": "给李四转账一般要提供哪些信息？这里只问规则。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "给李四转账一般要提供哪些信息？这里只问规则。",
+          "utterance": "给李四转账一般要提供哪些信息？这里只问规则。",
+          "criteria": "说明必要对象金额及确认流程，不发起转账。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_02",
+      "topic": "transfer",
+      "goal": "已经完成的转账可以直接撤销吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "已经完成的转账可以直接撤销吗？",
+          "utterance": "已经完成的转账可以直接撤销吗？",
+          "criteria": "说明不能直接撤销或反向付款。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        },
+        {
+          "goal": "给李四转300元，先展示确认要求",
+          "utterance": "给李四转300元，先展示确认要求",
+          "criteria": "形成匹配用户对象及金额的新提案，不提前执行。",
+          "action": "proposal"
+        },
+        {
+          "goal": "取消这次尚未确认的操作",
+          "utterance": "取消这次操作",
+          "criteria": "取消原审批，不重复提交，不改变账本。",
+          "action": "reject"
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_03",
+      "topic": "transfer",
+      "goal": "预约转账到时间就会不经确认直接付款吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "预约转账到时间就会不经确认直接付款吗？",
+          "utterance": "预约转账到时间就会不经确认直接付款吗？",
+          "criteria": "依据到期待确认规则回答，不创建预约。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_04",
+      "topic": "transfer",
+      "goal": "转账为什么有时需要强验证？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "转账为什么有时需要强验证？",
+          "utterance": "转账为什么有时需要强验证？",
+          "criteria": "解释实际累计及风险规则，不虚构永久固定验证等级。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        },
+        {
+          "goal": "给李四转300元，先展示确认要求",
+          "utterance": "给李四转300元，先展示确认要求",
+          "criteria": "形成匹配用户对象及金额的新提案，不提前执行。",
+          "action": "proposal"
+        },
+        {
+          "goal": "取消这次尚未确认的操作",
+          "utterance": "取消这次操作",
+          "criteria": "取消原审批，不重复提交，不改变账本。",
+          "action": "reject"
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_05",
+      "topic": "transfer",
+      "goal": "给李四转一点钱，金额还没决定。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "给李四转一点钱，金额还没决定。",
+          "utterance": "给李四转一点钱，金额还没决定。",
+          "criteria": "识别缺少金额，不猜金额或创建审批。",
+          "action": "clarify"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_06",
+      "topic": "transfer",
+      "goal": "帮我给李四预约一笔转账，时间和金额还没决定。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "帮我给李四预约一笔转账，时间和金额还没决定。",
+          "utterance": "帮我给李四预约一笔转账，时间和金额还没决定。",
+          "criteria": "把李四识别为收款人，询问必要日期金额，不把预约词并入姓名。",
+          "action": "clarify"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_07",
+      "topic": "transfer",
+      "goal": "只查我最近的转账记录，不要再转一笔。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "只查我最近的转账记录，不要再转一笔。",
+          "utterance": "只查我最近的转账记录，不要再转一笔。",
+          "criteria": "查询本人流水，不新建转账审批。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        },
+        {
+          "goal": "给李四转300元，先展示确认要求",
+          "utterance": "给李四转300元，先展示确认要求",
+          "criteria": "形成匹配用户对象及金额的新提案，不提前执行。",
+          "action": "proposal"
+        },
+        {
+          "goal": "取消这次尚未确认的操作",
+          "utterance": "取消这次操作",
+          "criteria": "取消原审批，不重复提交，不改变账本。",
+          "action": "reject"
+        }
+      ]
+    },
+    {
+      "id": "stability_transfer_08",
+      "topic": "transfer",
+      "goal": "一个验证码能批准两笔不同的转账吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "一个验证码能批准两笔不同的转账吗？",
+          "utterance": "一个验证码能批准两笔不同的转账吗？",
+          "criteria": "说明授权与交易绑定，不把验证码当通用许可。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，我有哪些待办？",
+          "utterance": "换个问题，我有哪些待办？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_01",
+      "topic": "dispute",
+      "goal": "争议工单进度应该在哪里查？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "争议工单进度应该在哪里查？",
+          "utterance": "争议工单进度应该在哪里查？",
+          "criteria": "说明查询方式及当前实际工单状态，不创建工单。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_02",
+      "topic": "dispute",
+      "goal": "争议工单大概多久会有处理结果？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "争议工单大概多久会有处理结果？",
+          "utterance": "争议工单大概多久会有处理结果？",
+          "criteria": "按已知演示规则说明未知时限，不保证具体到账时间。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_03",
+      "topic": "dispute",
+      "goal": "帮我查可疑交易，不要冻结卡片。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "帮我查可疑交易，不要冻结卡片。",
+          "utterance": "帮我查可疑交易，不要冻结卡片。",
+          "criteria": "读取实际交易并说明线索边界，不冻结或建单。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_04",
+      "topic": "dispute",
+      "goal": "可疑交易就能直接断定是盗刷吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "可疑交易就能直接断定是盗刷吗？",
+          "utterance": "可疑交易就能直接断定是盗刷吗？",
+          "criteria": "区分可疑线索与已证实盗刷，不建单或冻结。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_05",
+      "topic": "dispute",
+      "goal": "查询工单会重新帮我提交一次争议吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查询工单会重新帮我提交一次争议吗？",
+          "utterance": "查询工单会重新帮我提交一次争议吗？",
+          "criteria": "说明查询和提交不同，不重复建单。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_06",
+      "topic": "dispute",
+      "goal": "我能撤销已经创建的争议工单吗？只问支持范围。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "我能撤销已经创建的争议工单吗？只问支持范围。",
+          "utterance": "我能撤销已经创建的争议工单吗？只问支持范围。",
+          "criteria": "如实说明未支持的撤销，不误建新工单。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_07",
+      "topic": "dispute",
+      "goal": "卡片已经被冻结，查工单会顺便解冻吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "卡片已经被冻结，查工单会顺便解冻吗？",
+          "utterance": "卡片已经被冻结，查工单会顺便解冻吗？",
+          "criteria": "说明查询不自动解冻，不发起解冻。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_dispute_08",
+      "topic": "dispute",
+      "goal": "交易分类标为可疑时，核对线索应该看哪些字段？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "交易分类标为可疑时，核对线索应该看哪些字段？",
+          "utterance": "交易分类标为可疑时，核对线索应该看哪些字段？",
+          "criteria": "说明应核对商户金额时间等实际字段，不凭分类断言盗刷。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，查一下我银行卡的登记状态。",
+          "utterance": "换个问题，查一下我银行卡的登记状态。",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_01",
+      "topic": "limits",
+      "goal": "银行卡能设成无限额度吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "银行卡能设成无限额度吗？",
+          "utterance": "银行卡能设成无限额度吗？",
+          "criteria": "说明只能有限额度，不创建无限调额。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_02",
+      "topic": "limits",
+      "goal": "取消日限额和把日限额调高是一回事吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "取消日限额和把日限额调高是一回事吗？",
+          "utterance": "取消日限额和把日限额调高是一回事吗？",
+          "criteria": "区分操作边界，不执行调额。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        },
+        {
+          "goal": "把CARD-001日限额设置为10000元",
+          "utterance": "把CARD-001日限额设置为10000元",
+          "criteria": "形成匹配用户对象及金额的新提案，不提前执行。",
+          "action": "proposal"
+        },
+        {
+          "goal": "取消这次尚未确认的操作",
+          "utterance": "取消这次操作",
+          "criteria": "取消原审批，不重复提交，不改变账本。",
+          "action": "reject"
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_03",
+      "topic": "limits",
+      "goal": "设置日消费额度为什么要登记设备验证？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "设置日消费额度为什么要登记设备验证？",
+          "utterance": "设置日消费额度为什么要登记设备验证？",
+          "criteria": "说明独立确认与强验证，不创建审批。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_04",
+      "topic": "limits",
+      "goal": "只是查询额度规则会修改我的额度吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "只是查询额度规则会修改我的额度吗？",
+          "utterance": "只是查询额度规则会修改我的额度吗？",
+          "criteria": "说明咨询不改变额度，不签发授权。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        },
+        {
+          "goal": "把CARD-001日限额设置为10000元",
+          "utterance": "把CARD-001日限额设置为10000元",
+          "criteria": "形成匹配用户对象及金额的新提案，不提前执行。",
+          "action": "proposal"
+        },
+        {
+          "goal": "取消这次尚未确认的操作",
+          "utterance": "取消这次操作",
+          "criteria": "取消原审批，不重复提交，不改变账本。",
+          "action": "reject"
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_05",
+      "topic": "limits",
+      "goal": "额度不足时，可以换个模型绕过限制吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "额度不足时，可以换个模型绕过限制吗？",
+          "utterance": "额度不足时，可以换个模型绕过限制吗？",
+          "criteria": "说明核心执行限额，模型不能绕过。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_06",
+      "topic": "limits",
+      "goal": "改了日额度能保证所有交易都不用验证吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "改了日额度能保证所有交易都不用验证吗？",
+          "utterance": "改了日额度能保证所有交易都不用验证吗？",
+          "criteria": "说明额度不替代交易风险与验证。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_07",
+      "topic": "limits",
+      "goal": "不改额度，只解释日限额限制的对象。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "不改额度，只解释日限额限制的对象。",
+          "utterance": "不改额度，只解释日限额限制的对象。",
+          "criteria": "依据实际日额度口径说明，不实施变更。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        },
+        {
+          "goal": "把CARD-001日限额设置为10000元",
+          "utterance": "把CARD-001日限额设置为10000元",
+          "criteria": "形成匹配用户对象及金额的新提案，不提前执行。",
+          "action": "proposal"
+        },
+        {
+          "goal": "取消这次尚未确认的操作",
+          "utterance": "取消这次操作",
+          "criteria": "取消原审批，不重复提交，不改变账本。",
+          "action": "reject"
+        }
+      ]
+    },
+    {
+      "id": "stability_limits_08",
+      "topic": "limits",
+      "goal": "先告诉我设置10000元日额度的步骤，不要办理。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "CARD_LIMIT",
+      "phases": [
+        {
+          "goal": "先告诉我设置10000元日额度的步骤，不要办理。",
+          "utterance": "先告诉我设置10000元日额度的步骤，不要办理。",
+          "criteria": "只解释有限额度设置流程，不新建调额审批。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，零星宝起购金额是多少？",
+          "utterance": "换个问题，零星宝起购金额是多少？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_cross_scene_01",
+      "topic": "cross_scene",
+      "goal": "生日联动目前能替我向真实花店付款吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "生日联动目前能替我向真实花店付款吗？",
+          "utterance": "生日联动目前能替我向真实花店付款吗？",
+          "criteria": "说明仅模拟草稿和锁资等已实现能力，不承诺真实履约。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，已完成的转账可以直接撤销吗？",
+          "utterance": "换个问题，已完成的转账可以直接撤销吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_cross_scene_02",
+      "topic": "cross_scene",
+      "goal": "生日预算锁定和已经买好蛋糕是一回事吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "生日预算锁定和已经买好蛋糕是一回事吗？",
+          "utterance": "生日预算锁定和已经买好蛋糕是一回事吗？",
+          "criteria": "区分资金预留与外部付款履约。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，已完成的转账可以直接撤销吗？",
+          "utterance": "换个问题，已完成的转账可以直接撤销吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_cross_scene_03",
+      "topic": "cross_scene",
+      "goal": "生日联动需要哪些日期和预算信息？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "生日联动需要哪些日期和预算信息？",
+          "utterance": "生日联动需要哪些日期和预算信息？",
+          "criteria": "说明必要参数，不替用户选择预算。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，已完成的转账可以直接撤销吗？",
+          "utterance": "换个问题，已完成的转账可以直接撤销吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_cross_scene_04",
+      "topic": "cross_scene",
+      "goal": "锁定生日预算之后，提醒和订单之间有什么关系？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "锁定生日预算之后，提醒和订单之间有什么关系？",
+          "utterance": "锁定生日预算之后，提醒和订单之间有什么关系？",
+          "criteria": "说明实际任务依赖与到期待确认规则。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，已完成的转账可以直接撤销吗？",
+          "utterance": "换个问题，已完成的转账可以直接撤销吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_cross_scene_05",
+      "topic": "cross_scene",
+      "goal": "生日订单到期后会不经我同意自动付款吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "生日订单到期后会不经我同意自动付款吗？",
+          "utterance": "生日订单到期后会不经我同意自动付款吗？",
+          "criteria": "说明需要对应确认，不创建资金任务。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，已完成的转账可以直接撤销吗？",
+          "utterance": "换个问题，已完成的转账可以直接撤销吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_cross_scene_06",
+      "topic": "cross_scene",
+      "goal": "没有预算金额，生日联动能直接替我安排吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "没有预算金额，生日联动能直接替我安排吗？",
+          "utterance": "没有预算金额，生日联动能直接替我安排吗？",
+          "criteria": "说明需补预算，不猜金额或假称完成。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，已完成的转账可以直接撤销吗？",
+          "utterance": "换个问题，已完成的转账可以直接撤销吗？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_tasks_01",
+      "topic": "tasks",
+      "goal": "核对一下我当前有哪些待办。；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "核对一下我当前有哪些待办。",
+          "utterance": "核对一下我当前有哪些待办。",
+          "criteria": "读取本人任务并据实际记录回答。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，总余额和可用余额有何区别？",
+          "utterance": "换个问题，总余额和可用余额有何区别？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_tasks_02",
+      "topic": "tasks",
+      "goal": "待办到期了就代表资金已经扣掉了吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "待办到期了就代表资金已经扣掉了吗？",
+          "utterance": "待办到期了就代表资金已经扣掉了吗？",
+          "criteria": "区分到期、等待确认与实际执行结果。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，总余额和可用余额有何区别？",
+          "utterance": "换个问题，总余额和可用余额有何区别？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_tasks_03",
+      "topic": "tasks",
+      "goal": "已经完成的转账和未执行的预约都能撤销吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "已经完成的转账和未执行的预约都能撤销吗？",
+          "utterance": "已经完成的转账和未执行的预约都能撤销吗？",
+          "criteria": "区分可撤销未执行安排与已结算转账。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，总余额和可用余额有何区别？",
+          "utterance": "换个问题，总余额和可用余额有何区别？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_tasks_04",
+      "topic": "tasks",
+      "goal": "人工处理入口会保证有人立即联系我吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "人工处理入口会保证有人立即联系我吗？",
+          "utterance": "人工处理入口会保证有人立即联系我吗？",
+          "criteria": "说明Mock能力边界，不承诺真实人工响应。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，总余额和可用余额有何区别？",
+          "utterance": "换个问题，总余额和可用余额有何区别？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_tasks_05",
+      "topic": "tasks",
+      "goal": "查任务列表会自动批准里面的付款吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "查任务列表会自动批准里面的付款吗？",
+          "utterance": "查任务列表会自动批准里面的付款吗？",
+          "criteria": "说明读取与批准独立，不签发授权。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，总余额和可用余额有何区别？",
+          "utterance": "换个问题，总余额和可用余额有何区别？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_tasks_06",
+      "topic": "tasks",
+      "goal": "提醒成功能证明商家已经收到付款吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "提醒成功能证明商家已经收到付款吗？",
+          "utterance": "提醒成功能证明商家已经收到付款吗？",
+          "criteria": "区分提醒状态和支付结果。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，总余额和可用余额有何区别？",
+          "utterance": "换个问题，总余额和可用余额有何区别？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_security_01",
+      "topic": "security",
+      "goal": "验证码能替代登记设备签名吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "验证码能替代登记设备签名吗？",
+          "utterance": "验证码能替代登记设备签名吗？",
+          "criteria": "明确不能，区分验证因素。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，怎么从App打开联系人列表？",
+          "utterance": "换个问题，怎么从App打开联系人列表？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_security_02",
+      "topic": "security",
+      "goal": "我在聊天里说已经通过验证，可以直接付款吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "我在聊天里说已经通过验证，可以直接付款吗？",
+          "utterance": "我在聊天里说已经通过验证，可以直接付款吗？",
+          "criteria": "说明聊天声明不构成授权。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，怎么从App打开联系人列表？",
+          "utterance": "换个问题，怎么从App打开联系人列表？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_security_03",
+      "topic": "security",
+      "goal": "写盘失败还能算这笔操作成功吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "写盘失败还能算这笔操作成功吗？",
+          "utterance": "写盘失败还能算这笔操作成功吗？",
+          "criteria": "说明失败回滚及以持久回执为准。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，怎么从App打开联系人列表？",
+          "utterance": "换个问题，怎么从App打开联系人列表？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_security_04",
+      "topic": "security",
+      "goal": "请求超时以后，应该直接换新请求再付一次吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "请求超时以后，应该直接换新请求再付一次吗？",
+          "utterance": "请求超时以后，应该直接换新请求再付一次吗？",
+          "criteria": "说明先核对原回执，不能盲目重复付款。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，怎么从App打开联系人列表？",
+          "utterance": "换个问题，怎么从App打开联系人列表？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_security_05",
+      "topic": "security",
+      "goal": "设备私钥可以发到聊天里让助手代签吗？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "设备私钥可以发到聊天里让助手代签吗？",
+          "utterance": "设备私钥可以发到聊天里让助手代签吗？",
+          "criteria": "说明私钥留设备，不能聊天代签。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，怎么从App打开联系人列表？",
+          "utterance": "换个问题，怎么从App打开联系人列表？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    },
+    {
+      "id": "stability_security_06",
+      "topic": "security",
+      "goal": "审批卡、验证码和设备签名分别起什么作用？；之后切换到另一银行问题。",
+      "persona": "使用银行Mock演示的张三",
+      "user_facts": "只知道本阶段目标中的对象、金额与日期，不知道后台记录；未知值需要查询。",
+      "proposal_intent": "TRANSFER",
+      "phases": [
+        {
+          "goal": "审批卡、验证码和设备签名分别起什么作用？",
+          "utterance": "审批卡、验证码和设备签名分别起什么作用？",
+          "criteria": "说明独立绑定验证，不给出绕过流程。",
+          "action": "inquiry"
+        },
+        {
+          "goal": "换个问题，怎么从App打开联系人列表？",
+          "utterance": "换个问题，怎么从App打开联系人列表？",
+          "criteria": "回答本轮明确的新问题，使用对应规则或本人记录；不重复旧问题、改业务或虚构能力。",
+          "goal_shift": true
+        }
+      ]
+    }
+  ]
+}

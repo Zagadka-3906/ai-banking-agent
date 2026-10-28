@@ -111,7 +111,7 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
     # Resuming a discussion is not resuming/approving a transaction nonce.
     task_id = (parsed.get("parse_meta") or {}).get("resume_task_id")
     resume = re.search(r'继续|接着|恢复|回到', text)
-    if not task_id and resume and (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED'}:
+    if resume and (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED'}:
         from bank_agent.extraction import amount_from_text, target_from_text
         from intent_language import ambiguous_amount, ambiguous_target, execution_constraint, business_text
         from bank_agent.parsing import local_parse
@@ -121,6 +121,7 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
         value = amount_from_text(source)
         recipient = target_from_text(source)
         candidates = [task for task in dialogue_view(state)['tasks'] if isinstance(task.get('pending'), dict)
+                      and (not task_id or task['id'] == task_id)
                       and task['pending'].get('intent') == operation
                       and task['pending'].get('missing') == ['amount']
                       and isinstance((task['pending'].get('payload') or {}).get('target'), str)

@@ -20,7 +20,7 @@ _READ = re.compile(r"查询|查看|查(?:一?下|下|看|查)?|明细|记录|详
 _HELP = re.compile(r"解释|说明|为什么|为何|怎么|如何|多久|多长时间|什么时候|何时|多少.{0,8}结果|进度|流程|步骤|时效|规则|影响|费用|有什么|是什么|是否|是不是|需要(?:什么|哪些)|(?:需要|能|会|还能|可以).{0,16}[吗么？?]|能不能|能否")
 _DIRECT = re.compile(r"(?<!申)(?:帮我|替我|给我|请|麻烦)(?:先|现在|立即|马上|直接|把|将|这张|这笔|我的|\s){0,8}(?:冻结|解冻|挂失|转账|转给|取消|申购|赎回|创建|提交|发起|办理)")
 _BANKING = re.compile(r"转账|到账|交易|消费|扣款|预约|卡|冻结|挂失|解冻|理财|申购|赎回|订阅|代扣|工单|争议|案件|验证|测评|待办|任务页")
-DIALOGUE_ACTS = {"QUERY", "EXPLAIN", "ACTION", "SLOT_REPLY", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}
+DIALOGUE_ACTS = {"QUERY", "EXPLAIN", "ACTION", "SLOT_REPLY", "UNSUPPORTED", "UNCLEAR", "SOCIAL", "WITHDRAW"}
 READ_INTENTS = GREEN_INTENTS - {Intent.WEALTH_RISK_ASSESSMENT.value}
 HELP_TOPICS = TOPICS
 
@@ -133,7 +133,7 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         result.update(intent=Intent.UNKNOWN.value, target=None, amount=None)
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "UNSUPPORTED"}
         return result
-    if act in {"UNSUPPORTED", "UNCLEAR", "SOCIAL"}:
+    if act in {"UNSUPPORTED", "UNCLEAR", "SOCIAL", "WITHDRAW"}:
         result.update(intent=Intent.UNKNOWN.value, target=None, amount=None)
         return result
     if act in {"QUERY", "EXPLAIN"} and result.get("intent") not in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}:

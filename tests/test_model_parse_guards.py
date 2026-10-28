@@ -176,4 +176,6 @@ def test_model_may_extract_explicit_disputed_transaction_but_not_invent_it(model
 def test_unavailable_or_malformed_model_falls_back_to_local(monkeypatch):
     text = "给李四转账 10 元"
     monkeypatch.setattr(runtime, "llm", SimpleNamespace(invoke=lambda _: SimpleNamespace(content="not json")))
-    assert agent.model_parse(text) == agent.local_parse(text)
+    actual = agent.model_parse(text)
+    assert actual['parse_meta'].pop('model_failure') == 'MODEL_UNAVAILABLE'
+    assert actual == agent.local_parse(text)

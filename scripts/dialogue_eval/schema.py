@@ -54,6 +54,7 @@ class Task(StrictModel):
 
 class Dataset(StrictModel):
     version: Literal[1]
+    rubric_version: Literal['v1', 'v2'] = 'v1'
     split: Literal['development', 'holdout'] = 'development'
     source: str
     tasks: list[Task] = Field(min_length=1, max_length=100)

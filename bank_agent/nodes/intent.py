@@ -151,6 +151,12 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                 understood = validate_intent_payload(model_parse(text))
         except Exception:
             understood = None
+    model_failure = ((understood or {}).get('parse_meta') or {}).get('model_failure')
+    if model_failure:
+        audit_event('INTENT_UNAVAILABLE', user_id=state.get('user_id'), request_id=state['request_id'],
+                    decision='RETRY', outcome='FAILED', reason=model_failure)
+        return {**empty_state(final_response='理解服务暂时繁忙或不可用，本轮未发起新操作。原任务保留，请稍后重试这条消息。'),
+                'request_id': state['request_id'], 'context': prior_context, 'business_status': 'FAILED'}
     compound = prior_context.get("compound_workflow") if state.get("continue_workflow") or prior_context.get("pending_clarification") or prior_context.get("risk_quiz") else None
     if compound and compound["steps"][compound["index"]].get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
         compound = None
@@ -174,6 +180,12 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                         'request_id': state.get('request_id'), 'context': prior_context, 'dialogue_state': transition['view'],
                         'risk_quiz': {'active': False},
                         'business_status': 'CANCELLED' if transition['type'] == 'CANCEL' else 'NEEDS_INPUT'}
+    if understood is not None and (understood.get('parse_meta') or {}).get('dialogue_act') == 'WITHDRAW':
+        from intent_language import execution_constraint
+        # A semantic label alone cannot cancel a task or authorize any action.
+        verified = execution_constraint(text) == 'NEGATED_ACTION'
+        return {**empty_state(final_response=('好的，本轮不继续办理，没有发起新操作。' if verified else '请明确希望暂停或放弃哪项办理。')),
+                'request_id': state['request_id'], 'context': prior_context, 'business_status': 'NEEDS_INPUT'}
     if (isinstance(prior_quiz, dict) and not native_quiz_reply and not transition and understood is not None
             and (understood.get('parse_meta') or {}).get('dialogue_act') in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED'}):
         from bank_agent.dialogue_state import dialogue_view

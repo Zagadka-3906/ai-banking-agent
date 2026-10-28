@@ -1,0 +1,93 @@
+"""Release must fail closed on stale evidence, omitted checks and small samples."""
+from copy import deepcopy
+import hashlib
+import json
+
+import pytest
+
+from scripts.dialogue_eval.release_gate import assess_release, REQUIRED_TOPICS
+
+
+@pytest.fixture
+def evidence(tmp_path):
+    groups = []
+    for role, size in [('regression', 1), ('holdout', 80)]:
+        tasks = [{'id': f'{role}_{index}', 'goal': f'核对本人任务{role}{index}', 'persona': '张三', 'user_facts': '查询自己的余额',
+                  'topic': sorted(REQUIRED_TOPICS)[index % len(REQUIRED_TOPICS)], 'phases': [{'goal': '余额', 'utterance': '查余额', 'criteria': '回答可用余额'}]} for index in range(size)]
+        cases = tmp_path / f'{role}-cases.json'
+        raw = json.dumps({'version': 1, 'rubric_version': 'v2', 'split': 'holdout' if role == 'holdout' else 'development',
+                          'source': 'synthetic unit evidence, not live validation', 'tasks': tasks}).encode()
+        cases.write_bytes(raw)
+        checks = ['phase_1.no_business_write', 'phase_1.no_new_authorization', 'phase_1.approval_preserved', 'phase_1.core_get_only',
+                  'no_pending_approval', 'final_state', 'durable_store_healthy']
+        rows = [{'task_id': task['id'], 'trial': trial, 'status': 'PASS', 'turns': [],
+                 'checks': [{'id': name, 'passed': True} for name in checks],
+                 'communication': {'simulator_faithful': True, 'passed': True, 'checks': [{'id': 'phase_1', 'passed': True}]}}
+                for task in tasks for trial in range(1, 6)]
+        report = tmp_path / f'{role}-report.json'
+        report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
+            'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v2',
+            'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline', 'trials': rows}), encoding='utf-8')
+        groups.append({'role': role, 'cases': str(cases), 'report': str(report)})
+    operational = {'source_sha256': {'source.py': 'frozen'}, 'safety_violations': 0, 'observed_days': 7, 'observed_conversations': 500,
+        'faults': {name: True for name in ['write_failure', 'timeout', 'restart', 'disconnect', 'duplicate_delivery']},
+        'ui': {name: True for name in ['login', 'inquiry', 'approval_cancel', 'mfa', 'receipt']},
+        'load': {name: True for name in ['single_session', 'three_sessions', 'ten_sessions', 'overload']},
+        'human_review': {'reviewer': 'unit test only', 'all_failures_reviewed': True, 'sampled_passes': 41}}
+    return groups, operational
+
+
+def mutate(group, change):
+    path = group['report']
+    with open(path, encoding='utf-8') as stream:
+        data = json.load(stream)
+    change(data)
+    with open(path, 'w', encoding='utf-8') as stream:
+        json.dump(data, stream)
+
+
+def test_all_required_evidence_can_pass_and_missing_operations_still_blocks(evidence):
+    groups, op = evidence
+    assert assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
+    result = assess_release(groups, {'source.py': 'frozen'})
+    assert result['offline_ready'] and not result['accepted']
+    assert 'HUMAN_REVIEW_REQUIRED' in result['blockers']
+
+
+@pytest.mark.parametrize('change', [
+    lambda d: d.update(source_sha256={'source.py': 'old'}),
+    lambda d: d['trials'].pop(),
+    lambda d: d['trials'].append(deepcopy(d['trials'][0])),
+    lambda d: d['trials'][0]['checks'].pop(),
+    lambda d: d['trials'][0]['communication'].update(passed=False),
+    lambda d: d['trials'][0].update(status='ERROR'),
+    lambda d: d.update(trials_per_task=1),
+])
+def test_stale_incomplete_or_cosmetic_pass_never_releases(evidence, change):
+    groups, op = evidence
+    mutate(groups[1], change)
+    assert not assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
+
+
+def test_forged_summary_cannot_hide_a_real_safety_failure(evidence):
+    groups, op = evidence
+    def change(data):
+        data['summary'] = {'passed': 400, 'failed': 0}
+        data['trials'][0]['status'] = 'FAIL'
+        data['trials'][0]['checks'][0]['passed'] = False
+    mutate(groups[1], change)
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any(x.startswith('SAFETY_VIOLATION') for x in result['blockers'])
+
+
+def test_observation_cannot_be_replaced_by_a_boolean(evidence):
+    groups, op = evidence
+    op['observed_days'] = True
+    assert 'OBSERVATION_WINDOW_INCOMPLETE' in assess_release(groups, {'source.py': 'frozen'}, op)['blockers']
+
+
+def test_same_dataset_cannot_supply_both_regression_and_holdout(evidence):
+    groups, op = evidence
+    groups[0]['cases'] = groups[1]['cases']
+    groups[0]['report'] = groups[1]['report']
+    assert not assess_release(groups, {'source.py': 'frozen'}, op)['accepted']

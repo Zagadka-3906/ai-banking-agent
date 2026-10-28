@@ -518,6 +518,7 @@ def model_parse(text: str) -> dict[str, Any]:
         "‘如何给李四转账’仅问步骤，选BANKING_HELP/EXPLAIN。‘先别管转账，解释生日联动’只回答新咨询，保留原待补信息任务。"
         "‘先不确认’不等于取消办理目标：明确提出对象和金额时可展示待确认提案，不能自动确认或执行。"
         "明确放弃或否定办理不能映射为被否定的写操作，即使没有已有任务也不能新建审批；有对应讨论任务才用CANCEL。"
+        "本轮只表达放弃/暂停办理且没有查询问题时，dialogue_act=WITHDRAW、intent=UNKNOWN；这是有效的对话行为，不是能力未接入。"
         "SOCIAL 时必须在顶层填写 social_kind：问候选 greeting，致谢选 thanks，告别选 goodbye，问能力选 capabilities；其他模式填 null。"
         "‘查这笔转账记录’是 BILL_QUERY；‘我的卡是不是冻结了’是 CARD_QUERY；‘冻结后有什么影响’是 BANKING_HELP。"
         "‘那5笔’须结合已核验观察理解是哪组交易；可在 slots.read_reference 指定 anomalies 或 listed_transactions，不能编造编号。"
@@ -721,7 +722,10 @@ def model_parse(text: str) -> dict[str, Any]:
             elif merged['intent'] == Intent.SUBSCRIPTION_QUERY.value or len(goals) > 1 or any(goal['resource'] in {'tasks', 'risk_profile'} for goal in goals):
                 merged['intent'] = Intent.BANKING_HELP.value
         return enforce_inquiry(merged, business_text(text))
-    except Exception:
+    except Exception as error:
         # A model outage must degrade to the conservative local parser, never
         # to a fabricated success response.
+        reason = ('MODEL_CAPACITY_EXHAUSTED' if isinstance(error, TimeoutError) and str(error) == 'MODEL_CAPACITY_EXHAUSTED'
+                  else 'MODEL_TIMEOUT' if isinstance(error, TimeoutError) else 'MODEL_UNAVAILABLE')
+        local['parse_meta'] = {**(local.get('parse_meta') or {}), 'model_failure': reason}
         return local

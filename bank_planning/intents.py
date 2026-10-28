@@ -213,7 +213,7 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
                       "fast_path_eligible": meta.get("fast_path_eligible") is True}
         if meta.get("model_intent") in ALL_INTENTS:
             parse_meta["model_intent"] = str(meta["model_intent"])
-        if meta.get("dialogue_act") in {"QUERY", "EXPLAIN", "ACTION", "SLOT_REPLY", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}:
+        if meta.get("dialogue_act") in {"QUERY", "EXPLAIN", "ACTION", "SLOT_REPLY", "UNSUPPORTED", "UNCLEAR", "SOCIAL", "WITHDRAW"}:
             parse_meta["dialogue_act"] = str(meta["dialogue_act"])
         if meta.get("execution_constraint") in {"NEGATED_ACTION", "QUOTED_ACTION", "CONDITIONAL_ACTION", "PROCEDURE_QUESTION"}:
             parse_meta["execution_constraint"] = str(meta["execution_constraint"])
@@ -237,6 +237,8 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             parse_meta['task_transition'] = meta['task_transition']
         if meta.get('command_error') == 'INVALID_DIALOGUE_COMMAND':
             parse_meta['command_error'] = meta['command_error']
+        if meta.get('model_failure') in {'MODEL_CAPACITY_EXHAUSTED', 'MODEL_TIMEOUT', 'MODEL_UNAVAILABLE'}:
+            parse_meta['model_failure'] = meta['model_failure']
         if isinstance(meta.get("questions"), list):
             parse_meta["questions"] = [str(value)[:300] for value in meta["questions"][:5] if isinstance(value, str)]
         if 'goals' in meta:

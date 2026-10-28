@@ -13,7 +13,9 @@ from security import audit_event
 
 _observer: contextvars.ContextVar[Optional[Callable[[dict], None]]] = contextvars.ContextVar("bank_workflow_observer", default=None)
 _model_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bank-model")
-_model_slots = threading.BoundedSemaphore(2)
+# Two running calls plus eight queued calls. Timed-out running calls retain
+# admission until the SDK exits; cancelled queued calls release it immediately.
+_model_slots = threading.BoundedSemaphore(10)
 STAGES = {
     "intent_parser": "理解请求", "risk_checker": "核验业务条件",
     "human_review": "确认操作", "executor": "办理业务",
@@ -40,7 +42,11 @@ def invoke_model(model: Any, messages: list) -> Any:
         _model_slots.release()
         raise
     future.add_done_callback(lambda _: _model_slots.release())
-    return future.result(timeout=model_timeout())
+    try:
+        return future.result(timeout=model_timeout())
+    except TimeoutError:
+        future.cancel()
+        raise
 
 
 @contextmanager

@@ -25,7 +25,7 @@ from scripts.dialogue_eval.schema import Task, load_dataset
 
 
 def source_fingerprints() -> dict[str, str]:
-    files = [*ROOT.glob("*.py"), Path(__file__), ROOT/'scripts/optimize_dialogue_prompts.py']
+    files = [*ROOT.glob("*.py"), Path(__file__), ROOT/'scripts/optimize_dialogue_prompts.py', ROOT/'scripts/check_dialogue_release.py']
     for directory in ("bank_agent", "bank_core", "bank_security", "bank_planning", "scripts/dialogue_eval"):
         files.extend((ROOT / directory).rglob("*.py"))
     return {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(set(files))}
@@ -87,7 +87,7 @@ def worker(job_path: Path) -> int:
             runtime.answer_reviewer = ObservedModel(runtime.answer_reviewer, "answer_review")
         user = (SimulatedUser(evaluation_model(job["models"]["user"], "user", 0.8), job["seed"])
                 if job["user"] == "model" else ScriptedUser())
-        judge = ConversationJudge(evaluation_model(job["models"]["judge"], "judge", 0))
+        judge = ConversationJudge(evaluation_model(job["models"]["judge"], "judge", 0), job.get('rubric_version', 'v1'))
         environment = BankEnvironment(task)
         try:
             result = run_trial(task, environment, user, judge, seed=job["seed"], trial=job["trial"])
@@ -158,6 +158,7 @@ def main(argv=None) -> int:
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT))
     rows: list[dict] = []
     metadata = {**plan, "status": "RUNNING", "revision": revision, "worktree_dirty": dirty, "models": models,
+                'rubric_version': dataset.rubric_version,
                 "dataset_source": dataset.source, "started_utc": datetime.now(timezone.utc).isoformat(),
                 "source_sha256": source_fingerprints()}
 
@@ -173,7 +174,7 @@ def main(argv=None) -> int:
             trial_seed = args.seed + task_positions[task.id] * 100 + trial
             result_path = output / f"{task.id}-{trial}.json"
             job = {"task": task.model_dump(), "trial": trial, "seed": trial_seed, "result": str(result_path),
-                   "models": models, "user": args.user, 'instructions': instructions}
+                   "models": models, "user": args.user, 'instructions': instructions, 'rubric_version': dataset.rubric_version}
             job_path = output / "worker-job.json"
             job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
             try:

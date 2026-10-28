@@ -12,7 +12,7 @@ def business_text(text: str) -> str:
 
 
 _TASK_START = r"(?:请|麻烦|帮我|再|另外|同时)?\s*(?:给|向|查询|查看|查|看看|看|分析|冻结|解冻|挂失|解挂|申购|赎回|取消|关闭|申请|锁定|预留|(?:本月|上月|这个月|上个月|今天|今年)?(?:余额|账单|银行卡|卡片|订阅|持仓))"
-_EXPLICIT_SPLIT = re.compile(r"然后|接着|之后|，再|,再|；|;|并且|，并|同时|以及|顺便|(?=再(?:帮我|查一下|看一下|分析))")
+_EXPLICIT_SPLIT = re.compile(r"然后|接着(?!\s*(?:原来|刚才|之前|上次)的?(?:转账|预约转账|申购|赎回|调额))|之后|，再|,再|；|;|并且|，并|同时|以及|顺便|(?=再(?:帮我|查一下|看一下|分析))")
 
 
 def split_tasks(text: str) -> list[str]:
@@ -21,6 +21,10 @@ def split_tasks(text: str) -> list[str]:
     # Do not split a contact list, product comparison, number or partial slot.
     def separator(match):
         before, after = source[:match.start()], source[match.end():]
+        # A standalone continuation reference is context for the following
+        # request, not an incomplete first operation in a compound workflow.
+        if re.fullmatch(r'\s*(?:那|就)?(?:先)?(?:回到|继续|接着|恢复)(?:原来|刚才|之前|上次)?的?(?:转账|预约转账|申购|赎回|调额)(?:任务)?\s*', before):
+            return match.group()
         # A procedural qualifier does not name a second banking operation.
         if (re.match(r"\s*(?:请|麻烦|帮我|替我|先|再|我想)*\s*(?:看(?:一?下|看)?|了解|说明|解释)?\s*(?:怎么|如何|怎样|办理流程|操作步骤)", after)
                 and not re.search(r"余额|账单|卡片|银行卡|订阅|理财|申购|赎回|冻结|解冻|挂失|转账|预约|生日", after)):
