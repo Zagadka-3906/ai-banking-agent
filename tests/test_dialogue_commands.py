@@ -14,6 +14,26 @@ from test_general_dialogue_loop import model, goal
 from test_inquiry_boundaries import financial_state
 
 
+def test_single_model_action_is_compiled_from_whole_utterance():
+    from bank_agent.dialogue_commands import atomic_action_input
+    parsed = {**local_parse('转账'), 'parse_meta': {'dialogue_act': 'ACTION',
+        'goals': [{'id': 'q1', 'act': 'ACTION', 'resource': 'general', 'question': '给李四转300元',
+                   'fields': [], 'subject': None, 'subjects': [], 'needs_subject': False, 'topic': 'transfer', 'requires_record': False}]}}
+    text = '继续原先那个转账，给李四转300元'
+    # The local splitter sees an incomplete prefix and a complete restatement.
+    result = atomic_action_input(parsed, text)
+    assert result and result['target'] == '李四' and result['amount'] == 300
+
+
+@pytest.mark.parametrize('text', ['给李四转300元，然后给李四转300元', '给李四转300元，然后给王美转500元', '查余额，然后给李四转300元'])
+def test_single_model_goal_cannot_flatten_two_actual_requests(text):
+    from bank_agent.dialogue_commands import atomic_action_input
+    parsed = {**local_parse('给李四转300元'), 'parse_meta': {'dialogue_act': 'ACTION',
+        'goals': [{'id': 'q1', 'act': 'ACTION', 'resource': 'general', 'question': '转账',
+                   'fields': [], 'subject': None, 'subjects': [], 'needs_subject': False, 'topic': 'transfer', 'requires_record': False}]}}
+    assert atomic_action_input(parsed, text) is None
+
+
 def pending_state(*, user='user_zhang', target='李四'):
     pending={'intent':'TRANSFER','missing':['amount'],'payload':{'intent':'TRANSFER','target':target,'amount':None}}
     return {'user_id':user,'memory_principal':user,'context':{},'dialogue_state':{'principal':'user_zhang','tasks':[

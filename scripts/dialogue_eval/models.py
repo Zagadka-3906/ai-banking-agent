@@ -4,6 +4,11 @@ from __future__ import annotations
 import json
 
 
+def json_output_model(model):
+    """Enforce the wire format; unsupported providers fail, never silently retry."""
+    return model.bind(response_format={'type': 'json_object'})
+
+
 def ask(model, prompt: str, payload: dict) -> dict:
     from langchain_core.messages import HumanMessage, SystemMessage
 

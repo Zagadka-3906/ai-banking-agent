@@ -473,10 +473,10 @@ def model_parse(text: str) -> dict[str, Any]:
     # XML-like tags.  A malicious user must not be able to close a delimiter
     # and smuggle a second system/tool instruction into the extraction prompt.
     encoded_utterance = json.dumps(business_text(text), ensure_ascii=False)
-    from banking_rules import rules_version, search_rules
+    from banking_rules import rules_version, search_rules, rule_index
 
     rule_query = business_text(text)[:700].strip()
-    related_rules = {'version': rules_version(), 'documents': search_rules(rule_query, limit=4) if rule_query else []}
+    related_rules = {'version': rules_version(), 'documents': search_rules(rule_query, limit=4) if rule_query else [], 'index': rule_index()}
     from bank_planning.requests import RESOURCES, normalize_goals, read_only_goals, needs_record
     prompt = (
         "你是银行意图抽取器，只输出一个 JSON 对象，不执行任何工具。"
@@ -722,6 +722,8 @@ def model_parse(text: str) -> dict[str, Any]:
                 merged['intent'] = Intent.SUBSCRIPTION_QUERY.value
             elif merged['intent'] == Intent.SUBSCRIPTION_QUERY.value or len(goals) > 1 or any(goal['resource'] in {'tasks', 'risk_profile'} for goal in goals):
                 merged['intent'] = Intent.BANKING_HELP.value
+        from bank_agent.dialogue_commands import atomic_action_input
+        merged = atomic_action_input(merged, text) or merged
         return enforce_inquiry(merged, business_text(text))
     except Exception as error:
         # A model outage must degrade to the conservative local parser, never

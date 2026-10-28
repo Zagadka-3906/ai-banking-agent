@@ -58,7 +58,7 @@ def worker(job_path: Path) -> int:
         from langchain_openai import ChatOpenAI
         from pydantic import SecretStr
         from scripts.dialogue_eval.bank_environment import BankEnvironment
-        from scripts.dialogue_eval.models import ConversationJudge, ScriptedUser, SimulatedUser
+        from scripts.dialogue_eval.models import ConversationJudge, ScriptedUser, SimulatedUser, json_output_model
         from bank_agent import runtime
 
         counters: dict[str, dict] = {}
@@ -76,9 +76,9 @@ def worker(job_path: Path) -> int:
 
         def evaluation_model(name, role, temperature):
             prefix = "BANK_EVAL_" + role.upper()
-            return ObservedModel(ChatOpenAI(model=name, api_key=SecretStr(os.environ.get(prefix + "_API_KEY") or os.environ["DEEPSEEK_API_KEY"]),
+            return ObservedModel(json_output_model(ChatOpenAI(model=name, api_key=SecretStr(os.environ.get(prefix + "_API_KEY") or os.environ["DEEPSEEK_API_KEY"]),
                                            base_url=os.environ.get(prefix + "_BASE_URL") or os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-                                           temperature=temperature, timeout=20, max_retries=0), role)
+                                           temperature=temperature, timeout=20, max_retries=0)), role)
 
         if runtime.llm is None:
             raise RuntimeError("Missing live agent model")
@@ -124,6 +124,7 @@ def main(argv=None) -> int:
         parser.error("Unknown task IDs: " + ", ".join(sorted(unknown)))
     tasks = [task for task in dataset.tasks if not args.task or task.id in args.task]
     plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, 'dataset_split': dataset.split,
+            'evaluation_response_format': 'json_object',
             'prompt_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(), "task_ids": [task.id for task in tasks], "user": args.user,
             "trials_per_task": args.trials, "planned_trials": len(tasks) * args.trials,
             "max_agent_turns": sum(len(task.phases) for task in tasks) * args.trials}

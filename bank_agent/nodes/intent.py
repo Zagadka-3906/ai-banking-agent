@@ -163,8 +163,14 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     from bank_planning.requests import request_goals, read_only_goals
     parts = split_parts(text)
     transition = None
+    atomic_request = False
     if understood is not None:
-        from bank_agent.dialogue_commands import apply_command, withdraw_known_task
+        from bank_agent.dialogue_commands import apply_command, withdraw_known_task, atomic_action_input
+        atomic = atomic_action_input(understood, text) if not compound else None
+        if atomic:
+            understood = validate_intent_payload(atomic)
+            parts = [text]
+            atomic_request = True
         transition = apply_command(state, understood, text)
         if not transition:
             transition = withdraw_known_task(state, understood, text)
@@ -340,7 +346,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         return {**empty_state(final_response="这条消息包含多项业务，其中有尚未明确的请求。请逐项补充业务、对象和金额，或分开办理。"), "context": {}, "request_id": state["request_id"]}
     # A compound request that also contains a mutating part is never split and
     # never silently half-answered: the user is asked to handle it in steps.
-    mixed_write = has_mutating_part(text) and not sub_requests and not compound and not consultation and not read_only_goals(semantic_goals) and not resumed_slot
+    mixed_write = has_mutating_part(text) and not sub_requests and not compound and not consultation and not read_only_goals(semantic_goals) and not resumed_slot and not atomic_request
     # Resolve only explicit conversational references.  A prior recipient is
     # never silently used for a fresh request; the user must say “同一位/他”
     # and the operation remains behind the normal approval gate.

@@ -9,6 +9,41 @@ from bank_agent.dialogue_state import dialogue_view
 COMMANDS = {'RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL'}
 
 
+def atomic_action_input(parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
+    """Compile one understood action from the whole utterance, not its prefix.
+
+    Multiple complete operations, conflicting values or consultation goals
+    remain outside this path. It supplies banking inputs, never authorization.
+    """
+    from bank_agent.parsing import _local_parse_rules
+    from bank_planning.intents import GREEN_INTENTS
+    from bank_planning.requests import request_goals
+    from intent_language import ambiguous_amount, ambiguous_target, business_text, execution_constraint, split_tasks
+    goals = request_goals(parsed)
+    parts = split_tasks(text)
+    intent = parsed.get('intent')
+    if (len(parts) <= 1 or len(goals) != 1 or goals[0]['act'] != 'ACTION'
+            or (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'ACTION', 'SLOT_REPLY'}
+            or intent in GREEN_INTENTS | {'UNKNOWN', 'SUBSCRIPTION_QUERY'}
+            or execution_constraint(text) or ambiguous_amount(text) or ambiguous_target(text)):
+        return None
+    actions = [_local_parse_rules(business_text(part)) for part in parts]
+    if any(item['intent'] in GREEN_INTENTS for item in actions):
+        return None
+    actions = [item for item in actions if item['intent'] not in GREEN_INTENTS | {'UNKNOWN', 'SUBSCRIPTION_QUERY'}]
+    if not actions or any(item['intent'] != intent for item in actions):
+        return None
+    # Two explicit same-value payments still mean two actions.
+    if sum(bool(item.get('target') or item.get('amount') or item.get('product_ids')) for item in actions) > 1:
+        return None
+    whole = _local_parse_rules(business_text(text))
+    if whole['intent'] != intent:
+        return None
+    updates = {key: whole[key] for key in ('target', 'amount', 'scheduled_at', 'event_at', 'product_ids', 'participants')
+               if whole.get(key) not in (None, [], '')}
+    return {**parsed, **updates, 'slots': {**(parsed.get('slots') or {}), **(whole.get('slots') or {})}}
+
+
 def normalize_command(value: Any, text: str, known_ids: set[str]) -> dict[str, str] | None:
     if value is None:
         return None
