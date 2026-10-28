@@ -176,7 +176,9 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
             entities += [name for name in selectors if selector_matches_record(name, row, resource)]
             documents.append({**_document(resource, len(documents), identity + '：' + '；'.join(parts) + '。', ['records', *available],
                                           subject or row.get('merchant') or row.get('name') or row.get('product_id')),
-                              'entity_names': entities, 'entity_id': record_id, 'values': numeric_values})
+                              'entity_names': entities, 'entity_id': record_id, 'values': numeric_values,
+                              **({'card_last4': row['last4']} if resource == 'cards' and isinstance(row.get('last4'), str)
+                                 and re.fullmatch(r'\d{4}', row['last4']) else {})})
     for name in missing_selectors:
         documents.append(_document(resource, len(documents), f'已读取本人当前{RESOURCE_NAMES[resource]}记录，未找到“{name}”的匹配记录。', ['records', *keys], name))
     if len(selectors) == 2 and len(rows) == 2 and not missing_selectors:

@@ -9,7 +9,7 @@ from bank_agent.state import extract_json
 from bank_planning.requests import RESOURCES, needs_record
 from banking_knowledge import SCOPE_POLICY
 from security import audit_event
-from workflow_runtime import invoke_model
+from workflow_runtime import invoke_json_model as invoke_model
 
 
 def refine_goal_fields(parsed: dict[str, Any], text: str) -> dict[str, Any]:

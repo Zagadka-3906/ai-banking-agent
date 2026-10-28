@@ -93,3 +93,20 @@ def test_uncited_product_identity_cannot_prove_a_numeric_name():
              {'id': 'read.wealth_products.1', 'text': '起购条件已查询。', 'subject': '恒泉稳利·60天持有'}]
     with pytest.raises(ValueError, match='UNKNOWN_NUMBER'):
         _validate_draft({'answer': '恒泉稳利·60天持有。', 'evidence_ids': [facts[0]['id']], 'unanswered': []}, facts, {})
+
+
+def test_current_cited_card_tail_is_identity_not_an_unproven_number_or_money():
+    from bank_agent.evidence import project_records
+    data = {'code': 200, 'user_id': 'user_zhang', 'data': [{'card_id': 'CARD-001', 'type': '工资卡',
+            'status': 'FROZEN', 'daily_limit': 5000, 'last4': '3082'}]}
+    facts = project_records('cards', data, {'user_id': 'user_zhang'}, fields=['status'])
+    card = next(row for row in facts if row.get('entity_id') == 'CARD-001')
+    assert card['card_last4'] == '3082' and 'daily_limit' not in card['fields']
+    plan = {'answer': '卡片尾号：3082，登记状态FROZEN。', 'evidence_ids': [card['id']], 'unanswered': []}
+    assert '3082' in _validate_draft(plan, facts, {})[0]
+    with pytest.raises(ValueError, match='UNKNOWN_NUMBER'):
+        _validate_draft({**plan, 'answer': '卡片尾号3083。'}, facts, {})
+    with pytest.raises(ValueError, match='UNKNOWN_NUMBER'):
+        _validate_draft({**plan, 'evidence_ids': [facts[0]['id']]}, facts, {})
+    with pytest.raises(ValueError, match='UNANCHORED_MONEY'):
+        _validate_draft({**plan, 'answer': '当前日额度为3082元。'}, facts, {})

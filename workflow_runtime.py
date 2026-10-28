@@ -49,6 +49,25 @@ def invoke_model(model: Any, messages: list) -> Any:
         raise
 
 
+def invoke_json_model(model: Any, messages: list) -> Any:
+    """Request an object on the wire; keep admission, timeouts and validation.
+
+    Local injected callables need only implement invoke. SDK adapters that
+    expose bind must honor the format or fail; never retry as free-form text.
+    """
+    from langchain_core.messages import SystemMessage
+
+    instruction = '\nReturn one valid JSON object, with no prose outside the JSON object.'
+    structured = list(messages)
+    if structured and isinstance(structured[0], SystemMessage) and isinstance(structured[0].content, str):
+        structured[0] = structured[0].model_copy(update={'content': structured[0].content + instruction})
+    else:
+        structured.insert(0, SystemMessage(content=instruction))
+    bind = getattr(model, 'bind', None)
+    target = bind(response_format={'type': 'json_object'}) if callable(bind) else model
+    return invoke_model(target, structured)
+
+
 @contextmanager
 def observe_stages(callback: Callable[[dict], None]):
     token = _observer.set(callback)

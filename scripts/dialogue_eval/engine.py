@@ -95,7 +95,7 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
                     raise SimulatorDrift('Proposal replaced by a consultation before agent execution')
             observed = environment.step(text, phase, task)
             required = {"reply", "approval", "mode", "intent", "checks", "elapsed_ms", "core_calls", "answer_kind"}
-            if not required <= set(observed) or set(observed) - required - {'coverage', 'read_failures'}:
+            if not required <= set(observed) or set(observed) - required - {'coverage', 'read_failures', 'answer_diagnostics'}:
                 raise ValueError("Incomplete environment observation")
             if not isinstance(observed["checks"], dict) or not observed["checks"]:
                 raise ValueError("Missing hard checks")

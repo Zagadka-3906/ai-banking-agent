@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, Mapping
 
 from security import audit_event
-from workflow_runtime import invoke_model
+from workflow_runtime import invoke_json_model as invoke_model
 from bank_agent import runtime
 from bank_agent.state import extract_json
 from bank_agent.understanding import READ_INTENTS, _safe_text, model_context, understanding_context
@@ -105,10 +105,16 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
         raise ValueError("DRAFT_SCHEMA")
     text, ids, unanswered = plan.get("answer"), plan.get("evidence_ids"), plan.get("unanswered")
     known = {item["id"]: item for item in facts}
-    if (not isinstance(text, str) or not 1 <= len(text.strip()) <= 3000 or not isinstance(ids, list) or not 1 <= len(ids) <= 35
-            or any(not isinstance(key, str) or key not in known for key in ids) or len(set(ids)) != len(ids)
-            or not isinstance(unanswered, list) or len(unanswered) > 5 or any(not isinstance(value, str) or len(value) > 300 for value in unanswered)):
-        raise ValueError("DRAFT_FIELDS")
+    if not isinstance(text, str) or not 1 <= len(text.strip()) <= 3000:
+        raise ValueError('DRAFT_ANSWER_INVALID')
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 35:
+        raise ValueError('DRAFT_CITATION_SCHEMA')
+    if any(not isinstance(key, str) or key not in known for key in ids):
+        raise ValueError('UNKNOWN_EVIDENCE_ID')
+    if len(set(ids)) != len(ids):
+        raise ValueError('DUPLICATE_EVIDENCE_ID')
+    if not isinstance(unanswered, list) or len(unanswered) > 5 or any(not isinstance(value, str) or len(value) > 300 for value in unanswered):
+        raise ValueError('DRAFT_UNANSWERED_SCHEMA')
     if _MONEY.search(re.sub(r"\{\{value\.\d+\}\}", "", text)):
         raise ValueError("UNANCHORED_MONEY")
     def resolve(match: re.Match[str]) -> str:
@@ -131,6 +137,12 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
                      if isinstance(label, str) and label and not label.isdecimal()}
     if entity_labels:
         numeric_text = re.sub('|'.join(re.escape(label) for label in sorted(entity_labels, key=len, reverse=True)), '', numeric_text)
+    # A card tail is identity metadata from the cited current row. It can be
+    # quoted with an identity label, never as a monetary/account value.
+    card_tails = {known[key]['card_last4'] for key in ids if known[key].get('source') == 'core://cards'
+                  and re.fullmatch(r'\d{4}', str(known[key].get('card_last4') or ''))}
+    numeric_text = re.sub(r'(?:尾号|末四位|后四位)\s*[:：]?\s*(\d{4})(?!\d)',
+                          lambda match: '' if match.group(1) in card_tails else match.group(), numeric_text)
     if any(Decimal(value.replace(',', '')).normalize() not in numbers for value in _NUMBER.findall(numeric_text)):
         raise ValueError("UNKNOWN_NUMBER")
     if any(value not in evidence for value in _IDENTIFIER.findall(rendered)):

@@ -5,10 +5,21 @@ from contextlib import ExitStack
 from copy import deepcopy
 from decimal import Decimal
 import os
+import re
 import time
 from unittest.mock import patch
 from urllib.parse import urlsplit
 import uuid
+
+
+def answer_diagnostics(events, request_id):
+    """Expose bounded rejection codes, never provider text or audit payloads."""
+    if not isinstance(request_id, str) or not request_id:
+        return []
+    return [{'reason': row['reason'], 'attempt': row['metadata']['attempt']}
+            for row in events if row.get('request_id') == request_id and row.get('action') == 'ANSWER_REVIEW'
+            and row.get('outcome') == 'REJECTED' and re.fullmatch(r'[A-Za-z_]{3,80}', str(row.get('reason') or ''))
+            and type((row.get('metadata') or {}).get('attempt')) is int and 1 <= row['metadata']['attempt'] <= 3][-3:]
 
 
 class BankEnvironment:
@@ -170,6 +181,8 @@ class BankEnvironment:
                        "GENERATED_REVIEWED" if mode == "GENERATED_REVIEWED" else
                        "SAFE_FALLBACK" if mode == 'FIELD_FALLBACK' or reply.startswith("本次未能生成通过核验的完整解释") else
                        "SCOPE_OR_CLARIFICATION" if envelope.get("intent") == "UNKNOWN" else "CANONICAL")
+        import security
+        diagnostics = answer_diagnostics(security.get_audit_logs(limit=1000), envelope.get('request_id'))
         # No tokens, opaque handles, internal parsed state or raw account snapshots in transcripts.
         return {"reply": reply, "intent": envelope.get("intent"), "mode": mode, "answer_kind": answer_kind,
                 'coverage': [{'goal_id': row.get('goal_id'), 'status': row.get('status'),
@@ -177,6 +190,7 @@ class BankEnvironment:
                                                 if goal['id'] == row.get('goal_id')), None)}
                              for row in ((envelope.get('result') or {}).get('answer_presentation') or {}).get('coverage', [])],
                 'read_failures': deepcopy(self.read_failures[first_failure:]),
+                'answer_diagnostics': diagnostics,
                 "core_calls": deepcopy(self.calls[first_call:]),
                 "approval": {key: approval[key] for key in ("summary", "risk_level") if key in approval} if approval else None,
                 "checks": checks, "elapsed_ms": round((time.monotonic() - start) * 1000)}

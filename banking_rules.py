@@ -93,7 +93,7 @@ def implementation_manifest() -> dict[str, str]:
     files = {'banking_rules.py', 'banking_knowledge.py', 'bank_planning/intents.py',
              'intent_language.py', 'bank_agent/extraction.py', 'bank_agent/dialogue_state.py', 'bank_agent/dialogue.py', 'bank_agent/pending_questions.py',
              'bank_planning/requests.py', 'bank_agent/parsing.py', 'bank_agent/consultation.py',
-             'bank_agent/goal_fidelity.py',
+             'bank_agent/goal_fidelity.py', 'workflow_runtime.py',
              'bank_agent/evidence.py', 'bank_agent/evidence_session.py', 'bank_agent/goal_answering.py',
              'bank_agent/dialogue_commands.py', 'bank_agent/entities.py', 'bank_agent/computations.py', 'bank_agent/answer_repair.py', 'bank_agent/prompt_preferences.py',
              'bank_agent/nodes/intent.py', 'bank_agent/nodes/responder.py', 'bank_agent/nodes/executor.py',

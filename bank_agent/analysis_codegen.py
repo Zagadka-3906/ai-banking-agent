@@ -24,7 +24,7 @@ import re
 from typing import Any, Mapping, Optional, Sequence
 
 from security import SecurityError, audit_event, sanitize_text
-from workflow_runtime import invoke_model
+from workflow_runtime import invoke_json_model as invoke_model
 
 from bank_agent import runtime
 

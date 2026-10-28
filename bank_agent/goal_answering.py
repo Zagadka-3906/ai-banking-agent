@@ -17,7 +17,7 @@ from bank_agent.state import extract_json
 from bank_agent.understanding import _safe_text, model_context, understanding_context
 from banking_knowledge import SCOPE_POLICY
 from security import audit_event
-from workflow_runtime import invoke_model
+from workflow_runtime import invoke_json_model as invoke_model
 
 
 PRIMARY_RESOURCES = {'BALANCE': 'balance', 'CARD_QUERY': 'cards', 'SUBSCRIPTION_QUERY': 'subscriptions',

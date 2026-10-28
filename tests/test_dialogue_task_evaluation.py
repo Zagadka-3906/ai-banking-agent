@@ -275,6 +275,17 @@ def test_real_bank_queries_and_pending_approval_are_observed_not_mocked(bank_env
     assert all(environment.finish(item).values())
 
 
+def test_answer_diagnostics_filter_request_codes_attempts_and_private_audit_payloads():
+    from scripts.dialogue_eval.bank_environment import answer_diagnostics
+    row = {'action': 'ANSWER_REVIEW', 'request_id': 'current', 'outcome': 'REJECTED', 'reason': 'UNKNOWN_NUMBER',
+           'metadata': {'attempt': 2, 'secret': 'NEVER_COPY'}, 'provider_body': 'NEVER_COPY'}
+    events = [row, {**row, 'request_id': 'previous'}, {**row, 'reason': 'api-key=NEVER_COPY'},
+              {**row, 'metadata': {'attempt': 'NEVER_COPY'}}, {**row, 'action': 'OTHER'}]
+    assert answer_diagnostics(events, 'current') == [{'reason': 'UNKNOWN_NUMBER', 'attempt': 2}]
+    assert answer_diagnostics(events, None) == []
+    assert len(answer_diagnostics([row]*10, 'current')) == 3
+
+
 def test_real_injected_outage_has_resource_bound_http_evidence(bank_environment, monkeypatch):
     from test_general_dialogue_loop import model, goal
     from scripts.dialogue_eval.engine import goal_evidence_complete

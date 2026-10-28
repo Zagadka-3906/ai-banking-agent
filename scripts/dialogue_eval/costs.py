@@ -222,6 +222,11 @@ class MeteredModel:
         self.model, self.ledger, self.run, self.role, self.name = model, ledger, run, role, name
         self.counters = counters
 
+    def bind(self, **kwargs):
+        # Format binding must preserve this proxy; an SDK binding alone would
+        # bypass reservation, usage reconciliation and the shared stop signal.
+        return MeteredModel(self.model.bind(**kwargs), self.ledger, self.run, self.role, self.name, self.counters)
+
     def invoke(self, messages, **kwargs):
         identifier, cap = self.ledger.reserve(self.run, self.role, self.name)
         count = self.counters.setdefault(self.role, {'calls': 0, 'returned': 0}) if self.counters is not None else None

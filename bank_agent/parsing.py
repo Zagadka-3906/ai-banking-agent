@@ -16,7 +16,7 @@ from planner import (
     validate_intent_payload,
 )
 from security import audit_event
-from workflow_runtime import invoke_model
+from workflow_runtime import invoke_json_model as invoke_model
 from intent_language import ambiguous_amount, ambiguous_target, business_text, execution_constraint, finite_limit_change, requested_date_range, split_tasks
 from bank_agent import runtime
 from bank_agent.understanding import DIALOGUE_ACTS, HELP_TOPICS, INTENT_DESCRIPTIONS, _safe_text, enforce_inquiry, model_context

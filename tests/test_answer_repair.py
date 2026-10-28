@@ -18,6 +18,25 @@ def test_formatting_feedback_does_not_spend_read_or_planning_budget(monkeypatch)
     assert session.completed==[] and session.rounds==0
 
 
+@pytest.mark.parametrize('update,code', [
+    ({'answer': ''}, 'DRAFT_ANSWER_INVALID'), ({'answer': '很'*3001}, 'DRAFT_ANSWER_INVALID'),
+    ({'evidence_ids': None}, 'DRAFT_CITATION_SCHEMA'), ({'evidence_ids': []}, 'DRAFT_CITATION_SCHEMA'),
+    ({'evidence_ids': ['old']}, 'UNKNOWN_EVIDENCE_ID'), ({'evidence_ids': [{}]}, 'UNKNOWN_EVIDENCE_ID'),
+    ({'evidence_ids': ['guide.test', 'guide.test']}, 'DUPLICATE_EVIDENCE_ID'),
+    ({'unanswered': None}, 'DRAFT_UNANSWERED_SCHEMA'), ({'unanswered': [{'reason': '未答'}]}, 'DRAFT_UNANSWERED_SCHEMA'),
+])
+def test_invalid_draft_fields_have_actionable_codes_without_relaxing_validation(update, code, monkeypatch):
+    from bank_agent.answering import _validate_draft
+    session = EvidenceSession({'user_id': 'user_zhang', 'parse_meta': {'goals': goals()}})
+    monkeypatch.setattr(session, 'plan', lambda *args: pytest.fail('Schema repair must not read data'))
+    draft = {'answer': '卡片规则说明。', 'evidence_ids': ['guide.test'], 'unanswered': []}
+    with pytest.raises(ValueError, match=code):
+        _validate_draft({**draft, **update}, [{'id': 'guide.test', 'text': '卡片规则说明。'}], {})
+    feedback = validation_feedback(code, session.goals)
+    assert feedback[0]['action'] == 'REWRITE' and feedback[0]['reason'] != code
+    assert session.repair(feedback) is False
+
+
 @pytest.mark.parametrize('value',[
     [{'goal_id':'old','reason':'不属于本轮'}], [{'reason':'没有对应目标'}],
     [{'goal_id':'q1','reason':'伪造操作','action':'EXECUTE'}],

@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 from banking_knowledge import KNOWLEDGE_VERSION, SCOPE_POLICY, TOPICS, knowledge_documents
 from security import audit_event
-from workflow_runtime import invoke_model
+from workflow_runtime import invoke_json_model as invoke_model
 from bank_agent import runtime
 from bank_agent.state import BankingAgentState, extract_json
 from bank_agent.understanding import _safe_text, help_topic, model_context, understanding_context

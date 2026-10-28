@@ -28,6 +28,13 @@ def normalize_feedback(value: Any, goals: list[dict[str, Any]]) -> list[dict[str
 def validation_feedback(reason: str, goals: list[dict[str, Any]]) -> list[dict[str, Any]]:
     action = 'READ' if reason in READ_ERRORS else 'CALCULATE' if reason == 'MISSING_CALCULATION_EVIDENCE' else 'REWRITE'
     advice = {
+        'DRAFT_ANSWER_INVALID': 'answer必须是非空字符串，正文不超过3000字；保留直接回答本轮问题的内容。',
+        'DRAFT_CITATION_SCHEMA': 'evidence_ids必须是含1至35项的JSON字符串数组；按实际引用选择facts里的id，不能为null或对象。',
+        'UNKNOWN_EVIDENCE_ID': 'evidence_ids和coverage.evidence_ids只能使用本轮facts里实际出现的id，不得引用目录编号、旧证据或自行拼编号；对应金额也须引用其values来源。',
+        'DUPLICATE_EVIDENCE_ID': '同一evidence_ids数组中的id去重，保留实际引用来源，不增加新编号。',
+        'DRAFT_UNANSWERED_SCHEMA': 'unanswered必须是至多五项的JSON字符串数组，每项不超过300字；没有真正未答问题时用[]，不能为null、对象或对象数组。',
+        'DRAFT_SCHEMA': '严格输出answer字符串、evidence_ids字符串数组、unanswered字符串数组三个字段，不增加其他字段。',
+        'GOAL_DRAFT_SCHEMA': '严格输出answer字符串、evidence_ids字符串数组、unanswered字符串数组、coverage目标数组四个字段，不增加其他字段。',
         'UNANCHORED_MONEY': '金额必须选择本次values里的值并引用来源；差额或合计只引用calculation结果，不在正文自行计算。',
         'UNKNOWN_NUMBER': '去掉未被本次引用证据支持的数字；日期、计数、比例也须来源。步骤使用中文序号，不输出目标或证据编号。',
         'FINANCIAL_FIELD_MISMATCH': '按values对应字段准确标明总余额、可用余额或锁定金额，不能混用字段。',
