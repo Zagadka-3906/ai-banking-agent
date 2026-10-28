@@ -500,6 +500,8 @@ def model_parse(text: str) -> dict[str, Any]:
         'topic用于政策咨询，应匹配实际业务主题；可用general,contacts,transfer,card,limits,security,tasks,dispute,wealth,subscription,cross_scene。'
         'QUERY用于本人当前记录，EXPLAIN用于规则；解释实际状态原因时fields列出需读取字段。'
         '查看整体明细或列表只需fields=["records"]；不要把用户未明确要求的可选列都列为必需字段。'
+        '字段列表没有提供的独立字段或功能不要用相近字段替代；将这部分问题单列为UNSUPPORTED、resource=general、fields=[]，其他受支持问题照常列出。'
+        '已经支持的字段在某条记录中缺失不等于功能不支持，仍由查询证据说明缺口。询问如何补充办理参数是解释或澄清，不是缺少业务数据。'
         '问一个拟设数值是否可行是EXPLAIN，回答规则和必要条件；不能改成仅查询当前数值。当前值也被明确询问时才另列QUERY。'
         '一条消息中的状态、金额、原因等独立问题分别列出，不用历史问题替代本轮。'
         '资源和可读字段：' + json.dumps(RESOURCES, ensure_ascii=False)
@@ -739,6 +741,9 @@ def model_parse(text: str) -> dict[str, Any]:
         from bank_agent.dialogue_commands import atomic_action_input
         merged = atomic_action_input(merged, text) or merged
         merged = enforce_inquiry(merged, business_text(text))
+        if read_only_goals((merged.get('parse_meta') or {}).get('goals') or []) and act in {'QUERY', 'EXPLAIN'}:
+            from bank_agent.goal_fidelity import refine_goal_fields
+            merged = refine_goal_fields(merged, text)
         from intent_language import action_request_clause
         from bank_planning.intents import missing_slots
         clause = action_request_clause(text)

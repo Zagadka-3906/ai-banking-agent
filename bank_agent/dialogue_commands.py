@@ -89,6 +89,9 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
         origin = (task.get('quiz') or {}).get('origin_intent') if questionnaire else None
         withdrawing = (act == 'WITHDRAW' and execution_constraint(text) == 'NEGATED_ACTION'
                        and raw.get('intent') in {'UNKNOWN', intent, origin})
+        withdrawing = withdrawing or (act == 'WITHDRAW' and kind == 'CANCEL' and raw.get('intent') == 'UNDO_OPERATION'
+                                      and (raw.get('slots') or {}).get('undo_kind') == intent
+                                      and any(marker in text for marker in ('想法', '意向', '讨论', '提案')))
         saved_target = pending['payload'].get('target') or (task.get('quiz') or {}).get('origin_target')
         if kind == 'CANCEL' and raw.get('target') and saved_target and raw['target'] != saved_target:
             return None

@@ -148,6 +148,13 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         if result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and not subscription_records:
             result['intent'] = Intent.BANKING_HELP.value
         result.update(amount=None, participants=[])
+        if any(goal['resource'] == 'transactions' and needs_record(goal) for goal in goals):
+            from intent_language import requested_date_range
+            bounds = requested_date_range(text)
+            if bounds:
+                result.update(date_scope='CUSTOM', date_range=None if bounds.get('error') else bounds)
+                if bounds.get('error'):
+                    result['slots'] = {**(result.get('slots') or {}), 'date_range_ambiguous': True}
     elif result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and route and route[0] == Intent.BILL_QUERY.value:
         # Compatibility with older parsers: a transaction clue is still a ledger
         # read when the merchant happens to describe a subscription.

@@ -438,6 +438,10 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                 pending_clarification['choices'] = {'target': names}
             examples = f"，例如：{'、'.join(names)}" if names else ""
             response = f"要转给哪位收款人？请说出联系人姓名或手机号{examples}。我不会替您猜测收款账户。"
+            other_missing = [label for field, label in (('amount', '转账金额'), ('scheduled_at', '预约执行日期和时间'))
+                             if intent == Intent.SCHEDULED_TRANSFER.value and field in missing_fields]
+            if other_missing:
+                response += '还需补充' + '、'.join(other_missing) + '，信息齐全后才能生成办理提案。'
         elif intent in {Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value} and "target" in missing_fields:
             response = "请补充理财产品编号（例如 LX00118），我不会猜测产品。"
         elif intent == Intent.CARD_LIMIT.value and "amount" in missing_fields:
@@ -454,6 +458,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                 pending_clarification["missing"] = ["target"] + [item for item in missing_fields if item != "target"]
         elif "amount" in missing_fields and intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
             response = "请补充明确的金额（例如 300 元）。"
+            if intent == Intent.SCHEDULED_TRANSFER.value and 'scheduled_at' in missing_fields:
+                response += '还需补充预约执行日期和时间，确定后才能生成办理提案。'
         if response is None:
             # A clarification must always carry a question: derive a targeted
             # prompt from the missing slots instead of returning nothing.

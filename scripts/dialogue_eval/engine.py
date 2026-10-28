@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from math import comb, ceil
+import re
 from statistics import median
 import time
 from typing import Any
@@ -67,6 +68,16 @@ class SimulatorDrift(ValueError):
     pass
 
 
+def proposal_drift_reason(text: str) -> str | None:
+    """Detect explicit consultation-only wording before a proposal reaches the bank."""
+    from intent_language import execution_constraint
+    if execution_constraint(text) == 'FEASIBILITY_QUESTION':
+        return 'PROPOSAL_REPLACED_BY_FEASIBILITY'
+    if re.search(r'先(?:帮我|给我)?(?:了解|看看|看下|问问|解释|说明).{0,24}(?:怎么办理|办理流程|如何办理|操作流程)', text):
+        return 'PROPOSAL_REPLACED_BY_PROCEDURE_INQUIRY'
+    return None
+
+
 def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed: int, trial: int, rubric_version: str = 'v1') -> dict:
     """Each environment is a fresh process. Never infer success from a reply."""
     started = time.monotonic()
@@ -78,9 +89,9 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
             text = (UserMessage.model_validate(simulator.next(task.user_view(phase, history), phase.utterance)).text
                     if phase.action in {"inquiry", "clarify", "proposal"} else phase.utterance)
             if phase.action == 'proposal' and rubric_version == 'v3':
-                from intent_language import execution_constraint
-                if execution_constraint(text) == 'FEASIBILITY_QUESTION':
-                    result['simulator_drift'] = {'phase': index, 'user': text, 'reason': 'PROPOSAL_REPLACED_BY_FEASIBILITY'}
+                reason = proposal_drift_reason(text)
+                if reason:
+                    result['simulator_drift'] = {'phase': index, 'user': text, 'reason': reason}
                     raise SimulatorDrift('Proposal replaced by a consultation before agent execution')
             observed = environment.step(text, phase, task)
             required = {"reply", "approval", "mode", "intent", "checks", "elapsed_ms", "core_calls", "answer_kind"}

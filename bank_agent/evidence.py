@@ -45,6 +45,34 @@ def record_names(row: Mapping[str, Any], resource: str) -> list[str]:
     return names
 
 
+def selector_matches_record(selector: str, row: Mapping[str, Any], resource: str) -> bool:
+    """Resolve a display label against one current row, never strip a wrong ID."""
+    from unicodedata import normalize
+    from bank_agent.extraction import PRODUCT_ALIASES
+
+    names = record_names(row, resource)
+    if resource in {'wealth_products', 'wealth_holdings'}:
+        names += [alias for alias, code in PRODUCT_ALIASES.items() if row.get('product_id') == code]
+    known = {normalize('NFKC', name).strip().casefold() for name in names}
+    value = normalize('NFKC', selector).strip().casefold()
+    if value in known:
+        return True
+    pair = re.fullmatch(r'([^()]+?)\s*\(([^()]+)\)', value)
+    return bool(pair and all(part.strip() in known for part in pair.groups()))
+
+
+def transaction_scope_document(context: Mapping[str, Any], subjects: list[str]) -> dict[str, Any]:
+    from bank_agent.rendering import bill_scope_label
+    return {'id': 'read.transactions.scope', 'source': 'core://transactions',
+            'text': '本次流水读取范围：' + bill_scope_label(context) + '。', 'fields': [],
+            'subject': subjects[0] if len(subjects) == 1 else None, 'entity_names': subjects}
+
+
+def document_matches_subject(row: Mapping[str, Any], selector: str) -> bool:
+    return (row.get('scope') == 'resource_policy' or row.get('subject') == selector
+            or selector in row.get('entity_names', []))
+
+
 def _document(resource: str, index: int, text: str, fields: list[str], subject: str | None = None) -> dict[str, Any]:
     if not valid_text_field(text, max_length=400):
         raise ValueError('EVIDENCE_FIELD_INVALID')
@@ -90,11 +118,8 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
     selectors = subjects or ([subject] if subject else [])
     missing_selectors = []
     if selectors:
-        from bank_agent.extraction import PRODUCT_ALIASES
-        values = [PRODUCT_ALIASES.get(name, name) if resource in {'wealth_products', 'wealth_holdings'} else name for name in selectors]
-        missing_selectors = [name for name, value in zip(selectors, values)
-                             if not any(name_value.casefold() == value.casefold() for row in rows for name_value in record_names(row, resource))]
-        rows = [row for row in rows if any(name_value.casefold() == value.casefold() for name_value in record_names(row, resource) for value in values)]
+        missing_selectors = [name for name in selectors if not any(selector_matches_record(name, row, resource) for row in rows)]
+        rows = [row for row in rows if any(selector_matches_record(name, row, resource) for name in selectors)]
         subject = selectors[0] if len(selectors) == 1 else None
     keys = [key for key in selected if key != 'records'] if any(key != 'records' for key in selected) else ROW_FIELDS[resource]
     if not rows:
@@ -148,6 +173,7 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
             from bank_agent.extraction import PRODUCT_ALIASES
             entities = record_names(row, resource)
             entities += [alias for alias, product_id in PRODUCT_ALIASES.items() if row.get('product_id') == product_id]
+            entities += [name for name in selectors if selector_matches_record(name, row, resource)]
             documents.append({**_document(resource, len(documents), identity + '：' + '；'.join(parts) + '。', ['records', *available],
                                           subject or row.get('merchant') or row.get('name') or row.get('product_id')),
                               'entity_names': entities, 'entity_id': record_id, 'values': numeric_values})

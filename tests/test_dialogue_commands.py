@@ -117,6 +117,39 @@ def test_pause_keeps_frame_and_cancel_removes_only_selected_frame():
     assert cancelled['view']['tasks']==[]
 
 
+@pytest.mark.parametrize('text,allowed', [('取消这个预约转账的想法', True), ('取消预约转账任务', False),
+                                        ('取消生日锁定的想法', False)])
+def test_withdrawing_a_matching_unfinished_idea_is_separate_from_undoing_a_saved_task(text, allowed):
+    state = pending_state()
+    task = state['dialogue_state']['tasks'][0]
+    task['id'] = task['intent'] = task['pending']['intent'] = task['pending']['payload']['intent'] = 'SCHEDULED_TRANSFER'
+    parsed = command_parse(text, kind='CANCEL', task=task['id'])
+    parsed['parse_meta']['dialogue_act'] = 'WITHDRAW'
+    result = apply_command(state, parsed, text)
+    assert bool(result) == allowed
+    if allowed:
+        assert result['view']['tasks'] == [] and not result['proposal_input']
+
+
+def test_incomplete_scheduled_transfer_lists_all_missing_inputs_and_can_be_abandoned(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    def invoke(messages):
+        text = json.loads(str(messages[-1].content).splitlines()[-1])
+        result = {'intent': 'SCHEDULED_TRANSFER', 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE', 'target': None, 'amount': None}
+        if '取消' in text:
+            task = model_context()['discussion']['tasks'][0]
+            result = {'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE',
+                      'task_command': {'type': 'CANCEL', 'task_id': task['id'], 'evidence': text}}
+        return SimpleNamespace(content=json.dumps(result, ensure_ascii=False))
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=invoke))
+    before = financial_state()
+    first = _send(client, '我想办一个预约转账，日期和金额还没定', conversation_id='unfinished-scheduled')
+    assert first['approval'] is None and all(word in first['reply'] for word in ('收款人', '金额', '日期'))
+    cancelled = _send(client, '先不办预约转账了，我想取消这个预约转账的想法。', conversation_id='unfinished-scheduled')
+    assert cancelled['approval'] is None and '取消' in cancelled['reply'] and '尚未执行' in cancelled['reply']
+    assert financial_state() == before
+
+
 def test_same_intent_different_objects_have_distinct_frames():
     state=pending_state(target='王五')
     state['context']['pending_clarification']={'intent':'TRANSFER','missing':['amount'],'payload':{'intent':'TRANSFER','target':'李四'}}

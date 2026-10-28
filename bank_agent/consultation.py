@@ -163,6 +163,10 @@ def read_evidence(state: Mapping[str, Any], step: Mapping[str, Any]) -> list[dic
                                   "final_response": None, "slots": {},
                                   "date_scope": (state.get('date_scope') or 'ALL') if step.get('fields') else 'ALL',
                                   "date_range": state.get('date_range') if step.get('fields') else None})
+    if tool == 'transactions' and step.get('fields'):
+        # Typed goals select records after the owner/date-filtered fetch. The
+        # legacy question heuristics must not shrink a shared collection read.
+        side['user_input'] = ''
     result = _execute_green(side, intent)
     side["execution_result"] = result
     rendered = _respond(side)
@@ -174,15 +178,33 @@ def read_evidence(state: Mapping[str, Any], step: Mapping[str, Any]) -> list[dic
         if tool == 'disputes' and 'timing' in step['fields']:
             docs = project_records(str(tool), data, state, fields=[key for key in step['fields'] if key != 'timing'] or ['records'], subjects=subjects)
             docs.append({'id': f'read.disputes.{len(docs)}', 'text': data['policy']['timing_message'],
-                         'source': 'core://disputes', 'fields': ['timing'], 'required': False})
+                         'source': 'core://disputes', 'fields': ['timing'], 'scope': 'resource_policy', 'required': False})
             return docs
         if tool == 'transactions' and 'analysis' in step['fields']:
-            from bank_agent.nodes.responder import _with_custom_analysis
-            lines = str(_with_custom_analysis(side, rendered).get('final_response') or '').splitlines()
-            docs = [{'id': f'read.transactions.{index}', 'text': line, 'source': 'core://transactions',
-                     'fields': ['analysis'], 'required': False} for index, line in enumerate(lines[:12]) if line.strip()]
+            from bank_agent.evidence import selector_matches_record
+            from bank_planning.requests import request_goals, needs_record
+            from planner import analyze_transactions, safe_analysis_text
+            docs = []
+            analysis_goals = [goal for goal in request_goals(state) if goal['resource'] == 'transactions'
+                              and 'analysis' in goal['fields'] and needs_record(goal)]
+            analysis_selectors: list[str | None] = list(dict.fromkeys(name for goal in analysis_goals for name in goal['subjects']))
+            if not analysis_goals or any(not goal['subjects'] for goal in analysis_goals):
+                analysis_selectors.append(None)
+            # The shared fetch may cover the entire collection. Analysis still
+            # belongs to each goal's selection, rather than the fetch's scope.
+            for selector in analysis_selectors if analysis_goals else subjects or [None]:
+                rows = [row for row in result.get('records', [])
+                        if selector is None or selector_matches_record(selector, row, 'transactions')]
+                analysis = analyze_transactions(rows, user_id=state.get('user_id'), request_id=state.get('request_id'))
+                lines = safe_analysis_text(analysis).splitlines()
+                lines += [str(row['tx_id']) + '：' + '、'.join(row['reasons']) + '。' for row in analysis['anomalies']]
+                for line in lines[:12]:
+                    if line.strip():
+                        docs.append({'id': f'read.transactions.{len(docs)}', 'text': line, 'source': 'core://transactions',
+                                     'fields': ['analysis'], 'subject': selector, 'required': False})
             remaining = [key for key in step['fields'] if key != 'analysis']
-            return [*docs, *project_records(str(tool), data, state, fields=remaining, subjects=subjects)] if remaining else docs
+            projected = project_records(str(tool), data, state, fields=remaining, subjects=subjects) if remaining else []
+            return [{**row, 'id': f'read.transactions.{index}'} for index, row in enumerate([*docs, *projected])]
         return project_records(str(tool), data, state, fields=step['fields'], subjects=subjects)
     return [{"id": f"read.{tool}.{index}", "text": line, "source": f"core://{tool}", "required": False}
             for index, line in enumerate(str(rendered.get("final_response") or "").splitlines()) if line.strip()]

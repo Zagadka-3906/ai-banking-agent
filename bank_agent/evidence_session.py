@@ -38,7 +38,10 @@ class EvidenceSession:
         if step.get('tool') in RESOURCES:
             cached = [row for row in self.documents.values() if row['id'].startswith('read.' + step['tool'] + '.')]
             def covered(selector: str | None) -> bool:
-                rows = [row for row in cached if selector is None or row.get('subject') == selector or selector in row.get('entity_names', [])]
+                from bank_agent.evidence import document_matches_subject
+                rows = [row for row in cached if selector is None or document_matches_subject(row, selector)]
+                if selector is None and 'analysis' in (step.get('fields') or []):
+                    rows = [row for row in rows if 'analysis' not in row.get('fields', []) or row.get('subject') is None]
                 return bool(rows) and set(step.get('fields') or ['records']) <= {field for row in rows for field in row.get('fields', [])}
             if not changed_dates and all(covered(selector) for selector in selection or [None]):
                 return False
@@ -73,6 +76,9 @@ class EvidenceSession:
                         raise ValueError('INVALID_READ_DATE_CONTEXT')
                     read_state.update(date_scope=dates.get('date_scope'), date_range=dates.get('date_range'))
                 rows = read_evidence(read_state, step)
+                if step['tool'] == 'transactions':
+                    from bank_agent.evidence import transaction_scope_document
+                    rows.append(transaction_scope_document(read_state, selection))
                 self.contexts[str(step['tool'])] = {'date_scope': read_state.get('date_scope'), 'date_range': read_state.get('date_range')}
                 if step['tool'] == 'transactions':
                     self.transaction_dates = self.contexts['transactions']
@@ -98,9 +104,7 @@ class EvidenceSession:
         for topic in topics or ['general']:
             self.read({'tool': 'rules', 'query': '；'.join(goal['question'] for goal in self.goals if goal['topic'] == topic)[:700] or '银行业务', 'topic': topic})
         if 'limits' in topics or any('daily_limit' in goal['fields'] for goal in self.goals):
-            from bank_agent.extraction import amount_from_text
-            if amount_from_text(str(self.state.get('user_input') or '')) is not None:
-                self.read({'tool': 'account_context'})
+            self.read({'tool': 'account_context'})
         for goal in self.goals:
             step = goal_read(goal)
             # Public product fields may be phrased as an explanation; they

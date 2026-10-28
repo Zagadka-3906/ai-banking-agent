@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from scripts.dialogue_eval.engine import evaluate_judgement, run_trial, summarize
+from scripts.dialogue_eval.engine import evaluate_judgement, proposal_drift_reason, run_trial, summarize
 from scripts.dialogue_eval.models import SimulatedUser
 from scripts.dialogue_eval.schema import Dataset, Task, load_dataset
 from scripts.evaluate_dialogue_tasks import isolated_settings, main as evaluation_main
@@ -82,6 +82,22 @@ def test_intermediate_read_and_coverage_milestones_cannot_be_overruled_by_judge(
     summary=summarize([item],1,[row])
     assert summary['intermediate_milestones']['failed']==2
     assert summary['goal_shifts']=={'observed':1,'answered_in_same_turn':0}
+
+
+@pytest.mark.parametrize('text', ['我想给李四转300元，先帮我看看怎么办理。', '先了解预约转账的办理流程'])
+def test_v3_proposal_procedure_inquiry_is_simulator_drift_before_bank_execution(text):
+    item = load_dataset(DATASET)[0].tasks[-1]
+    env = Environment()
+    messages = iter(['能取消卡片限额吗', text])
+    result = run_trial(item, env, SimpleNamespace(next=lambda *args: {'text': next(messages)}),
+                       SimpleNamespace(assess=lambda *args: verdict(item)), seed=1, trial=1, rubric_version='v3')
+    assert result['status'] == 'ERROR' and result['error_type'] == 'SimulatorDrift' and env.steps == 1
+    assert result['simulator_drift']['reason'] == 'PROPOSAL_REPLACED_BY_PROCEDURE_INQUIRY'
+
+
+@pytest.mark.parametrize('text', ['给李四转300元，等我确认', '帮我把日限额设成10000', '给李四转300元，怎么确认'])
+def test_explicit_proposals_are_not_reclassified_as_simulator_drift(text):
+    assert proposal_drift_reason(text) is None
 
 
 def test_evaluation_counts_repeated_reads_and_actual_turn_latency():
