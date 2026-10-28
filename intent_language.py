@@ -119,6 +119,10 @@ def action_request_clause(text: str) -> str | None:
 
 def finite_limit_change(text: str) -> bool:
     """Recognize a new affirmative clause, not an earlier unlimited-limit quote."""
+    # A contextual shortcut must never discard a question in another clause.
+    # Let the full model distinguish requesting a change from asking about it.
+    if re.search(r'如何|怎么|怎样|能否|能不能|是否|多少|[吗么？?]', business_text(text)):
+        return False
     for clause in re.split(r"[，,。；;!?！？]", business_text(text)):
         if re.search(r"如何|怎么|怎样|假设|如果|要是|能否|能不能|是否|多少|[吗么？?]|不要|不必|不想|不能|取消|无限|不限额", clause):
             continue
@@ -134,7 +138,9 @@ def execution_constraint(text: str) -> str | None:
     source = business_text(text)
     mutation = r"执行|操作|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定|调额|修改限额"
     if (re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下|核对|看看)[^。；;!?！？]{0,40}(?:行不行|可行|能否|是否|能不能|可以吗|可不可以)', source)
-            or re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下)[^。；;!?！？]{0,16}可行性', source)):
+            or re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下)[^。；;!?！？]{0,16}可行性', source)
+            or re.search(r'(?:在(?:允许|支持|可设置|可接受)(?:的)?范围(?:里|内)?|符合[^，,。；;!?！？]{0,12}(?:要求|条件))\s*(?:吗|么|不)', source)
+            or re.search(r'(?:是否|是不是)[^，,。；;!?！？]{0,16}(?:允许范围|符合.{0,8}(?:要求|条件))', source)):
         return 'FEASIBILITY_QUESTION'
     # A withdrawal can mention the operation affirmatively in a later clause
     # ("不冻结了，放弃冻结卡片"). Never let that mention become a new request.

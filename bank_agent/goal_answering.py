@@ -55,6 +55,28 @@ def _bind_literal_values(plan: dict[str, Any], facts: list[dict[str, Any]], anch
     return {**plan, 'answer': _MONEY.sub(encode, text)}
 
 
+def request_amount_facts(text: str) -> list[dict[str, Any]]:
+    """Retain each quoted input amount without turning it into an account fact."""
+    from bank_agent.answering import _MONEY
+    from bank_agent.extraction import amount_from_text
+
+    single = amount_from_text(text)
+    amounts = [single] if single is not None else []
+    for match in _MONEY.finditer(text):
+        # A unit next to an identifier is not an independent monetary input.
+        if match.start() and re.match(r'[A-Za-z0-9_.-]', text[match.start() - 1]):
+            continue
+        value = amount_from_text(match.group())
+        if value is not None and value not in amounts:
+            amounts.append(value)
+        if len(amounts) >= 5:
+            break
+    return [{'id': 'request.amount' + (f'.{index}' if index else ''), 'source': 'user://current-request',
+             'fields': ['requested_amount'],
+             'text': f'你本轮提到的金额为¥{value:,.2f}；仅为用户输入，未经核验，不是账户余额、已核验合计、已生效额度或批准结果。'}
+            for index, value in enumerate(amounts)]
+
+
 def _matching(goal: Mapping[str, Any], facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = [row for row in facts if str(row['id']).startswith('read.' + str(goal['resource']) + '.')
             and (goal.get('calculation') or not row.get('derived'))]
@@ -224,11 +246,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                    if key in {'discussion', 'pending_question', 'pending_operation'}}
     feedback: list[dict[str, Any]] = []
     final_text, final_coverage, generated = '', [], False
-    from bank_agent.extraction import amount_from_text
-    requested_amount = amount_from_text(str(state.get('user_input') or ''))
-    request_facts = ([{'id': 'request.amount', 'source': 'user://current-request', 'fields': ['requested_amount'],
-                      'text': f'你本轮询问的金额为¥{requested_amount:,.2f}；只是用户询问参数，不是账户余额、已生效额度或批准结果。'}]
-                     if requested_amount is not None else [])
+    request_facts = request_amount_facts(str(state.get('user_input') or ''))
     for subject in dict.fromkeys(name for goal in goals for name in goal.get('subjects', [])):
         request_facts.append({'id': 'request.subject.' + str(len(request_facts)), 'source': 'user://current-request',
                               'fields': ['requested_subject'], 'text': '本轮询问或指代的对象是“' + subject + '”；'
@@ -248,6 +266,8 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 'audience=model的规则只约束内部推理，除非用户明确询问实现，不向用户复述工具、协议或读取预算。'
                 '每项当前账户事实必须引用对应read资源字段，规则不能证明个人状态。无法读取、需澄清、需订阅确认和未实现要分别说明。'
                 'request.amount仅为本轮用户询问数值，若复述必须明确称“你询问的金额”或“拟设额度”，不能作余额、已生效额度或批准结果；对应占位符同样必须引用。'
+                '多个request.amount分别来自本轮输入；可用“你提到的合计”引用用户自报合计，不因此声称已核验。'
+                '只解释概念或统计口径时，无需把用户自报数字再次核验当作完成解释的前提；也可省略无必要的数字。'
                 'request.subject仅为本轮询问对象的引用，可称“你所指的对象”，不证明记录存在或状态；resource_policy只说明整个产品适用的规则，不证明某条记录存在。'
                 '金额必须用values中的{{value.N}}并引用对应evidence_id，余额金额标明总余额/可用余额/锁定金额。'
                 '带calculation的目标必须引用服务器calculation证据，不自行算金额；引用计算结果即包含其操作数来源。'

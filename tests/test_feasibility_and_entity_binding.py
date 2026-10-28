@@ -15,6 +15,8 @@ from test_inquiry_boundaries import wrong_model, financial_state
     '我想把日限额改成10000，先了解这个数值行不行，暂不确认',
     '我想给李四转300元，先咨询是否可行',
     '我想申购零星宝，先了解可行性',
+    '想把这张卡的日限额设成10000元，这个数在允许范围里吗？',
+    '给李四转300元，这笔金额符合转账条件吗？',
 ])
 def test_feasibility_does_not_create_a_proposal_even_with_wrong_action_model(gateway, monkeypatch, text):  # noqa: F811
     client, _ = gateway
@@ -31,6 +33,19 @@ def test_explicit_limit_action_after_consultation_can_still_get_an_approval(gate
     _send(client, '先了解设置10000元日限额是否可行', conversation_id='ask-then-act')
     reply = _send(client, '现在请把CARD-001日限额设置为10000元', conversation_id='ask-then-act')
     assert reply['approval'] and '10,000' in reply['approval']['summary']
+
+
+def test_contextual_limit_input_cannot_bypass_understanding_of_a_later_question(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    monkeypatch.setattr(runtime, 'llm', None)
+    _send(client, '能取消卡片限额吗', conversation_id='limit-followup-question')
+    calls = []
+    wrong_model(monkeypatch, 'CARD_LIMIT', calls)
+    before = financial_state()
+    reply = _send(client, '那按你刚才说的规则，想把这张卡的日限额设成10000元，这个数在允许范围里吗？',
+                  conversation_id='limit-followup-question')
+    assert calls, 'Natural-language questions must not bypass the model through contextual slot filling'
+    assert reply['approval'] is None and financial_state() == before
 
 
 def responses(monkeypatch, book, payees):

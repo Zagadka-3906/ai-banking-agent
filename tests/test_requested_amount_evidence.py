@@ -2,7 +2,7 @@
 import pytest
 
 from bank_agent.answering import _anchored_facts, _validate_draft
-from bank_agent.goal_answering import _bind_literal_values, _fallback
+from bank_agent.goal_answering import _bind_literal_values, _fallback, request_amount_facts
 from bank_agent.evidence_session import EvidenceSession
 from bank_planning.requests import normalize_goals
 from test_general_dialogue_loop import goal
@@ -35,6 +35,25 @@ def test_an_uncited_requested_value_cannot_supply_a_number():
     plan = {'answer': '你询问的金额为10000元。', 'evidence_ids': ['guide.test'], 'unanswered': []}
     with pytest.raises(ValueError, match='UNANCHORED_MONEY'):
         _validate_draft(_bind_literal_values(plan, [FACT, other], anchors), [FACT, other], anchors)
+
+
+def test_multiple_self_reported_amounts_are_separate_quoted_inputs_not_verified_totals():
+    facts = request_amount_facts('我算了消费合计47.90元，可余额显示15000元，这两个数怎么不相等？')
+    assert len(facts) == 2 and len({row['id'] for row in facts}) == 2
+    _, anchors = _anchored_facts(facts)
+    plan = {'answer': '你提到的合计47.90元未经核验；期间支出和当前可用余额口径不同。',
+            'evidence_ids': [facts[0]['id']], 'unanswered': []}
+    assert '47.90' in _validate_draft(_bind_literal_values(plan, facts, anchors), facts, anchors)[0]
+    with pytest.raises(ValueError, match='REQUEST_VALUE_AS_ACCOUNT_FACT'):
+        _validate_draft({**plan, 'answer': '当前可用余额为{{value.0}}。'}, facts, anchors)
+    with pytest.raises(ValueError, match='UNANCHORED_MONEY'):
+        _validate_draft(_bind_literal_values({**plan, 'answer': '你提到的合计48元。'}, facts, anchors), facts, anchors)
+
+
+def test_amount_mentions_are_bounded_and_identifiers_cannot_supply_them():
+    assert request_amount_facts('TX1004和CARD-10000，查下这些流水编号') == []
+    assert len(request_amount_facts('、'.join(str(i) + '元' for i in range(1, 10)))) == 5
+    assert len(request_amount_facts('合计47.90元，还是47.90元')) == 1
 
 
 def test_same_number_in_balance_and_request_keeps_the_parameter_label():
