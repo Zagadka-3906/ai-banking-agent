@@ -149,14 +149,19 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
         raise ValueError("UNKNOWN_IDENTIFIER")
     balance_labels = {"balance.available_balance": r"可用|能用|可支配", "balance.total_balance": r"总余额|总额|全部余额",
                       "balance.locked_amount": r"锁定|预留"}
+    declared_inputs: set[str] = set()
     for match in re.finditer(r"\{\{(value\.\d+)\}\}", text):
         field = anchors[match.group(1)]["evidence_id"]
         bound_fields = known[field].get('fields') or []
         if known[field].get('source') == 'user://current-request':
             prefix = re.split(r'[，,。；;\n]', text[:match.start()])[-1][-32:]
-            if (not re.search(r'你(?:本轮)?(?:提到|询问|想设|希望|拟|提出)|用户(?:本轮)?(?:提出|询问)|拟(?:设|申请)|申请(?:的)?(?:金额|数值)', prefix)
+            declared = re.search(r'你(?:本轮)?(?:提到|询问|想设|希望|拟|提出)|用户(?:本轮)?(?:提出|询问)|拟(?:设|申请)|申请(?:的)?(?:金额|数值)', prefix)
+            hypothetical = re.search(r'如果|假如|假设|若(?:你|要|将|把)|你(?:想|打算|计划)(?:转|设|调|把|将)', prefix)
+            continued = field in declared_inputs and re.search(r'这笔|该笔|同一笔|这个(?:数值|金额)|上述(?:数值|金额|额度)', prefix)
+            if (not (declared or hypothetical or continued)
                     or re.search(r'当前|余额|已生效|已批准|已设置|设好|已办理', prefix)):
                 raise ValueError('REQUEST_VALUE_AS_ACCOUNT_FACT')
+            declared_inputs.add(field)
         if known[field].get('source') == 'core://balance' and len(bound_fields) == 1:
             field = 'balance.' + bound_fields[0]
         if field in balance_labels:

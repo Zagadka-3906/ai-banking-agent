@@ -37,6 +37,23 @@ def test_an_uncited_requested_value_cannot_supply_a_number():
         _validate_draft(_bind_literal_values(plan, [FACT, other], anchors), [FACT, other], anchors)
 
 
+@pytest.mark.parametrize('text', ['你询问的金额为10000元。这笔10000元仍须单独核验。',
+                                '如果把日限额设为10000元，仍须核对当前政策。'])
+def test_declared_or_hypothetical_input_can_be_referenced_naturally(text):
+    _, anchors = _anchored_facts([FACT])
+    plan = {'answer': text, 'evidence_ids': [FACT['id']], 'unanswered': []}
+    assert '10,000.00' in _validate_draft(_bind_literal_values(plan, [FACT], anchors), [FACT], anchors)[0]
+
+
+@pytest.mark.parametrize('text', ['这笔10000元已完成。', '你询问的金额为10000元。当前余额为10000元。',
+                                '你询问的金额为10000元。已生效额度为10000元。'])
+def test_input_reference_does_not_prove_an_account_or_executed_result(text):
+    _, anchors = _anchored_facts([FACT])
+    plan = {'answer': text, 'evidence_ids': [FACT['id']], 'unanswered': []}
+    with pytest.raises(ValueError, match='REQUEST_VALUE_AS_ACCOUNT_FACT|UNANCHORED_MONEY'):
+        _validate_draft(_bind_literal_values(plan, [FACT], anchors), [FACT], anchors)
+
+
 def test_multiple_self_reported_amounts_are_separate_quoted_inputs_not_verified_totals():
     facts = request_amount_facts('我算了消费合计47.90元，可余额显示15000元，这两个数怎么不相等？')
     assert len(facts) == 2 and len({row['id'] for row in facts}) == 2

@@ -68,7 +68,7 @@ def test_suffix_is_bound_to_a_real_unique_core_payee(monkeypatch):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize('verb', ['办', '办理', '安排'])
+@pytest.mark.parametrize('verb', ['办', '办理', '安排', '办一笔', '办理一笔', '安排一笔'])
 def test_payee_business_verb_suffix_uses_current_unique_identity(monkeypatch, verb):
     responses(monkeypatch, [], [{'display_name': '李四', 'contact_id': 'user_li'}])
     text = '给李四' + verb + '预约转账，金额和日期没想好'
