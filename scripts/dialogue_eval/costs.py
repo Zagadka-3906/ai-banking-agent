@@ -218,17 +218,27 @@ class CostLedger:
 
 
 class MeteredModel:
-    def __init__(self, model, ledger: CostLedger, run: str, role: str, name: str, counters=None):
+    def __init__(self, model, ledger: CostLedger, run: str, role: str, name: str, counters=None, stage_usage=None):
         self.model, self.ledger, self.run, self.role, self.name = model, ledger, run, role, name
         self.counters = counters
+        self.stage_usage = stage_usage
 
     def bind(self, **kwargs):
         # Format binding must preserve this proxy; an SDK binding alone would
         # bypass reservation, usage reconciliation and the shared stop signal.
-        return MeteredModel(self.model.bind(**kwargs), self.ledger, self.run, self.role, self.name, self.counters)
+        return MeteredModel(self.model.bind(**kwargs), self.ledger, self.run, self.role, self.name, self.counters, self.stage_usage)
 
     def invoke(self, messages, **kwargs):
         identifier, cap = self.ledger.reserve(self.run, self.role, self.name)
+        stage = None
+        if self.stage_usage is not None:
+            heading = ' '.join(str(getattr(message, 'content', ''))[:160] for message in messages[:2]) if isinstance(messages, list) else ''
+            tags = {'意图抽取器': 'understanding', '查询需求核验器': 'goal_fields', '只读咨询规划器': 'planning',
+                    '业务解答助手': 'answering', '独立银行回答核验器': 'review'}
+            label = next((value for key, value in tags.items() if key in heading), 'other') if self.role in {'agent', 'answer_review'} else self.role
+            stage = self.stage_usage.setdefault(label, {'calls': 0, 'returned': 0, 'input_tokens': 0,
+                'output_tokens': 0, 'cache_hit_tokens': 0, 'usage_unknown_calls': 0})
+            stage['calls'] += 1
         count = self.counters.setdefault(self.role, {'calls': 0, 'returned': 0}) if self.counters is not None else None
         if count is not None:
             count['calls'] += 1
@@ -239,7 +249,16 @@ class MeteredModel:
             requested = cap
         # ChatOpenAI rewrites max_tokens to max_completion_tokens. DeepSeek's
         # documented wire contract uses max_tokens; extra_body is merged last.
-        body = dict(kwargs.get('extra_body') or {})
+        # Preserve provider options from the SDK and any format bindings.
+        # Otherwise applying a token cap would drop an explicit thinking mode.
+        base, bindings = self.model, []
+        while hasattr(base, 'bound'):
+            bindings.append((getattr(base, 'kwargs', {}) or {}).get('extra_body') or {})
+            base = base.bound
+        body = dict(getattr(base, 'extra_body', None) or {})
+        for options in reversed(bindings):
+            body.update(options)
+        body.update(kwargs.get('extra_body') or {})
         body.pop('max_completion_tokens', None)
         body['max_tokens'] = min(requested, cap)
         kwargs['extra_body'] = body
@@ -247,8 +266,18 @@ class MeteredModel:
             answer = self.model.invoke(messages, **kwargs)
         except BaseException as error:
             self.ledger.failed(identifier, error)
+            if stage is not None:
+                stage['usage_unknown_calls'] += 1
             raise
         self.ledger.completed(identifier, answer)
+        if stage is not None:
+            stage['returned'] += 1
+            usage = token_usage(answer)
+            if usage is None:
+                stage['usage_unknown_calls'] += 1
+            else:
+                for field in ('input_tokens', 'output_tokens', 'cache_hit_tokens'):
+                    stage[field] += usage[field]
         if count is not None:
             count['returned'] += 1
         return answer

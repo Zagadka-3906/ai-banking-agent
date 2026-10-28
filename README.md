@@ -97,6 +97,7 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 `.env` 只在本机使用，不入库。可选填写：
 
 - `DEEPSEEK_API_KEY`：启用对话理解、只读咨询规划、自然回答、独立核验及“猜你想问”。未配置或调用失败时使用规则与已验证结果，复杂理解和解释能力会下降。
+- `BANK_LLM_MODEL`：默认 `deepseek-flash`；本机 Agent、核验、模拟用户与评分器均使用 Flash。`BANK_MODEL_THINKING` 选择 `disabled/enabled`，空值跟随服务商默认；当前候选为 `disabled`，与 12 秒单次期限一同评测。
 - `BANK_ANSWER_PLANNING`：默认 `1`，启用有依据的自然回答和独立核验；`0` 保留固定结果，咨询取证与规划仍可运行。`BANK_ANSWER_MODE=shadow` 生成核验但不替换可见回复；`BANK_REVIEW_MODEL` 可配置同一模型服务上的核验模型。详见 [Agent 架构](docs/Agent架构.md)。
 - `DASHSCOPE_API_KEY`：没有端侧识别时，经百炼转写语音。
 

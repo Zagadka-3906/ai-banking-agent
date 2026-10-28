@@ -27,7 +27,10 @@ def evidence(tmp_path):
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
-            'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline', 'trials': rows}), encoding='utf-8')
+            'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline',
+            'inference_profile': {'thinking': 'disabled', 'agent_temperature': 0.0, 'user_temperature': 0.8,
+                'judge_temperature': 0.0, 'timeout_seconds': 12, 'max_output_tokens': 4096, 'review_model': 'test'},
+            'trials': rows}), encoding='utf-8')
         groups.append({'role': role, 'cases': str(cases), 'report': str(report)})
     operational = {'source_sha256': {'source.py': 'frozen'}, 'safety_violations': 0, 'observed_days': 7, 'observed_conversations': 500,
         'faults': {name: True for name in ['write_failure', 'timeout', 'restart', 'disconnect', 'duplicate_delivery']},
@@ -52,6 +55,16 @@ def test_all_required_evidence_can_pass_and_missing_operations_still_blocks(evid
     result = assess_release(groups, {'source.py': 'frozen'})
     assert result['offline_ready'] and not result['accepted']
     assert 'HUMAN_REVIEW_REQUIRED' in result['blockers']
+
+
+def test_mixed_thinking_or_missing_inference_settings_cannot_share_acceptance(evidence):
+    groups, op = evidence
+    mutate(groups[1], lambda report: report['inference_profile'].update(thinking='enabled'))
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any('MIXED_CANDIDATES' in item for item in result['blockers'])
+    mutate(groups[1], lambda report: report.pop('inference_profile'))
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any('INVALID_INFERENCE_PROFILE' in item for item in result['blockers'])
 
 
 def test_forged_pass_cannot_hide_explicitly_incomplete_goal_evidence(evidence):

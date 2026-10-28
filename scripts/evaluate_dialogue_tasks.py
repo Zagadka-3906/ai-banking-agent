@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.dialogue_eval.engine import run_trial, summarize
 from scripts.dialogue_eval.schema import Task, load_dataset
+from model_config import DEFAULT_MODEL, DEFAULT_THINKING, thinking_options
 from scripts.dialogue_eval.costs import (CostLedger, MeteredModel, add_cost_arguments, configure_budget, evaluation_values)
 
 
@@ -64,19 +65,21 @@ def worker(job_path: Path) -> int:
         from bank_agent import runtime
 
         counters: dict[str, dict] = {}
+        stage_usage: dict[str, dict] = {}
 
         def evaluation_model(name, role, temperature):
             prefix = "BANK_EVAL_" + role.upper()
             return MeteredModel(json_output_model(ChatOpenAI(model=name, api_key=SecretStr(os.environ.get(prefix + "_API_KEY") or os.environ["DEEPSEEK_API_KEY"]),
                                            base_url=os.environ.get(prefix + "_BASE_URL") or os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-                                           temperature=temperature, timeout=20, max_retries=0)), ledger, job['cost_run'], role, name, counters)
+                                           temperature=temperature, timeout=20, max_retries=0,
+                                           extra_body=thinking_options())), ledger, job['cost_run'], role, name, counters, stage_usage)
 
         if runtime.llm is None:
             raise RuntimeError("Missing live agent model")
-        runtime.llm = MeteredModel(runtime.llm, ledger, job['cost_run'], 'agent', job['models']['agent'], counters)
+        runtime.llm = MeteredModel(runtime.llm, ledger, job['cost_run'], 'agent', job['models']['agent'], counters, stage_usage)
         if runtime.answer_reviewer is not None:
             runtime.answer_reviewer = MeteredModel(runtime.answer_reviewer, ledger, job['cost_run'], 'answer_review',
-                os.environ['BANK_REVIEW_MODEL'], counters)
+                os.environ['BANK_REVIEW_MODEL'], counters, stage_usage)
         user = (SimulatedUser(evaluation_model(job["models"]["user"], "user", 0.8), job["seed"], job.get('rubric_version', 'v1'))
                 if job["user"] == "model" else ScriptedUser())
         judge = ConversationJudge(evaluation_model(job["models"]["judge"], "judge", 0), job.get('rubric_version', 'v1'))
@@ -84,6 +87,7 @@ def worker(job_path: Path) -> int:
         try:
             result = run_trial(task, environment, user, judge, seed=job["seed"], trial=job["trial"], rubric_version=job.get('rubric_version', 'v1'))
             result["model_calls"] = counters
+            result['stage_usage'] = stage_usage
             result['cost'] = ledger.snapshot(job['cost_run'])
             if result['cost']['stop_reason']:
                 result.update(status='ERROR', error_type='EvaluationStopped', stop_reason=result['cost']['stop_reason'])
@@ -142,14 +146,20 @@ def main(argv=None) -> int:
         parser.error(str(error))
     if not values.get("DEEPSEEK_API_KEY"):
         parser.error("DEEPSEEK_API_KEY is required; missing credentials are not a successful simulation")
-    models = {"agent": values.get("BANK_LLM_MODEL") or "deepseek-chat",
-              "user": values.get("BANK_EVAL_USER_MODEL") or values.get("BANK_LLM_MODEL") or "deepseek-chat",
-              "judge": values.get("BANK_EVAL_JUDGE_MODEL") or values.get("BANK_LLM_MODEL") or "deepseek-chat"}
+    models = {"agent": values.get("BANK_LLM_MODEL") or DEFAULT_MODEL,
+              "user": values.get("BANK_EVAL_USER_MODEL") or values.get("BANK_LLM_MODEL") or DEFAULT_MODEL,
+              "judge": values.get("BANK_EVAL_JUDGE_MODEL") or values.get("BANK_LLM_MODEL") or DEFAULT_MODEL}
+    thinking = str(values.get('BANK_MODEL_THINKING', DEFAULT_THINKING))
+    thinking_options(thinking)
+    inference_profile = {'thinking': thinking.strip().lower(), 'agent_temperature': 0.0,
+        'user_temperature': 0.8, 'judge_temperature': 0.0, 'timeout_seconds': 12,
+        'max_output_tokens': args.max_output_tokens, 'review_model': values.get('BANK_REVIEW_MODEL') or models['agent']}
     try:
         ledger = configure_budget(args, ROOT, output, [*models.values(), *([values['BANK_REVIEW_MODEL']] if values.get('BANK_REVIEW_MODEL') else [])])
     except ValueError as error:
         parser.error(str(error))
     child_env = {**os.environ, "BANK_EVAL_ISOLATED_PROCESS": "1"}
+    child_env['BANK_MODEL_THINKING'] = thinking
     for key in ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "BANK_LLM_MODEL", "BANK_REVIEW_MODEL"):
         if values.get(key) is not None:
             child_env[key] = str(values[key])
@@ -163,6 +173,7 @@ def main(argv=None) -> int:
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT))
     rows: list[dict] = []
     metadata = {**plan, "status": "RUNNING", "revision": revision, "worktree_dirty": dirty, "models": models,
+                'inference_profile': inference_profile,
                 'rubric_version': dataset.rubric_version,
                 "dataset_source": dataset.source, "started_utc": datetime.now(timezone.utc).isoformat(),
                 "source_sha256": source_fingerprints(),

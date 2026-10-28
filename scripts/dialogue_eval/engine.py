@@ -174,7 +174,17 @@ def summarize(tasks: list[Task], trials: int, rows: list[dict]) -> dict:
     shifts = [(row, turn) for row in rows for turn in row.get('turns', []) if turn.get('goal_shift')]
     recovered = sum(all(turn['checks'].values()) and any(check['id'] == f'phase_{turn["phase"]}' and check['passed']
                     for check in (row.get('communication') or {}).get('checks', [])) for row, turn in shifts)
+    stages: dict[str, dict] = {}
+    for row in rows:
+        for name, usage in row.get('stage_usage', {}).items():
+            total = stages.setdefault(name, {'calls': 0, 'returned': 0, 'input_tokens': 0, 'output_tokens': 0,
+                                            'cache_hit_tokens': 0, 'usage_unknown_calls': 0})
+            for field in total:
+                total[field] += usage[field]
+    stage_usage = {name: {**usage, 'cache_hit_ratio': usage['cache_hit_tokens']/usage['input_tokens'] if usage['input_tokens'] else None}
+                   for name, usage in stages.items()}
     return {"complete": complete, "planned_trials": len(expected), "recorded_trials": len(rows),
+            'stage_usage': stage_usage,
             'intermediate_milestones': dict(Counter('passed' if check['passed'] else 'failed' for row in rows for check in row.get('checks', []) if '.milestone.' in check['id'])),
             'goal_shifts': {'observed': len(shifts), 'answered_in_same_turn': recovered},
             'within_turn_duplicate_gets': duplicate_gets,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
 from math import ceil
 from pathlib import Path
@@ -61,7 +62,16 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
                 identities.add(('task_body', body_hash))
             bundle = report['prompt_bundle_sha256']
             model = report['models']['agent']
-            identities.add(('candidate', model, bundle))
+            profile = report.get('inference_profile')
+            fields = {'thinking', 'agent_temperature', 'user_temperature', 'judge_temperature',
+                      'timeout_seconds', 'max_output_tokens', 'review_model'}
+            if (not isinstance(profile, dict) or set(profile) != fields or profile['thinking'] not in {'', 'enabled', 'disabled'}
+                    or type(profile['max_output_tokens']) is not int or profile['max_output_tokens'] <= 0
+                    or profile['timeout_seconds'] != 12 or not isinstance(profile['review_model'], str)
+                    or not profile['review_model']):
+                raise ValueError('INVALID_INFERENCE_PROFILE')
+            identities.add(('candidate', model, bundle, json.dumps(profile, sort_keys=True),
+                            json.dumps(report['models'], sort_keys=True)))
             if sum(identity[0] == 'candidate' for identity in identities) != 1:
                 raise ValueError('MIXED_CANDIDATES')
             for row in report['trials']:
@@ -119,8 +129,9 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
                     category_pass[topics[row['task_id']]] += row['status'] == 'PASS'
             evidence.append({'role': role, 'dataset_sha256': digest, 'report_sha256': hashlib.sha256(raw).hexdigest(),
                              'passed': summary['passed'], 'planned': summary['planned_trials']})
-        except (OSError, ValueError, KeyError, TypeError, StopIteration):
-            blockers.append('INVALID_EVIDENCE:' + str(group.get('report', 'missing')))
+        except (OSError, ValueError, KeyError, TypeError, StopIteration) as error:
+            code = str(error) if isinstance(error, ValueError) and re.fullmatch(r'[A-Z_]{3,80}', str(error)) else type(error).__name__
+            blockers.append('INVALID_EVIDENCE:' + str(group.get('report', 'missing')) + ':' + code)
     if roles != {'regression', 'holdout'}:
         blockers.append('BOTH_REGRESSION_AND_HOLDOUT_REQUIRED')
     rate = held_passed / held_planned if held_planned else 0

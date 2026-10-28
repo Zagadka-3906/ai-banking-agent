@@ -17,6 +17,7 @@ from pydantic import SecretStr
 
 from security import audit_event
 from workflow_runtime import model_timeout
+from model_config import DEFAULT_MODEL, thinking_options
 from bank_agent.state import (
     BankingAgentState,
 )
@@ -83,10 +84,11 @@ def channel_session(token: Optional[str]):
 llm: Any
 if MODEL_ENABLED:
     llm = ChatOpenAI(
-        model=os.getenv("BANK_LLM_MODEL", "deepseek-chat"),
+        model=os.getenv("BANK_LLM_MODEL", DEFAULT_MODEL),
         api_key=SecretStr(DEEPSEEK_API_KEY),
         base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         temperature=0.0,
+        extra_body=thinking_options(),
         timeout=model_timeout(),
         max_retries=max(0, min(int(os.getenv("BANK_MODEL_MAX_RETRIES", "0")), 1)),
     )
@@ -100,6 +102,7 @@ if MODEL_ENABLED and ChatOpenAI is not None and os.getenv("BANK_REVIEW_MODEL", "
     answer_reviewer = ChatOpenAI(
         model=os.environ["BANK_REVIEW_MODEL"].strip(), api_key=SecretStr(DEEPSEEK_API_KEY),
         base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), temperature=0.0,
+        extra_body=thinking_options(),
         timeout=model_timeout(), max_retries=0,
     )
 

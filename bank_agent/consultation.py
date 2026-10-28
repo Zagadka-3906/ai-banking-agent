@@ -262,10 +262,10 @@ def consult(state: Mapping[str, Any]) -> dict[str, Any]:
                 with understanding_context(state):
                     context = model_context()
                 from banking_rules import rule_index
-                payload = {"question": _safe_text(state.get("user_input"), 700), "context": context,
-                           'rule_index': rule_index(),
+                payload = {'tools': sorted(TOOLS), 'topics': sorted(TOPICS), 'rule_index': rule_index(),
+                           "question": _safe_text(state.get("user_input"), 700), "context": context,
                            "evidence": list(evidence.values()), "completed_reads": sorted(completed),
-                           "tools": sorted(TOOLS), "topics": sorted(TOPICS), "remaining_reads": 5 - reads}
+                           "remaining_reads": 5 - reads}
                 answer = invoke_model(runtime.llm, [runtime.SystemMessage(content=(
                     "你是银行只读咨询规划器。" + SCOPE_POLICY +
                     "围绕用户当前问题寻找缺失证据，允许结合多个业务解释原因、步骤、差异。"

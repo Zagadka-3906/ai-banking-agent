@@ -16,6 +16,8 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from model_config import DEFAULT_MODEL
 
 
 def percentile(values, fraction):
@@ -112,7 +114,7 @@ def main():
                 row["status"] = "MODEL_ERROR"
             print(f"{mode} {case['id']}: {row['status']}", flush=True)
         results[mode] = {"summary": summarize(rows), "cases": rows}
-    report = {"dataset_sha256": hashlib.sha256(raw).hexdigest(), "model": os.getenv("BANK_LLM_MODEL", "deepseek-chat"),
+    report = {"dataset_sha256": hashlib.sha256(raw).hexdigest(), "model": os.getenv("BANK_LLM_MODEL", DEFAULT_MODEL),
               "scope": "parser_only_no_bank_execution_no_task_completion_claim", "results": results}
     (args.output_dir / "benchmark.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     lines = ["# 意图理解对比评测", "", "仅评测解析与澄清，不执行账务，不将结果称为端到端完成率。", "",

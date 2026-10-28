@@ -116,6 +116,18 @@ def test_evaluation_counts_repeated_reads_and_actual_turn_latency():
     assert summary['turn_latency_ms']=={'median':40,'p95':40}
 
 
+def test_stage_cache_ratio_is_weighted_by_tokens_instead_of_request_count():
+    item = task()
+    rows = [run(item), run(item)]
+    rows[1]['trial'] = 2
+    for row, incoming, hit in zip(rows, [1000, 9000], [800, 900]):
+        row['stage_usage'] = {'understanding': {'calls': 1, 'returned': 1, 'input_tokens': incoming,
+            'output_tokens': 10, 'cache_hit_tokens': hit, 'usage_unknown_calls': 0}}
+    usage = summarize([item], 2, rows)['stage_usage']['understanding']
+    assert usage['calls'] == 2 and usage['input_tokens'] == 10000
+    assert usage['cache_hit_ratio'] == .17
+
+
 @pytest.mark.parametrize("mutate", [
     lambda value: value.update(checks=[]),
     lambda value: value["checks"].append(value["checks"][0]),

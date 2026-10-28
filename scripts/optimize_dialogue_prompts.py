@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from bank_agent.prompt_preferences import COMPONENTS, validate_instructions
+from model_config import DEFAULT_MODEL
 from scripts.dialogue_eval.schema import Dataset, load_dataset
 from scripts.evaluate_dialogue_tasks import source_fingerprints
 from scripts.dialogue_eval.costs import (MeteredModel, add_cost_arguments, configure_budget,
@@ -81,7 +82,7 @@ class BankingAdapter:
         from langchain_openai import ChatOpenAI
         from pydantic import SecretStr
         from scripts.dialogue_eval.models import json_output_model
-        name = self.values.get('BANK_LLM_MODEL') or 'deepseek-chat'
+        name = self.values.get('BANK_LLM_MODEL') or DEFAULT_MODEL
         model = MeteredModel(json_output_model(ChatOpenAI(model=name, api_key=SecretStr(self.values['DEEPSEEK_API_KEY']),
             base_url=self.values.get('DEEPSEEK_BASE_URL') or 'https://api.deepseek.com',
             temperature=0, timeout=20, max_retries=0)), self.ledger, str(self.output)+'#reflection', 'reflection', name)
@@ -128,7 +129,7 @@ def main(argv=None):
     values = evaluation_values(ROOT, args.eval_env_file)
     if not values.get('DEEPSEEK_API_KEY'):
         parser.error('Evaluation agent API key is required')
-    names = [values.get(key) or values.get('BANK_LLM_MODEL') or 'deepseek-chat'
+    names = [values.get(key) or values.get('BANK_LLM_MODEL') or DEFAULT_MODEL
              for key in ('BANK_LLM_MODEL', 'BANK_EVAL_USER_MODEL', 'BANK_EVAL_JUDGE_MODEL', 'BANK_REVIEW_MODEL')]
     try:
         ledger = configure_budget(args, ROOT, output, names)
