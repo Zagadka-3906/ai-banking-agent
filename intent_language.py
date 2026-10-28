@@ -80,12 +80,19 @@ def recipient_source(text: str) -> str:
     return re.sub(r'(?:给|向)我(?=(?:核对|看(?:看|一下)|展示|解释|说明|查(?:询|看)?|列出|显示))', '请', business_text(text))
 
 
-def ambiguous_target(text: str) -> bool:
+def recipient_references(text: str) -> set[str]:
+    """Literal candidate spans, without treating a grammatical guess as identity."""
     source = recipient_source(text)
     references = re.findall(r"(?:转账给|转给|汇给|打给|给|向|收款人(?:改成|改为|换成|是|为))\s*(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*([一-龥A-Za-z0-9·_-]{1,24}?)(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))", source)
     names: set[str] = set()
     for reference in references:
         names.update(name.strip() for name in re.split(r"或(?:者)?|还是|和|与|、", reference) if name.strip())
+    return names
+
+
+def ambiguous_target(text: str) -> bool:
+    source = recipient_source(text)
+    names = recipient_references(source)
     if len(names) > 1:
         return True
     if re.fullmatch(r"(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})(?:或(?:者)?|还是)(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})", source.strip()) and not re.search(r"元|块|[吗么?？]|是否|是不是|现在|仍", source):

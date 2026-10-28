@@ -104,6 +104,46 @@ def test_suffix_never_supplies_a_person_missing_from_core(monkeypatch):
     assert bind_payee({'user_id': 'user_zhang'}, parsed, text)['target'] == '赵星辰吧'
 
 
+@pytest.mark.parametrize('suffix', ['提案恢复出来', '转账提案恢复', '操作继续办理'])
+def test_repeated_payee_and_discussion_object_bind_to_one_current_identity(monkeypatch, suffix):
+    from intent_language import ambiguous_target
+    responses(monkeypatch, [], [{'display_name': '李四', 'contact_id': 'user_li'}])
+    text = '给李四转300元，把给李四的' + suffix
+    assert ambiguous_target(text)
+    parsed = {'intent': 'TRANSFER', 'target': None, 'amount': 300, 'slots': {'target_ambiguous': True},
+              'parse_meta': {'dialogue_act': 'ACTION'}}
+    result = bind_payee({'user_id': 'user_zhang'}, parsed, text)
+    assert result['target'] == '李四' and not result['slots'].get('target_ambiguous')
+    assert result['amount'] == 300 and result['parse_meta']['target_binding']['entity_id'] == 'user_li'
+
+
+@pytest.mark.parametrize('book,payees,text', [
+    ([], [], '给李四转300元，把给李四的提案恢复出来'),
+    ([], [{'display_name': '李四', 'contact_id': 'user_li'}], '给李四转300元，把给赵星辰的提案恢复出来'),
+    ([], [{'display_name': '李四', 'contact_id': 'user_li'}, {'display_name': '王美', 'contact_id': 'wife'}],
+     '给李四转300元，把给王美的提案恢复出来'),
+    ([{'name': '李四的提案恢复出来', 'account_id': 'literal-long-label'}],
+     [{'display_name': '李四', 'contact_id': 'user_li'}], '给李四转300元，把给李四的提案恢复出来'),
+    ([{'name': '李四', 'account_id': 'other-li'}], [{'display_name': '李四', 'contact_id': 'user_li'}],
+     '给李四转300元，把给李四的提案恢复出来'),
+])
+def test_discussion_grammar_never_discards_an_unknown_or_second_real_identity(monkeypatch, book, payees, text):
+    responses(monkeypatch, book, payees)
+    parsed = {'intent': 'TRANSFER', 'target': None, 'slots': {'target_ambiguous': True}, 'parse_meta': {'dialogue_act': 'ACTION'}}
+    assert bind_payee({'user_id': 'user_zhang'}, parsed, text) == parsed
+
+
+def test_resume_request_with_repeated_recipient_only_creates_a_confirmation(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps(
+        {'intent': 'TRANSFER', 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE', 'target': '李四'}))))
+    before = financial_state()
+    reply = _send(client, '我刚才取消了一笔给李四转300元的操作，现在想把这笔300元转给李四的提案恢复出来，继续办理。',
+                  conversation_id='resume-recipient-object')
+    assert reply['approval'] and '李四' in reply['approval']['summary'] and '300' in reply['approval']['summary']
+    assert financial_state()[:4] == before[:4]
+
+
 def test_purchase_prerequisite_remembers_which_intention_is_abandoned(gateway, monkeypatch):  # noqa: F811
     client, _ = gateway
     monkeypatch.setattr(runtime, 'llm', None)
