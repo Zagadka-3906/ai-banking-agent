@@ -6,7 +6,7 @@ import re
 
 RESOURCES: dict[str, dict[str, Any]] = {
     'balance': {'topic': 'general', 'fields': ['total_balance', 'available_balance', 'locked_amount']},
-    'transactions': {'topic': 'transfer', 'fields': ['records', 'amount', 'merchant', 'time', 'category', 'analysis']},
+    'transactions': {'topic': 'transfer', 'fields': ['records', 'amount', 'merchant', 'time', 'category', 'card_id', 'analysis']},
     'cards': {'topic': 'card', 'fields': ['records', 'status', 'daily_limit', 'channels', 'card_id']},
     'contacts': {'topic': 'contacts', 'fields': ['records', 'saved', 'name']},
     'disputes': {'topic': 'dispute', 'fields': ['records', 'status', 'created_at', 'transaction_id', 'timing']},

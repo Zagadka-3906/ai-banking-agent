@@ -237,7 +237,7 @@ def validate_intent_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
             parse_meta['task_transition'] = meta['task_transition']
         if meta.get('command_error') == 'INVALID_DIALOGUE_COMMAND':
             parse_meta['command_error'] = meta['command_error']
-        if meta.get('model_failure') in {'MODEL_CAPACITY_EXHAUSTED', 'MODEL_TIMEOUT', 'MODEL_UNAVAILABLE'}:
+        if meta.get('model_failure') in {'MODEL_CAPACITY_EXHAUSTED', 'MODEL_TIMEOUT', 'MODEL_UNAVAILABLE', 'MODEL_PROTOCOL_INVALID'}:
             parse_meta['model_failure'] = meta['model_failure']
         if isinstance(meta.get("questions"), list):
             parse_meta["questions"] = [str(value)[:300] for value in meta["questions"][:5] if isinstance(value, str)]

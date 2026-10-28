@@ -183,6 +183,9 @@ def _resolve_undo_target(state: BankingAgentState) -> dict[str, Any]:
 def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
     if state.get("final_response") or state.get("clarification_required"):
         return {"risk_level": "UNKNOWN"}
+    if (state.get('parse_meta') or {}).get('model_failure'):
+        return {'risk_level': 'UNKNOWN', 'auth_token': None, 'action_requirements': [], 'business_status': 'FAILED',
+                'final_response': '本轮理解或查询计划未通过校验，没有发起新操作。请稍后重试。'}
     from bank_agent.understanding import READ_INTENTS, fraud_action_requested, inquiry_route, unresolved_transaction_reference
     from intent_language import business_text, execution_constraint
 

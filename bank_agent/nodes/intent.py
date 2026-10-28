@@ -155,7 +155,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     if model_failure:
         audit_event('INTENT_UNAVAILABLE', user_id=state.get('user_id'), request_id=state['request_id'],
                     decision='RETRY', outcome='FAILED', reason=model_failure)
-        return {**empty_state(final_response='理解服务暂时繁忙或不可用，本轮未发起新操作。原任务保留，请稍后重试这条消息。'),
+        message = ('本轮问题未形成有效的查询计划，原任务保留，本轮未发起新操作。请换一种说法或稍后重试。'
+                   if model_failure == 'MODEL_PROTOCOL_INVALID' else '理解服务暂时繁忙或不可用，本轮未发起新操作。原任务保留，请稍后重试这条消息。')
+        return {**empty_state(final_response=message),
                 'request_id': state['request_id'], 'context': prior_context, 'business_status': 'FAILED'}
     compound = prior_context.get("compound_workflow") if state.get("continue_workflow") or prior_context.get("pending_clarification") or prior_context.get("risk_quiz") else None
     if compound and compound["steps"][compound["index"]].get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
