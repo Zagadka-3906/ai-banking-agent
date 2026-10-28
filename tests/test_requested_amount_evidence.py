@@ -45,6 +45,40 @@ def test_declared_or_hypothetical_input_can_be_referenced_naturally(text):
     assert '10,000.00' in _validate_draft(_bind_literal_values(plan, [FACT], anchors), [FACT], anchors)[0]
 
 
+@pytest.mark.parametrize('text', [
+    '你询问的金额是10000元；10000元在允许范围内。需另行确认新日额度10000元，尚未办理。',
+    '把日额度设为10000元在数值上可行。你询问的金额是10000元，仍需单独确认。',
+    '拟设10000元（你询问的金额）在数值上可行，还未办理。',
+])
+def test_one_input_attribution_covers_repetitions_in_the_same_answer(text):
+    _, anchors = _anchored_facts([FACT])
+    plan = {'answer': text, 'evidence_ids': [FACT['id']], 'unanswered': []}
+    assert '10,000.00' in _validate_draft(_bind_literal_values(plan, [FACT], anchors), [FACT], anchors)[0]
+
+
+@pytest.mark.parametrize('text', [
+    '你询问的金额是10000元。日额度为10000元。',
+    '你询问的金额是10000元。已为你设置日额度10000元。',
+    '你询问的金额是10000元。已为您批准10000元。',
+    '10000元在允许范围内。',
+])
+def test_input_declaration_does_not_authorize_limit_or_approval_claims(text):
+    _, anchors = _anchored_facts([FACT])
+    plan = {'answer': text, 'evidence_ids': [FACT['id']], 'unanswered': []}
+    with pytest.raises(ValueError, match='REQUEST_VALUE_AS_ACCOUNT_FACT'):
+        _validate_draft(_bind_literal_values(plan, [FACT], anchors), [FACT], anchors)
+
+
+def test_input_attribution_never_crosses_answers_or_different_values():
+    facts = request_amount_facts('10000元和20000元分别可行吗')
+    _, anchors = _anchored_facts(facts)
+    plan = {'answer': '你询问的金额是10000元。', 'evidence_ids': [row['id'] for row in facts], 'unanswered': []}
+    _validate_draft(_bind_literal_values(plan, facts, anchors), facts, anchors)
+    for text in ['10000元在范围内。', '你询问的金额是10000元；20000元在范围内。']:
+        with pytest.raises(ValueError, match='REQUEST_VALUE_AS_ACCOUNT_FACT'):
+            _validate_draft(_bind_literal_values({**plan, 'answer': text}, facts, anchors), facts, anchors)
+
+
 @pytest.mark.parametrize('text', ['这笔10000元已完成。', '你询问的金额为10000元。当前余额为10000元。',
                                 '你询问的金额为10000元。已生效额度为10000元。'])
 def test_input_reference_does_not_prove_an_account_or_executed_result(text):

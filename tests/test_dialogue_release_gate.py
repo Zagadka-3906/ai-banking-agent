@@ -21,11 +21,13 @@ def evidence(tmp_path):
         checks = ['phase_1.no_business_write', 'phase_1.no_new_authorization', 'phase_1.approval_preserved', 'phase_1.core_get_only',
                   'no_pending_approval', 'final_state', 'durable_store_healthy']
         rows = [{'task_id': task['id'], 'trial': trial, 'status': 'PASS', 'turns': [],
+                 'evaluation_transport': {'user': [], 'judge': []},
                  'checks': [{'id': name, 'passed': True} for name in checks],
                  'communication': {'simulator_faithful': True, 'passed': True, 'checks': [{'id': 'phase_1', 'passed': True}]}}
                 for task in tasks for trial in range(1, 6)]
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
+            'evaluation_transport_version': 2,
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
             'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline',
             'inference_profile': {'thinking': 'disabled', 'agent_temperature': 0.0, 'user_temperature': 0.8,
@@ -65,6 +67,15 @@ def test_mixed_thinking_or_missing_inference_settings_cannot_share_acceptance(ev
     mutate(groups[1], lambda report: report.pop('inference_profile'))
     result = assess_release(groups, {'source.py': 'frozen'}, op)
     assert not result['accepted'] and any('INVALID_INFERENCE_PROFILE' in item for item in result['blockers'])
+
+
+@pytest.mark.parametrize('change', [lambda report: report.pop('evaluation_transport_version'),
+                                 lambda report: report.update(evaluation_transport_version=1),
+                                 lambda report: report['trials'][0].pop('evaluation_transport')])
+def test_transport_policy_and_attempt_diagnostics_cannot_be_omitted(evidence, change):
+    groups, op = evidence
+    mutate(groups[0], change)
+    assert not assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
 
 
 def test_forged_pass_cannot_hide_explicitly_incomplete_goal_evidence(evidence):

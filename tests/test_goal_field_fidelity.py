@@ -25,6 +25,7 @@ def reviewer(monkeypatch, value):
         payload = json.loads(messages[-1].content)
         payloads.append(payload)
         assert set(payload) == {'question', 'goals'} and 'facts' not in payload
+        assert all('fields' not in item and 'question' not in item for item in payload['goals'])
         return SimpleNamespace(content=json.dumps(value, ensure_ascii=False))
     monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=invoke))
     monkeypatch.setattr(runtime, 'answer_reviewer', None)
@@ -41,6 +42,17 @@ def test_broad_query_can_use_records_without_making_every_optional_column_requir
     assert result['parse_meta']['goals'][0] == {**original['parse_meta']['goals'][0], 'fields': ['records', 'analysis']}
     audit = result['parse_meta']['goal_field_review']
     assert audit['status'] == 'REVIEWED' and audit['fields'][0]['original'] == ['amount', 'card_id', 'analysis']
+
+
+def test_initial_paraphrase_cannot_bias_independent_requirements_or_expand_reads(monkeypatch):
+    original = parsed()
+    original['parse_meta']['goals'][0]['question'] = '必须查明TX1004的卡片编号'
+    payloads = reviewer(monkeypatch, {'goals': [{'goal_id': 'q1', 'fields': ['records', 'merchant', 'analysis']}]})
+    result = refine_goal_fields(original, '看看TX1004交易线索')
+    assert payloads[0]['question'] == '看看TX1004交易线索'
+    assert '必须查明' not in json.dumps(payloads, ensure_ascii=False)
+    assert result['parse_meta']['goals'][0]['fields'] == ['records', 'analysis']
+    assert result['parse_meta']['goals'][0]['subject'] == 'TX1004'
 
 
 def test_explicit_card_question_keeps_its_required_field_and_strict_missing_evidence(monkeypatch):

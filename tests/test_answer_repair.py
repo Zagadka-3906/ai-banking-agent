@@ -5,6 +5,7 @@ from bank_agent.evidence_session import EvidenceSession
 from bank_planning.requests import normalize_goals
 from test_agent_gateway import gateway, _send  # noqa: F401
 from test_general_dialogue_loop import goal, model
+from test_inquiry_boundaries import financial_state
 
 
 def goals():
@@ -64,3 +65,93 @@ def test_review_diagnosis_survives_into_the_next_draft(gateway,monkeypatch):  # 
     assert reply['business_status']=='SUCCEEDED' and len(seen)==2
     assert seen[1]['feedback'][0]['reason']=='请明确本次卡片的登记状态，不要重复入口说明。'
     assert seen[1]['feedback'][0]['action']=='REWRITE'
+
+
+def test_input_amount_error_supplies_specific_fragment_without_extra_account_reads(gateway, monkeypatch):  # noqa: F811
+    from bank_agent import runtime
+    client, _ = gateway
+    seen, reads = [], []
+    original = runtime._http
+    def http(method, path, **kwargs):
+        reads.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    def draft(payload):
+        seen.append((payload, len(reads)))
+        evidence = next(row for row in payload['facts'] if row['id'].startswith('guide.security.'))
+        value = next(key for key, row in payload['values'].items() if row['evidence_id'] == 'request.amount')
+        reference = '{{' + value + '}}'
+        answer = '该次' + reference + '需要验证。' if len(seen) == 1 else '你询问的金额为' + reference + '。验证等级需按累计转出和行为条件判断。'
+        ids = ['request.amount', evidence['id']]
+        return {'answer': answer, 'evidence_ids': ids, 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': ids, 'reason': '解释验证规则'}]}
+    model(monkeypatch, [goal('general', [], '小额转账强验证规则', act='EXPLAIN') | {'topic': 'security'}], draft=draft)
+    before = financial_state()
+    reply = _send(client, '我想先了解100元转账的验证规则', conversation_id='specific-input-repair')
+    assert reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED' and len(seen) == 2
+    assert seen[0][1] == seen[1][1]
+    reason = seen[1][0]['feedback'][0]['reason']
+    assert '该次' in reason and 'request.amount' in reason and '{{value.' in reason
+    assert financial_state() == before
+
+
+@pytest.mark.parametrize('invented', [False, True])
+def test_goal_citations_compile_into_global_citations_but_unknown_sources_still_fail(gateway, monkeypatch, invented):  # noqa: F811
+    client, _ = gateway
+    drafts, reviews = [], []
+    def draft(payload):
+        drafts.append(payload)
+        balance = next(row for row in payload['facts'] if 'available_balance' in row.get('fields', []))
+        policy = next(row for row in payload['facts'] if row['id'].startswith('guide.'))
+        return {'answer': balance['text'] + '我只能处理本银行演示业务，无法替你写诗。',
+                'evidence_ids': [balance['id'], *(['invented.source'] if invented else [])], 'unanswered': [], 'coverage': [
+                    {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': [balance['id']], 'reason': '当前可用余额'},
+                    {'goal_id': 'q2', 'status': 'UNSUPPORTED', 'evidence_ids': [policy['id']], 'reason': '范围外请求'}]}
+    def review(payload):
+        reviews.append(payload)
+        return {'in_scope': True, 'grounded': True, 'answers_question': True, 'safe': True,
+                'coverage': payload['coverage'], 'feedback': []}
+    model(monkeypatch, [goal('balance', ['available_balance'], '当前可用余额'),
+                       goal('general', [], '写诗', act='UNSUPPORTED')], draft=draft, review=review)
+    before = financial_state()
+    reply = _send(client, '查询可用余额，另外帮我写诗', conversation_id='compile-citations')
+    if invented:
+        assert not reviews and reply['result']['answer_presentation']['mode'] == 'FIELD_FALLBACK'
+    else:
+        assert len(drafts) == len(reviews) == 1
+        assert set(reviews[0]['cited_ids']) == {key for row in reviews[0]['coverage'] for key in row['evidence_ids']}
+        assert reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED'
+    assert financial_state() == before
+
+
+def test_validation_details_are_not_part_of_the_audit_error_message():
+    from bank_agent.answering import DraftValidationError
+    error = DraftValidationError('REQUEST_VALUE_AS_ACCOUNT_FACT', evidence_id='request.amount', fragment='待修复的私有句子')
+    assert str(error) == 'REQUEST_VALUE_AS_ACCOUNT_FACT' and error.details['fragment'] == '待修复的私有句子'
+
+
+def test_cached_policy_prefix_still_reads_changed_balance_for_each_question(gateway, monkeypatch):  # noqa: F811
+    import main
+    from bank_agent import runtime
+    client, _ = gateway
+    reads = []
+    original = runtime._http
+    def http(method, path, **kwargs):
+        reads.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    calls = model(monkeypatch, [goal('balance', ['available_balance'], '可用余额')])
+    first = _send(client, '查询我的可用余额', conversation_id='fresh-balance-prefix')
+    monkeypatch.setitem(main.ACCOUNTS['user_zhang'], 'balance', 14987.5)
+    second = _send(client, '再查一遍可用余额', conversation_id='fresh-balance-prefix')
+    drafts = [(system, payload) for system, payload in calls if '银行业务解答助手' in system]
+    assert len(drafts) == 2 and drafts[0][0] == drafts[1][0]
+    prefixes = []
+    for _, payload in drafts:
+        guides = [row for row in payload['facts'] if row['id'].startswith('guide.')]
+        assert guides and payload['facts'][:len(guides)] == guides
+        prefixes.append(guides)
+    assert prefixes[0] == prefixes[1]
+    assert '15,000.00' in first['reply'] and '14,987.50' in second['reply']
+    assert '15,000.00' not in second['reply']
+    assert sum(method == 'GET' and path.endswith('/balance') for method, path in reads) == 2

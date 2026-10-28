@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import json
 
 
 READ_ERRORS = {'MISSING_GOAL_RECORD', 'MISSING_SUBJECT_RECORD', 'UNGROUNDED_GOAL_ANSWER',
@@ -25,7 +26,7 @@ def normalize_feedback(value: Any, goals: list[dict[str, Any]]) -> list[dict[str
     return result
 
 
-def validation_feedback(reason: str, goals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def validation_feedback(reason: str, goals: list[dict[str, Any]], details: dict[str, str] | None = None) -> list[dict[str, Any]]:
     action = 'READ' if reason in READ_ERRORS else 'CALCULATE' if reason == 'MISSING_CALCULATION_EVIDENCE' else 'REWRITE'
     advice = {
         'DRAFT_ANSWER_INVALID': 'answer必须是非空字符串，正文不超过3000字；保留直接回答本轮问题的内容。',
@@ -40,7 +41,13 @@ def validation_feedback(reason: str, goals: list[dict[str, Any]]) -> list[dict[s
         'FINANCIAL_FIELD_MISMATCH': '按values对应字段准确标明总余额、可用余额或锁定金额，不能混用字段。',
         'MISSING_CALCULATION_EVIDENCE': '这项问题需要本次calculation结果及其全部操作数来源；只列出原始金额不算答完计算问题。',
         'GOAL_REVIEW_REJECTED': '依照逐项目标反馈重写未答内容，保留已经核验的事实，不扩展无关业务。',
-        'REQUEST_VALUE_AS_ACCOUNT_FACT': 'request.amount是用户输入，可先明确称“你询问的金额”或“拟设额度”，后文再用“这笔金额”承接同一输入；假设场景须明确条件。不能写成当前余额、已生效额度、批准或执行结果，不必反复复述无必要的金额。',
+        'REQUEST_VALUE_AS_ACCOUNT_FACT': 'request.amount是用户输入，每个引用金额在本回答至少一次标为“你询问的金额”或“拟设额度”，也可用括号后置说明；后文可自然承接同一输入，不必反复标注。假设场景须明确条件。不能写成当前余额、实际额度、批准或执行结果，省略不必要的重复金额。',
         'UNREPORTED_GOAL_GAP': '先对照本轮目标：EXPLAIN只问流程、规则或如何准备，已说明所需条件就可完成解释；未办理、未给预算日期或未确认不是解释未答，把这些条件放正文，勿放unanswered。若所问规则或事实确实仍缺证据，才将对应目标标NEEDS_DATA；不能盲目改状态掩盖漏问。',
     }.get(reason, reason[:120])
+    if details:
+        # These excerpts come only from our validator, never provider errors.
+        excerpt = {key: value[:160] for key, value in details.items()
+                   if key in {'evidence_id', 'fragment'} and isinstance(value, str) and value}
+        if excerpt:
+            advice += ' 本次拒绝的位置（待修正文本，不是事实）：' + json.dumps(excerpt, ensure_ascii=False)
     return [{'goal_id': goal['id'], 'status': 'NEEDS_DATA', 'action': action, 'reason': advice} for goal in goals]

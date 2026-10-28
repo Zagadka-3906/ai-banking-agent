@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.dialogue_eval.engine import run_trial, summarize
 from scripts.dialogue_eval.schema import Task, load_dataset
+from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION
 from model_config import DEFAULT_MODEL, DEFAULT_THINKING, thinking_options
 from scripts.dialogue_eval.costs import (CostLedger, MeteredModel, add_cost_arguments, configure_budget, evaluation_values)
 
@@ -88,6 +89,7 @@ def worker(job_path: Path) -> int:
             result = run_trial(task, environment, user, judge, seed=job["seed"], trial=job["trial"], rubric_version=job.get('rubric_version', 'v1'))
             result["model_calls"] = counters
             result['stage_usage'] = stage_usage
+            result['evaluation_transport'] = {'user': getattr(user, 'transport_failures', []), 'judge': judge.transport_failures}
             result['cost'] = ledger.snapshot(job['cost_run'])
             if result['cost']['stop_reason']:
                 result.update(status='ERROR', error_type='EvaluationStopped', stop_reason=result['cost']['stop_reason'])
@@ -125,6 +127,7 @@ def main(argv=None) -> int:
     tasks = [task for task in dataset.tasks if not args.task or task.id in args.task]
     plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, 'dataset_split': dataset.split,
             'evaluation_response_format': 'json_object',
+            'evaluation_transport_version': EVALUATION_TRANSPORT_VERSION,
             'goal_evidence_check_version': 2,
             'simulator_goal_check_version': 2,
             'prompt_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(), "task_ids": [task.id for task in tasks], "user": args.user,

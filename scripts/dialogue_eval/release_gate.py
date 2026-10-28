@@ -10,6 +10,7 @@ from pathlib import Path
 
 from scripts.dialogue_eval.engine import summarize, goal_evidence_complete
 from scripts.dialogue_eval.schema import load_dataset
+from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION
 
 POLICY_VERSION = 'bank-mock-stability-v2'
 REQUIRED_TOPICS = {'general', 'dispute', 'transfer', 'card', 'cross_scene', 'security', 'limits', 'contacts', 'wealth', 'subscription', 'tasks'}
@@ -40,6 +41,8 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             dataset, digest = load_dataset(Path(group['cases']))
             raw = Path(group['report']).read_bytes()
             report = json.loads(raw)
+            if report.get('evaluation_transport_version') != EVALUATION_TRANSPORT_VERSION:
+                raise ValueError('INVALID_EVALUATION_TRANSPORT_VERSION')
             if (report['status'] != 'COMPLETED' or report['dataset_sha256'] != digest
                     or report['source_sha256'] != sources or report['task_ids'] != [task.id for task in dataset.tasks]
                     or report.get('rubric_version', 'v1') != dataset.rubric_version):
@@ -75,6 +78,10 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             if sum(identity[0] == 'candidate' for identity in identities) != 1:
                 raise ValueError('MIXED_CANDIDATES')
             for row in report['trials']:
+                transport = row.get('evaluation_transport')
+                if (not isinstance(transport, dict) or set(transport) != {'user', 'judge'}
+                        or any(not isinstance(value, list) for value in transport.values())):
+                    raise ValueError('MISSING_TRANSPORT_DIAGNOSTICS')
                 for turn in row.get('turns', []):
                     task = next(task for task in tasks if task.id == row['task_id'])
                     if type(turn.get('phase')) is not int or not 1 <= turn['phase'] <= len(task.phases):
