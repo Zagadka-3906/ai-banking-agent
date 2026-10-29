@@ -155,7 +155,7 @@ def target_from_text(text: str) -> Optional[str]:
     # Extract a stated name even when it is a saved contact's arbitrary label.
     # Resolution/ambiguity checks still belong to the core's contact allow-list.
     explicit = re.search(
-        r"(?:转账给|转给|汇给|打给|给|向|收款人(?:改成|改为|换成|是|为))\s*"
+        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为))\s*"
         r"(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*"
         r"([一-龥A-Za-z0-9·_-]{1,24}?)\s*(?=(?:的|那(?:一)?笔|这(?:一)?笔)(?:转账|汇款)|的(?:转账)?(?:金额|款项)(?:就)?(?:按|是|为|改成|补充为)?\s*[¥￥]?\d|预约|定时|转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$)", text,
     )

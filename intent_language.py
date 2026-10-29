@@ -83,7 +83,7 @@ def recipient_source(text: str) -> str:
 def recipient_references(text: str) -> set[str]:
     """Literal candidate spans, without treating a grammatical guess as identity."""
     source = recipient_source(text)
-    references = re.findall(r"(?:转账给|转给|汇给|打给|给|向|收款人(?:改成|改为|换成|是|为))\s*(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*([一-龥A-Za-z0-9·_-]{1,24}?)(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))", source)
+    references = re.findall(r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为))\s*(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*([一-龥A-Za-z0-9·_-]{1,24}?)(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))", source)
     names: set[str] = set()
     for reference in references:
         names.update(name.strip() for name in re.split(r"或(?:者)?|还是|和|与|、", reference) if name.strip())
@@ -129,6 +129,8 @@ _WITHDRAW_COMMAND = re.compile(
 _WITHDRAW_QUESTION = re.compile(
     r'如何|怎么|怎样|为什么|为何|什么|多久|何时|能否|能不能|是否|会不会|可以|可不可以'
     r'|(?:吗|(?<![那这什怎])么)(?=\s*(?:[，,。；;!?！？]|$))')
+_WITHDRAW_NEGATED = re.compile(
+    r'(?:不(?:用|必|想|打算|再|需要)?|别|不要|无需)(?:再|先|现在|立即|继续|帮我|替我)*(?:取消|撤销|放弃|停止)')
 
 
 def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) -> str | None:
@@ -143,13 +145,16 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
         return None
     for clause in re.split(r'[，,。；;!?！？]', source):
         clause = clause.strip()
-        if _WITHDRAW_QUESTION.search(clause) or re.search(r'已经|曾经|取消了|撤销了', clause):
+        if (_WITHDRAW_QUESTION.search(clause) or _WITHDRAW_NEGATED.search(clause)
+                or re.search(r'已经|曾经|取消了|撤销了', clause)):
             continue
         pending = re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
         current = (re.search(r'(?:这次|本次|这笔|这一笔|这个|当前|刚才那笔)[^，,。；;!?！？]{0,24}'
                              r'(?:申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理)', clause)
                    and not re.search(r'任务|工单|审批|授权|已完成|已执行|已扣款|已提交|已成交', clause))
-        if (_WITHDRAW_COMMAND.match(clause) and (pending or current_discussion and current)
+        terminal = (pending and re.search(r'(?:取消|撤销|放弃|停止)(?:掉|吧)?$', clause)
+                    and not re.search(r'解释|说明|分析|介绍|描述|谈谈|提醒|告诉|复述|转述|翻译', clause))
+        if ((_WITHDRAW_COMMAND.match(clause) or terminal) and (pending or current_discussion and current)
                 and re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause)):
             return clause
     return None
@@ -161,13 +166,14 @@ def withdrawal_statement(text: str) -> bool:
     if (_WITHDRAW_QUESTION.search(source)
             or re.search(r'假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|取消了|撤销了|[“”"‘’？?]', source)):
         return False
-    if re.search(r'(?:不(?:用|必|想|打算|再|需要)?|别|不要|无需)(?:再|先|现在|立即|继续|帮我|替我)*'
-                 r'(?:取消|撤销|放弃|停止)', source):
+    if _WITHDRAW_NEGATED.search(source):
         return False
     clause = pending_withdrawal_clause(source, current_discussion=True)
-    if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source) and not clause:
+    if clause or execution_constraint(source) == 'NEGATED_ACTION':
+        return True
+    if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source):
         return False
-    return bool(clause) or execution_constraint(source) == 'NEGATED_ACTION' or bool(_WITHDRAW_COMMAND.match(source))
+    return bool(_WITHDRAW_COMMAND.match(source))
 
 
 def finite_limit_change(text: str) -> bool:
