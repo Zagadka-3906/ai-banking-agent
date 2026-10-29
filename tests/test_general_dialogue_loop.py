@@ -70,6 +70,44 @@ def test_ungrounded_subject_requires_clarification_instead_of_querying_everythin
     assert normalize_goals([goal('cards',['status'],'卡状态',subject='CARD-001')],'查CARD-001',{})[0]['act']=='QUERY'
 
 
+@pytest.mark.parametrize('question', ['查尾号 3082 的卡片渠道', '查尾号\u00a03082的卡片渠道', '查尾号３０８２的卡片渠道'])
+def test_display_spacing_and_width_do_not_turn_a_literal_card_selector_into_ambiguity(gateway, monkeypatch, question):  # noqa: F811
+    client, _ = gateway
+    model(monkeypatch, [goal('cards', ['channels'], '网上支付及境外渠道配置', subject='尾号3082')])
+    before = financial_state()
+    reply = _send(client, question, conversation_id='formatted-card-selector')
+    assert reply['approval'] is None and reply['business_status'] == 'SUCCEEDED'
+    assert '网上支付' in reply['reply'] and '境外交易' in reply['reply']
+    coverage = reply['result']['answer_presentation']['coverage']
+    assert len(coverage) == 1 and coverage[0]['status'] == 'ANSWERED'
+    assert financial_state() == before
+
+
+@pytest.mark.parametrize('selector,question', [('尾号3082', '查尾号30820的卡'), ('尾号3082', '查尾号 3083 的卡'),
+                                            ('CARD-001', '查CARD-0012'), ('CARD-001', '查XCARD-001')])
+def test_format_tolerance_does_not_bind_wrong_or_partial_identifiers(selector, question):
+    result = normalize_goals([goal('cards', ['channels'], '交易渠道', subject=selector)], question, {})[0]
+    assert result['act'] == 'UNCLEAR' and result['needs_subject'] is True
+
+
+def test_multiple_whitespace_separated_literal_identifiers_remain_independently_bound():
+    goals = normalize_goals([dict(act='QUERY', resource='cards', fields=['channels'], question='分别查询交易渠道',
+                                  subjects=['CARD-001', 'CARD-002'])], '查询 CARD-001 CARD-002 的渠道', {})
+    assert goals[0]['act'] == 'QUERY' and goals[0]['subjects'] == ['CARD-001', 'CARD-002']
+
+
+def test_catalog_counts_and_records_cannot_be_presented_as_personal_holdings(gateway):  # noqa: F811
+    before = financial_state()
+    state = {'user_id': 'user_zhang', 'user_input': '查询产品货架和本人持仓'}
+    shelf = read_evidence(state, {'tool': 'wealth_products', 'fields': ['name', 'min_amount']})
+    holdings = read_evidence(state, {'tool': 'wealth_holdings', 'fields': ['principal']})
+    assert all(row['record_scope'] == 'PUBLIC_CATALOG' for row in shelf)
+    assert all(row['record_scope'] == 'AUTHENTICATED_USER' for row in holdings)
+    assert '产品货架' in shelf[0]['text'] and '本人' not in ''.join(row['text'] for row in shelf)
+    assert holdings[0]['collection_size'] == 0 and '本人' in holdings[0]['text']
+    assert financial_state() == before
+
+
 @pytest.mark.parametrize('step',[
  {'tool':'tasks','user_id':'user_li'}, {'tool':'wealth_products','url':'https://evil.invalid'},
  {'tool':'risk_profile','method':'POST'}, {'tool':'tasks','fields':['payload']},

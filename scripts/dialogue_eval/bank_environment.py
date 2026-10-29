@@ -226,7 +226,9 @@ class BankEnvironment:
         from banking_knowledge import knowledge_documents
         from bank_core.wealth_data import WEALTH_PRODUCTS
         from bank_core.routes.wealth import risk_profile_view
+        current = self.graph_state()
         return {"knowledge": knowledge_documents(task.topic), "security_knowledge": knowledge_documents("security"),
+                "query_context": {key: deepcopy(current.get(key)) for key in ('date_scope', 'date_range')},
                 "balances": {key: {"balance": value["balance"], "locked": value.get("locked_amount", 0)}
                              for key, value in self.main.ACCOUNTS.items()},
                 "own_cards": [{key: card.get(key) for key in ("status", "daily_limit")} for card in self.main.CARDS["user_zhang"]],

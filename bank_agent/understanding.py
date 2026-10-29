@@ -270,6 +270,14 @@ def model_context() -> dict[str, Any]:
     return _CONTEXT.get()
 
 
+def _observed_record_ids(observation: Mapping[str, Any], resource: str, legacy: str) -> list[str]:
+    resources = observation.get('resource_entities') or {}
+    # Modern projected entities describe what was actually verified/displayed;
+    # the legacy collection can still contain the entire underlying fetch.
+    values = resources[resource] if resource in resources else observation.get(legacy) or []
+    return list(dict.fromkeys(value for value in values if isinstance(value, str) and 1 <= len(value) <= 120))[:50]
+
+
 def referenced_case(state: Mapping[str, Any]) -> Optional[str]:
     text = str(state.get("user_input") or "")
     literal = _CASE.search(text)
@@ -279,9 +287,11 @@ def referenced_case(state: Mapping[str, Any]) -> Optional[str]:
         return None
     observations = state.get("observations") or {}
     for observation in reversed(list(observations.values())):
-        cases = observation.get("case_ids") or []
+        cases = _observed_record_ids(observation, 'disputes', 'case_ids')
         if cases:
             return cases[0] if len(cases) == 1 else None
+        if 'disputes' in (observation.get('resource_entities') or {}):
+            return None
     return None
 
 
@@ -293,8 +303,12 @@ def referenced_transactions(state: Mapping[str, Any]) -> tuple[list[str], str]:
     count = re.search(r"([0-9]{1,3})\s*笔", text)
     reference = (state.get("slots") or {}).get("read_reference")
     for observation in reversed(list((state.get("observations") or {}).values())):
-        ids = observation.get("transaction_ids") or []
+        ids = _observed_record_ids(observation, 'transactions', 'transaction_ids')
         anomalies = observation.get("suspicious_transaction_ids") or []
+        if 'transactions' in (observation.get('resource_entities') or {}):
+            anomalies = [identifier for identifier in anomalies if identifier in ids]
+            if not ids:
+                break
         if not ids and not anomalies:
             continue
         if observation.get("intent") in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value} and re.search(r"这笔|那笔|刚才.{0,8}转账", text):

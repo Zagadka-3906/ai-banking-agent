@@ -18,6 +18,62 @@ from test_inquiry_boundaries import financial_state
 from test_feasibility_and_entity_binding import responses
 
 
+@pytest.mark.parametrize('resource,legacy,selector', [('transactions', 'transaction_ids', 'TX1000'),
+                                                    ('disputes', 'case_ids', 'CASE-001')])
+def test_follow_up_uses_verified_modern_record_ids_without_falling_back_to_other_resources(resource, legacy, selector):
+    from bank_agent.understanding import referenced_case, referenced_transactions
+    resolver = referenced_case if resource == 'disputes' else lambda state: referenced_transactions(state)[0]
+    expected = selector if resource == 'disputes' else [selector]
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'user_input': '刚才这笔的记录',
+             'observations': {'BANKING_HELP': {'resource_entities': {resource: [selector], 'wealth_products': ['LX00118']}}}}
+    assert resolver(state) == expected
+    state['observations']['BANKING_HELP'][legacy] = [selector, 'UNSELECTED-999']
+    assert resolver(state) == expected
+    state['memory_principal'] = 'user_li'
+    assert resolver(state) in (None, [])
+
+
+def test_modern_transaction_reference_does_not_choose_one_of_multiple_verified_records():
+    from bank_agent.understanding import referenced_transactions
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'user_input': '这笔交易有疑问',
+             'observations': {'BANKING_HELP': {'resource_entities': {'transactions': ['TX1000', 'TX-CLOUD-0']}}}}
+    assert referenced_transactions(state) == ([], '')
+    state['slots'] = {'read_reference': 'listed_transactions'}
+    state['user_input'] = '请基于刚才交易列表整体分析线索'
+    assert referenced_transactions(state) == (['TX1000', 'TX-CLOUD-0'], 'TRANSACTION_REFERENCE')
+
+
+def test_empty_modern_selection_does_not_revive_an_older_record_or_unselected_anomaly():
+    from bank_agent.understanding import referenced_case, referenced_transactions
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'user_input': '刚才这笔可疑交易',
+             'observations': {'old': {'transaction_ids': ['OLD-TX'], 'case_ids': ['OLD-CASE']},
+                'new': {'resource_entities': {'transactions': [], 'disputes': []},
+                        'transaction_ids': ['OLD-TX'], 'suspicious_transaction_ids': ['OLD-TX']}}}
+    assert referenced_transactions(state) == ([], '') and referenced_case(state) is None
+    state['observations']['new']['resource_entities']['transactions'] = ['TX1000']
+    state['user_input'] = '那5笔可疑交易'
+    assert referenced_transactions(state) == ([], '')
+
+
+def test_legacy_follow_up_refreshes_only_the_record_verified_by_a_modern_query(gateway, monkeypatch):  # noqa: F811
+    from test_conversation_quality import fixed_model
+    client, _ = gateway
+    model(monkeypatch, [goal('transactions', ['records'], '查询TX1000', subject='TX1000')], intent='BILL_QUERY')
+    first = _send(client, '查询TX1000的交易明细', conversation_id='modern-to-legacy-reference')
+    assert first['business_status'] == 'SUCCEEDED'
+    import conversation
+    thread = conversation.conversation_thread_id('user_zhang', 'modern-to-legacy-reference')
+    observed = conversation.get_graph().get_state({'configurable': {'thread_id': thread}}).values['observations']
+    assert any(row.get('resource_entities', {}).get('transactions') == ['TX1000'] for row in observed.values()), observed
+    before = financial_state()
+    fixed_model(monkeypatch, 'BILL_QUERY', 'QUERY')
+    reply = _send(client, '刚才这笔交易再帮我核对一下', conversation_id='modern-to-legacy-reference')
+    assert reply['approval'] is None and reply['business_status'] == 'SUCCEEDED', reply['reply']
+    records = reply['result']['execution_result']['records']
+    assert [row['tx_id'] for row in records] == ['TX1000']
+    assert financial_state() == before
+
+
 @pytest.mark.parametrize('text', ['那就按10000元给我设置日限额', '帮我把日限额设置为10000元', '请给我冻结卡片'])
 def test_card_input_never_uses_the_payee_grammar_as_its_card_identifier(text):
     assert _local_parse_rules(text)['target'] is None

@@ -81,6 +81,7 @@ def _document(resource: str, index: int, text: str, fields: list[str], subject: 
     if not valid_text_field(text, max_length=400):
         raise ValueError('EVIDENCE_FIELD_INVALID')
     return {'id': f'read.{resource}.{index}', 'text': text, 'source': 'core://' + resource,
+            'record_scope': 'PUBLIC_CATALOG' if resource == 'wealth_products' else 'AUTHENTICATED_USER',
             'fields': fields, 'subject': subject, 'required': False}
 
 
@@ -128,11 +129,14 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
     keys = [key for key in selected if key != 'records'] if any(key != 'records' for key in selected) else ROW_FIELDS[resource]
     if not rows:
         if missing_selectors:
-            return [_document(resource, index, f'已读取本人当前{RESOURCE_NAMES[resource]}记录，未找到“{name}”的匹配记录。',
+            return [_document(resource, index, f'已读取当前产品货架，未找到“{name}”的匹配记录。' if resource == 'wealth_products'
+                              else f'已读取本人当前{RESOURCE_NAMES[resource]}记录，未找到“{name}”的匹配记录。',
                               ['records', *keys], name) for index, name in enumerate(missing_selectors)]
-        return [_document(resource, 0, f'已读取本人当前{RESOURCE_NAMES[resource]}记录，匹配共0条，未找到' + (f'“{subject}”的匹配记录。' if subject else '记录。'),
+        label = '当前产品货架' if resource == 'wealth_products' else f'本人当前{RESOURCE_NAMES[resource]}记录'
+        return [_document(resource, 0, f'已读取{label}，匹配共0条，未找到' + (f'“{subject}”的匹配记录。' if subject else '记录。'),
                           ['records', *keys], subject) | {'collection_size': 0, 'selection': list(selectors), 'complete': True}]
-    documents: list[dict[str, Any]] = [{**_document(resource, 0, f'本次本人{RESOURCE_NAMES[resource]}匹配共{len(rows)}条。', ['records'], subject),
+    label = '产品货架' if resource == 'wealth_products' else f'本人{RESOURCE_NAMES[resource]}'
+    documents: list[dict[str, Any]] = [{**_document(resource, 0, f'本次{label}匹配共{len(rows)}条。', ['records'], subject),
                                        'collection_size': len(rows), 'selection': list(selectors), 'complete': len(rows) <= 12}]
     for row in rows[:12]:
         identity = next((str(row[key]) for key in ('subscription_id', 'task_id', 'holding_id', 'case_id', 'tx_id', 'product_id', 'card_id') if row.get(key)), resource)
@@ -184,7 +188,8 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
                               **({'card_last4': row['last4']} if resource == 'cards' and isinstance(row.get('last4'), str)
                                  and re.fullmatch(r'\d{4}', row['last4']) else {})})
     for name in missing_selectors:
-        documents.append(_document(resource, len(documents), f'已读取本人当前{RESOURCE_NAMES[resource]}记录，未找到“{name}”的匹配记录。', ['records', *keys], name))
+        text = f'已读取当前产品货架，未找到“{name}”的匹配记录。' if resource == 'wealth_products' else f'已读取本人当前{RESOURCE_NAMES[resource]}记录，未找到“{name}”的匹配记录。'
+        documents.append(_document(resource, len(documents), text, ['records', *keys], name))
     if len(selectors) == 2 and len(rows) == 2 and not missing_selectors:
         # Derive comparisons from the same verified numeric fields, never from
         # numbers supplied by the model. The generator must cite this result.

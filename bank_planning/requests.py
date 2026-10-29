@@ -22,6 +22,18 @@ STATUSES = {'ANSWERED', 'NEEDS_DATA', 'NEEDS_CLARIFICATION', 'NEEDS_CONFIRMATION
 CALCULABLE_FIELDS = {'total_balance', 'available_balance', 'locked_amount', 'amount', 'principal', 'estimated_value', 'min_amount', 'daily_limit'}
 
 
+def literal_selector_mentioned(selector: str, text: str) -> bool:
+    """Ignore display spacing, retaining identifier boundaries and actual content."""
+    from unicodedata import normalize
+    literal = [normalize('NFKC', item).strip().casefold() for item in (selector, text)]
+    for value, source in (literal, [re.sub(r'\s+', '', item) for item in literal]):
+        pattern = (r'(?<![a-z0-9])' if re.match(r'[a-z0-9]', value) else '') + re.escape(value)
+        pattern += r'(?![a-z0-9])' if re.search(r'[a-z0-9]$', value) else ''
+        if value and re.search(pattern, source):
+            return True
+    return False
+
+
 def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[dict[str, Any]]:
     from banking_knowledge import TOPICS
     if not isinstance(value, list) or not 1 <= len(value) <= 5:
@@ -95,7 +107,7 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
                 resolved.append(name)
         subjects = list(dict.fromkeys(resolved))
         subject = subjects[0] if len(subjects) == 1 else None
-        bound = not unclear_reference and all(name in text or name in known for name in subjects)
+        bound = not unclear_reference and all(literal_selector_mentioned(name, text) or name in known for name in subjects)
         # An ungrounded selector becomes a clarification, never a whole-list query.
         goals.append({'id': f'q{index + 1}', 'act': item['act'] if bound else 'UNCLEAR',
                       'resource': item['resource'], 'question': question.strip(), 'fields': fields,
