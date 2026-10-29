@@ -123,7 +123,7 @@ class CostLedger:
         return ledger
 
     def stop(self, reason: str):
-        if reason not in {'WORKER_FAILED', 'WORKER_TIMEOUT', 'SOURCE_CHANGED', 'CONSECUTIVE_TRIAL_ERRORS', 'TASK_FAILED'}:
+        if reason not in {'WORKER_FAILED', 'WORKER_TIMEOUT', 'SOURCE_CHANGED', 'CONSECUTIVE_TRIAL_ERRORS', 'TASK_FAILED', 'TRIAL_ERROR'}:
             raise ValueError('INVALID_STOP_REASON')
         with self.transaction() as db:
             db.execute('UPDATE control SET stop=COALESCE(stop, ?) WHERE id=1', (reason,))
@@ -292,7 +292,7 @@ def add_cost_arguments(parser):
     parser.add_argument('--price-file', type=Path, help='CNY per million tokens; required for unknown model currency caps')
     parser.add_argument('--budget-ledger', type=Path, help='Shared ignored SQLite ledger for a whole evaluation campaign')
     parser.add_argument('--eval-env-file', type=Path, help='Optional separate evaluation credentials; never copied into reports')
-    parser.add_argument('--stop-on-failure', action='store_true', help='Stop a diagnostic campaign on the first failed task')
+    parser.add_argument('--stop-on-failure', action='store_true', help='Stop a diagnostic campaign on the first FAIL or ERROR')
 
 
 def evaluation_values(root: Path, env_file: Path | None = None) -> dict:

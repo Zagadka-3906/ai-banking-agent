@@ -59,6 +59,8 @@ def withdrawal(text, *, command=False):
     '那就先取消零星宝的申购意向', '那么我决定取消零星宝的待确认申购',
     '所以我决定取消零星宝的申购意向', '因此先取消这次零星宝申购意向',
     '那么，我决定取消零星宝的申购意向',
+    '那我先不申购零星宝了，决定取消这次申购意向。',
+    '决定取消零星宝的申购意向', '现在决定放弃零星宝的待确认申购',
 ])
 def test_pending_purchase_withdrawal_resolves_its_existing_questionnaire(text):
     state = pending_quiz()
@@ -84,6 +86,9 @@ def test_pending_purchase_withdrawal_resolves_its_existing_questionnaire(text):
     '那我决定取消这次申购意向会怎样', '那么取消零星宝的申购意向可以吗',
     '如果支持，那就取消零星宝的申购意向',
     '取消这次零星宝申购意向什么意思', '取消零星宝的待确认申购么',
+    '决定取消零星宝的申购意向会怎样', '如果决定取消零星宝的申购意向',
+    '那我先不申购恒泉稳利了，决定取消这次申购意向。',
+    '先不申购零星宝和恒泉稳利了，决定取消这次申购意向。',
 ])
 @pytest.mark.parametrize('act', ['WITHDRAW', 'QUERY'])
 def test_a_wrong_withdraw_label_or_command_cannot_cancel_an_unrelated_discussion(text, act):
@@ -108,7 +113,8 @@ def test_no_existing_intention_or_two_matching_frames_cannot_be_guessed():
     assert withdraw_known_task(state, withdrawal(text), text) is None
 
 
-def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion():
+@pytest.mark.parametrize('text', ['取消零星宝的待确认申购', '那我先不申购零星宝了，决定取消这次申购意向。'])
+def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion(text):
     state = pending_quiz()
     state['context'] = {}
     frames = []
@@ -117,7 +123,6 @@ def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion():
                        'pending': {'intent': 'WEALTH_PURCHASE', 'missing': ['amount'],
                                    'payload': {'intent': 'WEALTH_PURCHASE', 'target': target, 'amount': None}}})
     state['dialogue_state'] = {'principal': 'user_zhang', 'tasks': frames}
-    text = '取消零星宝的待确认申购'
     result = withdraw_known_task(state, withdrawal(text), text)
     assert result and [task['id'] for task in result['view']['tasks']] == ['HQ30060']
     assert not result['proposal_input'] and state['dialogue_state']['tasks'] == frames
@@ -126,6 +131,7 @@ def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion():
 @pytest.mark.parametrize('cancellation', [
     '对，我要取消刚才那笔零星宝的待确认申购，麻烦帮我取消。',
     '既然零星宝申购后不能撤单，那我决定取消这次申购意向，先不申购了。',
+    '那我先不申购零星宝了，决定取消这次申购意向。',
 ])
 def test_purchase_then_cancellation_question_then_withdrawal_is_read_only(gateway, monkeypatch, cancellation):  # noqa: F811
     client, _ = gateway
@@ -141,7 +147,7 @@ def test_purchase_then_cancellation_question_then_withdrawal_is_read_only(gatewa
         if text.startswith('那我先申购'):
             result = {'intent': 'WEALTH_PURCHASE', 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE',
                       'target': 'LX00118', 'amount': None}
-        elif '我要取消' in text or '我决定取消' in text:
+        elif '我要取消' in text or '决定取消' in text:
             result = {'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}
         else:
             return underlying.invoke(messages)

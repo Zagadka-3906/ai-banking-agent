@@ -198,6 +198,38 @@ def test_nested_optimization_reuses_the_campaign_budget(tmp_path):
     assert '--max-cost-cny' in arguments and '--unlimited-cost' not in arguments
 
 
+@pytest.mark.parametrize('status,reason', [('FAIL', 'TASK_FAILED'), ('ERROR', 'TRIAL_ERROR')])
+def test_stop_on_failure_stops_shared_campaign_after_first_failure_or_simulator_error(tmp_path, monkeypatch, status, reason):
+    monkeypatch.setattr(evaluator, 'ROOT', tmp_path)
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-only')
+    monkeypatch.setattr(evaluator, 'source_fingerprints', lambda: {'source.py': 'fixed'})
+    monkeypatch.setattr(evaluator.subprocess, 'check_output', lambda command, **kwargs: 'fixture' if 'rev-parse' in command else '')
+    workers = []
+    def worker(command, **kwargs):
+        job = json.loads(Path(command[-1]).read_text(encoding='utf-8'))
+        workers.append(job)
+        budget = CostLedger(Path(job['budget_ledger']))
+        identifier, _ = budget.reserve(job['cost_run'], 'user', 'deepseek-flash')
+        budget.completed(identifier, answer())
+        Path(job['result']).write_text(json.dumps({'task_id': job['task']['id'], 'trial': job['trial'], 'seed': job['seed'],
+            'status': status, 'error_type': 'SimulatorDrift' if status == 'ERROR' else None, 'turns': [], 'checks': []}), encoding='utf-8')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(evaluator.subprocess, 'run', worker)
+    cases = Path(__file__).parent/'data/dialogue_tasks.json'
+    task_id = json.loads(cases.read_text(encoding='utf-8'))['tasks'][0]['id']
+    campaign = tmp_path/'build/campaign.sqlite3'
+    for index in range(2):
+        output = tmp_path/f'build/run{index}'
+        assert evaluator.main(['--live', '--unlimited-cost', '--stop-on-failure', '--trials', '5', '--task', task_id,
+                               '--cases', str(cases), '--output-dir', str(output), '--budget-ledger', str(campaign)]) == 2
+        report = json.loads((output/'report.json').read_text(encoding='utf-8'))
+        assert report['status'] == 'STOPPED' and report['stop_reason'] == reason
+        assert report['summary']['not_run'] == (4 if index == 0 else 5)
+        assert report['cost']['campaign']['calls'] == 1
+        assert len(report['trials']) == (1 if index == 0 else 0)
+    assert len(workers) == 1
+
+
 def test_optimization_reflection_is_counted_in_the_same_campaign(tmp_path, monkeypatch):
     from langchain_openai import ChatOpenAI
     from scripts.optimize_dialogue_prompts import BankingAdapter

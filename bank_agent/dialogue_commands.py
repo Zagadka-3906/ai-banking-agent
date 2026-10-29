@@ -14,16 +14,18 @@ def _withdrawal_input(text: str) -> dict[str, Any]:
     from bank_agent.parsing import _local_parse_rules
     from intent_language import ambiguous_target, business_text, pending_withdrawal_clause
 
+    whole = business_text(text)
     clause = pending_withdrawal_clause(text)
-    source = clause or business_text(text)
+    source = clause or whole
     raw = _local_parse_rules(source)
-    products = {product for alias, product in PRODUCT_ALIASES.items() if alias in source}
-    products.update(product for product in PRODUCT_IDS if product in source.upper())
-    raw['_ambiguous'] = ambiguous_target(source) or len(products) > 1
+    products = {product for alias, product in PRODUCT_ALIASES.items() if alias in whole}
+    products.update(product for product in PRODUCT_IDS if product in whole.upper())
+    raw['_ambiguous'] = ambiguous_target(whole) or len(products) > 1
     if clause and raw.get('intent') == 'UNDO_OPERATION':
         # Here undo_kind identifies only the discussion's business type. It
         # cannot cancel a Core task or supply an execution approval.
         raw = {**raw, 'intent': (raw.get('slots') or {}).get('undo_kind'), 'target': target_from_text(clause)}
+    raw['target'] = raw.get('target') or target_from_text(whole)
     return raw
 
 

@@ -224,8 +224,8 @@ def main(argv=None) -> int:
                 row = {"task_id": task.id, "trial": trial, "seed": trial_seed, "status": "ERROR", "error_type": type(error).__name__}
                 ledger.stop('WORKER_TIMEOUT' if isinstance(error, subprocess.TimeoutExpired) else 'WORKER_FAILED')
             rows.append(row)
-            if args.stop_on_failure and row['status'] == 'FAIL':
-                ledger.stop('TASK_FAILED')
+            if args.stop_on_failure and row['status'] in {'FAIL', 'ERROR'}:
+                ledger.stop('TASK_FAILED' if row['status'] == 'FAIL' else 'TRIAL_ERROR')
             consecutive_errors = consecutive_errors + 1 if row['status'] == 'ERROR' else 0
             if consecutive_errors >= 3:
                 ledger.stop('CONSECUTIVE_TRIAL_ERRORS')
