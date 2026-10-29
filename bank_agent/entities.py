@@ -10,7 +10,10 @@ from intent_language import ambiguous_target, business_text, execution_constrain
 
 _PAYEE_SUFFIX = r'(?:吧|呀|啊|的|这笔|那笔|的事|这件事|那件事)'
 _PAYEE_BUSINESS_SUFFIX = r'(?:办|办理|安排)(?:一笔)?'
-_FRAME_ACTION_SUFFIX = r'(?:转账)?(?:提案|操作)(?:恢复(?:出来)?|继续(?:办理)?|重新办理)'
+# The resume verb may precede the object ("恢复转给某人的转账提案")
+# or follow it ("把给某人的提案恢复出来"). Both still need current
+# Core identity agreement before removing a lexical ambiguity.
+_FRAME_ACTION_SUFFIX = r'(?:转账)?(?:提案|操作)(?:恢复(?:出来)?|继续(?:办理)?|重新办理)?'
 _PAYEE_FRAME_SUFFIX = '的' + _FRAME_ACTION_SUFFIX
 
 
