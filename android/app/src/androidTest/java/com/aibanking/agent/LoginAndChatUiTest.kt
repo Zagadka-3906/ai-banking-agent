@@ -15,6 +15,8 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.aibanking.agent.data.SessionStore
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.chat.ChatRole
 import com.aibanking.agent.ui.chat.ChatViewModel
@@ -23,6 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -106,11 +109,15 @@ class LoginAndChatUiTest {
     }
 
     /** Ask the core what it recorded for one correlation id. */
-    private fun fetchCoreTrace(traceId: String): String {
-        val connection = (URL("$CORE_BASE/api/v1/security/audit/trace/$traceId").openConnection() as HttpURLConnection).apply {
+    private fun fetchCoreTrace(traceId: String): String = fetchCore("security/audit/trace/$traceId")
+
+    private fun fetchCore(path: String): String {
+        val credential = checkNotNull(SessionStore(InstrumentationRegistry.getInstrumentation().targetContext).sessionToken())
+        val connection = (URL("$CORE_BASE/api/v1/$path").openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             // The endpoint scopes a non-admin caller to their own requests.
             setRequestProperty("X-User-Id", PRINCIPAL)
+            setRequestProperty("X-Session-Token", credential)
             connectTimeout = 10_000
             readTimeout = 10_000
         }
@@ -163,18 +170,32 @@ class LoginAndChatUiTest {
     @Test
     fun a_bare_wealth_message_returns_products_without_internal_steps() {
         ensureLoggedIn()
+        val products = JSONObject(fetchCore("wealth/products")).getJSONArray("data")
+        val expectedIds = (0 until products.length()).map { products.getJSONObject(it).getString("product_id") }.toSet()
+        assertTrue("the fixture must contain products to browse", expectedIds.isNotEmpty())
+        val firstName = products.getJSONObject(0).getString("name")
+        lateinit var model: ChatViewModel
+        ui.runOnIdle { model = ViewModelProvider(ui.activity)[ChatViewModel::class.java] }
+        val previousIds = model.state.value.messages.map { it.id }.toSet()
         send("理财")
 
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
-            ui.onAllNodesWithText("在售理财产品共 4 款", substring = true, useUnmergedTree = true)
-                .fetchSemanticsNodes().isNotEmpty() &&
-                ui.onAllNodesWithText("零星宝·活钱管家", substring = true, useUnmergedTree = true)
-                    .fetchSemanticsNodes().isNotEmpty()
+            model.state.value.messages.any { it.id !in previousIds && productIds(it.result) == expectedIds } &&
+                ui.onAllNodesWithText(firstName, substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
         assertTrue(
             "internal processing steps must never be rendered in a reply card",
             ui.onAllNodesWithText("处理步骤", useUnmergedTree = true).fetchSemanticsNodes().isEmpty(),
         )
+    }
+
+    private fun productIds(value: Any?): Set<String> = when (value) {
+        is Map<*, *> -> {
+            val own = (value["product_id"] as? String)?.takeIf { value["name"] is String && value["min_amount"] is Number }
+            setOfNotNull(own) + value.values.flatMap { productIds(it) }
+        }
+        is List<*> -> value.flatMap { productIds(it) }.toSet()
+        else -> emptySet()
     }
 
     @Test

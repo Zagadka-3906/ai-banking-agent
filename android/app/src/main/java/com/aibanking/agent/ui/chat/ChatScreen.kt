@@ -196,6 +196,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
             tasks = state.tasks,
             splitRequests = state.splitRequests,
             busy = state.panelBusy,
+            submitting = state.taskSubmitting,
             onCancel = viewModel::cancelTask,
             onTakeover = viewModel::takeoverTask,
             error = state.panelError,

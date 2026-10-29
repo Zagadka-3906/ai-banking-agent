@@ -132,8 +132,9 @@ fun ChatViewModel.refreshTasks() {
 }
 
 fun ChatViewModel.cancelTask(taskId: String) {
+    if (_state.value.panelBusy) return
     val principal = _state.value.principal
-    _state.update { it.copy(panelBusy = true, error = null) }
+    _state.update { it.copy(panelBusy = true, taskSubmitting = true, error = null) }
     sessionWork.launch {
         try {
             io { tasks.cancel(taskId, principal, credential().orEmpty()) }
@@ -142,6 +143,13 @@ fun ChatViewModel.cancelTask(taskId: String) {
         } catch (failure: GatewayException) {
             check()
             applyPanelFailure(failure)
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            check()
+            applyPanelFailure(failure)
+        } finally {
+            check()
+            _state.update { it.copy(taskSubmitting = false) }
         }
     }
 }
@@ -150,7 +158,7 @@ fun ChatViewModel.takeoverTask(taskId: String, reason: String) {
     if (_state.value.panelBusy || reason.isBlank() || reason.length > 300) return
     if (_state.value.tasks.none { it.taskId == taskId && it.status in setOf("PENDING", "WAITING_USER", "FAILED") }) return
     val principal = _state.value.principal
-    _state.update { it.copy(panelBusy = true, error = null, panelError = null) }
+    _state.update { it.copy(panelBusy = true, taskSubmitting = true, error = null, panelError = null) }
     sessionWork.launch {
         try {
             io { tasks.takeover(taskId, reason.trim(), principal, credential().orEmpty()) }
@@ -160,6 +168,9 @@ fun ChatViewModel.takeoverTask(taskId: String, reason: String) {
             if (failure is CancellationException) throw failure
             check()
             applyPanelFailure(failure)
+        } finally {
+            check()
+            _state.update { it.copy(taskSubmitting = false) }
         }
     }
 }
@@ -171,8 +182,9 @@ fun ChatViewModel.prepareSplitPayment(request: SplitRequestView) {
 }
 
 fun ChatViewModel.declineSplit(splitId: String) {
+    if (_state.value.panelBusy) return
     val principal = _state.value.principal
-    _state.update { it.copy(panelBusy = true, error = null) }
+    _state.update { it.copy(panelBusy = true, taskSubmitting = true, error = null) }
     sessionWork.launch {
         try {
             io { tasks.declineSplit(splitId, principal, credential().orEmpty()) }
@@ -181,6 +193,13 @@ fun ChatViewModel.declineSplit(splitId: String) {
         } catch (failure: GatewayException) {
             check()
             applyPanelFailure(failure)
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            check()
+            applyPanelFailure(failure)
+        } finally {
+            check()
+            _state.update { it.copy(taskSubmitting = false) }
         }
     }
 }

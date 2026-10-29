@@ -278,9 +278,18 @@ class ScenarioAccountIsolationUiTest {
         val legacyDevice = enrollLegacyKey()
         authenticatedCore("devices/$legacyDevice/revoke", JSONObject())
         val before = authenticatedCore("devices").getJSONArray("data").length()
-        logout()
-        login(ALICE, waitForDevice = false)
-        ui.waitUntil(20_000) { model.state.value.notice?.contains("本机设备未注册") == true }
+        // ChatMessageEffects consumes notices immediately before displaying
+        // them. Observe the flow rather than polling an already-consumed value.
+        val notices = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val observer = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        observer.launch { model.state.collect { state -> state.notice?.let { notices.add(it) } } }
+        try {
+            logout()
+            login(ALICE, waitForDevice = false)
+            ui.waitUntil(20_000) { synchronized(notices) { notices.any { it.contains("本机设备未注册") } } }
+        } finally {
+            observer.cancel()
+        }
         assertNull(store.deviceId())
         assertEquals(legacyDevice, DeviceKeyManager().existingDeviceId())
         val after = authenticatedCore("devices").getJSONArray("data")

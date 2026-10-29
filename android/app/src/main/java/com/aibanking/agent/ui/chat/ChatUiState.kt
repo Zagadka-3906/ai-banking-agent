@@ -155,6 +155,7 @@ data class ChatUiState(
     val removedContactIds: Set<String> = emptySet(),
     val contactUndoId: String? = null,
     val panelBusy: Boolean = false,
+    val taskSubmitting: Boolean = false,
     /**
      * Why the last panel load failed, if it did.
      *

@@ -32,17 +32,18 @@ internal fun TaskPanel(
     onDismiss: () -> Unit,
     error: String? = null,
     onClearError: () -> Unit = {},
+    submitting: Boolean = busy,
 ) {
     var takeoverId by rememberSaveable { mutableStateOf<String?>(null) }
     var takeoverReason by rememberSaveable { mutableStateOf("") }
     var reasonEdited by rememberSaveable { mutableStateOf(false) }
-    val allowHide by rememberUpdatedState(takeoverId == null && !busy)
+    val allowHide by rememberUpdatedState(takeoverId == null && !submitting)
     val selected = tasks.firstOrNull { it.taskId == takeoverId }
     LaunchedEffect(selected?.status) {
         if (selected?.status == "HUMAN_TAKEOVER") { takeoverId = null; takeoverReason = "" }
     }
     fun back() {
-        if (busy) return
+        if (submitting) return
         if (takeoverId != null) takeoverId = null else onDismiss()
     }
     // Host callbacks and the focused sheet window must share the same navigation behavior.

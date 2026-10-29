@@ -172,6 +172,35 @@ class UiClosureComponentsTest {
         ui.onNodeWithText("验证码已失效，请重新获取").assertDoesNotExist()
     }
 
+    @Test fun task_read_loading_allows_back_without_submitting_an_operation() {
+        var dismissed = 0
+        var submitted = 0
+        render {
+            TaskPanel(emptyList(), emptyList(), true,
+                { submitted++ }, { _, _ -> submitted++ }, { submitted++ }, { submitted++ },
+                { dismissed++ }, submitting = false)
+        }
+        ui.onNodeWithText("正在更新任务…").assertIsDisplayed()
+        Espresso.pressBack()
+        ui.runOnIdle {
+            assertEquals(1, dismissed)
+            assertEquals(0, submitted)
+        }
+    }
+
+    @Test fun task_submission_blocks_back_until_the_operation_finishes() {
+        val submitting = mutableStateOf(true)
+        var dismissed = 0
+        render {
+            TaskPanel(emptyList(), emptyList(), submitting.value,
+                {}, { _, _ -> }, {}, {}, { dismissed++ }, submitting = submitting.value)
+        }
+        Espresso.pressBack()
+        ui.runOnIdle { assertEquals(0, dismissed); submitting.value = false }
+        Espresso.pressBack()
+        ui.runOnIdle { assertEquals(1, dismissed) }
+    }
+
     @Test fun task_confirmation_and_back_use_one_modal_and_never_submit_on_navigation() {
         var submitted = 0
         var dismissed = 0
