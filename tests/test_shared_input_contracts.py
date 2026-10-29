@@ -184,6 +184,65 @@ def test_explicitly_filling_the_transfer_amount_can_resume_one_paused_discussion
     assert resume_task(state, parsed, text) is None
 
 
+@pytest.mark.parametrize('act', ['ACTION', 'SLOT_REPLY'])
+@pytest.mark.parametrize('text', ['转账金额是300元，先帮我看看，暂不确认。', '转账金额就按300元，先展示待确认信息。'])
+def test_typed_amount_reply_can_fill_one_known_task_without_any_restore_keyword(act, text):
+    parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': act}}
+    state = pending_state()
+    restored = resume_task(state, parsed, text)
+    assert restored and restored['_verified_slot_resume'] == 300 and restored['payload']['target'] == '李四'
+    state['dialogue_state']['tasks'].append(deepcopy(state['dialogue_state']['tasks'][0]) | {'id': 'other-transfer'})
+    assert resume_task(state, parsed, text) is None
+
+
+@pytest.mark.parametrize('text', ['转账金额是300元的手续费是多少', '转账金额是300元，先不办理',
+                                '如果转账金额是300元会怎样', '给王五转300元', '300元', '转账金额是300或500元'])
+def test_typed_amount_reply_still_requires_literal_business_and_unambiguous_matching_request(text):
+    assert resume_task(pending_state(), {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'SLOT_REPLY'}}, text) is None
+
+
+@pytest.mark.parametrize('act', ['QUERY', 'EXPLAIN', 'UNCLEAR', 'UNSUPPORTED'])
+def test_typed_slot_cannot_override_a_read_only_or_unclear_goal(act):
+    text = '转账金额是300元，先帮我看看，暂不确认。'
+    goals = normalize_goals([goal('general', [], '转账咨询', act=act)], text, {})
+    parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE', 'goals': goals}}
+    assert resume_task(pending_state(), parsed, text) is None
+    parsed['parse_meta'].update(scope='OUT_OF_SCOPE', goals=[])
+    assert resume_task(pending_state(), parsed, text) is None
+
+
+@pytest.mark.parametrize('act', ['QUERY', 'EXPLAIN', 'UNCLEAR', 'UNSUPPORTED'])
+def test_discussion_action_reference_never_binds_personal_query_or_unclear_goals(act):
+    context = {'action_reference_subjects': ['李四']}
+    result = normalize_goals([goal('general', [], '承接对象', act=act, subject='李四')], '金额是300元', context)[0]
+    assert result['act'] == 'UNCLEAR' and result['needs_subject']
+    action = normalize_goals([goal('general', [], '补资料', act='ACTION', subject='李四')], '金额是300元', context)[0]
+    assert action['act'] == 'ACTION' and action['subject'] == '李四'
+
+
+@pytest.mark.parametrize('selected', ['TRANSFER', None, 'FAKE-TASK'])
+def test_model_fill_goal_preserves_selected_discussion_target_without_requiring_repetition(gateway, monkeypatch, selected):  # noqa: F811
+    from bank_agent import runtime
+    from types import SimpleNamespace
+    import json
+    client, _ = gateway
+    cid = 'selected-discussion-goal'
+    _send(client, '给李四转一点钱', conversation_id=cid)
+    model(monkeypatch, [goal('general', [], '生日联动规则', act='EXPLAIN')])
+    _send(client, '先问一下生日联动怎么弄，转账金额稍后说', conversation_id=cid)
+    def invoke(messages):
+        value = {'intent': 'TRANSFER', 'dialogue_act': 'SLOT_REPLY', 'scope': 'IN_SCOPE',
+                 'goals': [goal('general', [], '给李四转300元的待确认提案', act='ACTION', subject='李四')]}
+        if selected:
+            value['task_command'] = {'type': 'FILL', 'task_id': selected, 'evidence': '转账金额是300元'}
+        return SimpleNamespace(content=json.dumps(value))
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=invoke))
+    before = financial_state()
+    reply = _send(client, '转账金额是300元，先帮我看看，暂不确认。', conversation_id=cid)
+    assert reply['approval'] and '李四' in reply['approval']['summary'] and '300.00' in reply['approval']['summary']
+    assert financial_state()[:4] == before[:4]
+
+
 @pytest.mark.parametrize('text', ['转账补贴300元', '转账补偿300元', '如果转账金额补300元会怎样',
                                 '转账金额补300元的手续费是多少', '转账金额补300元或500元', '转账金额补300元，先不办理'])
 def test_amount_filling_does_not_resume_a_noun_consultation_ambiguity_or_withdrawal(text):
@@ -200,6 +259,45 @@ def test_explicit_standalone_do_not_proceed_clause_restricts_every_execution_pat
 def test_waiting_for_approval_or_negating_a_refusal_is_not_withdrawing_the_request(text):
     from intent_language import execution_constraint
     assert execution_constraint(text) is None
+
+
+@pytest.mark.parametrize('act', ['ACTION', 'SLOT_REPLY', 'EXPLAIN', 'UNCLEAR'])
+def test_literal_stop_closes_only_the_unique_matching_discussion_even_when_model_act_differs(act):
+    from bank_agent.dialogue_commands import withdraw_known_task
+    parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': act, 'scope': 'IN_SCOPE'}}
+    transition = withdraw_known_task(pending_state(), parsed, '转账金额补300元，先不办理。')
+    assert transition and transition['type'] == 'CANCEL' and transition['view']['tasks'] == []
+    assert transition['parsed']['parse_meta']['dialogue_act'] == 'WITHDRAW' and transition['proposal_input'] is False
+    parsed['parse_meta']['scope'] = 'OUT_OF_SCOPE'
+    assert withdraw_known_task(pending_state(), parsed, '转账金额补300元，先不办理。') is None
+
+
+@pytest.mark.parametrize('text', ['转账金额补300元，先不办理，解释手续费', '先不办理，查询我的余额',
+                                '给王五转账先不办理', '如果转账先不办理会怎样'])
+def test_literal_stop_does_not_consume_a_separate_question_or_a_different_object(text):
+    from bank_agent.dialogue_commands import withdraw_known_task
+    parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'EXPLAIN', 'scope': 'IN_SCOPE'}}
+    assert withdraw_known_task(pending_state(), parsed, text) is None
+
+
+@pytest.mark.parametrize('act', ['ACTION', 'SLOT_REPLY', 'EXPLAIN'])
+def test_gateway_acknowledges_stopping_a_known_task_without_turning_it_into_unrelated_help(gateway, monkeypatch, act):  # noqa: F811
+    from bank_agent import runtime
+    from types import SimpleNamespace
+    import json
+    client, _ = gateway
+    cid = 'literal-stop-acknowledgement'
+    _send(client, '给李四转一点钱', conversation_id=cid)
+    model(monkeypatch, [goal('general', [], '生日联动规则', act='EXPLAIN')])
+    _send(client, '先问一下生日联动怎么弄，转账金额稍后说', conversation_id=cid)
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'TRANSFER', 'dialogue_act': act, 'scope': 'IN_SCOPE',
+        'goals': [goal('general', [], '补金额但暂不办理', act='ACTION')]}))))
+    before = financial_state()
+    reply = _send(client, '转账金额补300元，先不办理。', conversation_id=cid)
+    assert reply['approval'] is None and reply['business_status'] == 'CANCELLED'
+    assert '尚未执行' in reply['reply'] and '当前待补信息任务' in reply['reply']
+    assert financial_state() == before
 
 
 def test_consulted_incomplete_intention_can_be_explicitly_resumed_without_turning_the_question_into_a_proposal(gateway, monkeypatch):  # noqa: F811

@@ -75,6 +75,10 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
             raise ValueError('INVALID_GOAL_SUBJECT')
         aliases = context.get('grounded_aliases') or {}
         known = {*observed, *aliases.keys(), *aliases.values()}
+        if item['act'] == 'ACTION':
+            # This reference is compiled from one selected principal-bound
+            # discussion by the parser, never from model-supplied account facts.
+            known.update(name for name in context.get('action_reference_subjects', []) if isinstance(name, str))
         if subject and subject not in known:
             parts = [part.strip() for part in re.split(r'和|与|、|,|，', subject)]
             if 2 <= len(parts) <= 5 and all(part in known for part in parts):

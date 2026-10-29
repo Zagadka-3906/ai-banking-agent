@@ -610,14 +610,6 @@ def model_parse(text: str) -> dict[str, Any]:
             merged["parse_meta"]["topic_relation"] = parsed["topic_relation"]
         if isinstance(parsed.get("questions"), list):
             merged["parse_meta"]["questions"] = [_safe_text(value, 300) for value in parsed["questions"][:5] if isinstance(value, str)]
-        if 'goals' in parsed:
-            try:
-                goals = normalize_goals(parsed['goals'], business_text(text), model_context())
-                for goal in goals:
-                    goal['question'] = _safe_text(goal['question'], 300)
-                merged['parse_meta']['goals'] = goals
-            except ValueError:
-                merged['parse_meta']['goal_error'] = 'INVALID_REQUEST_GOALS'
         known_tasks = {task.get("id") for task in (model_context().get("discussion") or {}).get("tasks") or []}
         if parsed.get('task_command') is not None:
             from bank_agent.dialogue_commands import normalize_command
@@ -627,6 +619,23 @@ def model_parse(text: str) -> dict[str, Any]:
                 merged['parse_meta']['command_error'] = 'INVALID_DIALOGUE_COMMAND'
         if isinstance(parsed.get("resume_task_id"), str) and parsed["resume_task_id"] in known_tasks:
             merged["parse_meta"]["resume_task_id"] = parsed["resume_task_id"]
+        goal_context = dict(model_context())
+        if act in {'ACTION', 'SLOT_REPLY'} and parsed.get('scope') != 'OUT_OF_SCOPE':
+            command = merged['parse_meta'].get('task_command') or {}
+            selected = command.get('task_id') if command.get('type') in {'FILL', 'RESUME', 'CORRECT'} else merged['parse_meta'].get('resume_task_id')
+            frames = [frame for frame in (goal_context.get('discussion') or {}).get('tasks', [])
+                      if frame.get('intent') == model_intent and frame.get('status') in {'WAITING_INPUT', 'PAUSED'}
+                      and (not selected or frame.get('id') == selected)]
+            if len(frames) == 1 and isinstance(frames[0].get('target'), str) and frames[0]['target']:
+                goal_context['action_reference_subjects'] = [frames[0]['target']]
+        if 'goals' in parsed:
+            try:
+                goals = normalize_goals(parsed['goals'], business_text(text), goal_context)
+                for goal in goals:
+                    goal['question'] = _safe_text(goal['question'], 300)
+                merged['parse_meta']['goals'] = goals
+            except ValueError:
+                merged['parse_meta']['goal_error'] = 'INVALID_REQUEST_GOALS'
         if model_intent in ALL_INTENTS and model_intent != Intent.UNKNOWN.value:
             merged["intent"] = model_intent
             merged["confidence"] = parsed.get("confidence")

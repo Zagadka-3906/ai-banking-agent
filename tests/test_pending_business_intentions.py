@@ -11,6 +11,13 @@ from bank_agent.dialogue_state import dialogue_view
 from bank_agent.extraction import target_from_text
 from bank_agent.understanding import enforce_inquiry
 from intent_language import action_request_clause, execution_constraint, recipient_references, withdrawal_statement
+
+
+@pytest.mark.parametrize('ending', ['不再继续办理了', '不要再继续办理', '先不继续办了', '暂时不再办'])
+def test_stacked_negative_adverbs_still_stop_the_current_unfinished_intention(ending):
+    text = '我本来想恢复零星宝的申购，但现在决定取消，' + ending + '。'
+    assert execution_constraint(text) == 'NEGATED_ACTION'
+    assert withdrawal_statement(text, pending_discussion=True)
 from test_agent_gateway import _send, gateway  # noqa: F401
 from test_general_dialogue_loop import goal, model
 from test_inquiry_boundaries import financial_state

@@ -135,13 +135,25 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
     task_id = (parsed.get("parse_meta") or {}).get("resume_task_id")
     source = business_text(text)
     resume = re.search(r'继续|接着|恢复|回到|补(?:上|充|全)|补(?=\s*(?:[¥￥]?\s*\d|[零〇一二两三四五六七八九十百千万]))|填(?:写|上|入)', source)
-    if resume and (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'SOCIAL', 'UNSUPPORTED'}:
+    from bank_agent.parsing import local_parse
+    from bank_planning.requests import request_goals
+    from planner import Intent
+
+    act = (parsed.get('parse_meta') or {}).get('dialogue_act')
+    literal_intent = local_parse(source).get('intent')
+    # The model may identify an amount-slot reply without using a restore verb.
+    # Require the same business in the current words, then compile only the
+    # literal new amount into one known pending frame; never carry an approval.
+    typed_fill = (resume is None and act in {'SLOT_REPLY', 'ACTION'} and parsed.get('intent') == literal_intent
+                  and literal_intent not in {None, Intent.UNKNOWN.value}
+                  and (parsed.get('parse_meta') or {}).get('scope') != 'OUT_OF_SCOPE'
+                  and not any(goal['act'] in {'QUERY', 'EXPLAIN', 'UNCLEAR', 'UNSUPPORTED'} for goal in request_goals(parsed)))
+    if (resume or typed_fill) and act not in {'SOCIAL', 'UNSUPPORTED'}:
         from bank_agent.extraction import amount_from_text, target_from_text
         from intent_language import ambiguous_amount, ambiguous_target, execution_constraint
-        from bank_agent.parsing import local_parse
-        active = source[resume.end():]
-        filling = resume.group().startswith(('补', '填'))
-        operation = local_parse(source if filling else active).get('intent')
+        active = source[resume.end():] if resume else source
+        filling = typed_fill or bool(resume and resume.group().startswith(('补', '填')))
+        operation = literal_intent if filling else local_parse(active).get('intent')
         value = amount_from_text(source)
         recipient = target_from_text(source)
         candidates = [task for task in dialogue_view(state)['tasks'] if isinstance(task.get('pending'), dict)

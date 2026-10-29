@@ -198,12 +198,23 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
 
 def withdraw_known_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
     """An unambiguous abandoned discussion need not have a model-supplied ID."""
-    from intent_language import business_text, withdrawal_statement
+    import re
+    from intent_language import business_text, execution_constraint, withdrawal_statement
+    from bank_planning.requests import request_goals
     meta = parsed.get('parse_meta') or {}
     view = dialogue_view(state)
-    if (meta.get('dialogue_act') != 'WITHDRAW' or meta.get('scope') == 'OUT_OF_SCOPE'
-            or not withdrawal_statement(text, pending_discussion=bool(view['tasks']))):
+    if (meta.get('scope') == 'OUT_OF_SCOPE' or not withdrawal_statement(text, pending_discussion=bool(view['tasks']))):
         return None
+    if meta.get('dialogue_act') != 'WITHDRAW':
+        # A literal stop already forbids execution. Carry it through to the
+        # matching discussion, rather than converting it into generic help.
+        # Preserve independent read/explanation requests in mixed messages.
+        if (execution_constraint(text) != 'NEGATED_ACTION'
+                or meta.get('dialogue_act') in {'SOCIAL', 'UNSUPPORTED'}
+                or any(goal['act'] in {'QUERY', 'EXPLAIN'} for goal in request_goals(parsed))
+                or re.search(r'查询|查看|解释|说明|分析|了解|核对|咨询|流程|规则|条件|费用|手续费', text)):
+            return None
+        parsed = {**parsed, 'parse_meta': {**meta, 'dialogue_act': 'WITHDRAW'}}
     raw = _withdrawal_input(text)
     if raw['_ambiguous']:
         return None
