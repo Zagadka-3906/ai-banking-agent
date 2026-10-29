@@ -27,13 +27,15 @@ from test_intent_language_boundaries import state as saved_state
 @pytest.mark.parametrize('operation,intent', [
     ('申购零星宝', 'WEALTH_PURCHASE'), ('赎回零星宝', 'WEALTH_REDEEM'),
     ('给李四转账', 'TRANSFER'), ('冻结银行卡', 'CARD_FREEZE'),
+    ('把这张卡的日限额改成10000', 'CARD_LIMIT'),
 ])
 def test_first_person_action_survives_a_later_procedural_qualifier(operation, intent):
-    text = f'那我先{operation}吧，先按办理流程走，让我看看下一步怎么填。'
-    parsed = {'intent': intent, 'parse_meta': {'source': 'model', 'dialogue_act': 'ACTION'}}
-    assert action_request_clause(text)
-    assert execution_constraint(text) is None
-    assert enforce_inquiry(parsed, text)['intent'] == intent
+    for suffix in ('先按办理流程走，让我看看下一步怎么填。', '先别确认，帮我看看怎么办理。'):
+        text = f'那我想{operation}，{suffix}'
+        parsed = {'intent': intent, 'parse_meta': {'source': 'model', 'dialogue_act': 'ACTION'}}
+        assert action_request_clause(text)
+        assert execution_constraint(text) is None
+        assert enforce_inquiry(parsed, text)['intent'] == intent
 
 
 @pytest.mark.parametrize('text', [
