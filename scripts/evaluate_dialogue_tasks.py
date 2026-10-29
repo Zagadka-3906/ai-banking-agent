@@ -29,6 +29,7 @@ from scripts.dialogue_eval.costs import (CostLedger, MeteredModel, add_cost_argu
 
 def source_fingerprints() -> dict[str, str]:
     files = [*ROOT.glob("*.py"), Path(__file__), ROOT/'scripts/optimize_dialogue_prompts.py', ROOT/'scripts/check_dialogue_release.py']
+    files.extend([ROOT/'pyproject.toml', *ROOT.glob('requirements*.txt')])
     for directory in ("bank_agent", "bank_core", "bank_security", "bank_planning", "scripts/dialogue_eval"):
         files.extend((ROOT / directory).rglob("*.py"))
     return {path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(set(files))}

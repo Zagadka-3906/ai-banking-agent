@@ -6,11 +6,12 @@ starlette==1.6.0
 uvicorn[standard]==0.34.0
 pydantic==2.10.6
 requests==2.33.0
-langgraph==1.2.12
+# CVE-2026-118667: keep the fixed graph/SDK pair aligned with pyproject.toml.
+langgraph==1.2.14
 # langgraph-sdk / langgraph-prebuilt are LangGraph transitives, pinned like
 # starlette: sdk < 0.4.4 carries PYSEC-2026-4240, which pip-audit fails on,
 # and langgraph 1.2.5 is the first line that accepts the fixed 0.4.x SDK.
-langgraph-sdk==0.4.5
+langgraph-sdk==0.4.6
 langgraph-prebuilt==1.1.0
 # Durable conversation checkpoints for the channel gateway (conversation.py).
 # Without it the gateway silently degrades to the in-process saver, so an

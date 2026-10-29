@@ -15,6 +15,23 @@ from scripts.evaluate_dialogue_tasks import isolated_settings, main as evaluatio
 DATASET = Path(__file__).parent / "data/dialogue_tasks.json"
 
 
+@pytest.mark.parametrize('manifest', ['pyproject.toml', 'requirements.txt', 'requirements-dev.txt', 'requirements-feishu.txt'])
+def test_dependency_changes_invalidate_the_frozen_candidate(tmp_path, monkeypatch, manifest):
+    from scripts import evaluate_dialogue_tasks as evaluator
+    scripts = tmp_path/'scripts'
+    scripts.mkdir()
+    for name in ('evaluate_dialogue_tasks.py', 'optimize_dialogue_prompts.py', 'check_dialogue_release.py'):
+        (scripts/name).write_text('# frozen evaluator\n')
+    for name in ('pyproject.toml', 'requirements.txt', 'requirements-dev.txt', 'requirements-feishu.txt'):
+        (tmp_path/name).write_text('frozen dependency version\n')
+    monkeypatch.setattr(evaluator, 'ROOT', tmp_path)
+    monkeypatch.setattr(evaluator, '__file__', str(scripts/'evaluate_dialogue_tasks.py'))
+    before = evaluator.source_fingerprints()
+    (tmp_path/manifest).write_text('changed dependency version\n')
+    after = evaluator.source_fingerprints()
+    assert set(before) == set(after) and {name for name in before if before[name] != after[name]} == {manifest}
+
+
 def task():
     return load_dataset(DATASET)[0].tasks[0]
 
