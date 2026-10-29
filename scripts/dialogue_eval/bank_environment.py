@@ -53,13 +53,6 @@ class BankEnvironment:
             from scheduler import TASK_STORE
             TASK_STORE.create('user_zhang', 'SCHEDULED_TRANSFER', {'amount': 40}, run_at='2099-01-01T09:00:00+08:00')
             TASK_STORE.create('user_li', 'ORDER_DRAFT', {'amount': 9999, 'name': '其他用户私有订单'})
-        from bank_core.payments import card_daily_spent, daily_spent
-        # Warm deterministic day buckets before the baseline; cache initialization
-        # is not a user business action and must not distort delta assertions.
-        for owner, cards in main.CARDS.items():
-            daily_spent(owner)
-            for card in cards:
-                card_daily_spent(card["card_id"])
         main.persist_ledger()
         self.core = self.stack.enter_context(TestClient(main.app))
         login = self.core.post("/api/v1/auth/login", json={"user_id": "user_zhang", "password": "Bank@2026"})

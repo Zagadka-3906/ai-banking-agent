@@ -29,7 +29,6 @@ from bank_core.idempotency import (
 )
 from bank_core.ledger import (
     ACCOUNTS,
-    DAILY_TRANSFERS,
     LOCKS,
     MOCK_ORDERS,
     SCHEDULED_TRANSFERS,
@@ -53,6 +52,7 @@ from bank_core.payments import (
     daily_spent,
     payment_card,
     record_card_spend,
+    record_transfer_spend,
     refresh_split_status,
     resolve_payee,
 )
@@ -413,7 +413,7 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
                         raise SecurityError("可用余额不足（部分资金已被锁定）", 400, "INSUFFICIENT_FUNDS")
                     account["balance"] = round(account["balance"] - amount, 2)
                     receiver["balance"] = round(receiver["balance"] + amount, 2)
-                    DAILY_TRANSFERS[actor] = round(daily_spent(actor) + amount, 2)
+                    record_transfer_spend(actor, amount)
                     record_card_spend(actor, amount, card=paying_card)
                     txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
                     TRANSACTIONS.append({"tx_id": txn_id, "account_id": actor, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": "预约转账", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})

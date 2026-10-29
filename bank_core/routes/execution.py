@@ -34,7 +34,6 @@ from bank_core.idempotency import (
 )
 from bank_core.ledger import (
     ACCOUNTS,
-    DAILY_TRANSFERS,
     DISPUTE_CASES,
     LOCKS,
     SCHEDULED_TRANSFERS,
@@ -68,10 +67,10 @@ from bank_core.operations import (
 from bank_core.payments import (
     charge_card_and_balance,
     inbound_transaction,
-    daily_spent,
     ensure_account,
     prepare_split_shares,
     record_card_spend,
+    record_transfer_spend,
     record_split_payment,
     resolve_payee,
     split_id_from_remark,
@@ -147,7 +146,7 @@ def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_aut
                     raise SecurityError("可用余额不足（部分资金已被锁定）", 400, "INSUFFICIENT_FUNDS")
                 sender["balance"] = round(sender["balance"] - amount, 2)
                 receiver["balance"] = round(receiver["balance"] + amount, 2)
-                DAILY_TRANSFERS[req.from_user] = round(daily_spent(req.from_user) + amount, 2)
+                record_transfer_spend(req.from_user, amount)
                 record_card_spend(req.from_user, amount, card=paying_card)
                 if int(round(amount * 100)) >= behavior_large_amount_cents():
                     record_behavior_signal(req.from_user, "LARGE_TRANSFER", metadata={"amount_cents": int(round(amount * 100)), "target_id": target_id}, request_id=request_id)

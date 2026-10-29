@@ -131,15 +131,20 @@ def ensure_account(user_id: str) -> dict[str, Any]:
 
 def daily_spent(user_id: str) -> float:
     today = datetime.now().strftime("%Y-%m-%d")
-    # Initialize the date bucket without discarding a deliberately seeded
-    # demo counter; only a known prior date is reset on rollover.
-    if user_id not in DAILY_TRANSFER_DATE:
-        DAILY_TRANSFER_DATE[user_id] = today
-        DAILY_TRANSFERS.setdefault(user_id, 0.0)
-    elif DAILY_TRANSFER_DATE.get(user_id) != today:
-        DAILY_TRANSFER_DATE[user_id] = today
-        DAILY_TRANSFERS[user_id] = 0.0
-    return float(DAILY_TRANSFERS.get(user_id, 0.0))
+    return _spent_on_day(DAILY_TRANSFERS, DAILY_TRANSFER_DATE, user_id, today)
+
+
+def _spent_on_day(counters: dict[str, float], dates: dict[str, str], key: str, today: str) -> float:
+    # A missing date retains intentionally seeded demo counters. Reading an
+    # expired bucket projects zero without changing any ledger collection.
+    return float(counters.get(key, 0.0)) if dates.get(key) in {None, today} else 0.0
+
+
+def record_transfer_spend(user_id: str, amount: float) -> None:
+    """Write amount and day together inside the caller's ledger transaction."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    DAILY_TRANSFERS[user_id] = round(_spent_on_day(DAILY_TRANSFERS, DAILY_TRANSFER_DATE, user_id, today) + amount, 2)
+    DAILY_TRANSFER_DATE[user_id] = today
 
 
 def _split_shares(total_cents: int, participant_count: int) -> tuple[int, int]:
@@ -221,13 +226,7 @@ def split_id_from_remark(remark: str) -> Optional[str]:
 
 def card_daily_spent(card_id: str) -> float:
     today = datetime.now().strftime("%Y-%m-%d")
-    if card_id not in CARD_DAILY_SPENT_DATE:
-        CARD_DAILY_SPENT_DATE[card_id] = today
-        CARD_DAILY_SPENT.setdefault(card_id, 0.0)
-    elif CARD_DAILY_SPENT_DATE.get(card_id) != today:
-        CARD_DAILY_SPENT_DATE[card_id] = today
-        CARD_DAILY_SPENT[card_id] = 0.0
-    return float(CARD_DAILY_SPENT.get(card_id, 0.0))
+    return _spent_on_day(CARD_DAILY_SPENT, CARD_DAILY_SPENT_DATE, card_id, today)
 
 
 def payment_card(user_id: str, card_id: Optional[str] = None) -> Optional[dict[str, Any]]:
@@ -298,7 +297,9 @@ def record_card_spend(user_id: str, amount: float, *, card: Optional[dict[str, A
     card_id = str(resolved.get("card_id") or "")
     if not card_id:
         return
-    CARD_DAILY_SPENT[card_id] = round(card_daily_spent(card_id) + amount, 2)
+    today = datetime.now().strftime("%Y-%m-%d")
+    CARD_DAILY_SPENT[card_id] = round(_spent_on_day(CARD_DAILY_SPENT, CARD_DAILY_SPENT_DATE, card_id, today) + amount, 2)
+    CARD_DAILY_SPENT_DATE[card_id] = today
 
 
 def charge_card_and_balance(user_id: str, amount: float, *, card_id: Optional[str] = None, channel: Optional[str] = None) -> dict[str, Any]:

@@ -239,11 +239,8 @@ def test_health_reports_the_ledger_store(client):
 @pytest.mark.parametrize("failure_at", ["open", "fsync", "replace"])
 @pytest.mark.parametrize("operation", [None, "failed-persistent-operation"])
 def test_failed_commit_rolls_back_and_cannot_report_success_after_restart(client, store_path, monkeypatch, failure_at, operation):
-    from bank_core.payments import card_daily_spent, daily_spent
-
-    # Prechecks normalize today's counters before entering the write boundary.
-    daily_spent("user_zhang")
-    card_daily_spent("CARD-001")
+    # All state, including uninitialised day buckets, belongs to the write
+    # boundary. Failed settlement must restore exactly this precheck state.
     main.persist_ledger()
     before_file = store_path.read_bytes()
     before = {name: deepcopy(persistence.LEDGER_COLLECTIONS[name]) for name in persistence.LEDGER_STATE_NAMES}
