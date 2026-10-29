@@ -411,7 +411,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                 from bank_agent.understanding import unsupported_reply
                 response = unsupported_reply(parsed.get("parse_meta") or {})
             elif act == "UNCLEAR":
-                response = "我还没有确定这次的问题。您希望解释刚才的结果、查询已有记录，还是办理一项新操作？"
+                from bank_agent.understanding import contextual_clarification
+                response = contextual_clarification(state, parsed) or "我还没有确定这次的问题。您希望解释刚才的结果、查询已有记录，还是办理一项新操作？"
             elif any(phrase in text for phrase in ELLIPSIS_REPEAT + ELLIPSIS_SAME_TARGET + ELLIPSIS_SAME_PRODUCT + ELLIPSIS_CANCEL_IT):
                 response = "我没有找到可以沿用的上一次操作，请直接说明要办理的业务、对象和金额。"
             else:

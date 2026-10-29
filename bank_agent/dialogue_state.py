@@ -128,18 +128,19 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
 
 def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
     import re
+    from intent_language import business_text
 
     # The model may identify a known task, never manufacture its stored slots.
     # Resuming a discussion is not resuming/approving a transaction nonce.
     task_id = (parsed.get("parse_meta") or {}).get("resume_task_id")
-    resume = re.search(r'继续|接着|恢复|回到|补(?:上|充|全)|填(?:写|上|入)', text)
+    source = business_text(text)
+    resume = re.search(r'继续|接着|恢复|回到|补(?:上|充|全)|补(?=\s*(?:[¥￥]?\s*\d|[零〇一二两三四五六七八九十百千万]))|填(?:写|上|入)', source)
     if resume and (parsed.get('parse_meta') or {}).get('dialogue_act') not in {'SOCIAL', 'UNSUPPORTED'}:
         from bank_agent.extraction import amount_from_text, target_from_text
-        from intent_language import ambiguous_amount, ambiguous_target, execution_constraint, business_text
+        from intent_language import ambiguous_amount, ambiguous_target, execution_constraint
         from bank_agent.parsing import local_parse
-        source = business_text(text)
         active = source[resume.end():]
-        filling = bool(re.fullmatch(r'补(?:上|充|全)|填(?:写|上|入)', resume.group()))
+        filling = resume.group().startswith(('补', '填'))
         operation = local_parse(source if filling else active).get('intent')
         value = amount_from_text(source)
         recipient = target_from_text(source)

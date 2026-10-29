@@ -278,6 +278,34 @@ def _observed_record_ids(observation: Mapping[str, Any], resource: str, legacy: 
     return list(dict.fromkeys(value for value in values if isinstance(value, str) and 1 <= len(value) <= 120))[:50]
 
 
+def contextual_clarification(state: Mapping[str, Any], parsed: Mapping[str, Any]) -> str | None:
+    """Ask about the known resource using only principal-bound observed IDs."""
+    from bank_planning.requests import request_goals
+    from bank_agent.evidence import RESOURCE_NAMES
+    from bank_agent.verification import valid_text_field
+
+    if (parsed.get('parse_meta') or {}).get('scope') == 'OUT_OF_SCOPE':
+        return None
+    goals = request_goals(parsed)
+    resources = list(dict.fromkeys(goal['resource'] for goal in goals if goal['act'] == 'UNCLEAR'
+                                  and goal['resource'] in RESOURCE_NAMES))
+    if not resources:
+        return None
+    own = state.get('memory_principal') == state.get('user_id')
+    observations = list((state.get('observations') or {}).values()) if own else []
+    lines = []
+    for resource in resources:
+        ids: list[str] = next((row['resource_entities'][resource] for row in reversed(observations)
+                    if resource in (row.get('resource_entities') or {})), [])
+        ids = [value for value in ids if isinstance(value, str) and valid_text_field(value, max_length=120)]
+        label = RESOURCE_NAMES[resource]
+        if ids:
+            lines.append(f'请明确要核对哪项{label}。刚才已核验并展示的候选编号有：' + '、'.join(ids[:12]) + '；请指定其中一项。')
+        else:
+            lines.append(f'请补充要核对的{label}名称或编号，当前没有可唯一确定的对象。')
+    return '\n'.join(lines) + '\n本轮尚未确认任何对象，也没有发起变更。'
+
+
 def referenced_case(state: Mapping[str, Any]) -> Optional[str]:
     text = str(state.get("user_input") or "")
     literal = _CASE.search(text)

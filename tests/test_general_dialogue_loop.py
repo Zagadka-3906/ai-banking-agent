@@ -541,6 +541,8 @@ def test_pending_question_can_cite_the_original_approval_without_reprechecking(g
 
 
 @pytest.mark.parametrize('utterance,classified_intent',[
+    ('转账金额补300元，先别确认，等确认卡出来我再看。', 'TRANSFER'),
+    ('转账金额补300元，先别确认，等确认卡出来我再看。', 'UNKNOWN'),
     ('生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。','UNKNOWN'),
     ('好的，那先回到原来的转账，给李四的金额就按300元，先别确认，让我看一下。','UNKNOWN'),
     ('生日的事先放一放，还是接着给李四转账吧，金额就补300元，先别确认。','CROSS_SCENE_LOCK'),

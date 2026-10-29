@@ -74,6 +74,51 @@ def test_legacy_follow_up_refreshes_only_the_record_verified_by_a_modern_query(g
     assert financial_state() == before
 
 
+@pytest.mark.parametrize('resource,identifiers', [('transactions', ['TX1000', 'TX-CLOUD-0']), ('cards', ['CARD-001', 'CARD-002']),
+                                                ('wealth_products', ['LX00118', 'HQ30060']), ('tasks', ['TASK-OWN-1'])])
+def test_resource_clarification_keeps_verified_candidates_separate_from_private_or_unrelated_records(resource, identifiers):
+    from bank_agent.understanding import contextual_clarification
+    goals = normalize_goals([goal(resource, ['records'], '对象不明确', act='UNCLEAR')], '哪项记录', {})
+    parsed = {'parse_meta': {'scope': 'IN_SCOPE', 'goals': goals}}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'observations': {
+        'old': {'resource_entities': {resource: ['STALE-PRIVATE']}},
+        'new': {'resource_entities': {resource: identifiers, 'contacts': ['UNRELATED-CONTACT']}, 'transaction_ids': ['UNSELECTED-999']}}}
+    answer = contextual_clarification(state, parsed)
+    assert answer and all(identifier in answer for identifier in identifiers)
+    assert all(value not in answer for value in ('STALE-PRIVATE', 'UNRELATED-CONTACT', 'UNSELECTED-999'))
+    state['memory_principal'] = 'user_li'
+    answer = contextual_clarification(state, parsed)
+    assert answer and all(identifier not in answer for identifier in identifiers)
+    parsed['parse_meta']['scope'] = 'OUT_OF_SCOPE'
+    assert contextual_clarification(state, parsed) is None
+
+
+def test_current_empty_selection_cannot_reintroduce_older_candidates_into_clarification():
+    from bank_agent.understanding import contextual_clarification
+    parsed = {'parse_meta': {'goals': normalize_goals([goal('transactions', ['records'], '对象不明确', act='UNCLEAR')], '哪笔', {})}}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'observations': {
+        'old': {'resource_entities': {'transactions': ['STALE-1']}}, 'new': {'resource_entities': {'transactions': []}}}}
+    assert 'STALE-1' not in contextual_clarification(state, parsed)
+
+
+def test_unclear_follow_up_keeps_the_resource_and_shows_actual_candidates_without_business_writes(gateway, monkeypatch):  # noqa: F811
+    from bank_agent import runtime
+    from types import SimpleNamespace
+    import json
+    client, _ = gateway
+    model(monkeypatch, [goal('transactions', ['records'], '最近交易')], intent='BILL_QUERY')
+    first = _send(client, '查询最近交易列表', conversation_id='resource-clarification')
+    assert first['business_status'] == 'SUCCEEDED'
+    def invoke(messages):
+        return SimpleNamespace(content=json.dumps({'intent': 'UNKNOWN', 'dialogue_act': 'UNCLEAR', 'scope': 'IN_SCOPE',
+            'goals': [goal('transactions', ['records'], '确认最近交易列表中所指对象', act='UNCLEAR')]}))
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=invoke))
+    before = financial_state()
+    answer = _send(client, '最近交易中有一笔想核对，但还没说明哪笔', conversation_id='resource-clarification')
+    assert answer['approval'] is None and 'TX1000' in answer['reply'] and 'TX-CLOUD-0' in answer['reply']
+    assert '想查询还是办理' not in answer['reply'] and financial_state() == before
+
+
 @pytest.mark.parametrize('text', ['那就按10000元给我设置日限额', '帮我把日限额设置为10000元', '请给我冻结卡片'])
 def test_card_input_never_uses_the_payee_grammar_as_its_card_identifier(text):
     assert _local_parse_rules(text)['target'] is None
@@ -127,13 +172,34 @@ def test_literal_resume_amount_is_verified_independently_of_the_model_act(act):
                        '回到刚才的转账，300元的手续费是多少') is None
 
 
-def test_explicitly_filling_the_transfer_amount_can_resume_one_paused_discussion():
+@pytest.mark.parametrize('text', ['好，那转账金额补上300元，先别确认。',
+                                '转账金额补300元，先别确认，等确认卡出来我再看。',
+                                '转账金额补三百元，先不确认。'])
+def test_explicitly_filling_the_transfer_amount_can_resume_one_paused_discussion(text):
     parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'SLOT_REPLY', 'resume_task_id': 'TRANSFER'}}
     state = pending_state()
-    result = resume_task(state, parsed, '好，那转账金额补上300元，先别确认。')
+    result = resume_task(state, parsed, text)
     assert result and result['_verified_slot_resume'] == 300 and result['payload']['target'] == '李四'
     state['dialogue_state']['tasks'].append(deepcopy(state['dialogue_state']['tasks'][0]) | {'id': 'another'})
-    assert resume_task(state, parsed, '好，那转账金额补上300元，先别确认。') is None
+    assert resume_task(state, parsed, text) is None
+
+
+@pytest.mark.parametrize('text', ['转账补贴300元', '转账补偿300元', '如果转账金额补300元会怎样',
+                                '转账金额补300元的手续费是多少', '转账金额补300元或500元', '转账金额补300元，先不办理'])
+def test_amount_filling_does_not_resume_a_noun_consultation_ambiguity_or_withdrawal(text):
+    assert resume_task(pending_state(), {'intent': 'TRANSFER'}, text) is None
+
+
+@pytest.mark.parametrize('text', ['转账金额补300元，先不办理', '金额补300元，我暂时不办', '本次先不要办理'])
+def test_explicit_standalone_do_not_proceed_clause_restricts_every_execution_path(text):
+    from intent_language import execution_constraint
+    assert execution_constraint(text) == 'NEGATED_ACTION'
+
+
+@pytest.mark.parametrize('text', ['转账金额补300元，先别确认', '给李四转300元，等确认卡出来我再看', '不是不办理，给李四转300元'])
+def test_waiting_for_approval_or_negating_a_refusal_is_not_withdrawing_the_request(text):
+    from intent_language import execution_constraint
+    assert execution_constraint(text) is None
 
 
 def test_consulted_incomplete_intention_can_be_explicitly_resumed_without_turning_the_question_into_a_proposal(gateway, monkeypatch):  # noqa: F811
