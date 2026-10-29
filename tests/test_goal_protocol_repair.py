@@ -39,6 +39,14 @@ def test_wrong_resource_fields_are_repaired_once_without_losing_question(monkeyp
     assert result['intent'] == 'BANKING_HELP' and not result['parse_meta'].get('goal_error')
 
 
+def test_goal_repair_normalizes_singular_topic_resource_alias(monkeypatch):
+    calls = responses(monkeypatch, {**VALID, 'resource': 'dispute', 'topic': 'dispute'})
+    result = model_parse('那这笔境外未知商户的¥999交易，我该怎么核对是不是我自己的消费？')
+    assert len(calls) == 2 and result['parse_meta']['goal_repair'] == 'REPAIRED'
+    goals = request_goals(result)
+    assert len(goals) == 1 and goals[0]['resource'] == 'disputes' and goals[0]['topic'] == 'dispute'
+
+
 @pytest.mark.parametrize('repaired', [INVALID, {**VALID, 'act': 'ACTION'}, {**VALID, 'user_id': 'user_li'}])
 def test_invalid_or_action_repair_cannot_change_a_read_into_a_proposal(monkeypatch, repaired):
     calls = responses(monkeypatch, repaired)
