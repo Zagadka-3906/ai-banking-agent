@@ -120,7 +120,7 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     if constraint:
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "execution_constraint": constraint}
         subscription_read = result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and read_only_goals((result.get('parse_meta') or {}).get('goals') or [])
-        if result.get("intent") not in READ_INTENTS and not subscription_read and act not in {"SOCIAL", "UNSUPPORTED"}:
+        if result.get("intent") not in READ_INTENTS and not subscription_read and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
             result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
             result["slots"] = {"help_topic": help_topic(text)}
             result["parse_meta"]["dialogue_act"] = "EXPLAIN"

@@ -9,6 +9,24 @@ from bank_agent.dialogue_state import dialogue_view
 COMMANDS = {'RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL'}
 
 
+def _withdrawal_input(text: str) -> dict[str, Any]:
+    from bank_agent.extraction import PRODUCT_ALIASES, PRODUCT_IDS, target_from_text
+    from bank_agent.parsing import _local_parse_rules
+    from intent_language import ambiguous_target, business_text, pending_withdrawal_clause
+
+    clause = pending_withdrawal_clause(text)
+    source = clause or business_text(text)
+    raw = _local_parse_rules(source)
+    products = {product for alias, product in PRODUCT_ALIASES.items() if alias in source}
+    products.update(product for product in PRODUCT_IDS if product in source.upper())
+    raw['_ambiguous'] = ambiguous_target(source) or len(products) > 1
+    if clause and raw.get('intent') == 'UNDO_OPERATION':
+        # Here undo_kind identifies only the discussion's business type. It
+        # cannot cancel a Core task or supply an execution approval.
+        raw = {**raw, 'intent': (raw.get('slots') or {}).get('undo_kind'), 'target': target_from_text(clause)}
+    return raw
+
+
 def atomic_action_input(parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
     """Compile one understood action from the whole utterance, not its prefix.
 
@@ -61,7 +79,7 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
     from bank_agent.extraction import amount_from_text, scheduled_at_from_text
     from bank_agent.parsing import local_parse
     from bank_planning.intents import validate_intent_payload
-    from intent_language import ambiguous_amount, ambiguous_target, business_text, execution_constraint, split_tasks
+    from intent_language import ambiguous_amount, ambiguous_target, business_text, execution_constraint, split_tasks, withdrawal_statement
 
     view = dialogue_view(state)
     tasks = view['tasks']
@@ -84,14 +102,12 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
     questionnaire = task.get('kind') == 'questionnaire'
     if kind in {'PAUSE', 'CANCEL'}:
         local_intent = local_parse(text).get('intent')
-        from bank_agent.parsing import _local_parse_rules
-        raw = _local_parse_rules(business_text(text))
+        raw = _withdrawal_input(text)
+        if kind == 'CANCEL' and (raw['_ambiguous'] or not withdrawal_statement(text)):
+            return None
         origin = (task.get('quiz') or {}).get('origin_intent') if questionnaire else None
-        withdrawing = (act == 'WITHDRAW' and execution_constraint(text) == 'NEGATED_ACTION'
+        withdrawing = (act == 'WITHDRAW' and withdrawal_statement(text)
                        and raw.get('intent') in {'UNKNOWN', intent, origin})
-        withdrawing = withdrawing or (act == 'WITHDRAW' and kind == 'CANCEL' and raw.get('intent') == 'UNDO_OPERATION'
-                                      and (raw.get('slots') or {}).get('undo_kind') == intent
-                                      and any(marker in text for marker in ('想法', '意向', '讨论', '提案')))
         saved_target = pending['payload'].get('target') or (task.get('quiz') or {}).get('origin_target')
         if kind == 'CANCEL' and raw.get('target') and saved_target and raw['target'] != saved_target:
             return None
@@ -180,11 +196,12 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
 
 def withdraw_known_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
     """An unambiguous abandoned discussion need not have a model-supplied ID."""
-    from bank_agent.parsing import _local_parse_rules
-    from intent_language import business_text, execution_constraint
-    if (parsed.get('parse_meta') or {}).get('dialogue_act') != 'WITHDRAW' or execution_constraint(text) != 'NEGATED_ACTION':
+    from intent_language import business_text, withdrawal_statement
+    if (parsed.get('parse_meta') or {}).get('dialogue_act') != 'WITHDRAW' or not withdrawal_statement(text):
         return None
-    raw = _local_parse_rules(business_text(text))
+    raw = _withdrawal_input(text)
+    if raw['_ambiguous']:
+        return None
     candidates = []
     for task in dialogue_view(state)['tasks']:
         pending = task.get('pending') or {}

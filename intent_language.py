@@ -119,9 +119,40 @@ def action_request_clause(text: str) -> str | None:
         clause = re.sub(r'^(?:不过|但是|那么|好的|接下来)\s*', '', clause)
         if re.search(r"如何|怎么|怎样|为什么|为何|多久|多长|何时|什么时候|进度|流程|步骤|时效|规则|影响|费用|需要|假设|如果|要是|若是|能否|能不能|是否|什么|不要|别|不必|不想|不打算|[吗么“”\"‘’]", clause):
             continue
-        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)|请|麻烦|帮我|替我|给我)?\s*(?:先|现在|直接)?(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
+        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)?|请|麻烦|帮我|替我|给我)?\s*(?:先|现在|直接)?(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
             return clause
     return None
+
+
+def pending_withdrawal_clause(text: str) -> str | None:
+    """Literal withdrawal of an unfinished intention, never an undo authority.
+
+    The cancellation, pending qualifier and business object must occur in the
+    same affirmative clause. Questions, quotations and conditions are not it.
+    """
+    source = business_text(text)
+    if re.search(r'假设|如果|若是|要是|[“”"‘’？?]', source):
+        return None
+    for clause in re.split(r'[，,。；;!?！？]', source):
+        clause = clause.strip()
+        if re.search(r'如何|怎么|怎样|为什么|能否|能不能|是否|会不会|可以|可不可以|吗|么|已经|曾经|取消了|撤销了', clause):
+            continue
+        if (re.match(r'^(?:(?:我(?:想|要|决定)?|请|麻烦|帮我|替我|先|现在)\s*)*(?:取消|撤销|放弃|停止)', clause)
+                and re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
+                and re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause)):
+            return clause
+    return None
+
+
+def withdrawal_statement(text: str) -> bool:
+    """A restrictive execution constraint alone is not a cancellation command."""
+    source = business_text(text)
+    if re.search(r'如何|怎么|怎样|为什么|能否|能不能|是否|会不会|可以|可不可以|吗|么|假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|取消了|撤销了|[“”"‘’？?]', source):
+        return False
+    if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source) and not pending_withdrawal_clause(source):
+        return False
+    return execution_constraint(source) == 'NEGATED_ACTION' or bool(re.match(
+        r'^(?:(?:我(?:想|要|决定)?|请|麻烦|帮我|替我|先|现在)\s*)*(?:取消|撤销|放弃|停止)', source))
 
 
 def finite_limit_change(text: str) -> bool:
@@ -153,7 +184,8 @@ def execution_constraint(text: str) -> str | None:
     # ("不冻结了，放弃冻结卡片"). Never let that mention become a new request.
     # Keep this restriction at the execution boundary, so a negated operation
     # can still accompany a genuine read or explanation in the same turn.
-    if (re.search(r"(?:放弃|暂停|暂缓|停止|搁置)[^，,。；;!?！？]{0,12}(?:" + mutation + r"|办理)", source)
+    if (pending_withdrawal_clause(source)
+            or re.search(r"(?:放弃|暂停|暂缓|停止|搁置)[^，,。；;!?！？]{0,12}(?:" + mutation + r"|办理)", source)
             or re.search(r'取消(?:这次|这个|本次|当前|刚才)?的?(?:申购|转账|调额|冻结)(?:意向|计划|讨论|提案|办理)', source)
             or re.search(r"不(?:再|会|继续)?(?:帮我|替我|实际|真的)?(?:" + mutation + r")", source)
             or re.search(r"(?:不办了|不做了|不用(?:再)?(?:往下|继续)(?:办|处理))", source)):
