@@ -116,7 +116,7 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         if literal:
             result['target'] = literal
     act = (result.get("parse_meta") or {}).get("dialogue_act")
-    constraint = execution_constraint(text)
+    constraint = execution_constraint(text, current_discussion=result.get('intent') != Intent.UNDO_OPERATION.value)
     if constraint:
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "execution_constraint": constraint}
         subscription_read = result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and read_only_goals((result.get('parse_meta') or {}).get('goals') or [])

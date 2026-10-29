@@ -33,6 +33,7 @@ def test_first_person_action_survives_a_later_procedural_qualifier(operation, in
     '那我先申购零星宝可以吗', '如果我先申购零星宝，下一步怎么填',
     '我不想申购零星宝，下一步怎么填',
     '我想把日限额改成10000，先了解这个数值行不行，暂不确认',
+    '我还是想申购零星宝，但金额没定，现在决定先取消这次申购。',
 ])
 def test_question_negation_and_feasibility_cannot_become_an_action(text):
     result = enforce_inquiry({'intent': 'WEALTH_PURCHASE', 'parse_meta': {'dialogue_act': 'ACTION'}}, text)
@@ -61,11 +62,14 @@ def withdrawal(text, *, command=False):
     '那么，我决定取消零星宝的申购意向',
     '那我先不申购零星宝了，决定取消这次申购意向。',
     '决定取消零星宝的申购意向', '现在决定放弃零星宝的待确认申购',
+    '我还是想申购零星宝，但金额没定，现在决定先取消这次申购。',
+    '我想申购零星宝，但现在决定取消本次申购',
+    '我想申购零星宝，不过还是先取消这笔申购',
 ])
 def test_pending_purchase_withdrawal_resolves_its_existing_questionnaire(text):
     state = pending_quiz()
     before = deepcopy(state)
-    assert pending_withdrawal_clause(text)
+    assert pending_withdrawal_clause(text, current_discussion=True)
     parsed = enforce_inquiry(withdrawal(text), text)
     assert parsed['parse_meta']['dialogue_act'] == 'WITHDRAW'
     result = withdraw_known_task(state, parsed, text)
@@ -89,6 +93,13 @@ def test_pending_purchase_withdrawal_resolves_its_existing_questionnaire(text):
     '决定取消零星宝的申购意向会怎样', '如果决定取消零星宝的申购意向',
     '那我先不申购恒泉稳利了，决定取消这次申购意向。',
     '先不申购零星宝和恒泉稳利了，决定取消这次申购意向。',
+    '我想申购恒泉稳利，但金额没定，现在决定先取消这次申购。',
+    '现在决定取消这次已完成的零星宝申购',
+    '现在决定取消这次零星宝申购会怎样',
+    '如果金额没定，现在决定取消这次申购',
+    '我不取消这次零星宝申购', '现在不用取消这次零星宝申购',
+    '我不想取消这次零星宝申购', '不要帮我取消这次零星宝申购',
+    '解释这句话“现在决定取消这次申购”',
 ])
 @pytest.mark.parametrize('act', ['WITHDRAW', 'QUERY'])
 def test_a_wrong_withdraw_label_or_command_cannot_cancel_an_unrelated_discussion(text, act):
@@ -101,8 +112,8 @@ def test_a_wrong_withdraw_label_or_command_cannot_cancel_an_unrelated_discussion
     assert state == before
 
 
-def test_no_existing_intention_or_two_matching_frames_cannot_be_guessed():
-    text = '取消零星宝的待确认申购'
+@pytest.mark.parametrize('text', ['取消零星宝的待确认申购', '我还是想申购零星宝，但金额没定，现在决定先取消这次申购。'])
+def test_no_existing_intention_or_two_matching_frames_cannot_be_guessed(text):
     assert withdraw_known_task({'user_id': 'user_zhang'}, withdrawal(text), text) is None
     state = pending_quiz()
     frame = dialogue_view(state)['tasks'][0]
@@ -113,7 +124,8 @@ def test_no_existing_intention_or_two_matching_frames_cannot_be_guessed():
     assert withdraw_known_task(state, withdrawal(text), text) is None
 
 
-@pytest.mark.parametrize('text', ['取消零星宝的待确认申购', '那我先不申购零星宝了，决定取消这次申购意向。'])
+@pytest.mark.parametrize('text', ['取消零星宝的待确认申购', '那我先不申购零星宝了，决定取消这次申购意向。',
+                                 '我还是想申购零星宝，但金额没定，现在决定先取消这次申购。'])
 def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion(text):
     state = pending_quiz()
     state['context'] = {}
@@ -128,10 +140,27 @@ def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion(tex
     assert not result['proposal_input'] and state['dialogue_state']['tasks'] == frames
 
 
+@pytest.mark.parametrize('intent,target,text', [
+    ('TRANSFER', '李四', '我还想给李四转账，但金额没定，现在决定先取消这笔转账。'),
+    ('CARD_LIMIT', 'CARD-001', '我还想调额，但数值没定，现在决定取消本次调额。'),
+    ('WEALTH_REDEEM', 'LX00118', '我想赎回零星宝，但份额没定，最后决定先取消这次赎回。'),
+])
+def test_current_operation_reference_binds_only_its_existing_business_discussion(intent, target, text):
+    pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target, 'amount': None}}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'context': {},
+             'dialogue_state': {'principal': 'user_zhang', 'tasks': [
+                 {'id': intent, 'intent': intent, 'status': 'PAUSED', 'pending': pending}]}}
+    before = deepcopy(state)
+    result = withdraw_known_task(state, withdrawal(text), text)
+    assert result and result['view']['tasks'] == [] and not result['proposal_input']
+    assert state == before
+
+
 @pytest.mark.parametrize('cancellation', [
     '对，我要取消刚才那笔零星宝的待确认申购，麻烦帮我取消。',
     '既然零星宝申购后不能撤单，那我决定取消这次申购意向，先不申购了。',
     '那我先不申购零星宝了，决定取消这次申购意向。',
+    '我还是想申购零星宝，但金额没定，现在决定先取消这次申购。',
 ])
 def test_purchase_then_cancellation_question_then_withdrawal_is_read_only(gateway, monkeypatch, cancellation):  # noqa: F811
     client, _ = gateway
@@ -147,7 +176,7 @@ def test_purchase_then_cancellation_question_then_withdrawal_is_read_only(gatewa
         if text.startswith('那我先申购'):
             result = {'intent': 'WEALTH_PURCHASE', 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE',
                       'target': 'LX00118', 'amount': None}
-        elif '我要取消' in text or '决定取消' in text:
+        elif '我要取消' in text or '决定取消' in text or '决定先取消' in text:
             result = {'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}
         else:
             return underlying.invoke(messages)

@@ -125,17 +125,18 @@ def action_request_clause(text: str) -> str | None:
 
 
 _WITHDRAW_COMMAND = re.compile(
-    r'^(?:(?:那(?:么)?|就|好的|对|所以|因此|我(?:想|要|决定)?|决定|请|麻烦|帮我|替我|先|现在)\s*)*(?:取消|撤销|放弃|停止)')
+    r'^(?:(?:那(?:么)?|就|好的|对|所以|因此|但是|但|不过|还是|最终|最后|我(?:想|要|决定)?|决定|请|麻烦|帮我|替我|先|现在)\s*)*(?:取消|撤销|放弃|停止)')
 _WITHDRAW_QUESTION = re.compile(
     r'如何|怎么|怎样|为什么|为何|什么|多久|何时|能否|能不能|是否|会不会|可以|可不可以'
     r'|(?:吗|(?<![那这什怎])么)(?=\s*(?:[，,。；;!?！？]|$))')
 
 
-def pending_withdrawal_clause(text: str) -> str | None:
+def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) -> str | None:
     """Literal withdrawal of an unfinished intention, never an undo authority.
 
-    The cancellation, pending qualifier and business object must occur in the
-    same affirmative clause. Questions, quotations and conditions are not it.
+    The cancellation and pending qualifier or current-operation reference
+    must occur in one affirmative clause. A current reference still needs a
+    matching existing discussion; it never authorizes undoing a saved task.
     """
     source = business_text(text)
     if re.search(r'假设|如果|若是|要是|[“”"‘’？?]', source):
@@ -144,8 +145,11 @@ def pending_withdrawal_clause(text: str) -> str | None:
         clause = clause.strip()
         if _WITHDRAW_QUESTION.search(clause) or re.search(r'已经|曾经|取消了|撤销了', clause):
             continue
-        if (_WITHDRAW_COMMAND.match(clause)
-                and re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
+        pending = re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
+        current = (re.search(r'(?:这次|本次|这笔|这一笔|这个|当前|刚才那笔)[^，,。；;!?！？]{0,24}'
+                             r'(?:申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理)', clause)
+                   and not re.search(r'任务|工单|审批|授权|已完成|已执行|已扣款|已提交|已成交', clause))
+        if (_WITHDRAW_COMMAND.match(clause) and (pending or current_discussion and current)
                 and re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause)):
             return clause
     return None
@@ -157,9 +161,13 @@ def withdrawal_statement(text: str) -> bool:
     if (_WITHDRAW_QUESTION.search(source)
             or re.search(r'假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|取消了|撤销了|[“”"‘’？?]', source)):
         return False
-    if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source) and not pending_withdrawal_clause(source):
+    if re.search(r'(?:不(?:用|必|想|打算|再|需要)?|别|不要|无需)(?:再|先|现在|立即|继续|帮我|替我)*'
+                 r'(?:取消|撤销|放弃|停止)', source):
         return False
-    return execution_constraint(source) == 'NEGATED_ACTION' or bool(_WITHDRAW_COMMAND.match(source))
+    clause = pending_withdrawal_clause(source, current_discussion=True)
+    if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source) and not clause:
+        return False
+    return bool(clause) or execution_constraint(source) == 'NEGATED_ACTION' or bool(_WITHDRAW_COMMAND.match(source))
 
 
 def finite_limit_change(text: str) -> bool:
@@ -178,7 +186,7 @@ def finite_limit_change(text: str) -> bool:
     return False
 
 
-def execution_constraint(text: str) -> str | None:
+def execution_constraint(text: str, *, current_discussion: bool = False) -> str | None:
     """Restrict executable actions without preventing read-only understanding."""
     source = business_text(text)
     mutation = r"执行|操作|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定|调额|修改限额"
@@ -191,7 +199,7 @@ def execution_constraint(text: str) -> str | None:
     # ("不冻结了，放弃冻结卡片"). Never let that mention become a new request.
     # Keep this restriction at the execution boundary, so a negated operation
     # can still accompany a genuine read or explanation in the same turn.
-    if (pending_withdrawal_clause(source)
+    if (pending_withdrawal_clause(source, current_discussion=current_discussion)
             or re.search(r"(?:放弃|暂停|暂缓|停止|搁置)[^，,。；;!?！？]{0,12}(?:" + mutation + r"|办理)", source)
             or re.search(r'取消(?:这次|这个|本次|当前|刚才)?的?(?:申购|转账|调额|冻结)(?:意向|计划|讨论|提案|办理)', source)
             or re.search(r"不(?:再|会|继续)?(?:帮我|替我|实际|真的)?(?:" + mutation + r")", source)

@@ -173,6 +173,9 @@ def test_withdrawal_cannot_create_approval_even_when_model_requests_a_freeze(gat
 @pytest.mark.parametrize('text', [
     '我不冻结了，放弃冻结卡片，不用再往下办了。',
     '放弃给李四转账', '我不申购了', '暂停调额', '不办了',
+    '我还是想申购零星宝，但金额没定，现在决定先取消这次申购。',
+    '我还想给李四转账，但金额没定，现在决定先取消这笔转账。',
+    '我还想调额，但数值没定，现在决定取消本次调额。',
 ])
 def test_risk_boundary_rechecks_withdrawal_without_obtaining_a_nonce(monkeypatch, text):
     def forbidden(*args, **kwargs):

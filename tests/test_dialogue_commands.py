@@ -118,6 +118,7 @@ def test_pause_keeps_frame_and_cancel_removes_only_selected_frame():
 
 
 @pytest.mark.parametrize('text,allowed', [('取消这个预约转账的想法', True), ('取消预约转账任务', False),
+                                        ('取消这次预约转账任务', False),
                                         ('取消生日锁定的想法', False)])
 def test_withdrawing_a_matching_unfinished_idea_is_separate_from_undoing_a_saved_task(text, allowed):
     state = pending_state()

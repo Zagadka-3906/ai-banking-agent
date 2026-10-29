@@ -15,7 +15,7 @@ def _withdrawal_input(text: str) -> dict[str, Any]:
     from intent_language import ambiguous_target, business_text, pending_withdrawal_clause
 
     whole = business_text(text)
-    clause = pending_withdrawal_clause(text)
+    clause = pending_withdrawal_clause(text, current_discussion=True)
     source = clause or whole
     raw = _local_parse_rules(source)
     products = {product for alias, product in PRODUCT_ALIASES.items() if alias in whole}

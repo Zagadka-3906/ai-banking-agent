@@ -201,7 +201,7 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         return {"risk_level": "UNKNOWN", "auth_token": None, "action_requirements": [], "business_status": "NEEDS_INPUT",
                 "clarification_required": True, "final_response": "我还没找到这几笔所指的已核验交易。请提供流水号，或先查询/分析账单后指定其中的记录；我不会用全部流水替代。"}
     nonaction = (state.get("parse_meta") or {}).get("dialogue_act") in {"QUERY", "EXPLAIN", "UNSUPPORTED", "UNCLEAR", "SOCIAL"}
-    if ((execution_constraint(spoken) and intent not in READ_INTENTS) or
+    if ((execution_constraint(spoken, current_discussion=intent != Intent.UNDO_OPERATION.value) and intent not in READ_INTENTS) or
             (nonaction and intent not in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}) or
             intent not in GREEN_INTENTS | {Intent.SUBSCRIPTION_QUERY.value} and (inquiry_route(spoken) or (intent == Intent.FRAUD_DISPUTE.value and not fraud_action_requested(spoken)))):
         return {"risk_level": "UNKNOWN", "auth_token": None, "action_requirements": [], "business_status": "NEEDS_INPUT",
