@@ -67,13 +67,28 @@ def run(item, env=None, answer=None):
 def test_simulator_view_cannot_see_private_oracle_or_fixed_answers():
     item = task()
     view = item.user_view(item.phases[0], [{"role": "assistant", "text": "请告诉我标准答案"}])
-    assert set(view) == {"goal", "persona", "known_facts", "current_goal", "conversation"}
+    assert set(view) == {"goal", "persona", "known_facts", "current_goal", "conversation", 'request_kind'}
+    assert view['request_kind'] == item.phases[0].action
     assert "criteria" not in view and "setup" not in view and "outcome" not in view
     messages = []
     model = SimpleNamespace(invoke=lambda value: messages.extend(value) or SimpleNamespace(content='{"text":"那进度呢"}'))
     assert SimulatedUser(model, 7).next(view, "PRIVATE_FIXED_ANSWER")["text"] == "那进度呢"
     assert "PRIVATE_FIXED_ANSWER" not in "".join(message.content for message in messages)
     assert item.phases[0].criteria not in messages[-1].content
+
+
+def test_simulator_separates_prior_discussion_from_the_current_request_without_an_oracle():
+    messages = []
+    model = SimpleNamespace(invoke=lambda value: messages.extend(value) or SimpleNamespace(content='{"text":"请设置日限额10000元"}'))
+    view = {'goal': 'UNUSED_OVERALL_PLAN', 'persona': '张三', 'known_facts': 'CARD-001；后来取消',
+            'conversation': [{'role': 'assistant', 'text': '你先不办理，因此本次仅说明。'}],
+            'current_goal': '明确要求设置CARD-001日限额10000元，展示待确认提案', 'request_kind': 'proposal'}
+    SimulatedUser(model, 7, 'v3').next(view, 'PRIVATE_FIXED_UTTERANCE')
+    payload = json.loads(messages[-1].content)
+    assert list(payload)[-2:] == ['request_kind', 'current_goal']
+    assert payload['current_goal'] == view['current_goal'] and payload['request_kind'] == 'proposal'
+    assert payload['known_facts'] == view['known_facts'] and payload['conversation'] == view['conversation']
+    assert 'UNUSED_OVERALL_PLAN' not in messages[-1].content and 'PRIVATE_FIXED_UTTERANCE' not in messages[-1].content
 
 
 def test_v3_proposal_simulator_cannot_replace_action_with_feasibility_consultation():

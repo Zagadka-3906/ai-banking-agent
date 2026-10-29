@@ -49,7 +49,7 @@ class Task(StrictModel):
     def user_view(self, phase: Phase, history: list[dict]) -> dict:
         # No setup, expected state, intent, criteria, tool trace or oracle verdict.
         return {"goal": phase.goal, "persona": self.persona, "known_facts": self.user_facts,
-                "current_goal": phase.goal, "conversation": history}
+                "current_goal": phase.goal, "conversation": history, 'request_kind': phase.action}
 
 
 class Dataset(StrictModel):
