@@ -187,12 +187,12 @@ def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool
     if bare and (pending_discussion or bare == source.strip('，,。；;!?！？ ')
                  or re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', source)):
         return True
+    if execution_constraint(source) == 'NEGATED_ACTION':
+        return True
     # A completed cancellation in one clause must not erase a later explicit
     # current command. Without that command, retain the historical safeguard.
     if re.search(r'取消了|撤销了', source):
         return False
-    if execution_constraint(source) == 'NEGATED_ACTION':
-        return True
     if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source):
         return False
     return bool(_WITHDRAW_COMMAND.match(source))

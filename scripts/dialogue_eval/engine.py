@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 import hashlib
 from math import comb, ceil
 import re
@@ -14,6 +15,7 @@ from pydantic import Field
 from scripts.dialogue_eval.schema import StrictModel, Task
 
 SIMULATOR_GOAL_CHECK_VERSION = 3
+JUDGE_CONTEXT_VERSION = 2
 
 
 class UserGoalVerdict(StrictModel):
@@ -97,11 +99,21 @@ def evaluate_judgement(raw: dict, task: Task) -> dict:
     return {**verdict.model_dump(), "passed": verdict.simulator_faithful and all(check.passed for check in verdict.checks)}
 
 
-def judge_evidence(environment, task: Task, turns: list[dict]) -> dict:
+def valid_judge_context(value, phase: int) -> bool:
+    return (isinstance(value, dict) and set(value) == {'version', 'phase', 'source', 'evidence'}
+            and type(value['version']) is int and value['version'] == JUDGE_CONTEXT_VERSION
+            and type(value['phase']) is int and value['phase'] == phase
+            and value['source'] == 'post_step_environment' and isinstance(value['evidence'], dict) and bool(value['evidence']))
+
+
+def judge_evidence(turns: list[dict]) -> dict:
     """Expose observed phase facts, never an inferred communication verdict."""
-    return {**environment.evidence(task), 'phase_observations': [
+    if any(not valid_judge_context(turn.get('judge_context'), turn['phase']) for turn in turns):
+        raise ValueError('Missing phase-time judgement evidence')
+    return {'phase_observations': [
         {'id': f"phase_{turn['phase']}", 'intent': turn['intent'],
-         'approval_present': turn['approval'] is not None, 'hard_checks': dict(turn['checks'])}
+         'approval_present': turn['approval'] is not None, 'hard_checks': dict(turn['checks']),
+         'trusted_evidence': turn['judge_context']['evidence']}
         for turn in turns]}
 
 
@@ -156,8 +168,13 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
             observed['checks'] = {**observed['checks'], **milestone_checks(phase, observed)}
             if phase.action == 'inquiry' and observed.get('coverage'):
                 observed['checks']['goal_evidence_complete'] = goal_evidence_complete(observed['coverage'], observed.get('read_failures', []))
+            snapshot = deepcopy(environment.evidence(task))
+            if not isinstance(snapshot, dict) or not snapshot:
+                raise ValueError('Missing phase-time environment snapshot')
             result["turns"].append({"phase": index, "user": text, 'goal_shift': phase.goal_shift,
-                                    **({'user_goal_check': goal_check} if goal_check else {}), **observed})
+                                    **({'user_goal_check': goal_check} if goal_check else {}), **observed,
+                                    'judge_context': {'version': JUDGE_CONTEXT_VERSION, 'phase': index,
+                                                      'source': 'post_step_environment', 'evidence': snapshot}})
             history.extend([{"role": "user", "text": text}, {"role": "assistant", "text": observed["reply"],
                             "approval": observed["approval"]}])
             result["checks"].extend({"id": f"phase_{index}.{key}", "passed": value} for key, value in observed["checks"].items())
@@ -167,7 +184,7 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
                 # Score simulator fidelity even for an aborted trajectory. A user
                 # that changed the goal is not evidence of agent unreliability.
                 partial = task.model_copy(update={"phases": task.phases[:index]})
-                verdict = evaluate_judgement(judge.assess(partial, history, judge_evidence(environment, task, result['turns'])), partial)
+                verdict = evaluate_judgement(judge.assess(partial, history, judge_evidence(result['turns'])), partial)
                 result["communication"] = verdict
                 if not verdict["simulator_faithful"]:
                     result["status"] = "ERROR"
@@ -180,7 +197,7 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
         if not all(final.values()):
             result["status"] = "FAIL"
             return result
-        verdict = evaluate_judgement(judge.assess(task, history, judge_evidence(environment, task, result['turns'])), task)
+        verdict = evaluate_judgement(judge.assess(task, history, judge_evidence(result['turns'])), task)
         result["communication"] = verdict
         if not verdict["simulator_faithful"]:
             result["error_type"] = "SimulatorDrift"

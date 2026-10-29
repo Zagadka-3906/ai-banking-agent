@@ -8,7 +8,8 @@ from collections import Counter
 from math import ceil
 from pathlib import Path
 
-from scripts.dialogue_eval.engine import SIMULATOR_GOAL_CHECK_VERSION, summarize, goal_evidence_complete, valid_user_goal_record
+from scripts.dialogue_eval.engine import (JUDGE_CONTEXT_VERSION, SIMULATOR_GOAL_CHECK_VERSION, summarize,
+                                        goal_evidence_complete, valid_user_goal_record, valid_judge_context)
 from scripts.dialogue_eval.schema import load_dataset
 from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION, valid_transport_diagnostics
 
@@ -43,6 +44,8 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             report = json.loads(raw)
             if report.get('evaluation_transport_version') != EVALUATION_TRANSPORT_VERSION:
                 raise ValueError('INVALID_EVALUATION_TRANSPORT_VERSION')
+            if type(report.get('judge_context_version')) is not int or report['judge_context_version'] != JUDGE_CONTEXT_VERSION:
+                raise ValueError('INVALID_JUDGE_CONTEXT_VERSION')
             if report.get('simulator_goal_check_version') != SIMULATOR_GOAL_CHECK_VERSION or report.get('user') != 'model':
                 raise ValueError('INVALID_SIMULATOR_GOAL_CHECK_VERSION_OR_USER')
             if (report['status'] != 'COMPLETED' or report['dataset_sha256'] != digest
@@ -96,6 +99,8 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
                     turns = row.get('turns') or []
                     if [turn['phase'] for turn in turns] != list(range(1, len(task.phases) + 1)):
                         raise ValueError('MISSING_OR_DUPLICATE_TRIAL_TURNS')
+                    if any(not valid_judge_context(turn.get('judge_context'), turn['phase']) for turn in turns):
+                        raise ValueError('MISSING_OR_INVALID_PHASE_SNAPSHOTS')
                     goal_checks = row.get('simulator_goal_checks')
                     expected_checks = []
                     for turn in turns:

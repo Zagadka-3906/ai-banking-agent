@@ -23,7 +23,9 @@ def evidence(tmp_path):
                   'no_pending_approval', 'final_state', 'durable_store_healthy']
         proof = user_goal_record({'faithful': True, 'expected_act': 'INQUIRE', 'actual_act': 'INQUIRE', 'reason': 'unit evidence'}, '余额', '查余额')
         rows = [{'task_id': task['id'], 'trial': trial, 'status': 'PASS',
-                 'turns': [{'phase': 1, 'user': '查余额', 'user_goal_check': deepcopy(proof)}],
+                 'turns': [{'phase': 1, 'user': '查余额', 'user_goal_check': deepcopy(proof),
+                            'judge_context': {'version': 2, 'phase': 1, 'source': 'post_step_environment',
+                                              'evidence': {'unit_only': True}}}],
                  'simulator_goal_checks': [{'phase': 1, 'user': '查余额', 'check': deepcopy(proof)}],
                  'evaluation_transport': {'user': [], 'judge': []},
                  'checks': [{'id': name, 'passed': True} for name in checks],
@@ -32,6 +34,7 @@ def evidence(tmp_path):
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
             'evaluation_transport_version': 3,
+            'judge_context_version': 2,
             'simulator_goal_check_version': 3, 'user': 'model',
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
             'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline',
@@ -62,6 +65,22 @@ def test_all_required_evidence_can_pass_and_missing_operations_still_blocks(evid
     result = assess_release(groups, {'source.py': 'frozen'})
     assert result['offline_ready'] and not result['accepted']
     assert 'HUMAN_REVIEW_REQUIRED' in result['blockers']
+
+
+@pytest.mark.parametrize('change', [
+    lambda report: report.pop('judge_context_version'),
+    lambda report: report.update(judge_context_version=1),
+    lambda report: report['trials'][0]['turns'][0].pop('judge_context'),
+    lambda report: report['trials'][0]['turns'][0]['judge_context'].update(phase=2),
+    lambda report: report['trials'][0]['turns'][0]['judge_context'].update(source='final_state'),
+    lambda report: report['trials'][0]['turns'][0]['judge_context'].update(evidence={}),
+    lambda report: report['trials'][0]['turns'][0]['judge_context'].update(version=2.0),
+])
+def test_release_requires_each_phase_own_snapshot_not_a_final_state_stamp(evidence, change):
+    groups, op = evidence
+    mutate(groups[0], change)
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any('JUDGE_CONTEXT' in item or 'PHASE_SNAPSHOTS' in item for item in result['blockers'])
 
 
 @pytest.mark.parametrize('change', [

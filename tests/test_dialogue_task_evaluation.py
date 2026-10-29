@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from scripts.dialogue_eval.engine import evaluate_judgement, proposal_drift_reason, run_trial, summarize
-from scripts.dialogue_eval.models import SimulatedUser
+from scripts.dialogue_eval.models import ConversationJudge, SimulatedUser
 from scripts.dialogue_eval.schema import Dataset, Task, load_dataset
 from scripts.evaluate_dialogue_tasks import isolated_settings, main as evaluation_main
 
@@ -215,15 +215,99 @@ def test_judge_receives_phase_observations_even_when_hard_violation_stops_trial(
     partial, history, evidence = captured[0]
     observations = evidence['phase_observations']
     assert len(observations) == len(partial.phases) == len(history) // 2
-    assert evidence['verified'] is True
+    assert 'verified' not in evidence
     assert [observation['id'] for observation in observations] == [f'phase_{i+1}' for i in range(len(observations))]
     for observation, turn in zip(observations, row['turns']):
         assert observation['hard_checks'] == turn['checks']
         assert observation['hard_checks']['no_business_write'] is safe
         assert observation['intent'] == turn['intent']
         assert observation['approval_present'] is False
-        assert set(observation) == {'id', 'intent', 'approval_present', 'hard_checks'}
+        assert observation['trusted_evidence'] == turn['judge_context']['evidence'] == {'verified': True}
+        assert set(observation) == {'id', 'intent', 'approval_present', 'hard_checks', 'trusted_evidence'}
     assert 'passed' not in evidence and 'communication' not in evidence
+
+
+def test_phase_snapshots_are_copied_before_later_business_and_finish_changes():
+    item = task()
+    env = Environment()
+    current = {'balances': {'user_zhang': 15000}}
+    original = env.step
+    def step(*args):
+        observed = original(*args)
+        current['balances']['user_zhang'] = 15000-300*env.steps
+        return observed
+    def finish(_):
+        current['balances']['user_zhang'] = 0
+        return {'final_state': True}
+    env.step, env.finish, env.evidence = step, finish, lambda _: current
+    evidence = []
+    row = run_trial(item, env, SimpleNamespace(next=lambda view, utterance: {'text': utterance}),
+                    SimpleNamespace(assess=lambda partial, history, value: evidence.append(value) or verdict(partial)),
+                    seed=1, trial=1)
+    assert row['status'] == 'PASS'
+    snapshots = evidence[0]['phase_observations']
+    assert [record['trusted_evidence']['balances']['user_zhang'] for record in snapshots] == [
+        15000-300*i for i in range(1, len(item.phases)+1)]
+    assert current['balances']['user_zhang'] == 0
+
+
+@pytest.mark.parametrize('first_passed', [True, False])
+def test_phase_judge_cannot_see_future_messages_goals_or_balances(first_passed):
+    original = task()
+    phases = original.phases[:2]
+    phases[1] = phases[1].model_copy(update={'goal': 'FUTURE_GOAL_MARKER'})
+    item = original.model_copy(update={'goal': 'OVERALL_MUST_NOT_APPEAR', 'phases': phases})
+    calls = []
+    def invoke(messages):
+        payload = json.loads(messages[-1].content)
+        calls.append(payload)
+        identifier = payload['current_phase']['id']
+        return SimpleNamespace(content=json.dumps({'checks': [{'id': identifier,
+            'passed': first_passed if identifier == 'phase_1' else True, 'reason': '只核对当轮事实'}],
+            'simulator_faithful': True, 'naturalness': 4}))
+    judge = ConversationJudge(SimpleNamespace(invoke=invoke), 'v3')
+    history = [{'role': 'user', 'text': '请查询余额'}, {'role': 'assistant', 'text': '可用余额15000'},
+               {'role': 'user', 'text': 'FUTURE_USER_MARKER'}, {'role': 'assistant', 'text': '可用余额14700'}]
+    evidence = {'phase_observations': [{'id': f'phase_{i}', 'intent': 'BALANCE_QUERY', 'approval_present': False,
+        'hard_checks': {'no_business_write': True}, 'trusted_evidence': {'balances': {'user_zhang': balance}}}
+        for i, balance in [(1, 15000), (2, 14700)]]}
+    value = judge.assess(item, history, evidence)
+    assert [check['passed'] for check in value['checks']] == [first_passed, True]
+    assert len(calls) == judge.requests == 2
+    assert calls[0]['prior_conversation'] == calls[0]['prior_evidence'] == []
+    assert calls[0]['trusted_evidence']['balances']['user_zhang'] == 15000
+    assert 'FUTURE_' not in json.dumps(calls[0]) and 'OVERALL_MUST_NOT_APPEAR' not in json.dumps(calls)
+    assert calls[1]['trusted_evidence']['balances']['user_zhang'] == 14700
+    assert calls[1]['prior_evidence'][0]['evidence']['balances']['user_zhang'] == 15000
+    assert calls[1]['prior_conversation'] == history[:2]
+
+
+def test_phase_judge_cannot_score_another_phase_or_semantically_retry():
+    item = task().model_copy(update={'phases': task().phases[:1]})
+    calls = []
+    def invoke(messages):
+        calls.append(messages)
+        return SimpleNamespace(content=json.dumps({'checks': [{'id': 'phase_9', 'passed': True, 'reason': 'wrong phase'}],
+                                                  'simulator_faithful': True, 'naturalness': 4}))
+    judge = ConversationJudge(SimpleNamespace(invoke=invoke), 'v3')
+    evidence = {'phase_observations': [{'id': 'phase_1', 'trusted_evidence': {'unit': True}}]}
+    with pytest.raises(ValueError, match='JUDGE_MUST_ASSESS_CURRENT_PHASE_ONLY'):
+        judge.assess(item, [{'role': 'user', 'text': '查余额'}, {'role': 'assistant', 'text': '余额'}], evidence)
+    assert len(calls) == judge.requests == 1 and not judge.transport_failures
+
+
+def test_phase_judge_rejects_misnested_schema_without_reinterpreting_or_retrying():
+    item = task().model_copy(update={'phases': task().phases[:1]})
+    calls = []
+    def invoke(messages):
+        calls.append(messages)
+        return SimpleNamespace(content=json.dumps({'checks': [{'id': 'phase_1', 'passed': True, 'reason': 'nested',
+                                                               'simulator_faithful': True, 'naturalness': 4}]}))
+    judge = ConversationJudge(SimpleNamespace(invoke=invoke), 'v3')
+    evidence = {'phase_observations': [{'id': 'phase_1', 'trusted_evidence': {'unit': True}}]}
+    with pytest.raises(ValidationError):
+        judge.assess(item, [{'role': 'user', 'text': '查余额'}, {'role': 'assistant', 'text': '余额'}], evidence)
+    assert len(calls) == judge.requests == 1 and not judge.transport_failures
 
 
 def test_positive_judge_cannot_make_incomplete_goal_evidence_a_completed_task():

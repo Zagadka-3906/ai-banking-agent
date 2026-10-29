@@ -103,6 +103,34 @@ def test_task_evidence_filters_owner_and_never_includes_raw_payload(gateway):  #
     assert [doc['values']['amount'] for doc in records if 'amount' in doc.get('values',{})] == ['40']
 
 
+def test_projected_fields_are_not_reported_as_missing_to_generator_or_reviewer(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    calls = model(monkeypatch, [goal('transactions', ['records', 'category'], '消费类别有哪些'),
+                                goal('balance', ['available_balance'], '现在可用余额')])
+    before = financial_state()
+    reply = _send(client, '消费类别有哪些？现在可用余额是多少？', conversation_id='projected-not-missing')
+    assert reply['approval'] is None and reply['business_status'] == 'SUCCEEDED'
+    drafts = [payload for system, payload in calls if '银行业务解答助手' in system]
+    reviews = [payload for system, payload in calls if '独立银行回答核验器' in system]
+    assert drafts and reviews
+    for payload in drafts + reviews:
+        contract = payload['projection_contract']
+        assert contract['records_are_projected'] is True
+        assert all(row['missing_requested_fields'] == [] for row in contract['goals'])
+        assert all('amount' not in row['requested_fields'] for row in contract['goals'])
+    assert drafts[-1]['projection_contract'] == reviews[-1]['projection_contract']
+    assert financial_state() == before
+
+
+def test_projection_contract_reports_a_truly_requested_missing_field():
+    from bank_agent.goal_answering import _projection_contract
+    goals = normalize_goals([goal('transactions', ['amount'], '流水金额是多少')], '查流水金额', {})
+    facts = [{'id': 'read.transactions.0', 'fields': ['records'], 'text': '已有流水记录但读取未返回所问金额'}]
+    contract = _projection_contract(goals, facts)
+    assert contract['goals'][0]['requested_fields'] == ['amount']
+    assert contract['goals'][0]['missing_requested_fields'] == ['amount']
+
+
 def test_two_goals_read_different_sources_and_answer_both_without_regex_reclassification(gateway,monkeypatch):  # noqa: F811
     client,_=gateway
     model(monkeypatch,[goal('balance',['available_balance'],'现在能动用多少'),goal('cards',['status'],'银行卡现在什么状态')])
