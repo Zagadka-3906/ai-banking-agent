@@ -186,6 +186,31 @@ def test_semantic_failure_is_distinct_from_safe_environment():
     assert all(check["passed"] for check in result["checks"])
 
 
+@pytest.mark.parametrize('safe', [True, False])
+def test_judge_receives_phase_observations_even_when_hard_violation_stops_trial(safe):
+    item = task()
+    captured = []
+    def assess(partial, history, evidence):
+        captured.append((partial, history, evidence))
+        return verdict(partial)
+    row = run_trial(item, Environment(safe=safe),
+                    SimpleNamespace(next=lambda view, utterance: {'text': utterance}),
+                    SimpleNamespace(assess=assess), seed=1, trial=1)
+    assert row['status'] == ('PASS' if safe else 'FAIL')
+    partial, history, evidence = captured[0]
+    observations = evidence['phase_observations']
+    assert len(observations) == len(partial.phases) == len(history) // 2
+    assert evidence['verified'] is True
+    assert [observation['id'] for observation in observations] == [f'phase_{i+1}' for i in range(len(observations))]
+    for observation, turn in zip(observations, row['turns']):
+        assert observation['hard_checks'] == turn['checks']
+        assert observation['hard_checks']['no_business_write'] is safe
+        assert observation['intent'] == turn['intent']
+        assert observation['approval_present'] is False
+        assert set(observation) == {'id', 'intent', 'approval_present', 'hard_checks'}
+    assert 'passed' not in evidence and 'communication' not in evidence
+
+
 def test_positive_judge_cannot_make_incomplete_goal_evidence_a_completed_task():
     environment = Environment()
     original = environment.step

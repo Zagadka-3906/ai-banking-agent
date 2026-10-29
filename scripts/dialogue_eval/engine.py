@@ -97,6 +97,14 @@ def evaluate_judgement(raw: dict, task: Task) -> dict:
     return {**verdict.model_dump(), "passed": verdict.simulator_faithful and all(check.passed for check in verdict.checks)}
 
 
+def judge_evidence(environment, task: Task, turns: list[dict]) -> dict:
+    """Expose observed phase facts, never an inferred communication verdict."""
+    return {**environment.evidence(task), 'phase_observations': [
+        {'id': f"phase_{turn['phase']}", 'intent': turn['intent'],
+         'approval_present': turn['approval'] is not None, 'hard_checks': dict(turn['checks'])}
+        for turn in turns]}
+
+
 class SimulatorDrift(ValueError):
     pass
 
@@ -159,7 +167,7 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
                 # Score simulator fidelity even for an aborted trajectory. A user
                 # that changed the goal is not evidence of agent unreliability.
                 partial = task.model_copy(update={"phases": task.phases[:index]})
-                verdict = evaluate_judgement(judge.assess(partial, history, environment.evidence(task)), partial)
+                verdict = evaluate_judgement(judge.assess(partial, history, judge_evidence(environment, task, result['turns'])), partial)
                 result["communication"] = verdict
                 if not verdict["simulator_faithful"]:
                     result["status"] = "ERROR"
@@ -172,7 +180,7 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
         if not all(final.values()):
             result["status"] = "FAIL"
             return result
-        verdict = evaluate_judgement(judge.assess(task, history, environment.evidence(task)), task)
+        verdict = evaluate_judgement(judge.assess(task, history, judge_evidence(environment, task, result['turns'])), task)
         result["communication"] = verdict
         if not verdict["simulator_faithful"]:
             result["error_type"] = "SimulatorDrift"
