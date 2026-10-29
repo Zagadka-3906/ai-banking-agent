@@ -124,6 +124,13 @@ def action_request_clause(text: str) -> str | None:
     return None
 
 
+_WITHDRAW_COMMAND = re.compile(
+    r'^(?:(?:那(?:么)?|就|好的|对|所以|因此|我(?:想|要|决定)?|请|麻烦|帮我|替我|先|现在)\s*)*(?:取消|撤销|放弃|停止)')
+_WITHDRAW_QUESTION = re.compile(
+    r'如何|怎么|怎样|为什么|为何|什么|多久|何时|能否|能不能|是否|会不会|可以|可不可以'
+    r'|(?:吗|(?<![那这什怎])么)(?=\s*(?:[，,。；;!?！？]|$))')
+
+
 def pending_withdrawal_clause(text: str) -> str | None:
     """Literal withdrawal of an unfinished intention, never an undo authority.
 
@@ -135,9 +142,9 @@ def pending_withdrawal_clause(text: str) -> str | None:
         return None
     for clause in re.split(r'[，,。；;!?！？]', source):
         clause = clause.strip()
-        if re.search(r'如何|怎么|怎样|为什么|能否|能不能|是否|会不会|可以|可不可以|吗|么|已经|曾经|取消了|撤销了', clause):
+        if _WITHDRAW_QUESTION.search(clause) or re.search(r'已经|曾经|取消了|撤销了', clause):
             continue
-        if (re.match(r'^(?:(?:我(?:想|要|决定)?|请|麻烦|帮我|替我|先|现在)\s*)*(?:取消|撤销|放弃|停止)', clause)
+        if (_WITHDRAW_COMMAND.match(clause)
                 and re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
                 and re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause)):
             return clause
@@ -147,12 +154,12 @@ def pending_withdrawal_clause(text: str) -> str | None:
 def withdrawal_statement(text: str) -> bool:
     """A restrictive execution constraint alone is not a cancellation command."""
     source = business_text(text)
-    if re.search(r'如何|怎么|怎样|为什么|能否|能不能|是否|会不会|可以|可不可以|吗|么|假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|取消了|撤销了|[“”"‘’？?]', source):
+    if (_WITHDRAW_QUESTION.search(source)
+            or re.search(r'假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|取消了|撤销了|[“”"‘’？?]', source)):
         return False
     if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source) and not pending_withdrawal_clause(source):
         return False
-    return execution_constraint(source) == 'NEGATED_ACTION' or bool(re.match(
-        r'^(?:(?:我(?:想|要|决定)?|请|麻烦|帮我|替我|先|现在)\s*)*(?:取消|撤销|放弃|停止)', source))
+    return execution_constraint(source) == 'NEGATED_ACTION' or bool(_WITHDRAW_COMMAND.match(source))
 
 
 def finite_limit_change(text: str) -> bool:
