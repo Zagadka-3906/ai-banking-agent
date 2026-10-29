@@ -10,7 +10,7 @@ from bank_agent.dialogue_commands import apply_command, withdraw_known_task
 from bank_agent.dialogue_state import dialogue_view
 from bank_agent.extraction import target_from_text
 from bank_agent.understanding import enforce_inquiry
-from intent_language import action_request_clause, execution_constraint, pending_withdrawal_clause, recipient_references
+from intent_language import action_request_clause, execution_constraint, recipient_references, withdrawal_statement
 from test_agent_gateway import _send, gateway  # noqa: F401
 from test_general_dialogue_loop import goal, model
 from test_inquiry_boundaries import financial_state
@@ -81,6 +81,8 @@ def withdrawal(text, *, command=False):
     '我想申购零星宝，不过还是先取消这笔申购',
     '零星宝我还是想申购，但这次决定先取消了，麻烦帮我取消这次申购。',
     '零星宝我还是想申购，但这次决定先撤销了，请撤销本次申购。',
+    '我还是想申购零星宝，不过现在决定取消了，帮我取消吧。',
+    '那就算了，帮我取消吧。',
     '那我不申购零星宝了，之前想申购的意向也一起取消，先不办这个了。',
     '之前想申购零星宝的意向也一起取消',
     '零星宝的待确认申购请先撤销', '零星宝的申购意向就先放弃吧',
@@ -88,7 +90,7 @@ def withdrawal(text, *, command=False):
 def test_pending_purchase_withdrawal_resolves_its_existing_questionnaire(text):
     state = pending_quiz()
     before = deepcopy(state)
-    assert pending_withdrawal_clause(text, current_discussion=True)
+    assert withdrawal_statement(text, pending_discussion=True)
     parsed = enforce_inquiry(withdrawal(text), text)
     assert parsed['parse_meta']['dialogue_act'] == 'WITHDRAW'
     result = withdraw_known_task(state, parsed, text)
@@ -126,6 +128,11 @@ def test_pending_purchase_withdrawal_resolves_its_existing_questionnaire(text):
     '告诉我零星宝申购意向怎么取消', '解释零星宝申购意向取消',
     '零星宝申购意向不要取消', '零星宝申购意向不用再取消',
     '零星宝申购意向已经取消了',
+    '零星宝申购已成交，帮我取消吧。',
+    '如果零星宝申购失败，帮我取消吧。',
+    '我只是转述“帮我取消吧”',
+    '零星宝和恒泉稳利都想申购，现在帮我取消吧。',
+    '我想申购恒泉稳利，不过决定取消了，帮我取消吧。',
 ])
 @pytest.mark.parametrize('act', ['WITHDRAW', 'QUERY'])
 def test_a_wrong_withdraw_label_or_command_cannot_cancel_an_unrelated_discussion(text, act):
@@ -173,6 +180,9 @@ def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion(tex
     ('TRANSFER', '李四', '我还想给李四转账，但决定先取消了，请取消这笔转账。'),
     ('CARD_LIMIT', 'CARD-001', '我还想调额，但决定先取消了，请取消本次调额。'),
     ('WEALTH_REDEEM', 'LX00118', '我想赎回零星宝，但决定先撤销了，请撤销这次赎回。'),
+    ('TRANSFER', '李四', '我还想给李四转账，不过现在决定取消了，帮我取消吧。'),
+    ('CARD_LIMIT', 'CARD-001', '我还想设置CARD-001日限额，不过现在决定取消了，帮我取消吧。'),
+    ('WEALTH_REDEEM', 'LX00118', '我还想赎回零星宝，不过现在决定撤销了，请撤销吧。'),
 ])
 def test_current_operation_reference_binds_only_its_existing_business_discussion(intent, target, text):
     pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target, 'amount': None}}
@@ -186,6 +196,7 @@ def test_current_operation_reference_binds_only_its_existing_business_discussion
 
 
 @pytest.mark.parametrize('cancellation', [
+    '我还是想申购零星宝，不过现在决定取消了，帮我取消吧。',
     '零星宝我还是想申购，但这次决定先取消了，麻烦帮我取消这次申购。',
     '对，我要取消刚才那笔零星宝的待确认申购，麻烦帮我取消。',
     '既然零星宝申购后不能撤单，那我决定取消这次申购意向，先不申购了。',
@@ -226,4 +237,29 @@ def test_purchase_then_cancellation_question_then_withdrawal_is_read_only(gatewa
     assert cancelled['business_status'] == 'CANCELLED' and cancelled['approval'] is None
     assert '已停止本轮申购意向' in cancelled['reply']
     assert dialogue_view(saved_state(cid))['tasks'] == []
+    assert financial_state() == before
+
+
+@pytest.mark.parametrize('command', [False, True])
+def test_out_of_scope_labels_cannot_cancel_existing_bank_discussions(command):
+    state = pending_quiz()
+    before = deepcopy(state)
+    text = '取消零星宝的待确认申购'
+    parsed = withdrawal(text, command=command)
+    parsed['parse_meta']['scope'] = 'OUT_OF_SCOPE'
+    assert withdraw_known_task(state, parsed, text) is None
+    if command:
+        assert apply_command(state, parsed, text) is None
+    assert state == before
+
+
+def test_literal_stop_without_an_existing_task_acknowledges_only_intention(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps({
+        'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}))))
+    before = financial_state()
+    response = _send(client, '我还是想申购零星宝，不过现在决定取消了，帮我取消吧。', conversation_id='no-task-stop')
+    assert response['approval'] is None and '本轮不继续办理' in response['reply']
+    assert '请明确' not in response['reply'] and '成功' not in response['reply']
+    assert dialogue_view(saved_state('no-task-stop'))['tasks'] == []
     assert financial_state() == before

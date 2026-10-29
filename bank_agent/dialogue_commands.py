@@ -12,10 +12,10 @@ COMMANDS = {'RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL'}
 def _withdrawal_input(text: str) -> dict[str, Any]:
     from bank_agent.extraction import PRODUCT_ALIASES, PRODUCT_IDS, target_from_text
     from bank_agent.parsing import _local_parse_rules
-    from intent_language import ambiguous_target, business_text, pending_withdrawal_clause
+    from intent_language import ambiguous_target, bare_withdrawal_clause, business_text, pending_withdrawal_clause
 
     whole = business_text(text)
-    clause = pending_withdrawal_clause(text, current_discussion=True)
+    clause = pending_withdrawal_clause(text, current_discussion=True) or bare_withdrawal_clause(text)
     source = clause or whole
     raw = _local_parse_rules(source)
     products = {product for alias, product in PRODUCT_ALIASES.items() if alias in whole}
@@ -86,7 +86,7 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
     view = dialogue_view(state)
     tasks = view['tasks']
     command = (parsed.get('parse_meta') or {}).get('task_command')
-    if not command:
+    if not command or (parsed.get('parse_meta') or {}).get('scope') == 'OUT_OF_SCOPE':
         return None
     try:
         command = normalize_command(command, business_text(text), {task['id'] for task in tasks})
@@ -105,10 +105,10 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
     if kind in {'PAUSE', 'CANCEL'}:
         local_intent = local_parse(text).get('intent')
         raw = _withdrawal_input(text)
-        if kind == 'CANCEL' and (raw['_ambiguous'] or not withdrawal_statement(text)):
+        if kind == 'CANCEL' and (raw['_ambiguous'] or not withdrawal_statement(text, pending_discussion=True)):
             return None
         origin = (task.get('quiz') or {}).get('origin_intent') if questionnaire else None
-        withdrawing = (act == 'WITHDRAW' and withdrawal_statement(text)
+        withdrawing = (act == 'WITHDRAW' and withdrawal_statement(text, pending_discussion=True)
                        and raw.get('intent') in {'UNKNOWN', intent, origin})
         saved_target = pending['payload'].get('target') or (task.get('quiz') or {}).get('origin_target')
         if kind == 'CANCEL' and raw.get('target') and saved_target and raw['target'] != saved_target:
@@ -199,13 +199,16 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
 def withdraw_known_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) -> dict[str, Any] | None:
     """An unambiguous abandoned discussion need not have a model-supplied ID."""
     from intent_language import business_text, withdrawal_statement
-    if (parsed.get('parse_meta') or {}).get('dialogue_act') != 'WITHDRAW' or not withdrawal_statement(text):
+    meta = parsed.get('parse_meta') or {}
+    view = dialogue_view(state)
+    if (meta.get('dialogue_act') != 'WITHDRAW' or meta.get('scope') == 'OUT_OF_SCOPE'
+            or not withdrawal_statement(text, pending_discussion=bool(view['tasks']))):
         return None
     raw = _withdrawal_input(text)
     if raw['_ambiguous']:
         return None
     candidates = []
-    for task in dialogue_view(state)['tasks']:
+    for task in view['tasks']:
         pending = task.get('pending') or {}
         origin = (task.get('quiz') or {}).get('origin_intent')
         target = pending.get('payload', {}).get('target') or (task.get('quiz') or {}).get('origin_target')

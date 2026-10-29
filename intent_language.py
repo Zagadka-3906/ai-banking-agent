@@ -133,6 +133,18 @@ _WITHDRAW_NEGATED = re.compile(
     r'(?:不(?:用|必|想|打算|再|需要)?|别|不要|无需)(?:再|先|现在|立即|继续|帮我|替我)*(?:取消|撤销|放弃|停止)')
 
 
+def bare_withdrawal_clause(text: str) -> str | None:
+    """A closing imperative may omit the object; binding belongs to the caller."""
+    clauses = [part.strip() for part in re.split(r'[，,。；;!?！？]', business_text(text)) if part.strip()]
+    if not clauses:
+        return None
+    clause = clauses[-1]
+    command = _WITHDRAW_COMMAND.match(clause)
+    if command and re.fullmatch(r'(?:掉|一下)?(?:吧|即可|就好)?', clause[command.end():]):
+        return clause
+    return None
+
+
 def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) -> str | None:
     """Literal withdrawal of an unfinished intention, never an undo authority.
 
@@ -160,7 +172,7 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
     return None
 
 
-def withdrawal_statement(text: str) -> bool:
+def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool:
     """A restrictive execution constraint alone is not a cancellation command."""
     source = business_text(text)
     if (_WITHDRAW_QUESTION.search(source)
@@ -170,6 +182,10 @@ def withdrawal_statement(text: str) -> bool:
         return False
     clause = pending_withdrawal_clause(source, current_discussion=True)
     if clause:
+        return True
+    bare = bare_withdrawal_clause(source)
+    if bare and (pending_discussion or bare == source.strip('，,。；;!?！？ ')
+                 or re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', source)):
         return True
     # A completed cancellation in one clause must not erase a later explicit
     # current command. Without that command, retain the historical safeguard.
