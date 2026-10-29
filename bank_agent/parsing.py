@@ -506,6 +506,7 @@ def model_parse(text: str) -> dict[str, Any]:
         '一条消息中的状态、金额、原因等独立问题分别列出，不用历史问题替代本轮。'
         '资源和可读字段：' + json.dumps(RESOURCES, ensure_ascii=False)
         + '。订阅实际记录必须先确认；本轮含订阅记录查询时顶层intent使用SUBSCRIPTION_QUERY，确认后再回答全部查询和解释。'
+        '询问待办、预约或任务到期是否会自动扣款/付款属于tasks规则解释（act="EXPLAIN",resource="general",topic="tasks"），不是subscriptions。'
         '多项安全查询/解释可用BANKING_HELP，统一按goals取证；操作goals不产生授权。'
         '金额、日期如需帮助定位，可另给parameter_evidence={"amount":{"text":"原文片段","value":数值},'
         '"scheduled_at":{"text":"原文日期时间片段","value":"规范日期时间"}}；服务端独立解析核对，不能覆盖已有值或多值歧义。'

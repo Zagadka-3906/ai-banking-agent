@@ -42,8 +42,14 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
     observed = [name for row in context.get('recent_observations', [])
                 for key in ('entity_names', 'transaction_ids', 'case_ids', 'suspicious_transaction_ids') for name in row.get(key, [])
                 if isinstance(name, str)]
+    task_due_payment = (bool(re.search(r'待办|任务|预约', text))
+                        and bool(re.search(r'(?:到期|到时间|到点|届时|自动).{0,10}(?:自动)?(?:扣款|付款|扣钱|划扣|支付|把钱扣掉)', text))
+                        and not bool(re.search(r'订阅|代扣|续费|自动扣费|周期扣款|乱扣费|莫名扣|偷偷扣|会员|apple|苹果|视频', text, re.I)))
     goals = []
     for index, item in enumerate(value):
+        if isinstance(item, dict) and task_due_payment and (item.get('resource') == 'subscriptions' or item.get('topic') == 'subscription'):
+            item = {'act': 'EXPLAIN', 'resource': 'general', 'question': item.get('question'),
+                    'fields': [], 'subject': None, 'subjects': [], 'topic': 'tasks', 'requires_record': False}
         if (not isinstance(item, dict) or set(item) - {'act', 'resource', 'question', 'fields', 'subject', 'subjects', 'topic', 'requires_record', 'calculation'}
                 or item.get('act') not in ACTS or item.get('resource') not in RESOURCES):
             raise ValueError('INVALID_REQUEST_GOAL')

@@ -677,3 +677,16 @@ def test_a_broad_card_topic_cannot_erase_the_specific_limit_input_type():
            'parse_meta':{'goals':goals},'execution_result':{'type':'BANKING_HELP','data':{'documents':[{'id':'guide.limits.finite'}]}}}
     discussion=remember_discussion(state,{})
     assert discussion['active_topic']=='limits' and discussion['next_input']['intent']=='CARD_LIMIT'
+
+
+def test_task_due_payment_inquiry_does_not_open_subscription_query_confirmation(gateway,monkeypatch):  # noqa: F811
+    client,_=gateway
+    model(monkeypatch,[goal('tasks',['records'],'我目前有哪些待办事项'),
+                       goal('subscriptions',['records'],'有没有到期会自动扣款的项目')],intent='SUBSCRIPTION_QUERY')
+    before=financial_state()
+    reply=_send(client,'你好，我想查一下我目前有哪些待办事项，另外有没有到期会自动扣款的项目？',conversation_id='task-due-not-subscription')
+    assert reply['approval'] is None and reply['business_status']=='SUCCEEDED'
+    assert reply['intent']=='BANKING_HELP'
+    coverage=reply['result']['answer_presentation']['coverage']
+    assert len(coverage)==2 and all(row['status']=='ANSWERED' for row in coverage)
+    assert financial_state()==before

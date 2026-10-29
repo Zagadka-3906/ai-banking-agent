@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-28.5",
-  "rules_version": "6b6b42d0c7994fa05788e27734dbb267e4b3a95f00707708aa59f9a3371c59be",
+  "rules_version": "37907a30fadd853f015e92296926b65b20275252094a3a09dee85262de70909f",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "ada475d5387ddf1e14780d01b05baf799855d7c63c6f1d39449f836ff6624a98",
@@ -21,7 +21,7 @@
     "bank_agent/nodes/executor.py": "d67e70f01a81e3a18c373f92d74204ea96483e97653bb63ba32aeb3b1bcbc5d4",
     "bank_agent/nodes/intent.py": "0ca77945b293afd836828bfa7bec4223e4e25d30e3794c2bea1e7c7c77aee019",
     "bank_agent/nodes/responder.py": "9bd3e973f31289b4242ad5469f520561c732a9b5eef0513962446d759eb6d0ef",
-    "bank_agent/parsing.py": "36b7dc0a78a514f56c5dddda8063e1c68a4990195c23e8c63ce91cadb5ed5773",
+    "bank_agent/parsing.py": "1b6a115459db298c4142217a3f7d3aee46ead5db44023ab9ef7260729987efcb",
     "bank_agent/pending_questions.py": "8fcacd7a0468794092f7f9afdf2f331699865d3f1aab82cbb119491c52d8f36f",
     "bank_agent/prompt_preferences.py": "abe306c5a36b06818aebd51fa75873226415dd54996877a44cccccc915f156ce",
     "bank_agent/query_focus.py": "fc5aa2abd3ca35736343002dd5dfd66d64a4907f578a5067f64257a0fadffc13",
@@ -41,7 +41,7 @@
     "bank_core/task_scheduler.py": "9b25be1958280c5d94bc682e126158d23c6f4ba9262f570be3f400981d89230b",
     "bank_core/undo.py": "1ee25b1f649779ec73343e201273f1efbd9d134a20e16ec072cc0cfc3bd30fbf",
     "bank_planning/intents.py": "332b187e7b39649bd6fc6172915fb6c09aac933aca66c34bc38fc2b855432dbb",
-    "bank_planning/requests.py": "4073a11249401275e85a45b5b8e2167635c06b1295d87e6feb1bcd735246c481",
+    "bank_planning/requests.py": "9b022cd121db6162be4e58ae4c6a4870861868e79b84a8aca502d8f71197d4d2",
     "bank_security/authorization.py": "652fe51c1fd7d96fbc580661f4352a2ceaafc00fb2cd85cb1aa5c47387ac48c7",
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "652d85f093a005ac78393b8c48b7617aa133fd0fd78f76ee934dfe6712d7bc67",
