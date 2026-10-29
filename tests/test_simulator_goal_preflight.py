@@ -124,3 +124,18 @@ def test_preflight_is_json_metered_once_and_has_no_score_retry(tmp_path):
     assert result['faithful'] is False and len(requests) == ledger.snapshot()['calls'] == 1
     assert ledger.snapshot()['roles']['judge']['input_tokens'] == 20
     assert judge.requests == 1 and judge.transport_failures == []
+
+
+def test_phase_goal_is_preserved_after_background_future_plans_without_assistant_or_scoring_leakage():
+    messages = []
+    judge = ConversationJudge(SimpleNamespace(invoke=lambda value: messages.extend(value)
+        or SimpleNamespace(content=json.dumps(check(expected='ACTION', actual='ACTION')))), 'v3')
+    item = load_dataset(Path('tests/data/dialogue_repair_regression_v3.json'))[0].tasks[1]
+    phase = item.phases[2]
+    judge.verify_user_goal(item.user_view(phase, []), '我决定把 CARD-001 的日限额设置为 10000 元，请展示待确认的提案。')
+    payload = json.loads(messages[-1].content)
+    assert '后来决定取消' in payload['known_facts']
+    assert payload['current_goal'] == phase.goal and '明确要求设置' in phase.goal
+    assert list(payload) == ['known_facts', 'previous_user_messages', 'current_goal', 'user_text']
+    assert '仅依据 current_goal 确定 expected_act' in messages[0].content
+    assert phase.criteria not in messages[-1].content
