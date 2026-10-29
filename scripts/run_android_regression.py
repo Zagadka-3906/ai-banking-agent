@@ -63,6 +63,31 @@ def verify_protobuf(folder: Path, expected: int):
                     str(expected), *[str(file) for file in files]], check=True, capture_output=True)
 
 
+def run_device_gradle(command, *, env, source: Path, output: Path):
+    """Retain failed observations and prevent stale results passing a new run."""
+    expected = (ROOT / 'android/app/build/outputs/androidTest-results/connected').resolve()
+    if not expected.is_relative_to(ROOT.resolve()) or source.resolve().parent != expected or source.name not in {'scenario', 'debug'}:
+        raise ValueError('Unexpected device result directory')
+    if not output.resolve().is_relative_to(ROOT.resolve() / 'build'):
+        raise ValueError('Artifacts must stay under repository build/')
+    if any((output / name).exists() for name in ('prior-device-results', 'device-results', 'gradle.log')):
+        raise ValueError('Use a new device output directory; retain previous evidence')
+    if source.exists():
+        shutil.move(str(source), str(output / 'prior-device-results'))
+    try:
+        with (output / 'gradle.log').open('w', encoding='utf-8') as stream:
+            try:
+                result = subprocess.run(command, cwd=ROOT / 'android', env=env, stdout=stream,
+                                        stderr=subprocess.STDOUT, timeout=1800)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError('Device regression timed out; private command arguments are not printed') from None
+            if result.returncode:
+                raise RuntimeError('Device regression failed; inspect the private Gradle log')
+    finally:
+        if source.exists():
+            shutil.copytree(source, output / 'device-results')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
@@ -80,7 +105,7 @@ def main():
     output = args.output_dir.resolve()
     if not output.is_relative_to(ROOT / "build"):
         raise ValueError("Artifacts must stay under repository build/")
-    output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=False)
     for port in (18800, 18810):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", port))  # fail instead of reusing someone else's backend
@@ -144,22 +169,15 @@ def main():
                 raise ValueError("Case manifests require the natural conversation recorder")
             subprocess.run([*adb_args, "push", str(args.case_manifest.resolve()), "/data/local/tmp/anyan-acceptance-cases.json"], check=True, capture_output=True)
             command.append("-Pandroid.testInstrumentationRunnerArguments.caseFile=/data/local/tmp/anyan-acceptance-cases.json")
-        with (output / "gradle.log").open("w", encoding="utf-8") as stream:
-            try:
-                result = subprocess.run(command, cwd=ROOT / "android", env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=1800)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("Device regression timed out; private command arguments are not printed") from None
-            if result.returncode:
-                raise RuntimeError("Device regression failed; inspect the private Gradle log")
         source = ROOT / "android/app/build/outputs/androidTest-results/connected" / args.variant
-        summary = verify_results(source, args.minimum_tests)
-        verify_protobuf(source, summary["tests"])
+        run_device_gradle(command, env=env, source=source, output=output)
+        summary = verify_results(output / 'device-results', args.minimum_tests)
+        verify_protobuf(output / 'device-results', summary["tests"])
         with urllib.request.urlopen("http://127.0.0.1:18800/api/v1/security/health", timeout=10) as response:
             durability = json.load(response)["ledger_persistence"]
         if not durability["file_configured"] or durability["last_write_failed"] or durability["writes_frozen"]:
             raise RuntimeError("Isolated ledger persistence is not healthy")
         summary.update({"variant": args.variant, "mode": args.mode, "ledger_persistence": "healthy"})
-        shutil.copytree(source, output / "device-results", dirs_exist_ok=True)
         if args.case_manifest:
             sys.path.insert(0, str(ROOT))
             from scripts.evaluate_agent_scenarios import evaluate_cases, render_markdown

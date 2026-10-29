@@ -3,7 +3,49 @@ from __future__ import annotations
 
 import json
 
-EVALUATION_TRANSPORT_VERSION = 2
+EVALUATION_TRANSPORT_VERSION = 3
+
+FORMAT_ERRORS = {'MALFORMED_JSON', 'NON_OBJECT_JSON'}
+API_ERRORS = {'API_TIMEOUT', 'API_CONNECTION', 'API_RETRYABLE_STATUS'}
+
+
+def api_transport_error(error):
+    from openai import APIConnectionError, APIStatusError, APITimeoutError
+    if isinstance(error, APITimeoutError):
+        return 'API_TIMEOUT'
+    if isinstance(error, APIConnectionError):
+        return 'API_CONNECTION'
+    if (isinstance(error, APIStatusError) and error.status_code in {408, 429, 500, 502, 503, 504}
+            and getattr(error, 'code', None) not in {'insufficient_quota', 'billing_hard_limit_reached'}):
+        return 'API_RETRYABLE_STATUS'
+    return None
+
+
+def valid_transport_diagnostics(rows, *, successful=False):
+    """Validate retry bounds without trusting the report's version stamp alone."""
+    if not isinstance(rows, list):
+        return False
+    previous_request, previous_attempt, retries, terminal = 0, 0, set(), False
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != {'request', 'attempt', 'error_code', 'response_chars', 'retried'}
+                or type(row['request']) is not int or row['request'] < 1
+                or type(row['attempt']) is not int or not 1 <= row['attempt'] <= 3
+                or type(row['response_chars']) is not int or row['response_chars'] < 0
+                or type(row['retried']) is not bool or not isinstance(row['error_code'], str)
+                or row['error_code'] not in FORMAT_ERRORS | API_ERRORS):
+            return False
+        if row['request'] != previous_request:
+            if row['request'] < previous_request:
+                return False
+            previous_attempt, retries, terminal = 0, set(), False
+        family = 'api' if row['error_code'] in API_ERRORS else 'format'
+        retry_allowed = family not in retries
+        if (terminal or row['attempt'] != previous_attempt+1 or row['retried'] is not retry_allowed
+                or (family == 'api' and row['response_chars'] != 0) or (successful and not row['retried'])):
+            return False
+        retries.add(family)
+        previous_request, previous_attempt, terminal = row['request'], row['attempt'], not row['retried']
+    return True
 
 
 class EvaluationJSONError(ValueError):
@@ -19,11 +61,24 @@ def ask(model, prompt: str, payload: dict, *, diagnostics=None, request=1) -> di
     from langchain_core.messages import HumanMessage, SystemMessage
 
     messages = [SystemMessage(content=prompt), HumanMessage(content=json.dumps(payload, ensure_ascii=False))]
-    for attempt in range(2):
-        # Repeat only a broken transport format, never a score, schema verdict
-        # or simulator goal. Keep the same task and structured API constraint.
-        response = model.invoke(messages if not attempt else [*messages, HumanMessage(content=json.dumps({
-            'format_retry': '上一结果不是合法JSON对象。保持原任务和判断标准，仅输出原要求的JSON对象，不输出普通对话或Markdown。'}, ensure_ascii=False))])
+    format_retry, api_retry = False, False
+    for attempt in range(1, 4):
+        current = messages if not format_retry else [*messages, HumanMessage(content=json.dumps({
+            'format_retry': '上一结果不是合法JSON对象。保持原任务和判断标准，仅输出原要求的JSON对象，不输出普通对话或Markdown。'}, ensure_ascii=False))]
+        try:
+            response = model.invoke(current)
+        except Exception as error:
+            code = api_transport_error(error)
+            if code is None:
+                raise
+            retry = not api_retry
+            if diagnostics is not None:
+                diagnostics.append({'request': request, 'attempt': attempt, 'error_code': code,
+                                    'response_chars': 0, 'retried': retry})
+            if not retry:
+                raise
+            api_retry = True
+            continue
         content = response.content
         try:
             value = json.loads(content) if isinstance(content, str) else None
@@ -32,9 +87,13 @@ def ask(model, prompt: str, payload: dict, *, diagnostics=None, request=1) -> di
                 return value
         except json.JSONDecodeError:
             code = 'MALFORMED_JSON'
+        retry = not format_retry
         if diagnostics is not None:
-            diagnostics.append({'request': request, 'attempt': attempt + 1, 'error_code': code,
-                                'response_chars': len(content) if isinstance(content, str) else 0, 'retried': attempt == 0})
+            diagnostics.append({'request': request, 'attempt': attempt, 'error_code': code,
+                                'response_chars': len(content) if isinstance(content, str) else 0, 'retried': retry})
+        if not retry:
+            break
+        format_retry = True
     raise EvaluationJSONError('EVALUATION_JSON_OBJECT_REQUIRED')
 
 

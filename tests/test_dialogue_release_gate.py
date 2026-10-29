@@ -31,7 +31,7 @@ def evidence(tmp_path):
                 for task in tasks for trial in range(1, 6)]
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
-            'evaluation_transport_version': 2,
+            'evaluation_transport_version': 3,
             'simulator_goal_check_version': 3, 'user': 'model',
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
             'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline',
@@ -64,6 +64,34 @@ def test_all_required_evidence_can_pass_and_missing_operations_still_blocks(evid
     assert 'HUMAN_REVIEW_REQUIRED' in result['blockers']
 
 
+@pytest.mark.parametrize('change', [
+    lambda row: row.update(attempt=4),
+    lambda row: row.update(request=True),
+    lambda row: row.update(retried=False),
+    lambda row: row.update(error_code='SEMANTIC_RETRY'),
+    lambda row: row.update(response_chars=100),
+    lambda row: row.update(private_body='not allowed'),
+])
+def test_release_rejects_invented_retry_records_even_with_current_version(evidence, change):
+    groups, op = evidence
+    record = {'request': 1, 'attempt': 1, 'error_code': 'API_TIMEOUT', 'response_chars': 0, 'retried': True}
+    change(record)
+    mutate(groups[0], lambda report: report['trials'][0]['evaluation_transport'].update(user=[record]))
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any('MISSING_TRANSPORT_DIAGNOSTICS' in item for item in result['blockers'])
+
+
+def test_release_accepts_bounded_recovered_transport_without_changing_task_scores(evidence):
+    groups, op = evidence
+    records = [{'request': 1, 'attempt': 1, 'error_code': 'API_TIMEOUT', 'response_chars': 0, 'retried': True},
+               {'request': 1, 'attempt': 2, 'error_code': 'MALFORMED_JSON', 'response_chars': 20, 'retried': True}]
+    mutate(groups[0], lambda report: report['trials'][0]['evaluation_transport'].update(user=records))
+    assert assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
+    records[1].update(error_code='API_TIMEOUT', response_chars=0)
+    mutate(groups[0], lambda report: report['trials'][0]['evaluation_transport'].update(user=records))
+    assert not assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
+
+
 def test_mixed_thinking_or_missing_inference_settings_cannot_share_acceptance(evidence):
     groups, op = evidence
     mutate(groups[1], lambda report: report['inference_profile'].update(thinking='enabled'))
@@ -76,6 +104,7 @@ def test_mixed_thinking_or_missing_inference_settings_cannot_share_acceptance(ev
 
 @pytest.mark.parametrize('change', [lambda report: report.pop('evaluation_transport_version'),
                                  lambda report: report.update(evaluation_transport_version=1),
+                                 lambda report: report.update(evaluation_transport_version=2),
                                  lambda report: report['trials'][0].pop('evaluation_transport')])
 def test_transport_policy_and_attempt_diagnostics_cannot_be_omitted(evidence, change):
     groups, op = evidence

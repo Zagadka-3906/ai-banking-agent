@@ -10,7 +10,7 @@ from pathlib import Path
 
 from scripts.dialogue_eval.engine import SIMULATOR_GOAL_CHECK_VERSION, summarize, goal_evidence_complete, valid_user_goal_record
 from scripts.dialogue_eval.schema import load_dataset
-from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION
+from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION, valid_transport_diagnostics
 
 POLICY_VERSION = 'bank-mock-stability-v2'
 REQUIRED_TOPICS = {'general', 'dispute', 'transfer', 'card', 'cross_scene', 'security', 'limits', 'contacts', 'wealth', 'subscription', 'tasks'}
@@ -82,7 +82,7 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             for row in report['trials']:
                 transport = row.get('evaluation_transport')
                 if (not isinstance(transport, dict) or set(transport) != {'user', 'judge'}
-                        or any(not isinstance(value, list) for value in transport.values())):
+                        or any(not valid_transport_diagnostics(value, successful=row['status'] == 'PASS') for value in transport.values())):
                     raise ValueError('MISSING_TRANSPORT_DIAGNOSTICS')
                 for turn in row.get('turns', []):
                     task = next(task for task in tasks if task.id == row['task_id'])

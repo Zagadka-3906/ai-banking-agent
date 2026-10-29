@@ -20,6 +20,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class ObservedScenarioModel:
+    """Record scenario timing without dropping the SDK's structured binding."""
+
+    def __init__(self, model, records):
+        self.model, self.records = model, records
+
+    def bind(self, **kwargs):
+        return ObservedScenarioModel(self.model.bind(**kwargs), self.records)
+
+    def invoke(self, *args, **kwargs):
+        started = time.monotonic()
+        record = {'success': False}
+        try:
+            value = self.model.invoke(*args, **kwargs)
+            record['success'] = True
+            return value
+        except Exception as error:
+            record['error_type'] = type(error).__name__
+            raise
+        finally:
+            record['elapsed_ms'] = round((time.monotonic() - started) * 1000)
+            self.records.append(record)
+
+
 class ScenarioResponseControls:
     """One-shot response barriers, installed only by this loopback test runner.
 
@@ -436,22 +460,7 @@ def run() -> None:
 
         app.add_middleware(ObserveHttpRejections)
         if runtime.llm is not None:
-            real_llm = runtime.llm
-            class ObservedModel:
-                def invoke(self, *positional, **keywords):
-                    started = time.monotonic()
-                    record = {"success": False}
-                    try:
-                        value = real_llm.invoke(*positional, **keywords)
-                        record["success"] = True
-                        return value
-                    except Exception as error:
-                        record["error_type"] = type(error).__name__
-                        raise
-                    finally:
-                        record["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-                        model_calls.append(record)
-            runtime.llm = ObservedModel()
+            runtime.llm = ObservedScenarioModel(runtime.llm, model_calls)
 
     @app.post("/__scenario/reset")
     async def reset(payload: dict, x_scenario_token: str = Header(default="")):
