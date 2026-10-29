@@ -94,10 +94,13 @@ def test_typed_evidence_tools_use_actual_core_without_business_or_authorization_
 def test_task_evidence_filters_owner_and_never_includes_raw_payload(gateway):  # noqa: F811
     from scheduler import TASK_STORE
     own=TASK_STORE.create('user_zhang','SCHEDULED_TRANSFER',{'amount':40,'password':'DO-NOT-PROJECT'})
-    TASK_STORE.create('user_li','ORDER_DRAFT',{'amount':999})
+    foreign=TASK_STORE.create('user_li','ORDER_DRAFT',{'amount':999})
     docs=read_evidence({'user_id':'user_zhang','user_input':'查看待办'},{'tool':'tasks','fields':['status','amount']})
     encoded=json.dumps(docs,ensure_ascii=False)
-    assert own.task_id in encoded and 'DO-NOT-PROJECT' not in encoded and '999' not in encoded
+    assert own.task_id in encoded and 'DO-NOT-PROJECT' not in encoded and foreign.task_id not in encoded
+    records=[doc for doc in docs if doc.get('entity_id')]
+    assert {doc['entity_id'] for doc in records} == {own.task_id}
+    assert [doc['values']['amount'] for doc in records if 'amount' in doc.get('values',{})] == ['40']
 
 
 def test_two_goals_read_different_sources_and_answer_both_without_regex_reclassification(gateway,monkeypatch):  # noqa: F811
