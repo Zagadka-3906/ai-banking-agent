@@ -229,6 +229,14 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
     # Keep actual date expressions intact, including dotted month/day ranges.
     source = re.sub(r'[¥￥]\s*[+-]?\d[\d,]*(?:\.\d+)?(?:\s*(?:万元|元|块钱|块))?', ' ', source)
     source = re.sub(r'(?:[¥￥]\s*)?-?\d[\d,]*(?:\.\d+)?\s*(?:万元|元|块钱|块|%)', ' ', source)
+    source = re.sub(r'((?:金额|数额)(?:为|是)?\s*)\d+\.\d{1,2}(?![\d.])', r'\1 ', source)
+    def amount_reference(match):
+        prefix = match.group(1)
+        if re.search(r'(?:在|从|到|至|发生于|日期(?:为|是)?|时间(?:为|是)?)\s*$', prefix):
+            return match.group(0)
+        return prefix + ' '
+    source = re.sub(r'([这那一几两]笔[^，,。；;!?！？\d]{0,24})\d+\.\d{1,2}(?![\d.])'
+                    r'(?=\s*的?(?:订阅(?:代扣)?|代扣|扣款|消费|支出|收入|付款|支付|交易金额))', amount_reference, source)
     current = now or datetime.now(timezone(timedelta(hours=8)))
     if current.tzinfo is not None:
         current = current.astimezone(timezone(timedelta(hours=8)))

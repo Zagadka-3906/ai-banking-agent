@@ -18,6 +18,32 @@ def test_currency_prefixed_amount_is_not_a_calendar_range(money):
     assert requested_date_range(f'查2026-10-01到2026-10-28金额{money}的交易') == {'start': '2026-10-01', 'end': '2026-10-28'}
 
 
+@pytest.mark.parametrize('text', [
+    '我看到有一笔云端存储19.90的订阅代扣，我不太记得开过这个，能帮我查一下这笔可疑交易的线索吗？',
+    '这笔其他商户12.50的消费查一下', '那笔10.25的扣款能查线索吗',
+    '查这笔数额为19.90的交易', '一笔商户99.99的付款是什么',
+])
+def test_bare_decimal_in_a_monetary_reference_does_not_invent_calendar_dates(text):
+    from intent_language import requested_date_range
+    assert requested_date_range(text) is None
+    dated = '查2026-10-01到2026-10-28，' + text
+    assert requested_date_range(dated) == {'start': '2026-10-01', 'end': '2026-10-28'}
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('查10.25的交易', {'start': '2026-10-25', 'end': '2026-10-25'}),
+    ('查一笔在10.25的扣款', {'start': '2026-10-25', 'end': '2026-10-25'}),
+    ('查一笔日期为10.25的扣款', {'start': '2026-10-25', 'end': '2026-10-25'}),
+    ('一笔10.25那天的消费', {'start': '2026-10-25', 'end': '2026-10-25'}),
+    ('查一笔在2.30的扣款', {'error': 'DATE_RANGE_INVALID'}),
+    ('查一笔日期为19.90的扣款', {'error': 'DATE_RANGE_INVALID'}),
+])
+def test_amount_reference_does_not_hide_explicit_dotted_dates_or_invalid_dates(text, expected):
+    from datetime import datetime
+    from intent_language import requested_date_range
+    assert requested_date_range(text, now=datetime(2026, 10, 29)) == expected
+
+
 def test_non_transaction_goals_do_not_inherit_a_product_duration_calendar_error():
     from bank_agent.parsing import local_parse
     from bank_agent.understanding import enforce_inquiry

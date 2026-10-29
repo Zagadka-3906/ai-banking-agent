@@ -145,14 +145,26 @@ def test_a_discussion_noun_after_a_name_is_repaired_only_with_current_core_evide
     assert bind_payee({'user_id': 'user_zhang'}, parsed, text)['target'] == '李四的事'
 
 
-def test_wrong_subscription_classifier_cannot_send_a_transaction_goal_to_precheck(gateway, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('text', ['我看到云端存储代扣19.90元，查这笔交易线索',
+    '我看到有一笔云端存储19.90的订阅代扣，我不太记得开过这个，能帮我查一下这笔可疑交易的线索吗？'])
+def test_wrong_subscription_classifier_cannot_send_a_transaction_goal_to_precheck(gateway, monkeypatch, text):  # noqa: F811
+    from bank_agent import runtime
     client, _ = gateway
     model(monkeypatch, [goal('transactions', ['records', 'merchant', 'amount'], '云端存储这笔扣款的线索', subject='云端存储')],
           intent='SUBSCRIPTION_QUERY')
     before = financial_state()
-    result = _send(client, '我看到云端存储代扣19.90元，查这笔交易线索', conversation_id='read-contract')
+    calls = []
+    underlying = runtime._http
+    def track(method, path, **kwargs):
+        calls.append((method, path))
+        return underlying(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', track)
+    result = _send(client, text, conversation_id='read-contract')
     assert result['approval'] is None and result['intent'] == 'BANKING_HELP'
     assert financial_state() == before and '不接受金额' not in result['reply']
+    assert '起止日期' not in result['reply']
+    assert any(method == 'GET' and '/transactions' in path for method, path in calls)
+    assert all(method == 'GET' for method, _ in calls)
 
 
 def test_legacy_transaction_route_is_not_overridden_by_subscription_merchant_keyword():
