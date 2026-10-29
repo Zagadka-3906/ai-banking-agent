@@ -75,15 +75,27 @@ def ambiguous_amount(text: str) -> bool:
     return len(values) > 1 or bool(values and chinese) or len(set(chinese)) > 1
 
 
+_PAYEE_PREFIX = (
+    r"(?:我的|我(?=老婆|爱人|媳妇|妻子|丈夫|老公|夫人|儿子|女儿|闺女|兄弟|兄妹|姐妹|哥哥|弟弟|姐姐|妹妹"
+    r"|爸爸|妈妈|父亲|母亲|父母|朋友|同事|同学|家人|对象|通讯录|联系人)|通讯录里(?:的)?|联系人里(?:的)?)*"
+)
+_PAYEE_TOKEN = r"((?:我(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)))|(?!我)[一-龥A-Za-z0-9·_-]{1,24}?))"
+
+
 def recipient_source(text: str) -> str:
     """Separate an instruction to the assistant from a payment recipient."""
-    return re.sub(r'(?:给|向)我(?=(?:核对|看(?:看|一下)|展示|解释|说明|查(?:询|看)?|列出|显示))', '请', business_text(text))
+    return re.sub(r'(?:给|向)我(?=(?:先|再|只|仅)?(?:核对|看(?:看|一?下)?|展示|解释|说明|查(?:询|看)?|列出|显示|生成))', '请', business_text(text))
 
 
 def recipient_references(text: str) -> set[str]:
     """Literal candidate spans, without treating a grammatical guess as identity."""
     source = recipient_source(text)
-    references = re.findall(r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为))\s*(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*([一-龥A-Za-z0-9·_-]{1,24}?)(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))", source)
+    references = re.findall(
+        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为))\s*"
+        + _PAYEE_PREFIX + _PAYEE_TOKEN
+        + r"(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))",
+        source,
+    )
     names: set[str] = set()
     for reference in references:
         names.update(name.strip() for name in re.split(r"或(?:者)?|还是|和|与|、", reference) if name.strip())

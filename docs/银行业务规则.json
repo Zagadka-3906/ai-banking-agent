@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-28.5",
-  "rules_version": "16c559a024e4ed30ac7900f5b9e338c169b8acd1f4092f31faae37e6dfae9e89",
+  "rules_version": "6b6b42d0c7994fa05788e27734dbb267e4b3a95f00707708aa59f9a3371c59be",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "ada475d5387ddf1e14780d01b05baf799855d7c63c6f1d39449f836ff6624a98",
@@ -15,7 +15,7 @@
     "bank_agent/entities.py": "6f272495da41e317bcceb889ec8714734cd03ca17f37756a1737c8818ddaec3b",
     "bank_agent/evidence.py": "24939552630314938367add9163704eeddf237e5f1ca33f4c370a5d10b308a3d",
     "bank_agent/evidence_session.py": "96876314ad0a4934896f9883c9147de63cf538771c5da08f018fbb8427711f5a",
-    "bank_agent/extraction.py": "9d43baaa379b05f842b029465262ea405103ced23385cefbf18fc300b5a52ff8",
+    "bank_agent/extraction.py": "2919776f5e0dde95e80f6dbe1f9cc1161c2e47e2e1956633d0be4928beca377f",
     "bank_agent/goal_answering.py": "b66c2e4bc21210f8d0f481d37c44c76f6bab3952399dad022fba5353ca54fe12",
     "bank_agent/goal_fidelity.py": "4fe84bea8292809eaa133be4fd0ac4d25c4647e82209e90a2f9c057f42db4523",
     "bank_agent/nodes/executor.py": "d67e70f01a81e3a18c373f92d74204ea96483e97653bb63ba32aeb3b1bcbc5d4",
@@ -46,7 +46,7 @@
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "652d85f093a005ac78393b8c48b7617aa133fd0fd78f76ee934dfe6712d7bc67",
     "banking_rules.py": "9927d515625ab37f33f8a1c357a21ad239c6c46d6301f65f8d207f0173a3e78f",
-    "intent_language.py": "df5bec07d6485a955c8fca7f12dc04c58f4bf0945e8c8fa08773a9d1e511663c",
+    "intent_language.py": "7ec8f7d5020b3e3689113831d5f0015a44bfbe6579318af029bb50604f5e68e3",
     "model_config.py": "2ce2f0b20b18d920968ad385b88f9d9ca30ca6a37425ca33af1ca7215ca0b701",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f",
     "workflow_runtime.py": "8b7b92c5aecafd3c3d56cef65667c07cfa21b496bdc4a9074e431487c0eed3f2"

@@ -185,7 +185,8 @@ def test_explicitly_filling_the_transfer_amount_can_resume_one_paused_discussion
 
 
 @pytest.mark.parametrize('act', ['ACTION', 'SLOT_REPLY'])
-@pytest.mark.parametrize('text', ['转账金额是300元，先帮我看看，暂不确认。', '转账金额就按300元，先展示待确认信息。'])
+@pytest.mark.parametrize('text', ['转账金额是300元，先帮我看看，暂不确认。', '转账金额就按300元，先展示待确认信息。',
+                                '转账金额是300元，先给我看确认信息，我暂不确认。', '转账金额是300元，先给我把确认卡生成出来，我暂不确认。'])
 def test_typed_amount_reply_can_fill_one_known_task_without_any_restore_keyword(act, text):
     parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': act}}
     state = pending_state()

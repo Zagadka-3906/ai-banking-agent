@@ -614,6 +614,8 @@ def test_showing_details_to_the_user_does_not_add_another_payment_recipient():
     from bank_agent.extraction import target_from_text
     text='给李四转300元，麻烦你先把转账信息展示给我核对一下。'
     assert not ambiguous_target(text) and target_from_text(text)=='李四'
+    assert not ambiguous_target('给李四转300元，先把确认信息发给我') and target_from_text('给李四转300元，先把确认信息发给我')=='李四'
+    assert target_from_text('转账金额是300元，先给我看确认信息，我暂不确认。') is None
     assert ambiguous_target('给李四转300元，或者给我转300元')
     assert ambiguous_target('给李四转300元，收款人改为王五')
 

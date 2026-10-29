@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
-from intent_language import ambiguous_amount, ambiguous_target, normalize_money_separators, split_tasks, recipient_source
+from intent_language import _PAYEE_PREFIX, _PAYEE_TOKEN, ambiguous_amount, ambiguous_target, normalize_money_separators, split_tasks, recipient_source
 
 
 _CHINESE_DIGITS = {
@@ -156,8 +156,9 @@ def target_from_text(text: str) -> Optional[str]:
     # Resolution/ambiguity checks still belong to the core's contact allow-list.
     explicit = re.search(
         r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为))\s*"
-        r"(?:我(?:的)?|通讯录里(?:的)?|联系人里(?:的)?)*"
-        r"([一-龥A-Za-z0-9·_-]{1,24}?)\s*(?=(?:的|那(?:一)?笔|这(?:一)?笔)(?:转账|汇款)|的(?:转账)?(?:金额|款项)(?:就)?(?:按|是|为|改成|补充为)?\s*[¥￥]?\d|预约|定时|转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$)", text,
+        + _PAYEE_PREFIX
+        + _PAYEE_TOKEN
+        + r"\s*(?=(?:的|那(?:一)?笔|这(?:一)?笔)(?:转账|汇款)|的(?:转账)?(?:金额|款项)(?:就)?(?:按|是|为|改成|补充为)?\s*[¥￥]?\d|预约|定时|转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$)", text,
     )
     if explicit:
         candidate = re.sub(r"再$", "", explicit.group(1))
