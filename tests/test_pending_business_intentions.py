@@ -79,6 +79,8 @@ def withdrawal(text, *, command=False):
     '我还是想申购零星宝，但金额没定，现在决定先取消这次申购。',
     '我想申购零星宝，但现在决定取消本次申购',
     '我想申购零星宝，不过还是先取消这笔申购',
+    '零星宝我还是想申购，但这次决定先取消了，麻烦帮我取消这次申购。',
+    '零星宝我还是想申购，但这次决定先撤销了，请撤销本次申购。',
     '那我不申购零星宝了，之前想申购的意向也一起取消，先不办这个了。',
     '之前想申购零星宝的意向也一起取消',
     '零星宝的待确认申购请先撤销', '零星宝的申购意向就先放弃吧',
@@ -97,6 +99,10 @@ def test_pending_purchase_withdrawal_resolves_its_existing_questionnaire(text):
 
 @pytest.mark.parametrize('text', [
     '取消零星宝的待确认申购会怎样', '零星宝未确认的申购怎么取消',
+    '这次零星宝申购已成交，请取消这次申购。',
+    '这次零星宝申购已扣款，请取消这次申购。',
+    '我已经取消了零星宝的待确认申购，麻烦帮我取消这次申购。',
+    '我曾经撤销了零星宝的申购，请撤销本次申购。',
     '能取消零星宝未确认的申购吗', '取消零星宝的待确认申购？',
     '如果取消零星宝的待确认申购', '我已经取消了零星宝的待确认申购',
     '取消这个申购意向会怎样', '如果取消这个申购意向', '我已经取消这个申购意向',
@@ -164,6 +170,9 @@ def test_withdrawal_also_cancels_only_the_matching_missing_amount_discussion(tex
     ('TRANSFER', '李四', '我还想给李四转账，但金额没定，现在决定先取消这笔转账。'),
     ('CARD_LIMIT', 'CARD-001', '我还想调额，但数值没定，现在决定取消本次调额。'),
     ('WEALTH_REDEEM', 'LX00118', '我想赎回零星宝，但份额没定，最后决定先取消这次赎回。'),
+    ('TRANSFER', '李四', '我还想给李四转账，但决定先取消了，请取消这笔转账。'),
+    ('CARD_LIMIT', 'CARD-001', '我还想调额，但决定先取消了，请取消本次调额。'),
+    ('WEALTH_REDEEM', 'LX00118', '我想赎回零星宝，但决定先撤销了，请撤销这次赎回。'),
 ])
 def test_current_operation_reference_binds_only_its_existing_business_discussion(intent, target, text):
     pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target, 'amount': None}}
@@ -177,6 +186,7 @@ def test_current_operation_reference_binds_only_its_existing_business_discussion
 
 
 @pytest.mark.parametrize('cancellation', [
+    '零星宝我还是想申购，但这次决定先取消了，麻烦帮我取消这次申购。',
     '对，我要取消刚才那笔零星宝的待确认申购，麻烦帮我取消。',
     '既然零星宝申购后不能撤单，那我决定取消这次申购意向，先不申购了。',
     '那我先不申购零星宝了，决定取消这次申购意向。',

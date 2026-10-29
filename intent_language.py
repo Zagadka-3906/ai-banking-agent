@@ -164,12 +164,18 @@ def withdrawal_statement(text: str) -> bool:
     """A restrictive execution constraint alone is not a cancellation command."""
     source = business_text(text)
     if (_WITHDRAW_QUESTION.search(source)
-            or re.search(r'假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|取消了|撤销了|[“”"‘’？?]', source)):
+            or re.search(r'假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|[“”"‘’？?]', source)):
         return False
     if _WITHDRAW_NEGATED.search(source):
         return False
     clause = pending_withdrawal_clause(source, current_discussion=True)
-    if clause or execution_constraint(source) == 'NEGATED_ACTION':
+    if clause:
+        return True
+    # A completed cancellation in one clause must not erase a later explicit
+    # current command. Without that command, retain the historical safeguard.
+    if re.search(r'取消了|撤销了', source):
+        return False
+    if execution_constraint(source) == 'NEGATED_ACTION':
         return True
     if re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', source):
         return False
