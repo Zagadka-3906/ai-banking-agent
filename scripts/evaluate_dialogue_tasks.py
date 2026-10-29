@@ -20,7 +20,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scripts.dialogue_eval.engine import run_trial, summarize
+from scripts.dialogue_eval.engine import SIMULATOR_GOAL_CHECK_VERSION, run_trial, summarize
 from scripts.dialogue_eval.schema import Task, load_dataset
 from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION
 from model_config import DEFAULT_MODEL, DEFAULT_THINKING, thinking_options
@@ -87,7 +87,8 @@ def worker(job_path: Path) -> int:
         judge = ConversationJudge(evaluation_model(job["models"]["judge"], "judge", 0), job.get('rubric_version', 'v1'))
         environment = BankEnvironment(task)
         try:
-            result = run_trial(task, environment, user, judge, seed=job["seed"], trial=job["trial"], rubric_version=job.get('rubric_version', 'v1'))
+            result = run_trial(task, environment, user, judge, seed=job["seed"], trial=job["trial"],
+                               rubric_version=job.get('rubric_version', 'v1'), verify_user_goal=True)
             result["model_calls"] = counters
             result['stage_usage'] = stage_usage
             result['evaluation_transport'] = {'user': getattr(user, 'transport_failures', []), 'judge': judge.transport_failures}
@@ -130,7 +131,7 @@ def main(argv=None) -> int:
             'evaluation_response_format': 'json_object',
             'evaluation_transport_version': EVALUATION_TRANSPORT_VERSION,
             'goal_evidence_check_version': 2,
-            'simulator_goal_check_version': 2,
+            'simulator_goal_check_version': SIMULATOR_GOAL_CHECK_VERSION,
             'prompt_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(), "task_ids": [task.id for task in tasks], "user": args.user,
             "trials_per_task": args.trials, "planned_trials": len(tasks) * args.trials,
             "max_agent_turns": sum(len(task.phases) for task in tasks) * args.trials}

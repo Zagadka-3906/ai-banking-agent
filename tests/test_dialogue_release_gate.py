@@ -6,6 +6,7 @@ import json
 import pytest
 
 from scripts.dialogue_eval.release_gate import assess_release, REQUIRED_TOPICS
+from scripts.dialogue_eval.engine import user_goal_record
 
 
 @pytest.fixture
@@ -20,7 +21,10 @@ def evidence(tmp_path):
         cases.write_bytes(raw)
         checks = ['phase_1.no_business_write', 'phase_1.no_new_authorization', 'phase_1.approval_preserved', 'phase_1.core_get_only',
                   'no_pending_approval', 'final_state', 'durable_store_healthy']
-        rows = [{'task_id': task['id'], 'trial': trial, 'status': 'PASS', 'turns': [],
+        proof = user_goal_record({'faithful': True, 'expected_act': 'INQUIRE', 'actual_act': 'INQUIRE', 'reason': 'unit evidence'}, '余额', '查余额')
+        rows = [{'task_id': task['id'], 'trial': trial, 'status': 'PASS',
+                 'turns': [{'phase': 1, 'user': '查余额', 'user_goal_check': deepcopy(proof)}],
+                 'simulator_goal_checks': [{'phase': 1, 'user': '查余额', 'check': deepcopy(proof)}],
                  'evaluation_transport': {'user': [], 'judge': []},
                  'checks': [{'id': name, 'passed': True} for name in checks],
                  'communication': {'simulator_faithful': True, 'passed': True, 'checks': [{'id': 'phase_1', 'passed': True}]}}
@@ -28,6 +32,7 @@ def evidence(tmp_path):
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
             'evaluation_transport_version': 2,
+            'simulator_goal_check_version': 3, 'user': 'model',
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
             'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline',
             'inference_profile': {'thinking': 'disabled', 'agent_temperature': 0.0, 'user_temperature': 0.8,
@@ -73,6 +78,25 @@ def test_mixed_thinking_or_missing_inference_settings_cannot_share_acceptance(ev
                                  lambda report: report.update(evaluation_transport_version=1),
                                  lambda report: report['trials'][0].pop('evaluation_transport')])
 def test_transport_policy_and_attempt_diagnostics_cannot_be_omitted(evidence, change):
+    groups, op = evidence
+    mutate(groups[0], change)
+    assert not assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
+
+
+@pytest.mark.parametrize('change', [
+    lambda d: d.pop('simulator_goal_check_version'),
+    lambda d: d.update(simulator_goal_check_version=2),
+    lambda d: d.update(user='scripted'),
+    lambda d: d['trials'][0].update(turns=[]),
+    lambda d: d['trials'][0]['turns'].append(deepcopy(d['trials'][0]['turns'][0])),
+    lambda d: d['trials'][0]['turns'][0].pop('user_goal_check'),
+    lambda d: d['trials'][0]['turns'][0]['user_goal_check'].update(faithful=False),
+    lambda d: d['trials'][0]['turns'][0]['user_goal_check'].update(actual_act='ACTION'),
+    lambda d: d['trials'][0]['turns'][0]['user_goal_check'].update(goal_sha256='old-goal'),
+    lambda d: d['trials'][0]['turns'][0].update(user='给李四转300元'),
+    lambda d: d['trials'][0].pop('simulator_goal_checks'),
+])
+def test_user_goal_preflight_cannot_be_omitted_forged_or_reused_for_another_turn(evidence, change):
     groups, op = evidence
     mutate(groups[0], change)
     assert not assess_release(groups, {'source.py': 'frozen'}, op)['accepted']

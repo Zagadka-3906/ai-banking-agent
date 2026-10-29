@@ -2,15 +2,48 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from math import comb, ceil
 import re
 from statistics import median
 import time
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
 from scripts.dialogue_eval.schema import StrictModel, Task
+
+SIMULATOR_GOAL_CHECK_VERSION = 3
+
+
+class UserGoalVerdict(StrictModel):
+    faithful: bool
+    expected_act: Literal['INQUIRE', 'ACTION', 'WITHDRAW', 'MIXED', 'OTHER']
+    actual_act: Literal['INQUIRE', 'ACTION', 'WITHDRAW', 'MIXED', 'OTHER']
+    reason: str = Field(min_length=1, max_length=500)
+
+
+def user_goal_record(raw: dict, goal: str, text: str) -> dict:
+    verdict = UserGoalVerdict.model_validate(raw)
+    return {**verdict.model_dump(), 'source': 'pre_agent_judge',
+            'goal_sha256': hashlib.sha256(goal.encode()).hexdigest(),
+            'user_sha256': hashlib.sha256(text.encode()).hexdigest()}
+
+
+def user_goal_matches(record: dict) -> bool:
+    return record['faithful'] is True and record['expected_act'] == record['actual_act']
+
+
+def valid_user_goal_record(value, goal: str, text: str) -> bool:
+    if not isinstance(value, dict) or not isinstance(goal, str) or not isinstance(text, str):
+        return False
+    fields = set(UserGoalVerdict.model_fields)
+    raw = {key: value[key] for key in fields if key in value}
+    try:
+        expected = user_goal_record(raw, goal, text)
+    except ValueError:
+        return False
+    return value == expected and user_goal_matches(expected)
 
 
 class UserMessage(StrictModel):
@@ -78,16 +111,27 @@ def proposal_drift_reason(text: str) -> str | None:
     return None
 
 
-def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed: int, trial: int, rubric_version: str = 'v1') -> dict:
+def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed: int, trial: int,
+              rubric_version: str = 'v1', verify_user_goal: bool = False) -> dict:
     """Each environment is a fresh process. Never infer success from a reply."""
     started = time.monotonic()
-    result: dict = {"task_id": task.id, "trial": trial, "seed": seed, "status": "ERROR", "turns": [], "checks": []}
+    result: dict = {"task_id": task.id, "trial": trial, "seed": seed, "status": "ERROR", "turns": [], "checks": [],
+                    'simulator_goal_checks': []}
     history: list[dict] = []
     try:
         for index, phase in enumerate(task.phases, 1):
             # Confirm/reject are explicit harness actions, never model-controlled tools.
             text = (UserMessage.model_validate(simulator.next(task.user_view(phase, history), phase.utterance)).text
                     if phase.action in {"inquiry", "clarify", "proposal"} else phase.utterance)
+            goal_check = None
+            if verify_user_goal and phase.action in {'inquiry', 'clarify', 'proposal'}:
+                attempt = {'phase': index, 'user': text, 'check': None}
+                result['simulator_goal_checks'].append(attempt)
+                goal_check = user_goal_record(judge.verify_user_goal(task.user_view(phase, history), text), phase.goal, text)
+                attempt['check'] = goal_check
+                if not user_goal_matches(goal_check):
+                    result['simulator_drift'] = {'phase': index, 'user': text, 'reason': 'USER_GOAL_MISMATCH', 'check': goal_check}
+                    raise SimulatorDrift('User goal changed before agent execution')
             if phase.action == 'proposal' and rubric_version == 'v3':
                 reason = proposal_drift_reason(text)
                 if reason:
@@ -104,7 +148,8 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
             observed['checks'] = {**observed['checks'], **milestone_checks(phase, observed)}
             if phase.action == 'inquiry' and observed.get('coverage'):
                 observed['checks']['goal_evidence_complete'] = goal_evidence_complete(observed['coverage'], observed.get('read_failures', []))
-            result["turns"].append({"phase": index, "user": text, 'goal_shift': phase.goal_shift, **observed})
+            result["turns"].append({"phase": index, "user": text, 'goal_shift': phase.goal_shift,
+                                    **({'user_goal_check': goal_check} if goal_check else {}), **observed})
             history.extend([{"role": "user", "text": text}, {"role": "assistant", "text": observed["reply"],
                             "approval": observed["approval"]}])
             result["checks"].extend({"id": f"phase_{index}.{key}", "passed": value} for key, value in observed["checks"].items())

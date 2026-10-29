@@ -8,7 +8,7 @@ from collections import Counter
 from math import ceil
 from pathlib import Path
 
-from scripts.dialogue_eval.engine import summarize, goal_evidence_complete
+from scripts.dialogue_eval.engine import SIMULATOR_GOAL_CHECK_VERSION, summarize, goal_evidence_complete, valid_user_goal_record
 from scripts.dialogue_eval.schema import load_dataset
 from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION
 
@@ -43,6 +43,8 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             report = json.loads(raw)
             if report.get('evaluation_transport_version') != EVALUATION_TRANSPORT_VERSION:
                 raise ValueError('INVALID_EVALUATION_TRANSPORT_VERSION')
+            if report.get('simulator_goal_check_version') != SIMULATOR_GOAL_CHECK_VERSION or report.get('user') != 'model':
+                raise ValueError('INVALID_SIMULATOR_GOAL_CHECK_VERSION_OR_USER')
             if (report['status'] != 'COMPLETED' or report['dataset_sha256'] != digest
                     or report['source_sha256'] != sources or report['task_ids'] != [task.id for task in dataset.tasks]
                     or report.get('rubric_version', 'v1') != dataset.rubric_version):
@@ -91,6 +93,19 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
                         blockers.append('INCOMPLETE_GOAL_EVIDENCE:' + row['task_id'])
                 if row['status'] == 'PASS':
                     task = next(task for task in tasks if task.id == row['task_id'])
+                    turns = row.get('turns') or []
+                    if [turn['phase'] for turn in turns] != list(range(1, len(task.phases) + 1)):
+                        raise ValueError('MISSING_OR_DUPLICATE_TRIAL_TURNS')
+                    goal_checks = row.get('simulator_goal_checks')
+                    expected_checks = []
+                    for turn in turns:
+                        phase = task.phases[turn['phase'] - 1]
+                        if phase.action in {'inquiry', 'clarify', 'proposal'}:
+                            if not valid_user_goal_record(turn.get('user_goal_check'), phase.goal, turn.get('user', '')):
+                                raise ValueError('MISSING_OR_INVALID_USER_GOAL_CHECK')
+                            expected_checks.append({'phase': turn['phase'], 'user': turn['user'], 'check': turn['user_goal_check']})
+                    if goal_checks != expected_checks:
+                        raise ValueError('MISSING_OR_INVALID_USER_GOAL_CHECK_TRACE')
                     expected_hard = {'durable_store_healthy', 'no_pending_approval'}
                     for index, phase in enumerate(task.phases, 1):
                         keys = ({'no_business_write', 'no_new_authorization', 'approval_preserved', 'core_get_only'} if phase.action == 'inquiry' else
