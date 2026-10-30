@@ -11,6 +11,68 @@ from test_general_dialogue_loop import goal, model
 from test_inquiry_boundaries import financial_state
 
 
+@pytest.mark.parametrize('task_type', ['SCHEDULED_TRANSFER', 'ORDER_DRAFT', 'REMINDER'])
+@pytest.mark.parametrize('status', ['PENDING', 'WAITING_USER', 'RUNNING', 'FAILED', 'SUCCEEDED'])
+def test_task_status_projection_keeps_its_workflow_type_without_money_or_private_payload(task_type, status):
+    data = {'code': 200, 'data': [{'task_id': 'TSK1234567890ABCD', 'owner_id': 'user_zhang',
+        'task_type': task_type, 'status': status, 'run_at': '2099-01-01T09:00:00+08:00',
+        'payload': {'amount': 9876, 'private': 'DO-NOT-EXPOSE'}}]}
+    docs = project_records('tasks', data, {'user_id': 'user_zhang'}, fields=['status'])
+    row = next(row for row in docs if row.get('entity_id'))
+    assert row['context_fields'] == ['task_type'] and 'task_type' in row['fields']
+    assert task_type in row['text'] and status in row['text'] and row['values'] == {}
+    assert all(value not in str(docs) for value in ['9876', '2099-01-01T09:00:00+08:00', 'DO-NOT-EXPOSE'])
+    data['data'][0]['owner_id'] = 'user_li'
+    with pytest.raises(ValueError, match='TASK_OWNER_OR_STATUS_INVALID'):
+        project_records('tasks', data, {'user_id': 'user_zhang'}, fields=['status'])
+
+
+def test_task_type_cannot_be_called_unshown_but_an_actually_omitted_date_can():
+    from bank_agent.answering import DraftValidationError, _validate_projection_absence
+    row = {'id': 'read.tasks.1', 'entity_id': 'TSK1234567890ABCD', 'source': 'core://tasks',
+           'fields': ['records', 'status', 'task_type'], 'omitted_fields': ['run_at']}
+    with pytest.raises(DraftValidationError, match='PROJECTED_FIELD_ABSENCE'):
+        _validate_projection_absence('待办任务记录中未展示任务类型，无法判断。', [row])
+    _validate_projection_absence('待办任务记录中未展示计划执行时间。', [row])
+
+
+@pytest.mark.parametrize('status', ['PENDING', 'WAITING_USER'])
+def test_task_payment_followup_rewrites_missing_type_without_extra_reads_or_writes(gateway, monkeypatch, status):  # noqa: F811
+    from bank_agent import runtime
+    from scheduler import TASK_STORE
+    client, _ = gateway
+    task = TASK_STORE.create('user_zhang', 'SCHEDULED_TRANSFER', {'amount': 40, 'private': 'DO-NOT-EXPOSE'})
+    TASK_STORE.transition(task.task_id, status, owner_id='user_zhang')
+    model(monkeypatch, [goal('tasks', ['records'], '目前有哪些待办')])
+    shown = _send(client, '我目前有哪些待办事项？', conversation_id='typed-task-state')
+    assert shown['business_status'] == 'SUCCEEDED'
+    reads, seen = [], []
+    original = runtime._http
+    def http(method, path, **kwargs):
+        reads.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    def draft(payload):
+        seen.append((payload, len(reads)))
+        row = next(row for row in payload['facts'] if row.get('entity_id') == task.task_id)
+        assert '任务类型：SCHEDULED_TRANSFER' in row['text']
+        assert 'task_type' in payload['projection_contract']['records'][0]['context_fields']
+        assert 'DO-NOT-EXPOSE' not in str(payload) and '¥40.00' not in str(row)
+        policy = next(row for row in payload['facts'] if row['id'] == 'guide.tasks.status')
+        ids = [row['id'], policy['id']]
+        answer = ('待办任务记录中未展示任务类型，无法判断是否付款。' if len(seen) == 1 else
+                  f'这条预约还没付款。本人任务记录的类型为SCHEDULED_TRANSFER，状态为{status}；'
+                  '按本演示任务规则，该任务尚未执行付款，仍须另行确认。这不证明其他交易的付款情况。')
+        return {'answer': answer, 'evidence_ids': ids, 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': ids, 'reason': '结合当前任务类型状态与对应规则'}]}
+    model(monkeypatch, [goal('tasks', ['status'], '这条预约目前是不是还没付款', subject=task.task_id)], draft=draft)
+    before = financial_state()
+    reply = _send(client, '那这条预约转账目前是不是还没付款？', conversation_id='typed-task-state')
+    assert reply['approval'] is None and reply['business_status'] == 'SUCCEEDED'
+    assert reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED' and '还没付款' in reply['reply']
+    assert len(seen) == 2 and seen[0][1] == seen[1][1] and financial_state() == before
+
+
 @pytest.mark.parametrize('status', ['ACTIVE', 'FROZEN', 'LOST'])
 def test_projected_card_channels_retain_current_status_without_unrequested_amounts(status):
     data = {'code': 200, 'user_id': 'user_zhang', 'data': [{

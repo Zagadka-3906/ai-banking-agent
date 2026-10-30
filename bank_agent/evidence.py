@@ -149,6 +149,11 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
         # bounded context on the same authenticated row, without copying any
         # other omitted values (balances, amounts or private payloads).
         context_fields = ['status'] if resource in {'cards', 'subscriptions', 'tasks'} and 'status' not in keys else []
+        # A task status has meaning only within its workflow type. Carry the
+        # type from this same authenticated row, without disclosing payloads,
+        # unrequested money or dates merely to interpret its execution stage.
+        if resource == 'tasks' and 'task_type' not in keys:
+            context_fields.append('task_type')
         for key in [*keys, *context_fields]:
             value = row.get(key)
             if resource == 'tasks' and key == 'amount':

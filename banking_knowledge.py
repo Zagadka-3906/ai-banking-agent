@@ -9,7 +9,7 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-10-30.7"
+KNOWLEDGE_VERSION = "2026-10-30.8"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits", "contacts"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、联系人与收款人、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
@@ -105,7 +105,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
     ],
     "tasks": [
         ("source", "本人任务状态可通过 tasks 只读工具查询，也可在 App 侧边栏 → 待办任务中查看；读取结果必须校验本人归属。规则不能证明具体任务状态，实际撤销和任务办理仍按对应确认流程处理。"),
-        ("status", "待办状态须查询本人任务记录，不能从聊天推断。任务到了设定时间不会自动扣款付款；需要付款的预约或订单须等待用户确认。提醒已发和订单草稿已生成也不代表资金已支付；执行失败或结果不确定须分别说明，不能整体报成功。"),
+        ("status", "待办状态须查询本人任务记录，不能从聊天推断。任务到了设定时间不会自动扣款付款；需要付款的预约或订单须等待用户确认。同一条本人任务同时读到任务类型和登记状态后，应按类型解释：SCHEDULED_TRANSFER（预约转账）和 ORDER_DRAFT（订单草稿）处于 PENDING 或 WAITING_USER 时，该任务尚未执行付款；WAITING_USER 表示等待再次确认，PENDING 表示尚未进入付款执行阶段。此结论只限这条任务，不证明用户没有其他付款。REMINDER 完成只表示提醒已处理，不能据此称已付款；RUNNING、FAILED 等状态须结合实际执行结果核对，不把失败或未知当作付款成功或确定未付款。提醒已发和订单草稿已生成也不代表资金已支付；执行失败或结果不确定须分别说明，不能整体报成功。"),
         ("entry", "打开侧边栏的待办任务可核对预约、提醒与订单草稿的状态、时间及依赖关系，也可选择请求人工处理以暂停相关步骤。"),
         ("undo", "未执行预约、未收款AA和锁资支持撤销；撤销需要核对目标并确认，已付款或已结算步骤不能通过撤销恢复资金。"),
         ("handoff", "任务页的请求人工处理会暂停任务并登记原因；这是演示接管记录，不代表已有真实客服人员接单。"),

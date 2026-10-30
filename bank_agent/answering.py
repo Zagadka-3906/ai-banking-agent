@@ -111,7 +111,7 @@ def _validate_projection_absence(text: str, facts: list[dict[str, Any]]) -> None
     labels = {'status': r'(?:登记|冻结(?:或挂失)?|挂失|当前)?状态', 'amount': '金额', 'card_id': '卡片编号',
               'channels': r'(?:交易)?渠道', 'daily_limit': r'日(?:额度|限额)', 'run_at': '计划执行时间',
               'time': r'(?:交易|消费)时间', 'category': r'(?:交易|消费)?分类', 'principal': '持仓本金',
-              'min_amount': '起购金额', 'next_charge': r'(?:扣款|计划)日期'}
+              'min_amount': '起购金额', 'next_charge': r'(?:扣款|计划)日期', 'task_type': r'(?:任务|待办)类型'}
     resources = {'cards': r'卡片|银行卡|这张卡|该卡', 'transactions': r'流水|交易|消费',
                  'tasks': r'待办|任务', 'subscriptions': r'订阅|会员',
                  'wealth_holdings': r'持仓', 'wealth_products': r'产品|货架'}
@@ -136,6 +136,7 @@ def _validate_projection_absence(text: str, facts: list[dict[str, Any]]) -> None
                 continue
             missing = r'(?:未(?:显示|包含|返回|提供)|没有(?:显示|包含|返回|提供)?|缺少|缺失)'
             if (re.search(missing + r'(?:任何|该|所问的?|对应的?|明确的)?\s*' + label, sentence)
+                    or field in row.get('fields', []) and re.search(r'未展示\s*' + label, sentence)
                     or re.search(label + r'(?:字段)?(?:未返回|缺失|缺少)', sentence)):
                 raise DraftValidationError('PROJECTED_FIELD_ABSENCE', evidence_id=row['id'], fragment=sentence)
 
