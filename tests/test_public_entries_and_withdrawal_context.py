@@ -78,3 +78,63 @@ def test_model_withdrawal_after_consultation_acknowledges_no_action_instead_of_r
     assert reply['approval'] is None and '请明确' not in reply['reply']
     assert '未' in reply['reply'] or '没有' in reply['reply']
     assert financial_state() == before
+
+
+@pytest.mark.parametrize('operation', ['冻结', '转账', '申购', '赎回', '挂失', '调额'])
+@pytest.mark.parametrize('acknowledgement', [
+    '{operation}的规则我已经清楚了',
+    '我已经了解清楚{operation}的流程了',
+    '{operation}的条件本人已经明白了',
+])
+def test_completed_consultation_does_not_turn_a_current_stop_into_completed_business(operation, acknowledgement):
+    text = acknowledgement.format(operation=operation) + f'，本轮就不{operation}了。'
+    assert withdrawal_statement(text, pending_discussion=True)
+
+
+@pytest.mark.parametrize('text', [
+    '冻结的规则我已经清楚了，这张卡就不冻结了。',
+    '我已经了解清楚转账的流程了，这次不转账了。',
+])
+def test_acknowledged_business_rules_then_stop_is_a_readonly_gateway_reply(gateway, monkeypatch, text):  # noqa: F811
+    client, _ = gateway
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE', 'topic_relation': 'CONTINUE'}))))
+    before = financial_state()
+    reply = _send(client, text, conversation_id='policy-understood-stop')
+    assert reply['approval'] is None
+    assert '请明确' not in reply['reply']
+    assert '没有发起新操作' in reply['reply']
+    assert financial_state() == before
+
+
+@pytest.mark.parametrize('text', [
+    '我已经冻结了银行卡，冻结规则我已经清楚了，这张卡不冻结了',
+    '我已经了解冻结规则并冻结卡片了，这张卡不冻结了',
+    '冻结流程里已经提交申请了，这张卡不冻结了',
+    '冻结规则我已经清楚了，已完成的冻结帮我撤销',
+    '如果冻结的规则已经清楚了，那就不冻结了',
+    '冻结规则我已经清楚了，先不要取消这次冻结',
+    '“冻结规则我已经清楚了，这张卡不冻结了”是什么意思？',
+])
+def test_policy_acknowledgement_cannot_hide_completed_actions_conditions_or_quotes(text):
+    assert not withdrawal_statement(text, pending_discussion=True)
+
+
+@pytest.mark.parametrize('operation,intent,target', [
+    ('转账', 'TRANSFER', '李四'), ('申购', 'WEALTH_PURCHASE', 'LX00118'), ('冻结', 'CARD_FREEZE', 'CARD-001'),
+])
+def test_policy_acknowledgement_only_stops_the_unique_matching_unfinished_discussion(operation, intent, target):
+    from copy import deepcopy
+    from bank_agent.dialogue_commands import withdraw_known_task
+    pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target}}
+    task = {'id': 'current-discussion', 'intent': intent, 'status': 'PAUSED', 'pending': pending}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'context': {},
+             'dialogue_state': {'principal': 'user_zhang', 'tasks': [task]}}
+    text = f'{operation}的规则我已经清楚了，取消这次{operation}意向。'
+    parsed = {'intent': 'UNKNOWN', 'parse_meta': {'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}}
+    before = deepcopy(state)
+    result = withdraw_known_task(state, parsed, text)
+    assert result and result['view']['tasks'] == [] and not result['proposal_input']
+    assert state == before
+    state['dialogue_state']['tasks'].append({**deepcopy(task), 'id': 'another-discussion'})
+    assert withdraw_known_task(state, parsed, text) is None

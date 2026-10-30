@@ -267,18 +267,34 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
     return None
 
 
+def _policy_understanding_acknowledgement(clause: str) -> bool:
+    """A completed understanding of policy is not completed banking activity.
+
+    Match a whole acknowledgement, retaining the original utterance for all
+    other guards. Extra past assertions or an action after it stay outside.
+    """
+    clause = clause.strip()
+    if len(re.findall(r'已经|曾经', clause)) != 1:
+        return False
+    topic = r'[^，,。；;!?！？]{1,80}(?:规则|流程|步骤|条件|要求|影响|费用|手续费|时效|说明|限制|方法|政策)'
+    understood = r'(?:都|也|完全|基本|很)?(?:了解|理解|弄清|搞清|听懂|看懂|掌握|熟悉|清楚|明白|知道)(?:清楚|明白)?(?:了)?'
+    return bool(re.fullmatch(topic + r'(?:我|本人)?(?:已经|曾经)' + understood, clause)
+                or re.fullmatch(r'(?:我|本人)?(?:已经|曾经)' + understood + r'(?:关于|有关)?' + topic + r'(?:了)?', clause))
+
+
 def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool:
     """A restrictive execution constraint alone is not a cancellation command."""
     source = business_text(text)
     if (_WITHDRAW_QUESTION.search(source)
             or re.search(r'假设|如果|若是|要是|已(?:经)?(?:完成|执行|扣款|提交|成交)|[“”"‘’？?]', source)):
         return False
-    # Past context in a separate non-business clause ("已经了解清楚了")
-    # does not make a later decision historical. Completed banking activity
-    # and past cancellations remain protected wherever they appear.
+    # Scope a past marker to its predicate: understanding banking rules does
+    # not execute that business. Completed actions and cancellations remain
+    # protected, including elsewhere in the same original utterance.
     for clause in re.split(r'[，,。；;!?！？]', source):
         if (re.search(r'已经|曾经', clause)
-                and re.search(r'申购|赎回|买|卖|转账|汇款|付款|支付|扣|冻结|解冻|挂失|解挂|预约|锁定|调额|限额|办理|办好|执行|提交|成交|取消|撤销|放弃|停止', clause)):
+                and re.search(r'申购|赎回|买|卖|转账|汇款|付款|支付|扣|冻结|解冻|挂失|解挂|预约|锁定|调额|限额|办理|办好|执行|提交|成交|取消|撤销|放弃|停止', clause)
+                and not _policy_understanding_acknowledgement(clause)):
             return False
     if _WITHDRAW_NEGATED.search(source):
         return False

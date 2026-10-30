@@ -487,7 +487,23 @@ def test_consultation_and_hypothesis_still_do_not_start_purchase_or_quiz(gateway
     assert not (reply['result'].get('risk_quiz') or {}).get('active')
 
 
-def test_refreshed_explanation_and_repair_keep_one_period(gateway):  # noqa: F811
+@pytest.mark.parametrize('as_of', ['2026-10-30', '2026-10-31', '2026-11-01'])
+def test_refreshed_explanation_and_repair_keep_one_period(gateway, monkeypatch, as_of):  # noqa: F811
+    import main
+    from bank_planning import bill_analysis
+    current = datetime.fromisoformat(as_of + 'T12:00:00')
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current if tz is None else current.astimezone(tz)
+
+    monkeypatch.setattr(bill_analysis, 'datetime', FixedDateTime)
+    recent_ids = {'TX1000', 'TX-CLOUD-0'}
+    previous_month = current.date().replace(day=1) - timedelta(days=1)
+    for row in main.TRANSACTIONS:
+        when = current.date() if row['tx_id'] in recent_ids else previous_month
+        monkeypatch.setitem(row, 'time', when.isoformat() + ' 09:00:00')
     goals = normalize_goals([goal('transactions', ['amount'], '解释消费金额', act='EXPLAIN') | {'requires_record': True}],
                             '解释消费金额', {})
     state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'date_scope': 'ALL',
@@ -498,10 +514,11 @@ def test_refreshed_explanation_and_repair_keep_one_period(gateway):  # noqa: F81
     session.bootstrap()
     session.read({'tool': 'transactions', 'fields': ['amount', 'card_id']})
     assert session.contexts['transactions']['date_scope'] == 'MONTH'
-    assert sum('entity_id' in row for row in session.facts()) == 2
+    assert {row['entity_id'] for row in session.facts() if 'entity_id' in row} == recent_ids
     session.read({'tool': 'transactions', 'fields': ['amount']}, date_context={'date_scope': 'ALL', 'date_range': None})
     assert session.contexts['date_scope'] if 'date_scope' in session.contexts else session.contexts['transactions']['date_scope'] == 'ALL'
-    assert sum('entity_id' in row for row in session.facts()) == 8
+    assert {row['entity_id'] for row in session.facts() if 'entity_id' in row} == {
+        'TX1000', 'TX1001', 'TX1002', 'TX1003', 'TX1004', 'TX-CLOUD-0', 'TX-CLOUD-30', 'TX-CLOUD-60'}
 
 
 def test_recent_transaction_period_and_deictic_two_count_survive_unclear_clarification(gateway, monkeypatch):  # noqa: F811
