@@ -130,6 +130,51 @@ def test_validation_details_are_not_part_of_the_audit_error_message():
     assert str(error) == 'REQUEST_VALUE_AS_ACCOUNT_FACT' and error.details['fragment'] == '待修复的私有句子'
 
 
+@pytest.mark.parametrize('claim', ['已冻结关联卡片', '已经为您转账', '成功退款', '已撤销操作'])
+def test_unverified_operation_claims_stay_blocked_with_bounded_rewrite_details(claim, monkeypatch):
+    from bank_agent.answering import DraftValidationError, _validate_draft
+    facts = [{'id': 'guide.test', 'text': '这里只说明业务规则，没有执行操作。'}]
+    with pytest.raises(DraftValidationError, match='UNVERIFIED_OPERATION_CLAIM') as caught:
+        _validate_draft({'answer': claim, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+    assert claim in caught.value.details['fragment'] and len(caught.value.details['fragment']) <= 160
+    assert str(caught.value) == 'UNVERIFIED_OPERATION_CLAIM'
+    feedback = validation_feedback(str(caught.value), goals(), caught.value.details)
+    assert feedback[0]['action'] == 'REWRITE' and claim in feedback[0]['reason']
+    session = EvidenceSession({'user_id': 'user_zhang', 'parse_meta': {'goals': goals()}})
+    monkeypatch.setattr(session, 'plan', lambda *args: pytest.fail('Claim wording repair must not read account data'))
+    assert session.repair(feedback) is False
+
+
+def test_operation_claim_feedback_rewrites_freeze_effects_without_new_reads_or_writes(gateway, monkeypatch):  # noqa: F811
+    from bank_agent import runtime
+    import security
+    client, _ = gateway
+    seen, reads = [], []
+    original = runtime._http
+    def http(method, path, **kwargs):
+        reads.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    def draft(payload):
+        seen.append((payload, len(reads)))
+        evidence = next(row for row in payload['facts'] if row['id'] == 'guide.card.receive')
+        answer = '已冻结关联卡片' if len(seen) == 1 else evidence['text']
+        return {'answer': answer, 'evidence_ids': [evidence['id']], 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': [evidence['id']], 'reason': '说明冻结影响'}]}
+    model(monkeypatch, [goal('general', [], '银行卡冻结后会有什么影响', act='EXPLAIN') | {'topic': 'card'}], draft=draft)
+    before = financial_state()
+    reply = _send(client, '我想先了解一下，银行卡冻结以后会有什么影响？', conversation_id='freeze-impact-claim-repair')
+    assert reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED' and len(seen) == 2
+    assert reply['business_status'] == 'SUCCEEDED' and reply['approval'] is None
+    assert '限制该卡付款' in reply['reply'] and '账户仍可接收转账' in reply['reply'] and '不会自动解除' in reply['reply']
+    assert '已冻结关联卡片' in seen[1][0]['feedback'][0]['reason']
+    assert seen[0][1] == seen[1][1] and all(method == 'GET' for method, _ in reads)
+    assert financial_state() == before
+    events = [row for row in security.get_audit_logs(limit=1000) if row.get('request_id') == reply['request_id']]
+    assert any(row.get('reason') == 'UNVERIFIED_OPERATION_CLAIM' for row in events)
+    assert all('已冻结关联卡片' not in str(row) for row in events)
+
+
 def test_cached_policy_prefix_still_reads_changed_balance_for_each_question(gateway, monkeypatch):  # noqa: F811
     import main
     from bank_agent import runtime

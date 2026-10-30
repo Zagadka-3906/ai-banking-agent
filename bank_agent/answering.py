@@ -200,7 +200,8 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
         clause_prefix = re.split(r"[，,。；;\n]", rendered[:match.start()])[-1]
         conditional = bool(re.search(r"如果|假如|一旦|若", clause_prefix))
         if not conditional and match.group() not in evidence:
-            raise ValueError("UNVERIFIED_OPERATION_CLAIM")
+            raise DraftValidationError("UNVERIFIED_OPERATION_CLAIM",
+                fragment=clause_prefix[-60:] + rendered[match.start():match.end() + 60])
     # Required complete record sets and material limitations stay server-owned.
     for item in facts:
         if item.get("required") and item["text"] not in rendered:
