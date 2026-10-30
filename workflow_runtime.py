@@ -117,10 +117,13 @@ def _invoke_understanding_model(model: Any, messages: list) -> Any:
         try:
             return primary.result(timeout=min(_UNDERSTANDING_HEDGE_DELAY_SECONDS, max(0, deadline-time.monotonic())))
         except TimeoutError:
-            # An SDK-raised timeout is not a slow pending call. Do not turn a
-            # completed exception into another semantic attempt.
-            if primary.done() or time.monotonic() >= deadline:
+            if time.monotonic() >= deadline:
                 raise
+            # Completion can race with expiry of the initial wait. Recover
+            # the completed response (even malformed content), or propagate
+            # its actual SDK exception; neither needs another model request.
+            if primary.done():
+                return primary.result(timeout=0)
         secondary = _submit_model(model, messages, speculative=True)
         if secondary is None:
             return primary.result(timeout=max(0, deadline-time.monotonic()))

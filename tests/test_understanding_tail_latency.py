@@ -1,5 +1,5 @@
 """Bounded inference speculation cannot change semantics, deadlines or admission."""
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import threading
 import time
 from types import SimpleNamespace
@@ -146,3 +146,60 @@ def test_plain_generation_does_not_inherit_understanding_speculation(isolated_po
         return SimpleNamespace(content='{}')
     assert workflow.invoke_json_model(SimpleNamespace(invoke=invoke), []).content == '{}'
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize('content', ['{}', 'INVALID_JSON'])
+def test_primary_completion_after_initial_wait_expiry_is_not_a_false_timeout(monkeypatch, content):
+    """A future can finish between wait expiry and the caller checking done()."""
+    class FinishingFuture(Future):
+        first_wait = True
+
+        def result(self, timeout=None):
+            if self.first_wait:
+                self.first_wait = False
+                self.set_result(SimpleNamespace(content=content))
+                raise TimeoutError('the initial wait expired just before completion')
+            return super().result(timeout)
+
+    primary = FinishingFuture()
+    submissions = []
+    monkeypatch.setattr(workflow, '_submit_model', lambda *args, **kwargs: submissions.append(kwargs) or primary)
+    assert workflow._invoke_understanding_model(None, []).content == content
+    assert len(submissions) == 1
+
+
+def test_primary_completion_at_logical_deadline_still_times_out(monkeypatch):
+    class ExpiredFuture(Future):
+        def result(self, timeout=None):
+            self.set_result(SimpleNamespace(content='{}'))
+            raise TimeoutError('logical deadline expired')
+
+    primary = ExpiredFuture()
+    clock = iter([0.0, 0.0, 13.0])
+    monkeypatch.setattr(workflow.time, 'monotonic', lambda: next(clock))
+    monkeypatch.setattr(workflow, 'model_timeout', lambda: 12.0)
+    monkeypatch.setattr(workflow, '_submit_model', lambda *args, **kwargs: primary)
+    with pytest.raises(TimeoutError):
+        workflow._invoke_understanding_model(None, [])
+
+
+def test_sdk_timeout_completing_after_wait_expiry_preserves_the_actual_exception(monkeypatch):
+    actual = TimeoutError('actual SDK timeout')
+
+    class FailingFuture(Future):
+        first_wait = True
+
+        def result(self, timeout=None):
+            if self.first_wait:
+                self.first_wait = False
+                self.set_exception(actual)
+                raise TimeoutError('initial wait expired')
+            return super().result(timeout)
+
+    primary = FailingFuture()
+    submissions = []
+    monkeypatch.setattr(workflow, '_submit_model', lambda *args, **kwargs: submissions.append(kwargs) or primary)
+    with pytest.raises(TimeoutError) as raised:
+        workflow._invoke_understanding_model(None, [])
+    assert raised.value is actual
+    assert len(submissions) == 1
