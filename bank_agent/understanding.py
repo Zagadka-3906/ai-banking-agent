@@ -30,7 +30,9 @@ INTENT_DESCRIPTIONS = DESCRIPTIONS
 
 def help_topic(text: str) -> str:
     from bank_agent.query_focus import contact_question
+    from intent_language import inquiry_focus
 
+    text = inquiry_focus(text)
     if contact_question(text):
         return "contacts"
     if re.search(r"生日|跨场景|订花|订.*花|预订.*花|鲜花|蛋糕", text):

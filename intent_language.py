@@ -11,6 +11,24 @@ def business_text(text: str) -> str:
     return re.split(r"备注|附言", text, maxsplit=1)[0].strip("，,；; ")
 
 
+def inquiry_focus(text: str) -> str:
+    """Exclude a leading asserted cause only when choosing a help topic.
+
+    Callers must retain the original text for entities, model understanding,
+    execution restrictions and authorization. Questions and conditions are
+    never removed by this presentation/routing boundary.
+    """
+    source = business_text(text)
+    parts = re.split(r'(?<=[，,。；;!?！？])', source)
+    while len(parts) > 1 and re.match(r'^\s*(?:既然|因为|由于|鉴于|考虑到)', parts[0]):
+        if re.search(r'是否|是不是|有没有|能否|能不能|怎么|如何|为什么|为何|请|帮我|[吗么？?“”\"‘’]', parts[0]):
+            break
+        if not ''.join(parts[1:]).strip('，,。；;!?！？ '):
+            break
+        parts.pop(0)
+    return ''.join(parts).strip()
+
+
 _TASK_START = r"(?:请|麻烦|帮我|再|另外|同时)?\s*(?:给|向|查询|查看|查|看看|看|分析|冻结|解冻|挂失|解挂|申购|赎回|取消|关闭|申请|锁定|预留|(?:本月|上月|这个月|上个月|今天|今年)?(?:余额|账单|银行卡|卡片|订阅|持仓))"
 _EXPLICIT_SPLIT = re.compile(r"然后|接着(?!\s*(?:原来|刚才|之前|上次)的?(?:转账|预约转账|申购|赎回|调额))|之后|[，,]再(?!(?:说|看(?:看)?|确认)(?:[，,。；;!?！？\s]|$))|；|;|并且|，并|同时|以及|顺便|(?=再(?:帮我|查一下|看一下|分析))")
 _NO_CONFIRM = r'(?:我)?(?:(?:先|暂时|暂|现在|目前)\s*)*(?:不|别|不要)(?:急着)?(?:点(?:击)?)?确认(?:了|吧)?'
@@ -145,7 +163,7 @@ def action_request_clause(text: str) -> str | None:
         clause = re.sub(r'^(?:不过|但是|那么|好的|接下来)\s*', '', clause)
         if re.search(r"如何|怎么|怎样|为什么|为何|多久|多长|何时|什么时候|进度|流程|步骤|时效|规则|影响|费用|需要|假设|如果|要是|若是|能否|能不能|是否|什么|不要|别|不必|不想|不打算|[吗么“”\"‘’]", clause):
             continue
-        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)?|请|麻烦|帮我|替我|给我)?\s*(?:先|现在|直接)?(?:给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
+        if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)?|请|麻烦|帮我|替我|给我)?\s*(?:先|现在|直接)?(?:预约(?:一笔)?转账|(?:安排|发起)(?:一笔)?预约转账|给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
             return clause
     return None
 

@@ -597,3 +597,58 @@ def test_explicit_action_with_approval_waiting_generates_only_an_unexecuted_prop
     if intent == 'CARD_LIMIT':
         assert '10,000.00' in reply['approval']['summary']
     assert financial_state()[:4] == before[:4]
+
+
+@pytest.mark.parametrize('prefix', ['既然联系人里没有保存李四', '因为联系人里没有保存李四',
+                                  '由于联系人里没有保存李四', '鉴于联系人里没有保存李四'])
+@pytest.mark.parametrize('current_question,topic', [('我想预约一笔转账给他，日期金额还没定，先看看怎么发起预约转账', 'transfer'),
+                                        ('如何查询银行卡的状态', 'card'), ('如何申购零星宝', 'wealth')])
+def test_asserted_causal_background_does_not_choose_the_current_help_topic(prefix, current_question, topic):
+    from bank_agent.understanding import help_topic
+    from bank_agent.query_focus import contact_question
+    from intent_language import inquiry_focus
+    text = prefix + '，' + current_question
+    assert inquiry_focus(text) == current_question and help_topic(text) == topic and not contact_question(text)
+
+
+@pytest.mark.parametrize('text', ['既然联系人里是否保存李四还不清楚，怎么确认',
+    '如果联系人未保存，能预约转账吗？', '解释“因为联系人没保存，不能转账”这句话',
+    '既然联系人里没有保存李四'])
+def test_inquiry_focus_preserves_questions_conditions_quotes_and_standalone_context(text):
+    from intent_language import inquiry_focus, business_text
+    assert inquiry_focus(text) == business_text(text)
+
+
+@pytest.mark.parametrize('verb', ['预约一笔转账', '预约转账', '安排一笔预约转账', '发起预约转账'])
+def test_affirmative_scheduled_request_survives_a_later_how_to_continue_question(verb):
+    from intent_language import action_request_clause, execution_constraint
+    text = '我想' + verb + '给李四，日期金额还没定，先帮我看看怎么发起预约转账'
+    assert action_request_clause(text) == '我想' + verb + '给李四'
+    assert execution_constraint(text) is None
+    assert enforce_inquiry({'intent': 'SCHEDULED_TRANSFER', 'parse_meta': {'dialogue_act': 'ACTION'}}, text)['intent'] == 'SCHEDULED_TRANSFER'
+
+
+@pytest.mark.parametrize('with_goals', [False, True])
+def test_original_contact_background_then_schedule_clarifies_and_can_cancel_without_writing(gateway, monkeypatch, with_goals):  # noqa: F811
+    import json
+    from types import SimpleNamespace
+    from bank_agent import runtime
+    client, _ = gateway
+    cid = 'contact-background-schedule'
+    before = financial_state()
+    model(monkeypatch, [goal('contacts', ['saved'], '李四是否保存', subject='李四')])
+    first = _send(client, '我想确认一下，联系人里有没有保存李四，该怎么查？', conversation_id=cid)
+    assert first['approval'] is None and '联系人' in first['reply']
+    payload = {'intent': 'SCHEDULED_TRANSFER', 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE', 'target': '李四'}
+    if with_goals:
+        payload['goals'] = [goal('general', [], '预约转账但日期金额未定', act='ACTION')]
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps(payload))))
+    second = _send(client, '既然联系人里没有保存李四，我想预约一笔转账给他，日期和金额还没定，先帮我看看怎么发起预约转账。', conversation_id=cid)
+    assert second['approval'] is None and second['intent'] == 'SCHEDULED_TRANSFER'
+    assert '金额' in second['reply'] and any(word in second['reply'] for word in ('日期', '时间'))
+    assert '侧边栏' not in second['reply']
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}))))
+    third = _send(client, '既然联系人里没保存李四，那这笔预约转账我先不办了，取消预约转账的意向。', conversation_id=cid)
+    assert third['business_status'] == 'CANCELLED' and third['approval'] is None
+    assert financial_state() == before

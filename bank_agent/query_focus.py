@@ -18,6 +18,8 @@ def subscription_subject(text: str) -> str | None:
 
 
 def contact_question(text: str) -> bool:
+    from intent_language import inquiry_focus
+    text = inquiry_focus(text)
     if re.search(r"转账|到账|流水|账单", text) and not re.search(r"保存|通讯录|联系人簿|常用收款人|收款人列表|联系人列表", text):
         return False
     return bool(re.search(r"常用收款人|联系人(?:簿|列表|管理)?|通讯录|收款人列表|(?:是否|是不是|有没有|怎么确认).{0,20}(?:已保存|保存过)|是否已保存", text))
