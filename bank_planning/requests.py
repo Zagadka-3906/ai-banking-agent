@@ -34,6 +34,32 @@ def literal_selector_mentioned(selector: str, text: str) -> bool:
     return False
 
 
+_REFERENCE_NOUNS = {
+    'transactions': r'交易|流水|转账(?:记录|流水)?|交易记录|流水记录',
+    'cards': r'卡|卡片|银行卡',
+    'wealth_products': r'产品|理财产品',
+    'wealth_holdings': r'持仓',
+    'tasks': r'任务|预约|预约任务|待办',
+    'disputes': r'工单|争议工单|案件',
+    'contacts': r'联系人|收款人',
+    'subscriptions': r'订阅|会员',
+}
+
+
+def _observed_reference(selector: str, resource: str, *, act: str) -> bool:
+    """Recognize a whole reference, never erase a name, amount or other filter."""
+    if re.fullmatch(r'(?:这|那|该|上述|刚才)(?:一|个|张|笔|项|款)?(?:的)?(?:卡|卡片|银行卡|产品|交易|流水|任务|预约|工单|订阅|会员|联系人|收款人)?', selector):
+        return True
+    if act == 'ACTION':
+        return False
+    nouns = _REFERENCE_NOUNS.get(resource)
+    if nouns is None:
+        return False
+    deictic = r'(?:这|那|该|上述)(?:一)?(?:个|张|笔|项|款)?(?:的)?'
+    recent = r'(?:刚才|刚刚|方才)(?:查询|查到|核对|展示|完成|结算|执行|创建|办理)?(?:的)?'
+    return bool(re.fullmatch(r'(?:' + deictic + '|' + recent + '(?:' + deictic + r')?)(?:' + nouns + r')?', selector))
+
+
 def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[dict[str, Any]]:
     from banking_knowledge import TOPICS
     if not isinstance(value, list) or not 1 <= len(value) <= 5:
@@ -81,6 +107,9 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
             raise ValueError('INVALID_GOAL_SUBJECT')
         aliases = context.get('grounded_aliases') or {}
         known = {*observed, *aliases.keys(), *aliases.values()}
+        known.update(name for row in context.get('recent_observations', [])
+                     for name in (row.get('resource_entities') or {}).get(item['resource'], [])
+                     if isinstance(name, str))
         if item['act'] == 'ACTION':
             # This reference is compiled from one selected principal-bound
             # discussion by the parser, never from model-supplied account facts.
@@ -104,7 +133,7 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
             raise ValueError('CALCULATION_OPERANDS_REQUIRED')
         resolved, unclear_reference = [], False
         for name in subjects:
-            if re.fullmatch(r'(?:这|那|该|上述|刚才)(?:一|个|张|笔|项|款)?(?:的)?(?:卡|卡片|银行卡|产品|交易|流水|任务|预约|工单|订阅|会员|联系人|收款人)?', name):
+            if _observed_reference(name, item['resource'], act=item['act']):
                 candidates: list[str] = next((row.get('resource_entities', {}).get(item['resource'], [])
                                    for row in reversed(context.get('recent_observations', []))
                                    if item['resource'] in row.get('resource_entities', {})), [])

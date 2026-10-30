@@ -690,3 +690,94 @@ def test_task_due_payment_inquiry_does_not_open_subscription_query_confirmation(
     coverage=reply['result']['answer_presentation']['coverage']
     assert len(coverage)==2 and all(row['status']=='ANSWERED' for row in coverage)
     assert financial_state()==before
+
+
+@pytest.mark.parametrize('resource,noun,identifier', [
+    ('transactions', '转账记录', 'TX-FRESH'), ('cards', '银行卡', 'CARD-001'),
+    ('wealth_products', '产品', 'LX00118'), ('tasks', '预约任务', 'TASK-001'),
+    ('disputes', '争议工单', 'CASE-1234'), ('contacts', '联系人', '李四'),
+    ('subscriptions', '订阅', '视频会员'),
+])
+@pytest.mark.parametrize('prefix', ['刚刚核对的那项', '刚才展示的那个', '上述', '那个'])
+def test_verified_record_references_share_resource_binding(resource, noun, identifier, prefix):
+    selector = prefix + noun
+    context = {'recent_observations': [{'resource_entities': {resource: [identifier]}}]}
+    result = normalize_goals([goal(resource, ['records'], '查询记录', subject=selector)], selector, context)[0]
+    assert result['act'] == 'QUERY' and result['subjects'] == [identifier] and not result['needs_subject']
+
+
+@pytest.mark.parametrize('resource,noun', [('transactions', '转账记录'), ('cards', '银行卡'),
+                                         ('tasks', '预约任务'), ('disputes', '争议工单')])
+@pytest.mark.parametrize('latest', [[], ['FIRST', 'SECOND']])
+def test_latest_ambiguous_or_empty_record_reference_cannot_revive_old_identity(resource, noun, latest):
+    selector = '刚刚核对的那笔' + noun
+    context = {'recent_observations': [{'resource_entities': {resource: ['OLDER']}},
+                                        {'resource_entities': {resource: latest}}]}
+    result = normalize_goals([goal(resource, ['records'], '查询记录', subject=selector)], selector, context)[0]
+    assert result['act'] == 'UNCLEAR' and result['subjects'] == [] and result['needs_subject']
+
+
+@pytest.mark.parametrize('selector', ['那笔给王五的转账', '那笔500元的转账', '另一笔转账', '李四的转账记录'])
+def test_specific_record_filter_is_not_replaced_by_previous_reference(selector):
+    context = {'recent_observations': [{'resource_entities': {'transactions': ['TX-OLD']}}]}
+    result = normalize_goals([goal('transactions', ['records'], '查询记录', subject=selector)], selector, context)[0]
+    assert result['subjects'] == [selector] and 'TX-OLD' not in result['subjects']
+
+
+def test_successful_transfer_receipt_enters_the_same_principal_bound_reference_map():
+    from bank_agent.understanding import remember_reply, understanding_context, model_context
+    state = {'user_id': 'user_zhang', 'intent': 'TRANSFER', 'user_input': '确认转账',
+             'execution_result': {'type': 'TRANSFER_SUCCESS', 'data': {'transaction_id': 'TX-RECEIPT'}}}
+    remembered = remember_reply(state, {'final_response': '转账成功，流水号TX-RECEIPT', 'business_status': 'SUCCEEDED'})
+    observation = remembered['observations']['TRANSFER']
+    assert observation['transaction_ids'] == ['TX-RECEIPT']
+    assert observation['resource_entities']['transactions'] == ['TX-RECEIPT']
+    with understanding_context({**remembered, 'user_id': 'user_li'}):
+        assert model_context()['recent_observations'] == []
+    assert not remember_reply(state, {'final_response': '转账失败', 'business_status': 'FAILED'})['observations']
+
+
+@pytest.mark.parametrize('selector', ['刚刚完成的那笔转账记录', '刚才那笔转账', '那笔转账记录'])
+def test_gateway_receipt_followup_binds_the_completed_transfer_without_new_authorization(gateway, monkeypatch, selector):  # noqa: F811
+    from copy import deepcopy
+    import main
+    client, _ = gateway
+    monkeypatch.setenv('BANK_MODEL_FAST_PATH', '1')
+    original_ids = {row['tx_id'] for row in main.TRANSACTIONS}
+    proposed = _send(client, '给李四转账300元', conversation_id='receipt-reference')
+    completed = client.post('/api/v1/agent/approvals/' + proposed['approval']['approval_id'],
+                            json={'decision': 'approve'}, headers=_headers())
+    assert completed.status_code == 200 and completed.json()['business_status'] == 'SUCCEEDED'
+    outgoing = [row for row in main.TRANSACTIONS if row['tx_id'] not in original_ids and row['account_id'] == 'user_zhang']
+    assert len(outgoing) == 1
+    identifier = outgoing[0]['tx_id']
+    before = deepcopy(financial_state())
+    model(monkeypatch, [goal('transactions', ['records'], '查询刚完成的转账记录', subject=selector)], intent='BILL_QUERY')
+    monkeypatch.setenv('BANK_MODEL_FAST_PATH', '0')
+    calls = []
+    original = runtime._http
+    def http(method, path, **kwargs):
+        calls.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    answer = _send(client, '我想查一下' + selector + '，能帮我看一下吗？', conversation_id='receipt-reference')
+    assert answer['business_status'] == 'SUCCEEDED' and answer['approval'] is None
+    assert identifier in answer['reply'] and '李四' in answer['reply'] and '300' in answer['reply']
+    assert all(method == 'GET' for method, _ in calls) and financial_state() == before
+
+
+@pytest.mark.parametrize('resource,noun', [('transactions', '转账记录'), ('cards', '银行卡'),
+                                         ('tasks', '预约任务'), ('disputes', '争议工单')])
+def test_new_read_references_cannot_bind_a_new_action_to_a_past_record(resource, noun):
+    selector = '刚刚完成的那笔' + noun
+    context = {'recent_observations': [{'resource_entities': {resource: ['OLDER']}}]}
+    result = normalize_goals([goal(resource, ['records'], '办理', act='ACTION', subject=selector)], selector, context)[0]
+    assert result['subjects'] == [selector] and 'OLDER' not in result['subjects']
+
+
+@pytest.mark.parametrize('resource,identifier', [('transactions', 'TX-VERIFIED'), ('cards', 'CARD-001'),
+                                               ('tasks', 'TASK-001'), ('disputes', 'CASE-1234')])
+def test_modern_verified_resource_ids_are_grounded_without_legacy_aliases(resource, identifier):
+    context = {'recent_observations': [{'resource_entities': {resource: [identifier]}}]}
+    result = normalize_goals([goal(resource, ['records'], '查询刚才结果', subject=identifier)], '查询刚才结果', context)[0]
+    assert result['act'] == 'QUERY' and result['subjects'] == [identifier]

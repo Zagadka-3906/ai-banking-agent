@@ -447,6 +447,10 @@ def remember_reply(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
                 resource_entities.setdefault(resource, [])
                 if isinstance(row.get('entity_id'), str) and row['entity_id'] not in resource_entities[resource]:
                     resource_entities[resource].append(row['entity_id'])
+        # A checked execution receipt is a verified observation too. Its ID
+        # selects a fresh read; it is never a substitute for current records.
+        if result.get('type') == 'TRANSFER_SUCCESS' and observation['transaction_ids']:
+            resource_entities['transactions'] = observation['transaction_ids']
         observation['resource_entities'] = {key: values[:20] for key, values in resource_entities.items()}
         from bank_agent.consultation import valid_read_step
         observation['read_requests'] = [dict(step) for step in (supporting.get('read_budget') or {}).get('completed', [])

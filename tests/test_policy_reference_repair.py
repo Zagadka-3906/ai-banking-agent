@@ -163,3 +163,104 @@ def test_gateway_can_explain_policy_after_repair_without_reading_account_records
     assert repairs == [1] and reply['business_status'] == 'SUCCEEDED'
     assert '没有真实客服审核队列' in reply['reply'] and '预计完成时间' in reply['reply']
     assert reply['approval'] is None and financial_state() == before
+
+
+RECORD_QUESTION = '我想查一下刚刚完成的那笔转账记录，能帮我看一下吗？'
+
+
+def record_request(subject='上一次完成的转账', **changes):
+    return {**goal('transactions', ['records'], '查询刚完成的转账记录', subject=subject), **changes}
+
+
+def record_context(ids=('TX-VERIFIED',), *, principal='user_zhang'):
+    return {'user_id': 'user_zhang', 'memory_principal': principal,
+            'observations': {'TRANSFER': {'resource_entities': {'transactions': list(ids)}}}}
+
+
+def test_unbound_read_reference_can_be_reconsidered_once_against_one_verified_object(monkeypatch):
+    from bank_agent.understanding import understanding_context
+    calls = install(monkeypatch, [record_request()], [record_request('TX-VERIFIED')])
+    with understanding_context(record_context()):
+        parsed = model_parse(RECORD_QUESTION)
+    assert len(calls) == 2 and parsed['parse_meta']['goal_repair'] == 'REPAIRED'
+    assert parsed['parse_meta']['goals'][0]['subjects'] == ['TX-VERIFIED']
+    assert parsed['parse_meta']['goals'][0]['act'] == 'QUERY'
+
+
+@pytest.mark.parametrize('state', [record_context(()), record_context(('FIRST', 'SECOND')),
+                                  record_context(principal='user_li')])
+def test_record_reference_repair_cannot_choose_between_objects_or_cross_principals(monkeypatch, state):
+    from bank_agent.understanding import understanding_context
+    calls = install(monkeypatch, [record_request()], [record_request('TX-VERIFIED')])
+    with understanding_context(state):
+        parsed = model_parse(RECORD_QUESTION)
+    assert len(calls) == 1 and parsed['parse_meta']['goals'][0]['act'] == 'UNCLEAR'
+
+
+@pytest.mark.parametrize('replacement', [
+    [record_request('TX-VERIFIED', act='ACTION')], [record_request('TX-OTHER')],
+    [record_request(None)], [record_request('TX-VERIFIED', fields=['amount'])],
+    [goal('cards', ['status'], '另查卡片', subject='CARD-001')],
+    [record_request('TX-VERIFIED'), record_request('TX-VERIFIED')],
+])
+def test_record_reconsideration_cannot_change_objects_fields_resources_or_actions(monkeypatch, replacement):
+    from bank_agent.understanding import understanding_context
+    calls = install(monkeypatch, [record_request()], replacement)
+    with understanding_context(record_context()):
+        parsed = model_parse(RECORD_QUESTION)
+    assert len(calls) == 2 and parsed['parse_meta']['goal_repair'] == 'FAILED'
+
+
+def test_clear_record_filter_does_not_add_an_understanding_call(monkeypatch):
+    from bank_agent.understanding import understanding_context
+    calls = install(monkeypatch, [record_request('TX-VERIFIED')], [])
+    with understanding_context(record_context()):
+        parsed = model_parse('查询TX-VERIFIED的流水')
+    assert len(calls) == 1 and parsed['parse_meta']['goals'][0]['act'] == 'QUERY'
+
+
+def test_record_reconsideration_preserves_an_independent_balance_question(monkeypatch):
+    from bank_agent.understanding import understanding_context
+    balance = goal('balance', ['available_balance'], '可用余额')
+    calls = install(monkeypatch, [record_request(), balance], [record_request('TX-VERIFIED'), balance])
+    with understanding_context(record_context()):
+        parsed = model_parse(RECORD_QUESTION + '另外查可用余额')
+    assert len(calls) == 2 and parsed['parse_meta']['goal_repair'] == 'REPAIRED'
+    assert parsed['parse_meta']['goals'][1]['fields'] == ['available_balance']
+
+
+
+def test_gateway_record_reference_reconsideration_reads_the_receipt_without_new_authorization(gateway, monkeypatch):  # noqa: F811
+    import main
+    from test_agent_gateway import _headers
+    client, _ = gateway
+    monkeypatch.setenv('BANK_MODEL_FAST_PATH', '1')
+    previous = {row['tx_id'] for row in main.TRANSACTIONS}
+    proposal = _send(client, '给李四转账300元', conversation_id='receipt-binding-repair')
+    settled = client.post('/api/v1/agent/approvals/' + proposal['approval']['approval_id'],
+                          json={'decision': 'approve'}, headers=_headers())
+    assert settled.status_code == 200 and settled.json()['business_status'] == 'SUCCEEDED'
+    identifier = next(row['tx_id'] for row in main.TRANSACTIONS
+                      if row['tx_id'] not in previous and row['account_id'] == 'user_zhang')
+    model(monkeypatch, [record_request()], intent='BILL_QUERY')
+    delegate, repairs = runtime.llm.invoke, []
+    def invoke(messages):
+        if '补全goals协议' in messages[0].content:
+            payload = json.loads(messages[-1].content)
+            binding = payload['record_reference_repairs']['0']
+            repairs.append(binding)
+            return SimpleNamespace(content=json.dumps({'goals': [record_request(binding['subject'])]}))
+        return delegate(messages)
+    monkeypatch.setattr(runtime.llm, 'invoke', invoke)
+    monkeypatch.setenv('BANK_MODEL_FAST_PATH', '0')
+    original, reads = runtime._http, []
+    def http(method, path, **kwargs):
+        reads.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    before = financial_state()
+    answer = _send(client, RECORD_QUESTION, conversation_id='receipt-binding-repair')
+    assert len(repairs) == 1 and repairs[0]['subject'] == identifier
+    assert answer['business_status'] == 'SUCCEEDED' and answer['approval'] is None
+    assert identifier in answer['reply'] and '李四' in answer['reply'] and '300' in answer['reply']
+    assert all(method == 'GET' for method, _ in reads) and financial_state() == before
