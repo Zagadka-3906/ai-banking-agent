@@ -178,8 +178,10 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
                    and not re.search(r'任务|工单|审批|授权|已完成|已执行|已扣款|已提交|已成交', clause))
         terminal = ((pending or current_discussion and current) and re.search(r'(?:取消|撤销|放弃|停止)(?:掉|吧)?$', clause)
                     and not re.search(r'解释|说明|分析|介绍|描述|谈谈|提醒|告诉|复述|转述|翻译', clause))
+        pending_reference = (current_discussion and pending and (terminal or _WITHDRAW_COMMAND.match(clause)
+                             and re.search(r'(?:意向|讨论|提案)(?:吧|即可|就好)?$', clause)))
         if ((_WITHDRAW_COMMAND.match(clause) or terminal) and (pending or current_discussion and current)
-                and re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause)):
+                and (pending_reference or re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause))):
             return clause
     return None
 

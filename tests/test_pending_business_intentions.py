@@ -124,6 +124,73 @@ def test_original_scheduled_transfer_withdrawal_closes_the_discussion_without_cr
     assert '尚未执行' in reply['reply'] and financial_state() == before
 
 
+def unspecified_scheduled_discussion():
+    from bank_agent.dialogue_state import remember_discussion
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'intent': 'BANKING_HELP',
+             'user_input': '我还想预约一笔转账，但日期和金额都还没定，能先帮我办这个预约吗？'}
+    return {**state, 'dialogue_state': remember_discussion(state, {'business_status': 'SUCCEEDED'})}
+
+
+def test_consulted_intention_is_retained_even_before_the_recipient_date_and_amount_are_known():
+    state = unspecified_scheduled_discussion()
+    tasks = state['dialogue_state']['tasks']
+    assert len(tasks) == 1 and tasks[0]['intent'] == 'SCHEDULED_TRANSFER'
+    assert tasks[0]['kind'] == 'discussed_intention' and tasks[0]['pending']['payload']['target'] is None
+    assert {'target', 'amount', 'scheduled_at'} <= set(tasks[0]['pending']['missing'])
+    assert 'auth_token' not in tasks[0]['pending']['payload']
+
+
+@pytest.mark.parametrize('text', ['那这笔预约转账我不打算办了，先取消这个意向吧。', '先取消这个意向吧。',
+                                '这个意向帮我取消吧'])
+def test_generic_intention_reference_can_stop_only_one_known_unfinished_discussion(text):
+    state = unspecified_scheduled_discussion()
+    before = deepcopy(state)
+    assert withdrawal_statement(text, pending_discussion=True)
+    result = withdraw_known_task(state, withdrawal(text), text)
+    assert result and result['view']['tasks'] == [] and not result['proposal_input']
+    assert state == before
+    task = state['dialogue_state']['tasks'][0]
+    state['dialogue_state']['tasks'].append({**task, 'id': 'another-scheduled'})
+    assert withdraw_known_task(state, withdrawal(text), text) is None
+
+
+@pytest.mark.parametrize('text', ['解释取消这个意向的含义', '取消这个意向的流程', '先取消这个意向可以吗',
+                                '这个意向不要取消', '如果取消这个意向会怎样', '先取消这个已完成的意向'])
+def test_generic_intention_reference_does_not_convert_explanations_or_completed_actions_to_commands(text):
+    assert not withdrawal_statement(text, pending_discussion=True)
+
+
+def test_business_in_another_clause_still_limits_which_intention_can_be_stopped():
+    state = pending_quiz()
+    text = '那这笔预约转账我不打算办了，先取消这个意向吧。'
+    assert withdraw_known_task(state, withdrawal(text), text) is None
+    scheduled = unspecified_scheduled_discussion()['dialogue_state']['tasks'][0]
+    quiz = dialogue_view(state)['tasks'][0]
+    state['context'] = {}
+    state['dialogue_state'] = {'principal': 'user_zhang', 'tasks': [quiz, scheduled]}
+    result = withdraw_known_task(state, withdrawal(text), text)
+    assert result and [task['id'] for task in result['view']['tasks']] == [quiz['id']]
+    ambiguous = '预约转账和零星宝申购我都不想办了，先取消这个意向吧。'
+    assert withdraw_known_task(state, withdrawal(ambiguous), ambiguous) is None
+
+
+def test_gateway_stops_the_consulted_scheduled_intention_before_any_required_input_was_provided(gateway, monkeypatch):  # noqa: F811
+    import conversation
+    client, _ = gateway
+    cid = 'unspecified-scheduled-intention'
+    model(monkeypatch, [goal('general', [], '日期金额未定的预约准备', act='EXPLAIN')])
+    _send(client, '我还想预约一笔转账，但日期和金额都还没定，能先帮我办这个预约吗？', conversation_id=cid)
+    thread = conversation.conversation_thread_id('user_zhang', cid)
+    current = conversation.get_graph().get_state({'configurable': {'thread_id': thread}}).values
+    assert any(task['pending']['payload'].get('target') is None for task in dialogue_view(current)['tasks'])
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}))))
+    before = financial_state()
+    reply = _send(client, '那这笔预约转账我不打算办了，先取消这个意向吧。', conversation_id=cid)
+    assert reply['approval'] is None and reply['business_status'] == 'CANCELLED' and '尚未执行' in reply['reply']
+    assert financial_state() == before
+
+
 @pytest.mark.parametrize('text', [
     '对，我要取消刚才那笔零星宝的待确认申购，麻烦帮我取消。',
     '请撤销零星宝未确认的申购', '我想放弃零星宝的申购意向',

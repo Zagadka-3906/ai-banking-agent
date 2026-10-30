@@ -10,8 +10,10 @@ COMMANDS = {'RESUME', 'FILL', 'CORRECT', 'PAUSE', 'CANCEL'}
 
 
 def _withdrawal_input(text: str) -> dict[str, Any]:
+    import re
     from bank_agent.extraction import PRODUCT_ALIASES, PRODUCT_IDS, target_from_text
     from bank_agent.parsing import _local_parse_rules
+    from bank_planning.intents import GREEN_INTENTS
     from intent_language import ambiguous_target, bare_withdrawal_clause, business_text, pending_withdrawal_clause
 
     whole = business_text(text)
@@ -25,6 +27,18 @@ def _withdrawal_input(text: str) -> dict[str, Any]:
         # Here undo_kind identifies only the discussion's business type. It
         # cannot cancel a Core task or supply an execution approval.
         raw = {**raw, 'intent': (raw.get('slots') or {}).get('undo_kind'), 'target': target_from_text(clause)}
+    if clause and raw.get('intent') == 'UNKNOWN':
+        # "Cancel this intention" names the pending object in its own clause;
+        # a business named elsewhere must still constrain which frame it stops.
+        businesses = set()
+        for fragment in re.split(r'[，,。；;!?！？]|以及|同时|并且|或者|和|与|及', whole):
+            value = _local_parse_rules(fragment)
+            operation = (value.get('slots') or {}).get('undo_kind') if value['intent'] == 'UNDO_OPERATION' else value['intent']
+            if operation and operation not in GREEN_INTENTS | {'UNKNOWN', 'SUBSCRIPTION_QUERY', 'LAST', 'SETTLED_TRANSFER'}:
+                businesses.add(operation)
+        raw['_ambiguous'] = raw['_ambiguous'] or len(businesses) > 1
+        if len(businesses) == 1:
+            raw['intent'] = next(iter(businesses))
     raw['target'] = raw.get('target') or target_from_text(whole)
     return raw
 

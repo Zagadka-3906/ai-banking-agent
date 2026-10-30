@@ -66,11 +66,11 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
 
         source = business_text(str(state.get('user_input') or ''))
         raw = _local_parse_rules(source)
-        # Remember a named, incomplete intention discussed in a consultation.
+        # Remember an incomplete intention, including unknown recipient/date.
         # It is not the active clarification or an authorization; a later turn
         # must explicitly resume it and independently supply executable values.
         if (raw['intent'] in {'TRANSFER', 'SCHEDULED_TRANSFER', 'WEALTH_PURCHASE', 'CARD_LIMIT'}
-                and raw.get('target') and raw.get('amount') is None and missing_slots(raw)
+                and raw.get('amount') is None and missing_slots(raw)
                 and execution_constraint(source) != 'NEGATED_ACTION'
                 and re.search(r'我想|我要|我打算|我准备|帮我|给.{1,24}(?:转|汇)', source)):
             existing = next((task for task in tasks if task.get('intent') == raw['intent']

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-30.1",
-  "rules_version": "72652c89a3822ded28b5deb9b587a3a7527cc7d2dfe1e2a10013f20be8dc8ef6",
+  "rules_version": "e5224562159dc4521b1cbab568433c3e31546404cc78487898451dd5eed64d3e",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "ada475d5387ddf1e14780d01b05baf799855d7c63c6f1d39449f836ff6624a98",
@@ -10,8 +10,8 @@
     "bank_agent/consultation.py": "bf060ecfe2f4987b7febae22ebe43742fe7ea87ce3b798280bd6cd32fbc27f86",
     "bank_agent/conversation_approvals.py": "d165fae834bdccffb449d3546d91d24e744ab84afe1b682512279db8bd58ce89",
     "bank_agent/dialogue.py": "27899dd3bd9573361d92e1a4067935e9f32f3c2b87b4875bbae12e56686c4b21",
-    "bank_agent/dialogue_commands.py": "805c4a142dc5c7690c0dfe0811e2c89b55d91748e1f97700da5555361c0efae7",
-    "bank_agent/dialogue_state.py": "8dc2f46a2a9dae84f6fe11902a2b98b4f6c8477817636a62ae4b4a274a496031",
+    "bank_agent/dialogue_commands.py": "beb21cc9c15560e8d0e9656448633d7ccc93be80ea048a21ff8e9cc8f12c3404",
+    "bank_agent/dialogue_state.py": "3b685a88a389b090ab8cb21a4253b4fb454b58c00753051b8d37f1afacdf184d",
     "bank_agent/entities.py": "6f272495da41e317bcceb889ec8714734cd03ca17f37756a1737c8818ddaec3b",
     "bank_agent/evidence.py": "24939552630314938367add9163704eeddf237e5f1ca33f4c370a5d10b308a3d",
     "bank_agent/evidence_session.py": "96876314ad0a4934896f9883c9147de63cf538771c5da08f018fbb8427711f5a",
@@ -46,7 +46,7 @@
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "510e40488519ca282f8f58f3d63b3701cb34eb943564625139e40bad5c36741b",
     "banking_rules.py": "9927d515625ab37f33f8a1c357a21ad239c6c46d6301f65f8d207f0173a3e78f",
-    "intent_language.py": "561c183f3a98f7c433801446b34cbed92bc2ce22f5803ad0e9b4bb33b0356d37",
+    "intent_language.py": "a1be094d51123ea99ee4a1cc84df220ad1059c9cb7f7289158cf511c57192e2f",
     "model_config.py": "2ce2f0b20b18d920968ad385b88f9d9ca30ca6a37425ca33af1ca7215ca0b701",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f",
     "workflow_runtime.py": "8b7b92c5aecafd3c3d56cef65667c07cfa21b496bdc4a9074e431487c0eed3f2"
