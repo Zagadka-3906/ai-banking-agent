@@ -553,3 +553,47 @@ def test_recent_transaction_period_and_deictic_two_count_survive_unclear_clarifi
     records = turn3['result']['execution_result']['records']
     assert [row['tx_id'] for row in records] == ['TX1000', 'TX-CLOUD-0']
     assert 'TX1004' not in turn3['reply'] and '全部时间' not in turn3['reply']
+
+
+@pytest.mark.parametrize('qualifier', ['我先不确认，等看到确认卡再说', '暂不确认', '先别确认；等审批卡出来我再看',
+                                    '等看到确认卡，再说', '我暂时先不确认', '先别点击确认'])
+def test_approval_waiting_conditions_stay_with_the_primary_request(qualifier):
+    from intent_language import split_tasks
+    text = '请把CARD-001日限额改为10000元；' + qualifier
+    parts = split_tasks(text)
+    assert len(parts) == 1 and parts[0] == text
+
+
+@pytest.mark.parametrize('extra,expected', [('查询余额', '查询余额'), ('查看我的银行卡', '查看我的银行卡'),
+    ('给王美转500元', '给王美转500元'), ('冻结CARD-002', '冻结CARD-002'),
+    ('我先不确认，手续费是多少？', '手续费是多少？'), ('等看到确认卡再说，给王美转500元', '给王美转500元')])
+def test_approval_qualifiers_do_not_swallow_actual_queries_or_another_operation(extra, expected):
+    from intent_language import split_tasks
+    parts = split_tasks('给李四转300元；先不确认；' + extra)
+    assert len(parts) >= 2 and expected in parts[-1]
+
+
+@pytest.mark.parametrize('with_goals', [False, True])
+@pytest.mark.parametrize('text,intent,risk', [
+    ('明白了，那请把卡片CARD-001的日限额改为10000元；我先不确认，等看到确认卡再说。', 'CARD_LIMIT', 'RED'),
+    ('给李四转300元；我先不确认，等看到确认卡再说。', 'TRANSFER', 'YELLOW'),
+    ('冻结CARD-001；我先不确认，等看到确认卡再说。', 'CARD_FREEZE', 'RED'),
+])
+def test_explicit_action_with_approval_waiting_generates_only_an_unexecuted_proposal(gateway, monkeypatch, with_goals, text, intent, risk):  # noqa: F811
+    from bank_agent import runtime
+    from types import SimpleNamespace
+    import json
+    client, _ = gateway
+    payload = {'intent': intent, 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE'}
+    if with_goals:
+        payload['goals'] = [goal('general', [], '生成该办理的待确认提案', act='ACTION')]
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps(payload))))
+    before = financial_state()
+    reply = _send(client, text, conversation_id='approval-wait-condition')
+    assert reply['status'] == 'APPROVAL_REQUIRED' and reply['approval']['risk_level'] == risk
+    assert reply['approval']['mfa_required'] == (risk == 'RED')
+    expected_target = 'CARD-001' if intent.startswith('CARD_') else '李四'
+    assert expected_target in reply['approval']['summary']
+    if intent == 'CARD_LIMIT':
+        assert '10,000.00' in reply['approval']['summary']
+    assert financial_state()[:4] == before[:4]

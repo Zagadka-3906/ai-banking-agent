@@ -12,7 +12,11 @@ def business_text(text: str) -> str:
 
 
 _TASK_START = r"(?:请|麻烦|帮我|再|另外|同时)?\s*(?:给|向|查询|查看|查|看看|看|分析|冻结|解冻|挂失|解挂|申购|赎回|取消|关闭|申请|锁定|预留|(?:本月|上月|这个月|上个月|今天|今年)?(?:余额|账单|银行卡|卡片|订阅|持仓))"
-_EXPLICIT_SPLIT = re.compile(r"然后|接着(?!\s*(?:原来|刚才|之前|上次)的?(?:转账|预约转账|申购|赎回|调额))|之后|，再|,再|；|;|并且|，并|同时|以及|顺便|(?=再(?:帮我|查一下|看一下|分析))")
+_EXPLICIT_SPLIT = re.compile(r"然后|接着(?!\s*(?:原来|刚才|之前|上次)的?(?:转账|预约转账|申购|赎回|调额))|之后|[，,]再(?!(?:说|看(?:看)?|确认)(?:[，,。；;!?！？\s]|$))|；|;|并且|，并|同时|以及|顺便|(?=再(?:帮我|查一下|看一下|分析))")
+_NO_CONFIRM = r'(?:我)?(?:(?:先|暂时|暂|现在|目前)\s*)*(?:不|别|不要)(?:急着)?(?:点(?:击)?)?确认(?:了|吧)?'
+_WAIT_APPROVAL = (r'等(?:我)?(?:看到|看见|看过|核对)?(?:确认|审批)(?:卡片|卡|信息|界面)'
+                  r'(?:出来|出现|显示)?(?:之后|以后|后)?(?:[，,]\s*)?(?:我)?(?:再(?:说|看(?:看)?|确认))?')
+_APPROVAL_QUALIFIER = re.compile(r'(?:' + _NO_CONFIRM + '|' + _WAIT_APPROVAL + r')(?:[，,]\s*(?:' + _NO_CONFIRM + '|' + _WAIT_APPROVAL + '))*')
 
 
 def split_tasks(text: str) -> list[str]:
@@ -41,6 +45,16 @@ def split_tasks(text: str) -> list[str]:
     source = re.sub(r"(?:[，,、。]|和|与|及)(?=\s*" + _TASK_START + r")", separator, source)
     parts = [part.strip("，,。；; ") for part in _EXPLICIT_SPLIT.split(source)]
     parts = [part for part in parts if part]
+    qualified: list[str] = []
+    for part in parts:
+        # Waiting to inspect an approval is a condition on the preceding
+        # request, not another banking task or authority to confirm it.
+        # Full matching retains any independent query or operation as a task.
+        if qualified and _APPROVAL_QUALIFIER.fullmatch(part):
+            qualified[-1] += '；' + part
+        else:
+            qualified.append(part)
+    parts = qualified
     if parts and len(segments) == 3:
         parts[-1] += segments[1] + segments[2]
     return parts
