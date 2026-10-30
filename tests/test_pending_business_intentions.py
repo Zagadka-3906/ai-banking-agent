@@ -76,6 +76,54 @@ def withdrawal(text, *, command=False):
     return {'intent': 'UNKNOWN', 'parse_meta': meta}
 
 
+@pytest.mark.parametrize('intent,target,text', [
+    ('SCHEDULED_TRANSFER', '李四', '那我先不预约转账了，这笔预约转账帮我取消吧。'),
+    ('SCHEDULED_TRANSFER', '李四', '这笔预约转账帮我取消吧。'),
+    ('TRANSFER', '李四', '这笔转账帮我取消吧'),
+    ('WEALTH_PURCHASE', 'LX00118', '这次零星宝申购帮我取消吧'),
+    ('CARD_LIMIT', 'CARD-001', '本次调额请停止'),
+])
+def test_object_before_withdrawal_binds_only_one_current_unfinished_discussion(intent, target, text):
+    from intent_language import pending_withdrawal_clause
+    pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target}}
+    frame = {'id': intent, 'intent': intent, 'status': 'PAUSED', 'pending': pending}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'context': {},
+             'dialogue_state': {'principal': 'user_zhang', 'tasks': [frame]}}
+    before = deepcopy(state)
+    assert pending_withdrawal_clause(text, current_discussion=True)
+    assert withdrawal_statement(text, pending_discussion=True)
+    transition = withdraw_known_task(state, withdrawal(text), text)
+    assert transition and transition['view']['tasks'] == [] and transition['proposal_input'] is False
+    assert state == before
+    state['dialogue_state']['tasks'].append({**frame, 'id': 'another'})
+    assert withdraw_known_task(state, withdrawal(text), text) is None
+
+
+@pytest.mark.parametrize('text', ['这笔已完成转账帮我取消吧', '这笔预约转账不要取消', '这笔预约任务帮我取消吧',
+                                '如果这笔预约转账取消会怎样', '这笔预约转账怎么取消', '说明“这笔预约转账帮我取消吧”'])
+def test_object_first_syntax_never_supplies_an_undo_authority_or_converts_a_question(text):
+    from intent_language import pending_withdrawal_clause
+    assert pending_withdrawal_clause(text, current_discussion=True) is None
+    assert withdrawal_statement(text, pending_discussion=True) is False
+
+
+@pytest.mark.parametrize('text', ['先不预约转账了', '我不预约了', '暂时不预约转账'])
+def test_negating_a_scheduled_transfer_constrains_execution(text):
+    assert execution_constraint(text) == 'NEGATED_ACTION'
+
+
+def test_original_scheduled_transfer_withdrawal_closes_the_discussion_without_creating_a_saved_task(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    model(monkeypatch, [goal('general', [], '准备预约转账但缺日期金额', act='ACTION')], intent='SCHEDULED_TRANSFER')
+    _send(client, '我想给李四预约转账，不过日期和金额还没定，先帮我准备一下', conversation_id='scheduled-withdraw')
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'UNKNOWN', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}))))
+    before = financial_state()
+    reply = _send(client, '那我先不预约转账了，这笔预约转账帮我取消吧。', conversation_id='scheduled-withdraw')
+    assert reply['approval'] is None and reply['business_status'] == 'CANCELLED'
+    assert '尚未执行' in reply['reply'] and financial_state() == before
+
+
 @pytest.mark.parametrize('text', [
     '对，我要取消刚才那笔零星宝的待确认申购，麻烦帮我取消。',
     '请撤销零星宝未确认的申购', '我想放弃零星宝的申购意向',

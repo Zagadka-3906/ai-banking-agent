@@ -176,7 +176,7 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
         current = (re.search(r'(?:这次|本次|这笔|这一笔|这个|当前|刚才那笔)[^，,。；;!?！？]{0,24}'
                              r'(?:申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理)', clause)
                    and not re.search(r'任务|工单|审批|授权|已完成|已执行|已扣款|已提交|已成交', clause))
-        terminal = (pending and re.search(r'(?:取消|撤销|放弃|停止)(?:掉|吧)?$', clause)
+        terminal = ((pending or current_discussion and current) and re.search(r'(?:取消|撤销|放弃|停止)(?:掉|吧)?$', clause)
                     and not re.search(r'解释|说明|分析|介绍|描述|谈谈|提醒|告诉|复述|转述|翻译', clause))
         if ((_WITHDRAW_COMMAND.match(clause) or terminal) and (pending or current_discussion and current)
                 and re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause)):
@@ -229,7 +229,7 @@ def finite_limit_change(text: str) -> bool:
 def execution_constraint(text: str, *, current_discussion: bool = False) -> str | None:
     """Restrict executable actions without preventing read-only understanding."""
     source = business_text(text)
-    mutation = r"执行|操作|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定|调额|修改限额"
+    mutation = r"执行|操作|预约(?:转账)?|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定|调额|修改限额"
     if (re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下|核对|看看)[^。；;!?！？]{0,40}(?:行不行|可行|能否|是否|能不能|可以吗|可不可以)', source)
             or re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下)[^。；;!?！？]{0,16}可行性', source)
             or re.search(r'(?:在(?:允许|支持|可设置|可接受)(?:的)?范围(?:里|内)?|符合[^，,。；;!?！？]{0,12}(?:要求|条件))\s*(?:吗|么|不)', source)

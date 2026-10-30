@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-30.1",
-  "rules_version": "c4fced04c678e966c459b1b80fda2d961a87fad6411dd409dcf8c0048a1469cd",
+  "rules_version": "72652c89a3822ded28b5deb9b587a3a7527cc7d2dfe1e2a10013f20be8dc8ef6",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "ada475d5387ddf1e14780d01b05baf799855d7c63c6f1d39449f836ff6624a98",
@@ -46,7 +46,7 @@
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "510e40488519ca282f8f58f3d63b3701cb34eb943564625139e40bad5c36741b",
     "banking_rules.py": "9927d515625ab37f33f8a1c357a21ad239c6c46d6301f65f8d207f0173a3e78f",
-    "intent_language.py": "dc449913fb555650ce78a80f16c9915b6c048cd02f6c34e1886e141687b69b8f",
+    "intent_language.py": "561c183f3a98f7c433801446b34cbed92bc2ce22f5803ad0e9b4bb33b0356d37",
     "model_config.py": "2ce2f0b20b18d920968ad385b88f9d9ca30ca6a37425ca33af1ca7215ca0b701",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f",
     "workflow_runtime.py": "8b7b92c5aecafd3c3d56cef65667c07cfa21b496bdc4a9074e431487c0eed3f2"
