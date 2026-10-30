@@ -114,8 +114,19 @@ class ScenarioTaskLifecycleUiTest {
         openTasks()
         ui.onNodeWithTag("task_takeover").performScrollTo().performClick()
         ui.onNodeWithText("处理原因").performTextInput("需要人工核对日期")
-        ui.onNodeWithText("确认暂停").performClick()
-        ui.waitUntil(20_000) { !model.state.value.panelBusy && model.state.value.tasks.single().status == "HUMAN_TAKEOVER" }
+        // The IME can still move the sheet after Compose becomes idle.
+        // Establish visibility before one real click; never retry submission.
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
+        ui.waitForIdle()
+        ui.onNodeWithTag("task_takeover_confirm").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+        try {
+            ui.waitUntil(20_000) { !model.state.value.panelBusy && model.state.value.tasks.single().status == "HUMAN_TAKEOVER" }
+        } catch (failure: ComposeTimeoutException) {
+            val state = model.state.value
+            throw AssertionError("single takeover click was not completed: panelBusy=${state.panelBusy}, " +
+                "submitting=${state.taskSubmitting}, panelError=${state.panelError != null}, " +
+                "statuses=${state.tasks.map { it.status }}", failure)
+        }
         assertEquals("需要人工核对日期", model.state.value.tasks.single().error)
         val state = evidence("manual-review")
         assertEquals(15000.0, state.getDouble("balance"), 0.001)

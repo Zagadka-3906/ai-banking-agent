@@ -140,6 +140,12 @@ def ambiguous_target(text: str) -> bool:
     if len(names) > 1:
         return True
     if re.fullmatch(r"(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})(?:或(?:者)?|还是)(?:[一-龥A-Za-z·_-]{2,16}|1\d{10})", source.strip()) and not re.search(r"元|块|[吗么?？]|是否|是不是|现在|仍", source):
+        # In "想了想还是先取消这次申购", the right side is an
+        # imperative about the current business, not a second payee name.
+        # Explicit recipient alternatives were already checked above.
+        continuation = re.search(r'还是([^，,。；;!?！？]+)$', source)
+        if continuation and pending_withdrawal_clause(continuation.group(1), current_discussion=True):
+            return False
         return True
     return bool(re.search(r"不是(?:给|向|转给)|收款人[^，,。]*(?:不对|错了)", source))
 
@@ -175,6 +181,28 @@ _WITHDRAW_QUESTION = re.compile(
     r'|(?:吗|(?<![那这什怎])么)(?=\s*(?:[，,。；;!?！？]|$))')
 _WITHDRAW_NEGATED = re.compile(
     r'(?:不(?:用|必|想|打算|再|需要)?|别|不要|无需)(?:再|先|现在|立即|继续|帮我|替我)*(?:取消|撤销|放弃|停止)')
+_WITHDRAW_REQUEST_SPAN = re.compile(
+    r'(?:请|麻烦|帮我|替我|决定|先|现在|最终|最后|还是)'
+    r'(?:(?:先|现在|暂时|就|还是|帮我|替我)\s*)*(?:取消|撤销|放弃|停止)')
+
+
+def _withdrawal_command_in_clause(clause: str) -> bool:
+    """Validate an imperative span without enumerating its thought preamble.
+
+    The caller separately requires a pending/current object in this clause
+    and validates the entire utterance before binding a discussion.
+    """
+    if _WITHDRAW_COMMAND.match(clause):
+        return True
+    command = _WITHDRAW_REQUEST_SPAN.search(clause)
+    if command is None:
+        return False
+    prefix = clause[:command.start()]
+    if re.search(r'解释|说明|分析|介绍|描述|谈谈|提醒|告诉|复述|转述|翻译|讨论|商量|说|建议|声称|表示|提到'
+                 r'|不支持|无法|禁止|不能|不可|不允许|不想|不希望|不打算|不准备|无需|不必|未决定|没(?:有)?决定'
+                 r'|昨天|前天|上周|上个月|去年|当时|明天|后天|下周|下次', clause[:command.end()]):
+        return False
+    return not re.search(r'考虑(?:中|着)?$|^(?:我)?(?:以后|稍后|晚点|等会|到时候)', prefix)
 
 
 def workflow_abandonment_clause(text: str) -> str | None:
@@ -225,14 +253,15 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
                 or re.search(r'已经|曾经|取消了|撤销了', clause)):
             continue
         pending = re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
+        command = _withdrawal_command_in_clause(clause)
         current = (re.search(r'(?:这次|本次|这笔|这一笔|这个|当前|刚才那笔)[^，,。；;!?！？]{0,24}'
                              r'(?:申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理)', clause)
                    and not re.search(r'任务|工单|审批|授权|已完成|已执行|已扣款|已提交|已成交', clause))
         terminal = ((pending or current_discussion and current) and re.search(r'(?:取消|撤销|放弃|停止)(?:掉|吧)?$', clause)
                     and not re.search(r'解释|说明|分析|介绍|描述|谈谈|提醒|告诉|复述|转述|翻译', clause))
-        pending_reference = (current_discussion and pending and (terminal or _WITHDRAW_COMMAND.match(clause)
+        pending_reference = (current_discussion and pending and (terminal or command
                              and re.search(r'(?:意向|讨论|提案)(?:吧|即可|就好)?$', clause)))
-        if ((_WITHDRAW_COMMAND.match(clause) or terminal) and (pending or current_discussion and current)
+        if ((command or terminal) and (pending or current_discussion and current)
                 and (pending_reference or re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause))):
             return clause
     return None

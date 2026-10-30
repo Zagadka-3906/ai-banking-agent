@@ -77,6 +77,41 @@ def pending_quiz():
 
 
 @pytest.mark.parametrize('operation,intent,target', [
+    ('申购', 'WEALTH_PURCHASE', 'LX00118'), ('赎回', 'WEALTH_REDEEM', 'LX00118'),
+    ('转账', 'TRANSFER', '李四'), ('预约转账', 'SCHEDULED_TRANSFER', '李四'),
+    ('调额', 'CARD_LIMIT', 'CARD-001'),
+])
+@pytest.mark.parametrize('preamble', ['但想了想还是先', '经过权衡我决定先', '再斟酌一番后还是先', '不过考虑后我决定先'])
+def test_explicit_stop_span_does_not_depend_on_enumerating_its_thought_preamble(operation, intent, target, preamble):
+    text = f'{preamble}取消这次{operation}吧'
+    pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target}}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'context': {},
+             'dialogue_state': {'principal': 'user_zhang', 'tasks': [
+                 {'id': intent, 'intent': intent, 'status': 'PAUSED', 'pending': pending}]}}
+    before = deepcopy(state)
+    result = withdraw_known_task(state, withdrawal(text), text)
+    assert result and result['view']['tasks'] == [] and not result['proposal_input']
+    assert state == before
+
+
+@pytest.mark.parametrize('prefix', [
+    '解释为什么要', '说明', '我正在考虑', '我还没有决定', '我不打算',
+    '不支持', '不能', '客服说', '朋友建议', '我昨天决定', '明天', '稍后我再',
+])
+def test_reported_uncertain_negated_or_deferred_stop_spans_are_not_current_commands(prefix):
+    text = f'{prefix}先取消这次申购吧'
+    state = pending_quiz()
+    before = deepcopy(state)
+    assert withdraw_known_task(state, withdrawal(text), text) is None and state == before
+
+
+@pytest.mark.parametrize('text', ['张三还是李四', '给张三还是李四转账', '李四或者王五'])
+def test_a_real_recipient_choice_is_not_erased_by_the_imperative_span_rule(text):
+    from intent_language import ambiguous_target
+    assert ambiguous_target(text)
+
+
+@pytest.mark.parametrize('operation,intent,target', [
     ('申购零星宝', 'WEALTH_PURCHASE', 'LX00118'), ('赎回零星宝', 'WEALTH_REDEEM', 'LX00118'),
     ('给李四转账', 'TRANSFER', '李四'), ('预约一笔转账给李四', 'SCHEDULED_TRANSFER', '李四'),
     ('设置CARD-001日限额', 'CARD_LIMIT', 'CARD-001'),
@@ -467,6 +502,7 @@ def test_current_operation_reference_binds_only_its_existing_business_discussion
 
 
 @pytest.mark.parametrize('cancellation', [
+    '我还是想申购零星宝，但想了想还是先取消这次申购吧。',
     '我还是想申购零星宝，不过考虑后决定这次先取消，不继续提交了。',
     '我之前想申购零星宝，现在决定取消，先不办这笔申购了。',
     '我之前想申购零星宝，现在决定取消，暂时不办理这次申购了。',
