@@ -50,6 +50,26 @@ def test_question_negation_and_feasibility_cannot_become_an_action(text):
     assert result['intent'] == 'BANKING_HELP'
 
 
+@pytest.mark.parametrize('text', [
+    '我想申购零星宝；办理前先问一下，申购后支持撤单吗？',
+    '我想给李四转账，在继续转账之前，我想先了解手续费是多少？',
+    '我想调整卡片限额，确认前先核对一下日限额允许范围',
+    '我想赎回零星宝，提交前先查询我的持仓',
+])
+def test_explicit_preliminary_inquiry_takes_precedence_over_background_action(text):
+    assert execution_constraint(text) == 'PRIOR_INQUIRY'
+    parsed = {'intent': 'WEALTH_PURCHASE', 'parse_meta': {'dialogue_act': 'ACTION'}}
+    result = enforce_inquiry(parsed, text)
+    assert result['intent'] in {'BANKING_HELP', 'BALANCE_QUERY', 'BILL_QUERY'}
+    assert result['parse_meta']['dialogue_act'] == 'EXPLAIN'
+
+
+def test_independent_action_after_a_preliminary_inquiry_is_not_silently_dropped():
+    from intent_language import prior_inquiry_clause
+    text = '办理前先查一下余额，然后给李四转300元，先不确认'
+    assert prior_inquiry_clause(text) is None
+
+
 def pending_quiz():
     return {'user_id': 'user_zhang', 'memory_principal': 'user_zhang',
             'context': {'risk_quiz': {'answers': {'1': 'B'}, 'origin_intent': 'WEALTH_PURCHASE',

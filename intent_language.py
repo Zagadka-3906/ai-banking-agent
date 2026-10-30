@@ -242,10 +242,28 @@ def finite_limit_change(text: str) -> bool:
     return False
 
 
+def prior_inquiry_clause(text: str) -> str | None:
+    """An explicit question before proceeding takes precedence over its background action."""
+    source = business_text(text)
+    match = re.search(
+        r'(?:^|[，,。；;!?！？])\s*(?:在)?(?:继续|办理|确认|执行|提交|操作|申购|赎回|转账)'
+        r'[^，,。；;!?！？]{0,20}?(?:之)?前[，,]?\s*(?:我(?:想|要)?\s*)?先'
+        r'(?:问(?:一下|问)?|了解(?:一下)?|咨询(?:一下)?|确认(?:一下)?|查(?:询|一下)?|核对(?:一下)?)', source)
+    if not match:
+        return None
+    inquiry = source[match.end():].strip('，,。；;!?！？：: ')
+    # Preserve a genuinely independent later action as a mixed request.
+    if not inquiry or any(action_request_clause(part) for part in split_tasks(inquiry)):
+        return None
+    return inquiry
+
+
 def execution_constraint(text: str, *, current_discussion: bool = False) -> str | None:
     """Restrict executable actions without preventing read-only understanding."""
     source = business_text(text)
     mutation = r"执行|操作|预约(?:转账)?|转账|给.{1,8}转|申购|赎回|买入|冻结|解冻|挂失|解挂|申请.{0,4}卡|取消.{0,8}订阅|锁定|调额|修改限额"
+    if prior_inquiry_clause(source):
+        return 'PRIOR_INQUIRY'
     if (re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下|核对|看看)[^。；;!?！？]{0,40}(?:行不行|可行|能否|是否|能不能|可以吗|可不可以)', source)
             or re.search(r'(?:先|仅|只)(?:想|是)?(?:了解|咨询|问问|问一下)[^。；;!?！？]{0,16}可行性', source)
             or re.search(r'(?:在(?:允许|支持|可设置|可接受)(?:的)?范围(?:里|内)?|符合[^，,。；;!?！？]{0,12}(?:要求|条件))\s*(?:吗|么|不)', source)
