@@ -222,6 +222,43 @@ def test_compound_stop_keeps_the_recipient_named_in_the_stopping_clause():
     assert withdraw_known_task(state, withdrawal(text), text) is None and state == before
 
 
+@pytest.mark.parametrize('operation,intent,target', [
+    ('申购零星宝', 'WEALTH_PURCHASE', 'LX00118'), ('赎回零星宝', 'WEALTH_REDEEM', 'LX00118'),
+    ('给李四转账', 'TRANSFER', '李四'), ('预约一笔转账给李四', 'SCHEDULED_TRANSFER', '李四'),
+    ('设置CARD-001日限额', 'CARD_LIMIT', 'CARD-001'), ('冻结CARD-001', 'CARD_FREEZE', 'CARD-001'),
+])
+@pytest.mark.parametrize('prefix', ['但这次决定先', '综合考虑我决定', '我反复想过后决定先'])
+@pytest.mark.parametrize('ending', ['取消了', '取消吧'])
+def test_shared_command_span_also_validates_a_bare_current_stop(operation, intent, target, prefix, ending):
+    text = f'我还是想{operation}，{prefix}{ending}。'
+    pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target}}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'context': {},
+             'dialogue_state': {'principal': 'user_zhang', 'tasks': [
+                 {'id': intent, 'intent': intent, 'status': 'PAUSED', 'pending': pending}]}}
+    before = deepcopy(state)
+    transition = withdraw_known_task(state, withdrawal(text), text)
+    assert transition and transition['view']['tasks'] == [] and not transition['proposal_input']
+    assert state == before
+
+
+@pytest.mark.parametrize('text', [
+    '我还是想申购零星宝，朋友说这次决定取消了',
+    '我还是想申购零星宝，我还没有决定取消了',
+    '我还是想申购零星宝，我正在考虑决定取消了',
+    '我还是想申购零星宝，我不打算决定取消了',
+    '我还是想申购零星宝，稍后我决定取消了',
+    '我还是想申购零星宝，明天再决定取消了',
+    '我还是想申购零星宝，我取消了',
+    '我还是想申购零星宝，这次决定取消了吗？',
+    '我还是想申购恒泉稳利，但这次决定先取消了',
+    '我还是想申购零星宝和恒泉稳利，但这次决定先取消了',
+])
+def test_shared_command_span_preserves_history_uncertainty_and_object_binding(text):
+    state = pending_quiz()
+    before = deepcopy(state)
+    assert withdraw_known_task(state, withdrawal(text), text) is None and state == before
+
+
 @pytest.mark.parametrize('text', [
     '先别提交', '先不提交了', '暂不提交', '暂时不继续提交了', '不确认',
     '我想申购恒泉稳利，不继续提交了', '我想申购零星宝和恒泉稳利，不继续提交了',
@@ -607,6 +644,8 @@ def test_current_operation_reference_binds_only_its_existing_business_discussion
     '那我不申购零星宝了，之前想申购的意向也一起取消，先不办这个了。',
     '我原本想申购零星宝，但现在决定先取消不再办理了。',
     '我原本想申购零星宝，经过权衡决定取消不再继续提交了。',
+    '我还是想申购零星宝，但这次决定先取消了。',
+    '我还是想申购零星宝，综合考虑我决定取消吧。',
 ])
 def test_purchase_then_cancellation_question_then_withdrawal_is_read_only(gateway, monkeypatch, cancellation):  # noqa: F811
     client, _ = gateway
