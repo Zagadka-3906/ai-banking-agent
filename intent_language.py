@@ -152,8 +152,15 @@ def bare_withdrawal_clause(text: str) -> str | None:
         return None
     clause = clauses[-1]
     command = _WITHDRAW_COMMAND.match(clause)
-    if command and re.fullmatch(r'(?:掉|一下)?(?:吧|即可|就好)?', clause[command.end():]):
-        return clause
+    if command:
+        tail = clause[command.end():]
+        if re.fullmatch(r'(?:掉|一下)?(?:吧|即可|就好)?', tail):
+            return clause
+        # Sentence-final 了 can mark a present change of mind. Require an
+        # explicit decision in this same command clause; plain "取消了" is
+        # still a report of a past cancellation, never a fresh command.
+        if re.search(r'决定', clause[:command.end()]) and re.fullmatch(r'(?:掉)?了(?:吧|即可|就好)?', tail):
+            return clause
     return None
 
 

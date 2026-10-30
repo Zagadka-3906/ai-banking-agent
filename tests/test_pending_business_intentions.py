@@ -56,6 +56,78 @@ def pending_quiz():
                                      'origin_target': 'LX00118'}}}
 
 
+@pytest.mark.parametrize('ending', ['不过现在决定先取消了', '不过我决定先取消了', '现在决定取消了吧', '最后决定先取消掉了'])
+def test_sentence_final_le_with_a_current_decision_stops_the_matching_unfinished_purchase(ending):
+    text = '我还是想申购零星宝，' + ending + '。'
+    state = pending_quiz()
+    before = deepcopy(state)
+    assert withdrawal_statement(text, pending_discussion=True)
+    result = withdraw_known_task(state, {'intent': 'UNKNOWN', 'parse_meta': {'dialogue_act': 'WITHDRAW'}}, text)
+    assert result and result['view']['tasks'] == [] and not result['context'].get('risk_quiz')
+    assert not result['proposal_input'] and result['origin_intent'] == 'WEALTH_PURCHASE'
+    assert state == before
+
+
+@pytest.mark.parametrize('text', [
+    '我取消了', '取消了', '零星宝申购取消了', '我昨天决定取消了',
+    '我已经决定取消了', '我曾经决定取消了', '我已经申购了零星宝，现在决定先取消了',
+    '零星宝申购已成交，现在决定先取消了', '如果想申购零星宝，现在决定先取消了',
+    '我还是想申购零星宝，不过现在决定先取消了可以吗？',
+    '我还是想申购零星宝，不过现在决定不要取消了',
+    '解释“我想申购零星宝，不过现在决定先取消了”',
+    '我想申购恒泉稳利，不过现在决定先取消了',
+    '我想申购零星宝和恒泉稳利，不过现在决定先取消了',
+])
+def test_past_reports_and_wrong_subjects_do_not_cancel_a_quiz_via_sentence_final_le(text):
+    state = pending_quiz()
+    before = deepcopy(state)
+    result = withdraw_known_task(state, {'intent': 'UNKNOWN', 'parse_meta': {'dialogue_act': 'WITHDRAW'}}, text)
+    assert result is None and state == before
+
+
+@pytest.mark.parametrize('failure', ['capacity', 'timeout', 'connection'])
+def test_model_unavailability_does_not_prevent_a_verified_local_discussion_stop(gateway, monkeypatch, failure):  # noqa: F811
+    from bank_agent.nodes.intent import intent_parser_node
+    def unavailable(*args, **kwargs):
+        if failure == 'capacity':
+            raise TimeoutError('MODEL_CAPACITY_EXHAUSTED')
+        if failure == 'timeout':
+            raise TimeoutError('timed out')
+        raise ConnectionError('PRIVATE-PROVIDER-CONTENT')
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=unavailable))
+    state = {**pending_quiz(), 'user_input': '我还是想申购零星宝，不过现在决定先取消了。'}
+    original, before = deepcopy(state), financial_state()
+    result = intent_parser_node(state)
+    assert result['business_status'] == 'CANCELLED' and result['risk_quiz'] == {'active': False}
+    assert '停止本轮申购意向' in result['final_response'] and not result['context'].get('risk_quiz')
+    assert not result.get('approval') and not result['dialogue_state']['tasks']
+    assert state == original and financial_state() == before
+
+
+@pytest.mark.parametrize('text,patch', [
+    ('我想申购恒泉稳利，不过现在决定先取消了', {}),
+    ('查询余额，然后取消零星宝申购意向', {}),
+    ('如果取消零星宝申购意向会怎样', {}),
+    ('我已经申购零星宝，现在决定取消了', {}),
+    ('零星宝申购意向不要取消', {}),
+    ('取消零星宝申购意向', {'memory_principal': 'user_li'}),
+    ('取消零星宝申购意向', {'pending_operation': {'operation': 'WEALTH_PURCHASE'}}),
+    ('取消零星宝申购意向', {'approval': {'id': 'PENDING-APPROVAL'}}),
+    ('给李四转300元', {}),
+])
+def test_unavailable_model_does_not_make_other_requests_or_approvals_locally_executable(gateway, monkeypatch, text, patch):  # noqa: F811
+    from bank_agent.nodes.intent import intent_parser_node
+    def unavailable(*args, **kwargs):
+        raise TimeoutError('MODEL_CAPACITY_EXHAUSTED')
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=unavailable))
+    state = {**pending_quiz(), 'user_input': text, **patch}
+    original, before = deepcopy(state), financial_state()
+    result = intent_parser_node(state)
+    assert result['business_status'] == 'FAILED' and '原任务保留' in result['final_response']
+    assert not result.get('approval') and result['context'] == state['context']
+    assert state == original and financial_state() == before
+
+
 @pytest.mark.parametrize('text,target,names', [
     ('之前想申购零星宝的意向也一起取消', 'LX00118', set()),
     ('之前想申购的意向也一起取消', None, set()),

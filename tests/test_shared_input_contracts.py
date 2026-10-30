@@ -155,6 +155,52 @@ def test_one_explicitly_resumed_task_keeps_its_known_payee_without_repetition():
     assert resume_task(state, parsed, '那回到刚才的转账，金额是300元，先不确认') is None
 
 
+@pytest.mark.parametrize('prefix', ['先不管生日联动', '暂时不谈生日联动', '我先不聊生日安排'])
+def test_fill_clause_selects_the_current_business_after_a_parked_topic(prefix):
+    state = pending_state()
+    before = deepcopy(state)
+    parsed = {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'SLOT_REPLY'}}
+    text = prefix + '，原转账金额补上300元，暂不确认。'
+    restored = resume_task(state, parsed, text)
+    assert restored and restored['_verified_slot_resume'] == 300 and restored['payload']['target'] == '李四'
+    assert state == before
+    state['dialogue_state']['tasks'].append(deepcopy(state['dialogue_state']['tasks'][0]) | {'id': 'other'})
+    assert resume_task(state, parsed, text) is None
+
+
+@pytest.mark.parametrize('text', [
+    '帮我办理生日联动，原转账金额补上300元，暂不确认',
+    '申购零星宝，原转账金额补上300元，暂不确认',
+    '先不管生日联动，原转账金额补上300元，另外给王美转500元',
+    '先不管生日联动，原转账金额补上300元可以吗？',
+    '如果不管生日联动，原转账金额补上300元',
+    '先不管生日联动，原转账金额补上300元，但不要转账',
+    '解释这句话“原转账金额补上300元”',
+])
+def test_fill_clause_cannot_discard_another_operation_or_a_whole_message_constraint(text):
+    assert resume_task(pending_state(), {'intent': 'TRANSFER', 'parse_meta': {'dialogue_act': 'SLOT_REPLY'}}, text) is None
+
+
+def test_parked_birthday_topic_does_not_erase_original_transfer_payee_at_the_gateway(gateway, monkeypatch):  # noqa: F811
+    import json
+    from bank_agent import runtime
+    client, _ = gateway
+    cid = 'parked-topic-slot-fill'
+    first = _send(client, '我想给李四转一点钱，金额还没定，先帮我发起转账。', conversation_id=cid)
+    assert first['intent'] == 'TRANSFER' and '金额' in first['reply'], (first['intent'], first['reply'])
+    model(monkeypatch, [goal('general', [], '生日联动规则', act='EXPLAIN')])
+    _send(client, '转账金额我先不补，想先问一下生日联动怎么弄？', conversation_id=cid)
+    from types import SimpleNamespace
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'TRANSFER', 'dialogue_act': 'SLOT_REPLY', 'scope': 'IN_SCOPE',
+        'goals': [goal('general', [], '补充原转账金额', act='ACTION')]}))))
+    before = financial_state()
+    reply = _send(client, '先不管生日联动，原转账金额补上300元，暂不确认。', conversation_id=cid)
+    assert reply['approval'], (reply['intent'], reply['reply'])
+    assert '李四' in reply['approval']['summary'] and '300' in reply['approval']['summary']
+    assert financial_state()[:4] == before[:4]
+
+
 def test_successful_side_question_cannot_consume_the_paused_task_named_by_its_pause_command():
     from bank_agent.dialogue_state import remember_discussion
     state = {**pending_state(), 'intent': 'BANKING_HELP', 'user_input': '转账先放着，生日联动怎么做',

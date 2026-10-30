@@ -154,6 +154,25 @@ def resume_task(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str) 
         active = source[resume.end():] if resume else source
         filling = typed_fill or bool(resume and resume.group().startswith(('补', '填')))
         operation = literal_intent if filling else local_parse(active).get('intent')
+        if filling and resume:
+            # The business around the literal fill verb can be more specific
+            # than an earlier parked topic. Require classifier agreement and
+            # retain all whole-message safety/parameter checks below.
+            left = max((match.end() for match in re.finditer(r'[，,。；;!?！？]', source[:resume.start()])), default=0)
+            right = re.search(r'[，,。；;!?！？]', source[resume.end():])
+            end = resume.end() + right.start() if right else len(source)
+            clause = source[left:end]
+            current = local_parse(clause).get('intent')
+            goals = request_goals(parsed)
+            if (current in {'TRANSFER', 'SCHEDULED_TRANSFER', 'WEALTH_PURCHASE', 'WEALTH_REDEEM', 'CARD_LIMIT'}
+                    and parsed.get('intent') == current and all(goal['act'] == 'ACTION' for goal in goals)):
+                from bank_planning.intents import GREEN_INTENTS
+                others = [part for part in re.split(r'[，,。；;!?！？]', source[:left] + source[end:]) if part.strip()]
+                conflicts = [part for part in others if local_parse(part).get('intent') not in GREEN_INTENTS | {'UNKNOWN', current}
+                             and not re.fullmatch(r'\s*(?:那|就)?(?:我)?(?:先|暂时)?(?:不管|不谈|不聊|不考虑).{1,40}', part)]
+                if conflicts:
+                    return None
+                operation = current
         value = amount_from_text(source)
         recipient = target_from_text(source)
         candidates = [task for task in dialogue_view(state)['tasks'] if isinstance(task.get('pending'), dict)

@@ -152,6 +152,20 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         except Exception:
             understood = None
     model_failure = ((understood or {}).get('parse_meta') or {}).get('model_failure')
+    if (model_failure and not state.get('pending_operation') and not state.get('approval')
+            and not prior_context.get('compound_workflow')
+            and not re.search(r'查询|查看|解释|说明|分析|了解|核对|咨询|流程|规则|条件|费用|手续费', text)):
+        from bank_agent.dialogue_commands import withdraw_known_task
+        fallback = validate_intent_payload({'intent': 'UNKNOWN', 'parse_meta': {
+            'source': 'rules_context', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE',
+            'resolution': 'verified_unavailable_withdrawal', 'fast_path_eligible': False}})
+        verified_stop = withdraw_known_task(state, fallback, text)
+        if verified_stop and verified_stop['type'] == 'CANCEL' and not verified_stop['proposal_input']:
+            # Only a literal, unique, principal-bound discussion cancellation
+            # can survive model unavailability. No proposal/approval resumes.
+            audit_event('INTENT_UNAVAILABLE', user_id=state.get('user_id'), request_id=state['request_id'],
+                        decision='DISCUSSION_ONLY', outcome='VERIFIED_LOCAL_CANCEL', reason=model_failure)
+            understood, model_failure = fallback, None
     if model_failure:
         audit_event('INTENT_UNAVAILABLE', user_id=state.get('user_id'), request_id=state['request_id'],
                     decision='RETRY', outcome='FAILED', reason=model_failure)
