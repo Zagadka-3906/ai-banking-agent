@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 from types import SimpleNamespace
 
 import httpx
@@ -26,6 +27,27 @@ def ledger(tmp_path, **limits):
 def answer(incoming=100, outgoing=20, cached=50):
     return SimpleNamespace(usage_metadata={'input_tokens': incoming, 'output_tokens': outgoing,
                                           'input_token_details': {'cache_read': cached}})
+
+
+def test_concurrent_bound_attempts_reconcile_every_call_and_stage_token(tmp_path):
+    from langchain_core.messages import SystemMessage
+    budget = ledger(tmp_path, max_calls=16)
+    barrier = threading.Barrier(16)
+    class Fake:
+        def bind(self, **kwargs):
+            return self
+        def invoke(self, messages, **kwargs):
+            barrier.wait(timeout=3)
+            return answer()
+    counters, stages = {}, {}
+    model = MeteredModel(Fake(), budget, 'run', 'agent', 'test', counters, stages)
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(lambda _: model.bind(response_format={'type': 'json_object'}).invoke([
+            SystemMessage(content='意图抽取器')]), range(16)))
+    assert counters['agent'] == {'calls': 16, 'returned': 16}
+    assert stages['understanding']['input_tokens'] == 1600 and stages['understanding']['cache_hit_tokens'] == 800
+    assert stages['understanding']['returned'] == stages['understanding']['calls'] == budget.snapshot()['calls'] == 16
+    assert stages['understanding']['latency_ms_total'] >= stages['understanding']['latency_ms_max'] >= 0
 
 
 def test_cache_usage_and_reasoning_are_not_double_counted(tmp_path):

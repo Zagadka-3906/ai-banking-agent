@@ -51,6 +51,9 @@ def test_question_negation_and_feasibility_cannot_become_an_action(text):
 
 
 @pytest.mark.parametrize('text', [
+    '我想给李四转账，金额还没定；这笔转账一般多久能到账？',
+    '我想申购零星宝，金额没定；这款产品是否支持撤单？',
+    '我想冻结这张银行卡，不过冻结有什么影响？',
     '我想申购零星宝；办理前先问一下，申购后支持撤单吗？',
     '我想给李四转账，在继续转账之前，我想先了解手续费是多少？',
     '我想调整卡片限额，确认前先核对一下日限额允许范围',
@@ -64,10 +67,54 @@ def test_explicit_preliminary_inquiry_takes_precedence_over_background_action(te
     assert result['parse_meta']['dialogue_act'] == 'EXPLAIN'
 
 
-def test_independent_action_after_a_preliminary_inquiry_is_not_silently_dropped():
+@pytest.mark.parametrize('text', [
+    '办理前先查一下余额，然后给李四转300元，先不确认',
+    '我想给李四转300元，现在帮我办理；这笔转账一般多久到账？',
+    '我想申购零星宝，请帮我提交申购；这款产品是否支持撤单？',
+    '我想冻结这张卡，立即办理冻结；冻结有什么影响？',
+])
+def test_independent_action_after_a_preliminary_inquiry_is_not_silently_dropped(text):
     from intent_language import prior_inquiry_clause
-    text = '办理前先查一下余额，然后给李四转300元，先不确认'
     assert prior_inquiry_clause(text) is None
+
+
+def test_consultation_after_failed_understanding_does_not_restart_missing_amount_action(gateway, monkeypatch):  # noqa: F811
+    from bank_agent import runtime
+    import workflow_runtime as workflow
+    client, _ = gateway
+    goals = [goal('general', [], '解释转账到账时效', act='EXPLAIN') | {'topic': 'transfer'}]
+    calls, reads = [], []
+    def draft(payload):
+        policy = next(row for row in payload['facts'] if row['id'] == 'guide.transfer.timing')
+        return {'answer': policy['text'], 'evidence_ids': [policy['id']], 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': [policy['id']], 'reason': '说明演示到账边界'}]}
+    model(monkeypatch, goals, draft=draft)
+    underlying, original = runtime.llm, runtime._http
+    def http(method, path, **kwargs):
+        reads.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    def invoke(messages):
+        system, prompt = str(messages[0].content), str(messages[-1].content)
+        calls.append((system, workflow._understanding_tail_hedge.get()))
+        if '补全goals协议' in system:
+            return SimpleNamespace(content=json.dumps({'goals': goals}))
+        if '你是银行意图抽取器' in prompt:
+            text = json.loads(prompt.splitlines()[-1])
+            if '先帮我办一下转账' in text:
+                raise TimeoutError('test transport failure')
+            return SimpleNamespace(content=json.dumps({'intent': 'TRANSFER', 'dialogue_act': 'ACTION',
+                'scope': 'IN_SCOPE', 'target': '李四', 'goals': [goal('general', [], '转账', act='ACTION')]}))
+        return underlying.invoke(messages)
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=invoke))
+    before = financial_state()
+    first = _send(client, '我想给李四转一笔钱，具体金额还没定，先帮我办一下转账。', conversation_id='failed-then-inquiry')
+    assert first['business_status'] == 'FAILED' and first['approval'] is None
+    second = _send(client, '我想给李四转账，金额还没定；这笔转账一般多久能到账？', conversation_id='failed-then-inquiry')
+    assert second['business_status'] == 'SUCCEEDED' and second['approval'] is None
+    assert '虚构账本' in second['reply'] and '请补充' not in second['reply']
+    assert all(method == 'GET' for method, _ in reads) and financial_state() == before
+    assert any('补全goals协议' in system and not hedge for system, hedge in calls)
 
 
 def pending_quiz():

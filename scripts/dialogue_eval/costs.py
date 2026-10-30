@@ -6,6 +6,8 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import json
 from pathlib import Path
 import sqlite3
+import threading
+import time
 from typing import Any
 import uuid
 
@@ -218,15 +220,17 @@ class CostLedger:
 
 
 class MeteredModel:
-    def __init__(self, model, ledger: CostLedger, run: str, role: str, name: str, counters=None, stage_usage=None):
+    def __init__(self, model, ledger: CostLedger, run: str, role: str, name: str, counters=None, stage_usage=None, metrics_lock=None):
         self.model, self.ledger, self.run, self.role, self.name = model, ledger, run, role, name
         self.counters = counters
         self.stage_usage = stage_usage
+        self.metrics_lock = metrics_lock or threading.Lock()
 
     def bind(self, **kwargs):
         # Format binding must preserve this proxy; an SDK binding alone would
         # bypass reservation, usage reconciliation and the shared stop signal.
-        return MeteredModel(self.model.bind(**kwargs), self.ledger, self.run, self.role, self.name, self.counters, self.stage_usage)
+        return MeteredModel(self.model.bind(**kwargs), self.ledger, self.run, self.role, self.name,
+                            self.counters, self.stage_usage, self.metrics_lock)
 
     def invoke(self, messages, **kwargs):
         identifier, cap = self.ledger.reserve(self.run, self.role, self.name)
@@ -236,12 +240,15 @@ class MeteredModel:
             tags = {'意图抽取器': 'understanding', '查询需求核验器': 'goal_fields', '只读咨询规划器': 'planning',
                     '业务解答助手': 'answering', '独立银行回答核验器': 'review'}
             label = next((value for key, value in tags.items() if key in heading), 'other') if self.role in {'agent', 'answer_review'} else self.role
-            stage = self.stage_usage.setdefault(label, {'calls': 0, 'returned': 0, 'input_tokens': 0,
-                'output_tokens': 0, 'cache_hit_tokens': 0, 'usage_unknown_calls': 0})
-            stage['calls'] += 1
-        count = self.counters.setdefault(self.role, {'calls': 0, 'returned': 0}) if self.counters is not None else None
-        if count is not None:
-            count['calls'] += 1
+            with self.metrics_lock:
+                stage = self.stage_usage.setdefault(label, {'calls': 0, 'returned': 0, 'input_tokens': 0,
+                    'output_tokens': 0, 'cache_hit_tokens': 0, 'usage_unknown_calls': 0,
+                    'latency_ms_total': 0, 'latency_ms_max': 0})
+                stage['calls'] += 1
+        with self.metrics_lock:
+            count = self.counters.setdefault(self.role, {'calls': 0, 'returned': 0}) if self.counters is not None else None
+            if count is not None:
+                count['calls'] += 1
         requested_legacy = kwargs.pop('max_tokens', None)
         requested = requested_legacy or kwargs.pop('max_completion_tokens', None) or cap
         kwargs.pop('max_completion_tokens', None)
@@ -262,24 +269,33 @@ class MeteredModel:
         body.pop('max_completion_tokens', None)
         body['max_tokens'] = min(requested, cap)
         kwargs['extra_body'] = body
+        started = time.monotonic()
         try:
             answer = self.model.invoke(messages, **kwargs)
         except BaseException as error:
+            elapsed_ms = int((time.monotonic()-started)*1000)
             self.ledger.failed(identifier, error)
-            if stage is not None:
-                stage['usage_unknown_calls'] += 1
+            with self.metrics_lock:
+                if stage is not None:
+                    stage['usage_unknown_calls'] += 1
+                    stage['latency_ms_total'] += elapsed_ms
+                    stage['latency_ms_max'] = max(stage['latency_ms_max'], elapsed_ms)
             raise
+        elapsed_ms = int((time.monotonic()-started)*1000)
         self.ledger.completed(identifier, answer)
-        if stage is not None:
-            stage['returned'] += 1
-            usage = token_usage(answer)
-            if usage is None:
-                stage['usage_unknown_calls'] += 1
-            else:
-                for field in ('input_tokens', 'output_tokens', 'cache_hit_tokens'):
-                    stage[field] += usage[field]
-        if count is not None:
-            count['returned'] += 1
+        with self.metrics_lock:
+            if stage is not None:
+                stage['returned'] += 1
+                stage['latency_ms_total'] += elapsed_ms
+                stage['latency_ms_max'] = max(stage['latency_ms_max'], elapsed_ms)
+                usage = token_usage(answer)
+                if usage is None:
+                    stage['usage_unknown_calls'] += 1
+                else:
+                    for field in ('input_tokens', 'output_tokens', 'cache_hit_tokens'):
+                        stage[field] += usage[field]
+            if count is not None:
+                count['returned'] += 1
         return answer
 
 

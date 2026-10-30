@@ -317,15 +317,25 @@ def finite_limit_change(text: str) -> bool:
 
 
 def prior_inquiry_clause(text: str) -> str | None:
-    """An explicit question before proceeding takes precedence over its background action."""
+    """A current information question can follow an uncommitted action desire."""
     source = business_text(text)
     match = re.search(
         r'(?:^|[，,。；;!?！？])\s*(?:在)?(?:继续|办理|确认|执行|提交|操作|申购|赎回|转账)'
         r'[^，,。；;!?！？]{0,20}?(?:之)?前[，,]?\s*(?:我(?:想|要)?\s*)?先'
         r'(?:问(?:一下|问)?|了解(?:一下)?|咨询(?:一下)?|确认(?:一下)?|查(?:询|一下)?|核对(?:一下)?)', source)
     if not match:
-        return None
-    inquiry = source[match.end():].strip('，,。；;!?！？：: ')
+        clauses = [part.strip() for part in re.split(r'[，,。；;!?！？]', source) if part.strip()]
+        if len(clauses) < 2:
+            return None
+        background, inquiry = '，'.join(clauses[:-1]), clauses[-1]
+        question = r'多久|何时|什么时候|多长时间|多少钱|多少费用|手续费|到账时间|有什么(?:条件|要求|影响)|是否|会不会|支持.{0,12}[吗么]'
+        directive = r'(?:请|帮我|替我|给我).{0,12}(?:办理|执行|提交|发起|创建|转账|转给|申购|赎回|冻结|取消|修改)|(?:现在|立即|马上)(?:就)?(?:办理|执行|提交)'
+        if (not action_request_clause(background) or not re.search(question, inquiry)
+                or re.search(question, background) or re.search(directive, source)
+                or sum(bool(action_request_clause(part)) for part in split_tasks(background)) != 1):
+            return None
+    else:
+        inquiry = source[match.end():].strip('，,。；;!?！？：: ')
     # Preserve a genuinely independent later action as a mixed request.
     if not inquiry or any(action_request_clause(part) for part in split_tasks(inquiry)):
         return None

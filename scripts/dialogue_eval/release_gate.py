@@ -76,17 +76,21 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             model = report['models']['agent']
             profile = report.get('inference_profile')
             fields = {'thinking', 'agent_temperature', 'user_temperature', 'judge_temperature',
-                      'timeout_seconds', 'max_output_tokens', 'review_model'}
+                      'timeout_seconds', 'max_output_tokens', 'review_model', 'understanding_hedge'}
             if (not isinstance(profile, dict) or set(profile) != fields or profile['thinking'] not in {'', 'enabled', 'disabled'}
                     or type(profile['max_output_tokens']) is not int or profile['max_output_tokens'] <= 0
                     or profile['timeout_seconds'] != 12 or not isinstance(profile['review_model'], str)
-                    or not profile['review_model']):
+                    or not profile['review_model'] or profile['understanding_hedge'] != {
+                        'delay_seconds': 4, 'max_attempts': 2, 'requires_idle_worker': True}
+                    or profile['understanding_hedge']['requires_idle_worker'] is not True):
                 raise ValueError('INVALID_INFERENCE_PROFILE')
             identities.add(('candidate', model, bundle, json.dumps(profile, sort_keys=True),
                             json.dumps(report['models'], sort_keys=True)))
             if sum(identity[0] == 'candidate' for identity in identities) != 1:
                 raise ValueError('MIXED_CANDIDATES')
             for row in report['trials']:
+                if row.get('model_calls_completed') is not True:
+                    raise ValueError('INCOMPLETE_MODEL_ACCOUNTING')
                 schema = row.get('judge_schema_diagnostics')
                 if not valid_judge_schema_diagnostics(schema) or row['status'] == 'PASS' and schema:
                     raise ValueError('INVALID_JUDGE_SCHEMA_DIAGNOSTICS')

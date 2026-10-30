@@ -22,7 +22,7 @@ def evidence(tmp_path):
         checks = ['phase_1.no_business_write', 'phase_1.no_new_authorization', 'phase_1.approval_preserved', 'phase_1.core_get_only',
                   'no_pending_approval', 'final_state', 'durable_store_healthy']
         proof = user_goal_record({'faithful': True, 'expected_act': 'INQUIRE', 'actual_act': 'INQUIRE', 'reason': 'unit evidence'}, '余额', '查余额')
-        rows = [{'task_id': task['id'], 'trial': trial, 'status': 'PASS',
+        rows = [{'task_id': task['id'], 'trial': trial, 'status': 'PASS', 'model_calls_completed': True,
                  'turns': [{'phase': 1, 'user': '查余额', 'user_goal_check': deepcopy(proof),
                             'judge_context': {'version': 2, 'phase': 1, 'source': 'post_step_environment',
                                               'evidence': {'unit_only': True}}}],
@@ -41,7 +41,8 @@ def evidence(tmp_path):
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
             'trials_per_task': 5, 'models': {'agent': 'test'}, 'prompt_bundle_sha256': 'baseline',
             'inference_profile': {'thinking': 'disabled', 'agent_temperature': 0.0, 'user_temperature': 0.8,
-                'judge_temperature': 0.0, 'timeout_seconds': 12, 'max_output_tokens': 4096, 'review_model': 'test'},
+                'judge_temperature': 0.0, 'timeout_seconds': 12, 'max_output_tokens': 4096, 'review_model': 'test',
+                'understanding_hedge': {'delay_seconds': 4, 'max_attempts': 2, 'requires_idle_worker': True}},
             'trials': rows}), encoding='utf-8')
         groups.append({'role': role, 'cases': str(cases), 'report': str(report)})
     operational = {'source_sha256': {'source.py': 'frozen'}, 'safety_violations': 0, 'observed_days': 7, 'observed_conversations': 500,
@@ -83,6 +84,19 @@ def test_a_claimed_pass_cannot_omit_schema_diagnostics_or_hide_an_invalid_judge_
     mutate(groups[0], change)
     result = assess_release(groups, {'source.py': 'frozen'}, op)
     assert not result['accepted'] and any('JUDGE_SCHEMA_DIAGNOSTICS' in blocker for blocker in result['blockers'])
+
+
+@pytest.mark.parametrize('change,code', [
+    (lambda report: report['trials'][0].pop('model_calls_completed'), 'INCOMPLETE_MODEL_ACCOUNTING'),
+    (lambda report: report['trials'][0].update(model_calls_completed=False), 'INCOMPLETE_MODEL_ACCOUNTING'),
+    (lambda report: report['inference_profile'].pop('understanding_hedge'), 'INVALID_INFERENCE_PROFILE'),
+    (lambda report: report['inference_profile']['understanding_hedge'].update(requires_idle_worker=1), 'INVALID_INFERENCE_PROFILE'),
+])
+def test_hedged_calls_need_a_consistent_profile_and_completed_accounting(evidence, change, code):
+    groups, operational = evidence
+    mutate(groups[0], change)
+    result = assess_release(groups, {'source.py': 'frozen'}, operational)
+    assert not result['accepted'] and any(code in blocker for blocker in result['blockers'])
 
 
 @pytest.mark.parametrize('change', [

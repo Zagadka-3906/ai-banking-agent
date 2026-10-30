@@ -248,9 +248,13 @@ def summarize(tasks: list[Task], trials: int, rows: list[dict]) -> dict:
     for row in rows:
         for name, usage in row.get('stage_usage', {}).items():
             total = stages.setdefault(name, {'calls': 0, 'returned': 0, 'input_tokens': 0, 'output_tokens': 0,
-                                            'cache_hit_tokens': 0, 'usage_unknown_calls': 0})
+                                            'cache_hit_tokens': 0, 'usage_unknown_calls': 0,
+                                            'latency_ms_total': 0, 'latency_ms_max': 0})
             for field in total:
-                total[field] += usage[field]
+                if field == 'latency_ms_max':
+                    total[field] = max(total[field], usage.get(field, 0))
+                else:
+                    total[field] += usage.get(field, 0) if field == 'latency_ms_total' else usage[field]
     stage_usage = {name: {**usage, 'cache_hit_ratio': usage['cache_hit_tokens']/usage['input_tokens'] if usage['input_tokens'] else None}
                    for name, usage in stages.items()}
     return {"complete": complete, "planned_trials": len(expected), "recorded_trials": len(rows),
