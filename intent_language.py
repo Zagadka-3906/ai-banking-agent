@@ -258,7 +258,9 @@ def execution_constraint(text: str, *, current_discussion: bool = False) -> str 
     if (pending_withdrawal_clause(source, current_discussion=current_discussion)
             or re.search(r"(?:放弃|暂停|暂缓|停止|搁置)[^，,。；;!?！？]{0,12}(?:" + mutation + r"|办理)", source)
             or re.search(r'取消(?:这次|这个|本次|当前|刚才)?的?(?:申购|转账|调额|冻结)(?:意向|计划|讨论|提案|办理)', source)
-            or re.search(r"不(?:再|会|继续)?(?:帮我|替我|实际|真的)?(?:" + mutation + r")", source)
+            # An auxiliary verb and current-operation reference do not turn
+            # "不办理这笔申购" into an affirmative purchase request.
+            or re.search(r"不(?:再|会|继续)?(?:帮我|替我|实际|真的)?(?:(?:办(?:理)?|做)(?:这次|本次|这笔|这一笔|这个|当前|刚才那笔)?的?)?(?:" + mutation + r")", source)
             or re.search(r"(?:不办了|不做了|不用(?:再)?(?:往下|继续)(?:办|处理))", source)
             or re.search(r'(?:^|[，,。；;!?！？])\s*(?:我)?(?:这次|本次|现在|当前)?(?:先|暂时|目前|暂)?'
                          r'(?:不|不要|不用|别)(?:再|继续)*办(?:理)?(?:了|吧)?\s*(?:[，,。；;!?！？]|$)', source)):

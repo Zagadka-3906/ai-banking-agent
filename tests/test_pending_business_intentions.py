@@ -56,6 +56,27 @@ def pending_quiz():
                                      'origin_target': 'LX00118'}}}
 
 
+@pytest.mark.parametrize('operation', ['申购', '赎回', '转账', '预约转账', '冻结', '解冻', '挂失', '调额'])
+@pytest.mark.parametrize('auxiliary', ['办', '办理', '做'])
+def test_negated_auxiliary_and_current_operation_reference_forbid_execution(operation, auxiliary):
+    text = f'先不{auxiliary}这笔{operation}了'
+    assert execution_constraint(text) == 'NEGATED_ACTION'
+    assert withdrawal_statement(text, pending_discussion=True)
+
+
+@pytest.mark.parametrize('text', [
+    '如果先不办理这笔申购了会怎样', '先不办理这笔申购了可以吗？',
+    '解释“先不办理这笔申购了”', '我已经申购零星宝，现在不办理这笔申购了',
+    '我想申购恒泉稳利，现在不办理这笔申购了',
+    '我想申购零星宝和恒泉稳利，现在不办理这笔申购了',
+])
+def test_negated_auxiliary_never_stops_a_different_historical_or_hypothetical_discussion(text):
+    state = pending_quiz()
+    before = deepcopy(state)
+    parsed = {'intent': 'UNKNOWN', 'parse_meta': {'dialogue_act': 'WITHDRAW'}}
+    assert withdraw_known_task(state, parsed, text) is None and state == before
+
+
 @pytest.mark.parametrize('ending', ['不过现在决定先取消了', '不过我决定先取消了', '现在决定取消了吧', '最后决定先取消掉了'])
 def test_sentence_final_le_with_a_current_decision_stops_the_matching_unfinished_purchase(ending):
     text = '我还是想申购零星宝，' + ending + '。'
@@ -393,6 +414,8 @@ def test_current_operation_reference_binds_only_its_existing_business_discussion
 
 
 @pytest.mark.parametrize('cancellation', [
+    '我之前想申购零星宝，现在决定取消，先不办这笔申购了。',
+    '我之前想申购零星宝，现在决定取消，暂时不办理这次申购了。',
     '我前面想申购零星宝，现在决定取消了，先不办了。',
     '我还是想申购零星宝，不过现在决定取消了，帮我取消吧。',
     '零星宝我还是想申购，但这次决定先取消了，麻烦帮我取消这次申购。',
