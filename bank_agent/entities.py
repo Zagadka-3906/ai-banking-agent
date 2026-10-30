@@ -10,6 +10,7 @@ from intent_language import ambiguous_target, business_text, execution_constrain
 
 _PAYEE_SUFFIX = r'(?:吧|呀|啊|的|这笔|那笔|的事|这件事|那件事)'
 _PAYEE_BUSINESS_SUFFIX = r'(?:办|办理|安排)(?:一笔)?'
+_PAYEE_RESUME_SUFFIX = r'(?:恢复|继续|接着|重新办理)(?:(?:刚才|之前)?(?:这|那))?(?:一)?笔'
 # The resume verb may precede the object ("恢复转给某人的转账提案")
 # or follow it ("把给某人的提案恢复出来"). Both still need current
 # Core identity agreement before removing a lexical ambiguity.
@@ -62,9 +63,11 @@ def bind_payee(state: Mapping[str, Any], parsed: dict[str, Any], text: str) -> d
     reference = isinstance(raw, str) and bool(re.fullmatch(r'(?:他|她|同一位|同一个收款人)(?:办|办理|安排)(?:一笔)?', raw))
     verb_suffix = isinstance(raw, str) and bool(re.search(_PAYEE_BUSINESS_SUFFIX + '$', raw)
         and re.search(re.escape(raw) + r'(?:一笔)?(?:预约|定时)?(?:转账|汇款)', source))
+    resume_suffix = isinstance(raw, str) and bool(re.search(_PAYEE_RESUME_SUFFIX + '$', raw)
+        and re.search(re.escape(raw) + r'[^，,。；;!?！？]{0,24}(?:转账|汇款)', source))
     if (parsed.get('intent') not in {'TRANSFER', 'SCHEDULED_TRANSFER'}
             or not frame_ambiguity and (not isinstance(raw, str) or raw not in source
-                or not (reference or verb_suffix or re.search(_PAYEE_SUFFIX + '$', raw)) or ambiguous_target(source))
+                or not (reference or verb_suffix or resume_suffix or re.search(_PAYEE_SUFFIX + '$', raw)) or ambiguous_target(source))
             or execution_constraint(source)
             or (parsed.get('parse_meta') or {}).get('dialogue_act') in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED', 'WITHDRAW'}):
         return parsed
@@ -105,6 +108,7 @@ def bind_payee(state: Mapping[str, Any], parsed: dict[str, Any], text: str) -> d
         if (isinstance(name, str) and isinstance(identity, str) and identity != owner
                 and (re.fullmatch(re.escape(name) + _PAYEE_SUFFIX, raw)
                      or verb_suffix and re.fullmatch(re.escape(name) + _PAYEE_BUSINESS_SUFFIX, raw)
+                     or resume_suffix and re.fullmatch(re.escape(name) + _PAYEE_RESUME_SUFFIX, raw)
                      or reference and any(value in previous_names for value in (name, row.get('contact_id'), identity)))):
             matches[identity] = name
     if len(matches) != 1:

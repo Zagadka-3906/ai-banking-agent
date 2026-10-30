@@ -153,7 +153,12 @@ def test_resume_request_with_repeated_recipient_only_creates_a_confirmation(gate
     assert financial_state()[:4] == before[:4]
 
 
-def test_missing_amount_then_rule_question_then_natural_resume_obtains_a_fresh_proposal(gateway, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('resume', [
+    '我这次想给李四转300元，请帮我恢复之前那个300元转给李四的转账提案。',
+    '我想给李四恢复那笔300元的转账，金额是300元，请帮我办理。',
+    '我想给李四继续这笔300元的转账，金额是300元，请帮我办理。',
+])
+def test_missing_amount_then_rule_question_then_natural_resume_obtains_a_fresh_proposal(gateway, monkeypatch, resume):  # noqa: F811
     from test_general_dialogue_loop import goal, model
     client, _ = gateway
     cid = 'missing-amount-rule-resume-frame'
@@ -167,7 +172,7 @@ def test_missing_amount_then_rule_question_then_natural_resume_obtains_a_fresh_p
     side = _send(client, '金额我还没定，我想先问一下给李四转账的话，到账时间是怎么规定的？', conversation_id=cid)
     assert side['approval'] is None and financial_state() == before
     monkeypatch.setattr(runtime, 'llm', action_model)
-    resumed = _send(client, '我这次想给李四转300元，请帮我恢复之前那个300元转给李四的转账提案。', conversation_id=cid)
+    resumed = _send(client, resume, conversation_id=cid)
     assert resumed['approval'] and all(value in resumed['approval']['summary'] for value in ('李四', '300'))
     after = financial_state()
     assert after[:4] == before[:4] and len(after[4]) == len(before[4]) + 1
@@ -195,3 +200,34 @@ def test_abandoning_an_ambiguous_transfer_does_not_choose_one_frame():
     parsed = {'intent': 'UNKNOWN', 'parse_meta': {'dialogue_act': 'WITHDRAW'}}
     assert withdraw_known_task(state, parsed, '我先不转账了') is None
     assert len(state['dialogue_state']['tasks']) == 2
+
+
+@pytest.mark.parametrize('name', ['李四', '赵星辰', '司马青云'])
+@pytest.mark.parametrize('resume', ['恢复那笔', '继续这笔', '接着那一笔', '恢复刚才那笔'])
+def test_resume_reference_after_payee_binds_only_an_exact_core_name(monkeypatch, name, resume):
+    responses(monkeypatch, [], [{'display_name': name, 'contact_id': 'recipient-current'}])
+    text = f'我想给{name}{resume}300元的转账，金额是300元，请帮我办理。'
+    parsed = {'intent': 'TRANSFER', 'target': name + resume, 'amount': 300, 'slots': {},
+              'parse_meta': {'dialogue_act': 'ACTION'}}
+    bound = bind_payee({'user_id': 'user_zhang'}, parsed, text)
+    assert bound['target'] == name and bound['amount'] == 300
+    assert bound['parse_meta']['target_binding']['entity_id'] == 'recipient-current'
+
+
+@pytest.mark.parametrize('rows', [[], [{'display_name': '李', 'contact_id': 'short'}],
+    [{'display_name': '李四', 'contact_id': 'first'}, {'display_name': '李四', 'contact_id': 'second'}],
+    [{'display_name': '李四恢复那笔', 'contact_id': 'long'}, {'display_name': '李四', 'contact_id': 'short'}]])
+def test_resume_reference_does_not_prefix_match_or_override_a_literal_real_label(monkeypatch, rows):
+    responses(monkeypatch, [], rows)
+    text = '我想给李四恢复那笔300元的转账，金额是300元，请帮我办理。'
+    parsed = local_parse(text)
+    assert bind_payee({'user_id': 'user_zhang'}, parsed, text)['target'] == '李四恢复那笔'
+
+
+@pytest.mark.parametrize('text', ['如果给李四恢复那笔300元的转账会怎样',
+    '怎么给李四恢复那笔300元的转账', '不要给李四恢复那笔300元的转账',
+    '给李四或者王美恢复那笔300元的转账'])
+def test_resume_payee_grammar_never_overrides_inquiry_negation_or_recipient_choice(monkeypatch, text):
+    monkeypatch.setattr(runtime, '_http', lambda *args, **kwargs: pytest.fail('binding must not read or select a payee'))
+    parsed = local_parse(text)
+    assert bind_payee({'user_id': 'user_zhang'}, parsed, text) == parsed

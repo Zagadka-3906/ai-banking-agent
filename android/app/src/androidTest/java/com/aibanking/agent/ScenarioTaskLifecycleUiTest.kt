@@ -154,7 +154,9 @@ class ScenarioTaskLifecycleUiTest {
     }
 
     private fun cancelFirst() {
-        ui.onAllNodesWithTag(UiTags.TASK_CANCEL).onFirst().performScrollTo().performClick()
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
+        ui.waitForIdle()
+        ui.onAllNodesWithTag(UiTags.TASK_CANCEL).onFirst().performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
         ui.waitUntil(20_000) { !model.state.value.panelBusy && model.state.value.tasks.any { it.status == "CANCELLED" } }
         assertEquals(null, model.state.value.error)
     }

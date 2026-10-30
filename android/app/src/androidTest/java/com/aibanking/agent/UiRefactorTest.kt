@@ -74,7 +74,9 @@ class UiRefactorSmokeTest {
         ui.ensureLoggedIn("Bank@2026")
         ui.openFromDrawer(UiTags.OPEN_CONTACTS)
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.CONTACT_SEARCH).fetchSemanticsNodes().isNotEmpty() }
-        ui.onNodeWithTag(UiTags.CONTACT_OPEN_ADD).performClick()
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
+        ui.waitForIdle()
+        ui.onNodeWithTag(UiTags.CONTACT_OPEN_ADD).assertIsDisplayed().assertIsEnabled().performClick()
         ui.waitUntil(20_000) { runCatching { ui.onNodeWithText("姓名").assertIsEnabled() }.isSuccess }
         ui.onNodeWithTag(UiTags.CONTACT_ADD).performScrollTo().assertIsNotEnabled()
         screenshot("08-contact-add")
@@ -82,7 +84,9 @@ class UiRefactorSmokeTest {
         val name = "验收联系人$suffix"
         ui.onNodeWithText("姓名").performScrollTo().performTextInput(name)
         ui.onNodeWithText("电话").performScrollTo().performTextInput("139$suffix")
-        ui.onNodeWithTag(UiTags.CONTACT_ADD).performScrollTo().assertIsEnabled().performClick()
+        androidx.test.espresso.Espresso.closeSoftKeyboard()
+        ui.waitForIdle()
+        ui.onNodeWithTag(UiTags.CONTACT_ADD).performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
         ui.waitUntil(20_000) { ui.onAllNodesWithTag(UiTags.CONTACT_SEARCH).fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag(UiTags.CONTACT_SEARCH).performTextInput(name)
         ui.onNode(hasText(name) and !hasSetTextAction()).performClick()
