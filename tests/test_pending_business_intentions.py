@@ -241,6 +241,50 @@ def test_shared_command_span_also_validates_a_bare_current_stop(operation, inten
     assert state == before
 
 
+@pytest.mark.parametrize('operation,intent,target', [
+    ('申购零星宝', 'WEALTH_PURCHASE', 'LX00118'), ('赎回零星宝', 'WEALTH_REDEEM', 'LX00118'),
+    ('给李四转账', 'TRANSFER', '李四'), ('预约一笔转账给李四', 'SCHEDULED_TRANSFER', '李四'),
+    ('设置CARD-001日限额', 'CARD_LIMIT', 'CARD-001'), ('冻结CARD-001', 'CARD_FREEZE', 'CARD-001'),
+])
+@pytest.mark.parametrize('decision', ['已经决定', '已经决定先', '已经决定现在'])
+@pytest.mark.parametrize('ending', ['取消这笔{operation}', '取消了', '取消不再办理了'])
+def test_completed_decision_does_not_mean_completed_banking(operation, intent, target, decision, ending):
+    text = f'我原本想{operation}，但现在{decision}{ending.format(operation=operation)}。'
+    pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target}}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'context': {},
+             'dialogue_state': {'principal': 'user_zhang', 'tasks': [
+                 {'id': intent, 'intent': intent, 'status': 'PAUSED', 'pending': pending}]}}
+    before = deepcopy(state)
+    assert withdrawal_statement(text, pending_discussion=True)
+    transition = withdraw_known_task(state, withdrawal(text), text)
+    assert transition and transition['view']['tasks'] == [] and not transition['proposal_input']
+    assert state == before
+
+
+@pytest.mark.parametrize('text', [
+    '我已经申购零星宝，现在已经决定取消这笔申购，先不办了',
+    '我已经申购零星宝后决定取消这笔申购，先不办了',
+    '我现在已经决定取消已经提交的零星宝申购，先不办了',
+    '我现在已经决定取消零星宝申购，但这笔已经成交了',
+    '我现在已经决定取消这笔申购，但之前已经给李四转账',
+    '我曾经决定取消这笔申购，先不办了',
+    '我昨天已经决定取消这笔申购，先不办了',
+    '明天我已经决定取消这笔申购，先不办了',
+    '朋友说现在已经决定取消这笔申购，先不办了',
+    '我现在已经决定取消这笔申购了吗？',
+    '解释“我现在已经决定取消这笔申购”',
+    '如果我已经决定取消这笔申购，先不办了',
+    '我原本想申购恒泉稳利，但现在已经决定取消这笔申购，先不办了',
+    '我原本想申购零星宝和恒泉稳利，但现在已经决定取消了',
+    '我已经决定取消这笔预约任务',
+])
+def test_decision_scope_preserves_actual_history_reporting_and_binding(text):
+    state = pending_quiz()
+    before = deepcopy(state)
+    assert withdraw_known_task(state, withdrawal(text), text) is None
+    assert state == before
+
+
 @pytest.mark.parametrize('text', [
     '我还是想申购零星宝，朋友说这次决定取消了',
     '我还是想申购零星宝，我还没有决定取消了',
@@ -646,6 +690,9 @@ def test_current_operation_reference_binds_only_its_existing_business_discussion
     '我原本想申购零星宝，经过权衡决定取消不再继续提交了。',
     '我还是想申购零星宝，但这次决定先取消了。',
     '我还是想申购零星宝，综合考虑我决定取消吧。',
+    '我原本想申购零星宝，但现在已经决定取消这笔申购，先不办了。',
+    '我原本想申购零星宝，但现在已经决定先取消了。',
+    '我已经决定取消这笔申购。',
 ])
 def test_purchase_then_cancellation_question_then_withdrawal_is_read_only(gateway, monkeypatch, cancellation):  # noqa: F811
     client, _ = gateway

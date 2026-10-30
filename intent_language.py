@@ -266,7 +266,7 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
     for clause in re.split(r'[，,。；;!?！？]', source):
         clause = clause.strip()
         if (_WITHDRAW_QUESTION.search(clause) or _WITHDRAW_NEGATED.search(clause)
-                or re.search(r'已经|曾经|取消了|撤销了', clause)):
+                or _withdrawal_past_assertion(clause) or re.search(r'取消了|撤销了', clause)):
             continue
         pending = re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
         command = _withdrawal_command_in_clause(clause)
@@ -298,6 +298,26 @@ def _policy_understanding_acknowledgement(clause: str) -> bool:
                 or re.fullmatch(r'(?:我|本人)?(?:已经|曾经)' + understood + r'(?:关于|有关)?' + topic + r'(?:了)?', clause))
 
 
+def _withdrawal_past_assertion(clause: str) -> bool:
+    """Scope completion to policy understanding, a decision, or banking activity.
+
+    A single completed decision immediately governing the validated current
+    stop is not an executed business. Keep the original clause for every
+    command/object/history check, and never discount a second past marker.
+    """
+    markers = list(re.finditer(r'已经|曾经', clause))
+    if not markers or _policy_understanding_acknowledgement(clause):
+        return False
+    if (len(markers) == 1 and markers[0].group() == '已经'
+            and re.search(r'现在|这次|本次|这笔|这一笔|这个|当前|刚才那笔', clause)):
+        marker = markers[0]
+        command = _withdrawal_command_span(clause)
+        if (command and command.start() == marker.end()
+                and clause[command.start():].startswith('决定')):
+            return False
+    return True
+
+
 def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool:
     """A restrictive execution constraint alone is not a cancellation command."""
     source = business_text(text)
@@ -308,9 +328,8 @@ def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool
     # not execute that business. Completed actions and cancellations remain
     # protected, including elsewhere in the same original utterance.
     for clause in re.split(r'[，,。；;!?！？]', source):
-        if (re.search(r'已经|曾经', clause)
-                and re.search(r'申购|赎回|买|卖|转账|汇款|付款|支付|扣|冻结|解冻|挂失|解挂|预约|锁定|调额|限额|办理|办好|执行|提交|成交|取消|撤销|放弃|停止', clause)
-                and not _policy_understanding_acknowledgement(clause)):
+        if (_withdrawal_past_assertion(clause)
+                and re.search(r'申购|赎回|买|卖|转账|汇款|付款|支付|扣|冻结|解冻|挂失|解挂|预约|锁定|调额|限额|办理|办好|执行|提交|成交|取消|撤销|放弃|停止', clause)):
             return False
     if _WITHDRAW_NEGATED.search(source):
         return False
