@@ -183,3 +183,108 @@ def test_phase_goal_is_preserved_after_background_future_plans_without_assistant
     assert list(payload) == ['known_facts', 'previous_user_messages', 'current_goal', 'user_text']
     assert '仅依据 current_goal 确定 expected_act' in messages[0].content
     assert phase.criteria not in messages[-1].content
+
+
+def test_proposal_generation_contract_cannot_rewrite_or_retry_a_premature_confirmation():
+    from scripts.dialogue_eval.models import SimulatedUser
+    task = next(task for task in load_dataset(Path('tests/data/dialogue_repair_regression_v4.json'))[0].tasks
+                if task.id == 'transfer_missing_amount_insert_rule_reject')
+    phase = task.phases[2]
+    task = task.model_copy(update={'phases': [phase]})
+    original = '我确认给李四转300元，请按这个收款人和金额帮我发起办理。'
+    calls = []
+    user = SimulatedUser(SimpleNamespace(invoke=lambda messages: calls.append(messages)
+        or SimpleNamespace(content=json.dumps({'text': original}))), 7, 'v3')
+    env = Environment()
+    judge = SimpleNamespace(verify_user_goal=lambda *args: check(faithful=False, expected='ACTION', actual='ACTION'),
+                            assess=lambda *args: pytest.fail('Premature confirmation cannot be rescored'))
+    row = run_trial(task, env, user, judge, seed=7, trial=1, rubric_version='v3', verify_user_goal=True)
+    assert row['status'] == 'ERROR' and row['error_type'] == 'SimulatorDrift'
+    assert row['simulator_drift']['user'] == original and env.steps == 0
+    assert len(calls) == user.requests == 1 and user.transport_failures == []
+    payload = json.loads(calls[0][-1].content)
+    assert payload['proposal_phase_contract']['no_confirmation'] is True
+    assert payload['current_goal'] == phase.goal and payload['request_kind'] == 'proposal'
+    assert phase.criteria not in calls[0][-1].content
+
+
+def test_proposal_goal_guidance_never_overwrites_the_preflight_verdict():
+    calls = []
+    raw = check(faithful=False, expected='INQUIRE', actual='ACTION')
+    judge = ConversationJudge(SimpleNamespace(invoke=lambda messages: calls.append(messages)
+        or SimpleNamespace(content=json.dumps(raw))), 'v3')
+    task = next(task for task in load_dataset(Path('tests/data/dialogue_repair_regression_v4.json'))[0].tasks
+                if task.id == 'transfer_missing_amount_insert_rule_reject')
+    phase = task.phases[2]
+    verdict = judge.verify_user_goal(task.user_view(phase, []), '请给李四转300元，帮我发起办理。')
+    assert verdict == raw and len(calls) == judge.requests == 1
+    assert '提案尚未执行不使该请求变成INQUIRE' in calls[0][0].content
+    assert phase.criteria not in calls[0][-1].content
+
+
+def test_proposal_generation_does_not_observe_future_cancellation_or_assistant_instructions():
+    from scripts.dialogue_eval.models import SimulatedUser
+    captured = []
+    request = '请给李四转300元，帮我发起办理。'
+
+    def invoke(messages):
+        payload = json.loads(messages[-1].content)
+        captured.append(payload)
+        contaminated = '最终取消' in json.dumps(payload, ensure_ascii=False) or '建议你取消' in json.dumps(payload, ensure_ascii=False)
+        return SimpleNamespace(content=json.dumps({'text': '那就取消吧' if contaminated else request}))
+
+    history = [{'role': 'user', 'text': '我想给李四转账，金额没定'}, {'role': 'assistant', 'text': '建议你取消'}]
+    view = {'persona': '张三', 'known_facts': '想给李四转账；最终取消', 'conversation': history,
+            'request_kind': 'proposal', 'current_goal': '恢复300元李四转账提案'}
+    user = SimulatedUser(SimpleNamespace(invoke=invoke), 7, 'v3')
+    assert user.next(view, 'PRIVATE_FIXED_UTTERANCE')['text'] == request
+    assert captured[0]['conversation'] == [history[0]]
+    assert captured[0]['current_goal'] == view['current_goal'] and captured[0]['known_facts'] == []
+    assert history == view['conversation'] and user.requests == 1
+
+
+@pytest.mark.parametrize('request_kind', ['inquiry', 'clarify'])
+def test_nonproposal_user_keeps_released_facts_and_observed_dialogue(request_kind):
+    from scripts.dialogue_eval.models import SimulatedUser
+    captured = []
+    history = [{'role': 'assistant', 'text': '请补充希望核对的金额'}]
+    view = {'persona': '张三，后来取消', 'known_facts': '本轮询问300元；最终取消', 'conversation': history,
+            'simulation_context': {'persona': '张三', 'facts': ['本轮询问300元']},
+            'request_kind': request_kind, 'current_goal': '核对金额'}
+    user = SimulatedUser(SimpleNamespace(invoke=lambda messages: captured.append(json.loads(messages[-1].content))
+        or SimpleNamespace(content='{"text":"请核对300元"}')), 7, 'v3')
+    assert user.next(view, 'PRIVATE_FIXED_UTTERANCE')['text'] == '请核对300元'
+    assert captured[0]['known_facts'] == ['本轮询问300元'] and captured[0]['conversation'] == history
+    assert captured[0]['persona'] == '张三' and '最终取消' not in json.dumps(captured[0], ensure_ascii=False)
+
+
+def test_task_releases_static_and_current_phase_facts_without_future_intentions():
+    from scripts.dialogue_eval.models import SimulatedUser
+    from scripts.dialogue_eval.schema import SimulatorProfile
+    task = next(task for task in load_dataset(Path('tests/data/dialogue_repair_regression_v4.json'))[0].tasks
+                if task.id == 'transfer_missing_amount_insert_rule_reject').model_copy(deep=True)
+    task.simulation_profile = SimulatorProfile(persona='张三，银行客户', facts=['收款人李四'])
+    task.phases[0].simulation_facts = ['转账金额尚未确定']
+    task.phases[2].simulation_facts = ['本阶段转账金额300元']
+    captured = []
+    user = SimulatedUser(SimpleNamespace(invoke=lambda messages: captured.append(json.loads(messages[-1].content))
+        or SimpleNamespace(content='{"text":"我想给李四转账，金额还没定。"}')), 7, 'v3')
+    view = task.user_view(task.phases[0], [])
+    assert '最终' in view['known_facts'] and '中途' in view['persona']
+    user.next(view, 'PRIVATE_FIXED_UTTERANCE')
+    payload = captured[0]
+    assert payload['persona'] == '张三，银行客户'
+    assert payload['known_facts'] == ['收款人李四', '转账金额尚未确定']
+    assert '300' not in json.dumps(payload, ensure_ascii=False)
+    assert '最终' not in json.dumps(payload, ensure_ascii=False) and '中途' not in json.dumps(payload, ensure_ascii=False)
+    assert task.phases[0].criteria not in json.dumps(payload, ensure_ascii=False)
+
+
+@pytest.mark.parametrize('facts', [[300], ['x' * 181], ['a'] * 21])
+def test_invalid_declared_simulator_context_fails_before_any_model_call(facts):
+    from scripts.dialogue_eval.models import SimulatedUser
+    user = SimulatedUser(SimpleNamespace(invoke=lambda *args: pytest.fail('Invalid context cannot reach a model')), 7, 'v3')
+    with pytest.raises(ValueError):
+        user.next({'request_kind': 'clarify', 'current_goal': '补充金额',
+                   'simulation_context': {'persona': '银行客户', 'facts': facts}}, 'PRIVATE_FIXED_UTTERANCE')
+    assert user.requests == 0

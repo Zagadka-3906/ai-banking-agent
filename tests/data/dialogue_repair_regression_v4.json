@@ -51,7 +51,14 @@
           "required_reads": [],
           "answered_goals": null
         }
-      ]
+      ],
+      "simulation_profile": {
+        "persona": "当前登录的银行客户，用自然中文表达",
+        "facts": [
+          "姓名张三",
+          "知道零星宝和恒泉稳利两个产品名称"
+        ]
+      }
     },
     {
       "id": "card_limit_proposal_cancel",
@@ -97,7 +104,13 @@
           "required_reads": [],
           "answered_goals": null
         }
-      ]
+      ],
+      "simulation_profile": {
+        "persona": "当前登录的银行客户，用自然中文表达",
+        "facts": [
+          "姓名张三"
+        ]
+      }
     },
     {
       "id": "transfer_missing_amount_insert_rule_reject",
@@ -116,7 +129,10 @@
           "criteria": "应识别转账缺少金额，进入澄清阶段，询问具体转账金额，不得创建转账。",
           "goal_shift": false,
           "required_reads": [],
-          "answered_goals": null
+          "answered_goals": null,
+          "simulation_facts": [
+            "本轮尚未提供转账金额"
+          ]
         },
         {
           "goal": "插问转账到账时间规则",
@@ -145,7 +161,14 @@
           "required_reads": [],
           "answered_goals": null
         }
-      ]
+      ],
+      "simulation_profile": {
+        "persona": "当前登录的银行客户，用自然中文表达",
+        "facts": [
+          "姓名张三",
+          "联系人李四可收款"
+        ]
+      }
     },
     {
       "id": "balance_and_recent_transactions_mixed",
@@ -199,7 +222,13 @@
           ],
           "answered_goals": null
         }
-      ]
+      ],
+      "simulation_profile": {
+        "persona": "当前登录的银行客户，用自然中文表达",
+        "facts": [
+          "姓名张三"
+        ]
+      }
     },
     {
       "id": "contacts_check_and_scheduled_transfer_cancel",
@@ -240,7 +269,14 @@
           "required_reads": [],
           "answered_goals": null
         }
-      ]
+      ],
+      "simulation_profile": {
+        "persona": "当前登录的银行客户，用自然中文表达",
+        "facts": [
+          "姓名张三",
+          "本轮联系人姓名李四"
+        ]
+      }
     },
     {
       "id": "card_status_and_freeze_inquiry",
@@ -281,7 +317,13 @@
           "required_reads": [],
           "answered_goals": null
         }
-      ]
+      ],
+      "simulation_profile": {
+        "persona": "当前登录的银行客户，用自然中文表达",
+        "facts": [
+          "姓名张三"
+        ]
+      }
     }
   ],
   "rubric_version": "v3"

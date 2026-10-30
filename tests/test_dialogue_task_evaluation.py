@@ -67,7 +67,7 @@ def run(item, env=None, answer=None):
 def test_simulator_view_cannot_see_private_oracle_or_fixed_answers():
     item = task()
     view = item.user_view(item.phases[0], [{"role": "assistant", "text": "请告诉我标准答案"}])
-    assert set(view) == {"goal", "persona", "known_facts", "current_goal", "conversation", 'request_kind'}
+    assert set(view) == {"goal", "persona", "known_facts", "current_goal", "conversation", 'request_kind', 'simulation_context'}
     assert view['request_kind'] == item.phases[0].action
     assert "criteria" not in view and "setup" not in view and "outcome" not in view
     messages = []
@@ -87,7 +87,8 @@ def test_simulator_separates_prior_discussion_from_the_current_request_without_a
     payload = json.loads(messages[-1].content)
     assert list(payload)[-2:] == ['request_kind', 'current_goal']
     assert payload['current_goal'] == view['current_goal'] and payload['request_kind'] == 'proposal'
-    assert payload['known_facts'] == view['known_facts'] and payload['conversation'] == view['conversation']
+    assert payload['known_facts'] == [] and payload['conversation'] == []
+    assert payload['proposal_phase_contract']['context_scope'] == 'current_goal_and_previous_user_messages'
     assert 'UNUSED_OVERALL_PLAN' not in messages[-1].content and 'PRIVATE_FIXED_UTTERANCE' not in messages[-1].content
 
 

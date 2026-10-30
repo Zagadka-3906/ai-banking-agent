@@ -4,13 +4,25 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+SimulatorFact = Annotated[str, Field(min_length=1, max_length=180)]
+
+
+class SimulatorProfile(StrictModel):
+    persona: str = Field(default='当前登录的银行客户', min_length=1, max_length=180)
+    facts: list[SimulatorFact] = Field(default_factory=list, max_length=10)
+
+
+class SimulatorContext(SimulatorProfile):
+    facts: list[SimulatorFact] = Field(default_factory=list, max_length=20)
 
 
 class Phase(StrictModel):
@@ -21,6 +33,7 @@ class Phase(StrictModel):
     goal_shift: bool = False
     required_reads: list[Literal['balance', 'cards', 'transactions', 'contacts', 'wealth_products', 'wealth_holdings', 'risk_profile', 'tasks', 'disputes']] = Field(default_factory=list, max_length=5)
     answered_goals: int | None = Field(default=None, ge=1, le=5)
+    simulation_facts: list[SimulatorFact] = Field(default_factory=list, max_length=10)
 
 
 class Task(StrictModel):
@@ -28,6 +41,7 @@ class Task(StrictModel):
     goal: str = Field(min_length=1, max_length=1500)
     persona: str = Field(min_length=1, max_length=500)
     user_facts: str = Field(min_length=1, max_length=1000)
+    simulation_profile: SimulatorProfile = Field(default_factory=SimulatorProfile)
     topic: Literal["general", "dispute", "transfer", "card", "cross_scene", "security", "limits", "contacts", "wealth", "subscription", "tasks"]
     setup: Literal["default", "frozen_card", "recent_limit_change", "mixed_tasks", "tasks_read_outage"] = "default"
     outcome: Literal["unchanged", "transfer_300"] = "unchanged"
@@ -49,7 +63,9 @@ class Task(StrictModel):
     def user_view(self, phase: Phase, history: list[dict]) -> dict:
         # No setup, expected state, intent, criteria, tool trace or oracle verdict.
         return {"goal": phase.goal, "persona": self.persona, "known_facts": self.user_facts,
-                "current_goal": phase.goal, "conversation": history, 'request_kind': phase.action}
+                "current_goal": phase.goal, "conversation": history, 'request_kind': phase.action,
+                'simulation_context': SimulatorContext(persona=self.simulation_profile.persona,
+                    facts=[*self.simulation_profile.facts, *phase.simulation_facts]).model_dump()}
 
 
 class Dataset(StrictModel):
