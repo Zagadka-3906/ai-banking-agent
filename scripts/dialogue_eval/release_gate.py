@@ -85,7 +85,9 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             for row in report['trials']:
                 transport = row.get('evaluation_transport')
                 if (not isinstance(transport, dict) or set(transport) != {'user', 'judge'}
-                        or any(not valid_transport_diagnostics(value, successful=row['status'] == 'PASS') for value in transport.values())):
+                        or any(not valid_transport_diagnostics(value, successful=row['status'] == 'PASS') for value in transport.values())
+                        # Scores are never schema-retried; only the simulated user may be.
+                        or any(isinstance(item, dict) and item.get('error_code') == 'SCHEMA_INVALID' for item in transport['judge'])):
                     raise ValueError('MISSING_TRANSPORT_DIAGNOSTICS')
                 for turn in row.get('turns', []):
                     task = next(task for task in tasks if task.id == row['task_id'])

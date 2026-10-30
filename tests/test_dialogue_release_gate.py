@@ -33,7 +33,7 @@ def evidence(tmp_path):
                 for task in tasks for trial in range(1, 6)]
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
-            'evaluation_transport_version': 3,
+            'evaluation_transport_version': 4,
             'judge_context_version': 2,
             'simulator_goal_check_version': 3, 'user': 'model',
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
@@ -111,6 +111,16 @@ def test_release_accepts_bounded_recovered_transport_without_changing_task_score
     assert not assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
 
 
+def test_only_the_simulated_user_may_record_a_schema_format_retry(evidence):
+    groups, op = evidence
+    records = [{'request': 1, 'attempt': 1, 'error_code': 'SCHEMA_INVALID', 'response_chars': 20, 'retried': True}]
+    mutate(groups[0], lambda report: report['trials'][0]['evaluation_transport'].update(user=records))
+    assert assess_release(groups, {'source.py': 'frozen'}, op)['accepted']
+    mutate(groups[0], lambda report: report['trials'][0]['evaluation_transport'].update(user=[], judge=records))
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any('MISSING_TRANSPORT_DIAGNOSTICS' in item for item in result['blockers'])
+
+
 def test_mixed_thinking_or_missing_inference_settings_cannot_share_acceptance(evidence):
     groups, op = evidence
     mutate(groups[1], lambda report: report['inference_profile'].update(thinking='enabled'))
@@ -124,6 +134,7 @@ def test_mixed_thinking_or_missing_inference_settings_cannot_share_acceptance(ev
 @pytest.mark.parametrize('change', [lambda report: report.pop('evaluation_transport_version'),
                                  lambda report: report.update(evaluation_transport_version=1),
                                  lambda report: report.update(evaluation_transport_version=2),
+                                 lambda report: report.update(evaluation_transport_version=3),
                                  lambda report: report['trials'][0].pop('evaluation_transport')])
 def test_transport_policy_and_attempt_diagnostics_cannot_be_omitted(evidence, change):
     groups, op = evidence

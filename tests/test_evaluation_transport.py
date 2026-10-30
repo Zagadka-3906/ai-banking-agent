@@ -153,6 +153,31 @@ def test_valid_json_scores_or_schema_or_goal_errors_are_never_format_retried(val
     assert len(calls) == 1 and not diagnostics
 
 
+@pytest.mark.parametrize('first', [{'utterance': '查余额'}, {'text': '查余额', 'extra': 1}, {'text': ''}])
+def test_simulated_user_schema_mismatch_uses_the_single_format_retry(first):
+    calls = []
+    def invoke(messages):
+        calls.append(messages)
+        return SimpleNamespace(content=json.dumps(first if len(calls) == 1 else {'text': '查余额'}, ensure_ascii=False))
+    user = SimulatedUser(SimpleNamespace(invoke=invoke), 1, 'v3')
+    assert user.next({'current_goal': '查余额'}, '') == {'text': '查余额'}
+    assert len(calls) == 2 and 'format_retry' in calls[1][-1].content
+    assert user.transport_failures == [{'request': 1, 'attempt': 1, 'error_code': 'SCHEMA_INVALID',
+                                        'response_chars': len(json.dumps(first, ensure_ascii=False)), 'retried': True}]
+    assert valid_transport_diagnostics(user.transport_failures, successful=True)
+
+
+def test_simulated_user_repeated_schema_mismatch_remains_an_evaluation_error():
+    calls = []
+    def invoke(messages):
+        calls.append(messages)
+        return SimpleNamespace(content='{"utterance":"查余额"}')
+    user = SimulatedUser(SimpleNamespace(invoke=invoke), 1, 'v3')
+    with pytest.raises(EvaluationJSONError):
+        user.next({'current_goal': '查余额'}, '')
+    assert len(calls) == 2 and [row['retried'] for row in user.transport_failures] == [True, False]
+
+
 @pytest.mark.parametrize('sequence,error_type,code', [
     (['timeout', 200], None, 'API_TIMEOUT'),
     (['connection', 200], None, 'API_CONNECTION'),

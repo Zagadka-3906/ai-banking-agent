@@ -9,7 +9,7 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-10-28.5"
+KNOWLEDGE_VERSION = "2026-10-30.1"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits", "contacts"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、联系人与收款人、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
@@ -78,7 +78,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
         ("unfreeze_steps", "App内解冻步骤：在对话页输入“我的卡片”并发送，核对目标卡片与状态；输入“解冻”加该卡片编号并发送，核对红色审批卡，领取或核对本机一次性演示验证码，点击“验证并确认办理”，按系统提示用设备PIN或生物识别完成设备签名，再等待核心成功回执。未收到成功回执不能视为已解冻；不需要真实柜台办理。"),
         ("verification", "冻结、解冻、挂失、解除挂失和调额均需单独确认及强验证；登记设备签名通常由设备凭据或本地PIN解锁，不能用聊天中的已验证声明替代。"),
         ("lost", "冻结与挂失是不同状态；挂失卡须解除挂失，单纯解冻不能解除挂失。可先查询实际卡片状态再决定操作。"),
-        ("receive", "本演示中冻结卡片限制该卡付款，账户仍可接收转账。"),
+        ("receive", "本演示的冻结针对单张卡片，没有单独冻结整个账户的功能；用户说“账户冻结”时按卡片冻结说明。冻结卡片限制该卡付款，账户仍可接收转账；冻结不会自动解除，解冻须另行提出并完成确认和强验证。"),
         ("channels", "关闭网上支付或境外交易渠道需确认，开通渠道需强验证；查询状态或询问影响不会改变开关。"),
     ],
     "limits": [
