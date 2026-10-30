@@ -234,3 +234,46 @@ def test_projected_field_absence_is_rewritten_before_review_without_extra_reads(
     reviews = [payload for system, payload in calls if '独立银行回答核验器' in system]
     assert len(reviews) == 1 and reviews[0]['projection_contract'] == seen[1][0]['projection_contract']
     assert all(method == 'GET' for method, _ in reads)
+
+
+@pytest.mark.parametrize('prefix', ['不代表', '不意味着', '不等于', '并非', '不是', '不能据此认定'])
+@pytest.mark.parametrize('operation', ['已下单', '已扣款', '已转账', '已冻结', '已创建争议工单'])
+def test_explicit_denial_of_completion_is_not_an_execution_claim(prefix, operation):
+    from bank_agent.answering import _validate_draft
+    facts = [{'id': 'guide.test', 'text': '这里只解释业务步骤，草稿尚未执行，也不证明资金或订单状态。'}]
+    text = '生成提醒或草稿' + prefix + operation + '，执行仍须核对并由用户另行确认。'
+    answer, _ = _validate_draft({'answer': text, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+    assert answer == text
+
+
+@pytest.mark.parametrize('text', [
+    '提醒不代表已下单，但我已扣款。', '草稿不等于已转账；我已经为您冻结卡片。',
+    '不是要取消，我已撤销订阅。', '不仅已下单，而且已扣款。',
+    '不能说未执行，我已转账。', '草稿不代表已下单。已创建争议工单。',
+    '不是没操作，已冻结。',
+])
+def test_a_completion_denial_cannot_mask_another_positive_claim(text):
+    from bank_agent.answering import _validate_draft, DraftValidationError
+    facts = [{'id': 'guide.test', 'text': '这里只解释步骤，没有执行操作。'}]
+    with pytest.raises(DraftValidationError, match='UNVERIFIED_OPERATION_CLAIM'):
+        _validate_draft({'answer': text, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+
+
+def test_gateway_explains_birthday_dependencies_without_treating_not_completed_as_completed(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    def draft(payload):
+        rows = [row for row in payload['facts'] if row['id'] in
+                {'guide.cross_scene.capability', 'guide.cross_scene.fulfillment'}]
+        ids = [row['id'] for row in rows]
+        answer = ''.join(row['text'] for row in rows) + '生成提醒和模拟订单草稿不代表已下单，也不等于已扣款。'
+        return {'answer': answer, 'evidence_ids': ids, 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': ids, 'reason': '说明预留预算与提醒订单依赖及执行限制'}]}
+    calls = model(monkeypatch, [goal('general', [], '资金锁定生日提醒订单草稿如何联动', act='EXPLAIN') |
+                              {'topic': 'cross_scene'}], draft=draft)
+    before = financial_state()
+    answer = _send(client, '资金锁定、生日提醒和鲜花订单草稿具体怎么联动？', conversation_id='birthday-denied-completion')
+    assert answer['business_status'] == 'SUCCEEDED' and answer['approval'] is None
+    assert answer['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED'
+    assert '预留明确预算' in answer['reply'] and '到期仍需用户再次确认' in answer['reply']
+    assert sum('银行业务解答助手' in system for system, _ in calls) == 1
+    assert financial_state() == before

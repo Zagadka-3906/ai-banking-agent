@@ -239,7 +239,10 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
     for match in _WRITE_CLAIM.finditer(rendered):
         clause_prefix = re.split(r"[，,。；;\n]", rendered[:match.start()])[-1]
         conditional = bool(re.search(r"如果|假如|一旦|若", clause_prefix))
-        if not conditional and match.group() not in evidence:
+        # Negation must immediately govern this matched completion predicate.
+        # It cannot exempt another assertion later in the same answer.
+        denial = bool(re.search(r'(?:不代表|不意味着|不等于|并非|不是|不能据此认定)\s*$', clause_prefix))
+        if not conditional and not denial and match.group() not in evidence:
             raise DraftValidationError("UNVERIFIED_OPERATION_CLAIM",
                 fragment=clause_prefix[-60:] + rendered[match.start():match.end() + 60])
     _validate_projection_absence(rendered, facts)
