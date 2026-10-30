@@ -11,6 +11,105 @@ from test_general_dialogue_loop import goal, model
 from test_inquiry_boundaries import financial_state
 
 
+@pytest.mark.parametrize('scope,bounds', [('ALL', None), ('MONTH', None),
+    ('CUSTOM', {'start': '2026-08-01', 'end': '2026-08-31'})])
+def test_recent_list_reference_inherits_actual_read_scope_including_all(scope, bounds):
+    from bank_agent.understanding import enforce_inquiry, understanding_context
+    text = '帮我把刚才查到的这些最近交易整体看看，有没有什么可疑线索？'
+    goals = normalize_goals([goal('transactions', ['analysis'], '分析这些交易')], text, {})
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'user_input': text,
+             'observations': {'BANKING_HELP': {'read_contexts': {'transactions': {'date_scope': scope, 'date_range': bounds}},
+                                               'resource_entities': {'transactions': []}}}}
+    with understanding_context(state):
+        result = enforce_inquiry({'intent': 'BILL_ANALYSIS', 'date_scope': 'MONTH',
+            'parse_meta': {'dialogue_act': 'QUERY', 'topic_relation': 'CONTINUE', 'goals': goals}}, text)
+    assert result['date_scope'] == scope and result.get('date_range') == bounds
+
+
+@pytest.mark.parametrize('text', ['分析刚才那些交易中2026-08-01到2026-08-07的流水',
+                                 '分析这些交易中最近三天的流水', '分析这些交易中本月的流水'])
+def test_literal_new_period_wins_over_referenced_collection(text):
+    from bank_agent.understanding import enforce_inquiry, understanding_context
+    goals = normalize_goals([goal('transactions', ['records'], '筛选流水')], text, {})
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'user_input': text,
+             'observations': {'BILL_QUERY': {'intent': 'BILL_QUERY', 'date_scope': 'ALL'}}}
+    with understanding_context(state):
+        result = enforce_inquiry({'intent': 'BILL_QUERY', 'date_scope': 'MONTH' if '本月' in text else 'ALL',
+            'parse_meta': {'dialogue_act': 'QUERY', 'goals': goals}}, text)
+    assert result['date_scope'] == ('MONTH' if '本月' in text else 'CUSTOM')
+    if '本月' not in text:
+        from intent_language import requested_date_range
+        assert result['date_range'] == requested_date_range(text)
+
+
+def test_latest_empty_all_period_does_not_revive_older_period_and_foreign_memory_is_ignored():
+    from bank_agent.understanding import enforce_inquiry, understanding_context
+    text = '刚才这些最近交易整体分析一下'
+    goals = normalize_goals([goal('transactions', ['analysis'], '分析列表')], text, {})
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'user_input': text,
+             'observations': {'BILL_QUERY': {'intent': 'BILL_QUERY', 'date_scope': 'LAST_MONTH'},
+                              'BANKING_HELP': {'read_contexts': {'transactions': {'date_scope': 'ALL', 'date_range': None}},
+                                               'resource_entities': {'transactions': []}}}}
+    parsed = {'intent': 'BILL_ANALYSIS', 'date_scope': 'ALL', 'parse_meta': {'dialogue_act': 'QUERY', 'goals': goals}}
+    with understanding_context(state):
+        assert enforce_inquiry(parsed, text)['date_scope'] == 'ALL'
+    with understanding_context({**state, 'memory_principal': 'user_li'}):
+        assert enforce_inquiry(parsed, text)['date_scope'] == 'CUSTOM'
+
+
+@pytest.mark.parametrize('text,reference,expected', [
+    ('把刚才查到的这些最近交易整体看看，有没有可疑线索', 'anomalies', ['TX1000', 'TX1004']),
+    ('这些交易整体查一下有没有可疑', None, ['TX1000', 'TX1004']),
+    ('刚才交易里有没有可疑线索', 'listed_transactions', ['TX1000', 'TX1004']),
+    ('查看刚才这些可疑交易', 'anomalies', ['TX1004']),
+    ('刚才那1笔可疑交易是什么', None, ['TX1004']),
+])
+def test_collection_analysis_does_not_confuse_input_list_and_suspicious_subset(text, reference, expected):
+    from bank_agent.understanding import referenced_transactions
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'user_input': text,
+             'slots': {'read_reference': reference}, 'observations': {'BILL_QUERY': {
+                 'intent': 'BILL_QUERY', 'resource_entities': {'transactions': ['TX1000', 'TX1004']},
+                 'suspicious_transaction_ids': ['TX1004']}}}
+    assert referenced_transactions(state)[0] == expected
+    assert referenced_transactions({**state, 'memory_principal': 'user_li'}) == ([], '')
+
+
+@pytest.mark.parametrize('first_question,scope', [('查询全部历史交易明细', 'ALL'), ('查询最近几天的交易明细', 'CUSTOM')])
+def test_recent_analysis_after_clarification_keeps_the_displayed_collection(gateway, monkeypatch, first_question, scope):  # noqa: F811
+    import json
+    import main
+    from types import SimpleNamespace
+    from bank_agent import runtime
+    client, _ = gateway
+    cid = 'displayed-list-period'
+    before = financial_state()
+    _send(client, '你好，我想先查一下我的账户余额。', conversation_id=cid)
+    model(monkeypatch, [goal('transactions', ['records'], '查询交易明细')], intent='BILL_QUERY')
+    first = _send(client, first_question, conversation_id=cid)
+    expected = {row['tx_id'] for row in main.TRANSACTIONS if row.get('account_id') == 'user_zhang'}
+    if scope == 'CUSTOM':
+        expected = {'TX1000', 'TX-CLOUD-0'}
+    assert {row['tx_id'] for row in first['result']['execution_result']['records']} == expected
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps({
+        'intent': 'UNKNOWN', 'dialogue_act': 'UNCLEAR', 'scope': 'IN_SCOPE',
+        'goals': [goal('transactions', ['records'], '明确所指交易', act='UNCLEAR')]}))))
+    unclear = _send(client, '这些交易里有一笔我有点疑问，但一时说不上是哪一笔，你能先帮我确认一下我指的是哪一笔吗？', conversation_id=cid)
+    assert unclear['business_status'] == 'NEEDS_INPUT'
+    def cite(payload):
+        rows = [row for row in payload['facts'] if row['id'].startswith('read.transactions.')]
+        ids = [row['id'] for row in rows]
+        return dict(answer='\n'.join(row['text'] for row in rows), evidence_ids=ids, unanswered=[],
+                    coverage=[dict(goal_id='q1', status='ANSWERED', evidence_ids=ids, reason='对应本次读取')])
+    model(monkeypatch, [goal('transactions', ['records', 'analysis'], '整体分析刚才列表')], intent='BILL_ANALYSIS', draft=cite)
+    result = _send(client, '我一时也说不准具体是哪一笔，能不能先帮我把刚才查到的这些最近交易整体看看，有没有什么可疑的线索？', conversation_id=cid)
+    assert result['business_status'] == 'SUCCEEDED' and result['approval'] is None
+    execution = result['result']['execution_result']
+    assert execution['date_scope'] == scope
+    assert {row['tx_id'] for row in execution['records']} == expected
+    assert ('TX1004' in result['reply']) == (scope == 'ALL')
+    assert financial_state() == before
+
+
 @pytest.mark.parametrize('money', ['¥19.90', '￥999.00', '¥1,500.50', '¥-19.90'])
 def test_currency_prefixed_amount_is_not_a_calendar_range(money):
     from intent_language import requested_date_range

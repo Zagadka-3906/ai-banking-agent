@@ -320,7 +320,8 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     if not isinstance(prior, dict):
         prior = {}
     parsed = validate_intent_payload(resolve_ellipsis(parsed, prior, text, state.get("execution_result")))
-    parsed = validate_intent_payload(enforce_inquiry(parsed, business_text(text)))
+    with understanding_context(state):
+        parsed = validate_intent_payload(enforce_inquiry(parsed, business_text(text)))
     if (parsed.get("parse_meta") or {}).get("execution_constraint"):
         audit_event("INTENT_WITHHELD", user_id=state.get("user_id"), request_id=state["request_id"],
                     decision="READ_ONLY", outcome="CONSULTATION", reason="NON_EXECUTING_LANGUAGE")

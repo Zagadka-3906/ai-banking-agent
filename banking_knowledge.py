@@ -9,7 +9,7 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-10-30.1"
+KNOWLEDGE_VERSION = "2026-10-30.2"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits", "contacts"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、联系人与收款人、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
@@ -45,6 +45,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
         ("common_flag", "本产品没有单独的常用频率标记，已保存与交易频率是不同信息。"),
     ],
     "general": [
+        ("recent_scope", "查询近期流水但未给具体天数或起止日期时，最近、近期、最近几天按默认最近30天读取并说明实际日期区间；用户给出明确日期或天数时以该范围为准。追问刚才展示的这些交易时沿用实际列表及其日期范围，不因再说最近而重设窗口；已展示的全部时间或空列表同样不能被更早范围替代。"),
         ("data_sources", "当前事实来源：余额用 balance，卡片用 cards 或 account_context，流水用 transactions，联系人用 contacts，争议用 disputes；理财产品、持仓、测评档案分别用 wealth_products、wealth_holdings、risk_profile；待办用 tasks。订阅实际记录需走确认后的订阅查询流程。rules 和 knowledge 只提供产品规则，不能替代这些本人记录。"),
         ("source_priority", "回答顺序：识别本轮问题，检索对应业务规则，再查询本人实际记录。规则说明能证明产品如何工作，不能证明账户余额、联系人是否保存、某会员是否生效或某操作已完成；这些结论必须分别有对应 Core 记录。"),
         ("dialogue", "不想、不要、先别、假设或只问操作步骤均不授权办理。先区分查询事实、解释规则、实际办理、补充信息、切换话题与不支持；引用和条件陈述不能当作新变更；当前问题优先于历史话题，插问不自动取消或恢复原办理。不要把普通语气词或谓词误当业务对象二选一。"),
