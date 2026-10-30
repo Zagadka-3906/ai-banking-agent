@@ -181,8 +181,10 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                 return response_validation_failure(state, "SERVICE_DOCUMENTS_INVALID")
             ids = set()
             from bank_agent.computations import calculation_evidence
+            from bank_agent.evidence_session import read_failure_documents
             from bank_planning.requests import request_goals
             calculations = {row['id']: row for row in calculation_evidence(request_goals(state), documents)}
+            outcomes = {row['id']: row for row in read_failure_documents((data.get('read_budget') or {}).get('failures'))}
             for index, item in enumerate(documents):
                 if (not isinstance(item, dict) or not valid_text_field(item.get("id"), max_length=100)
                         or item["id"] in ids or item.get("text") != facts[index]):
@@ -192,6 +194,8 @@ def _respond(state: BankingAgentState) -> dict[str, Any]:
                     valid = item.get("text") == known[item["id"]]["text"] and item.get("source") == known[item["id"]]["source"]
                 elif item['id'] in calculations:
                     valid = item == calculations[item['id']]
+                elif item['id'] in outcomes:
+                    valid = item == outcomes[item['id']]
                 else:
                     valid = bool(re.fullmatch(r"context\.[a-z_.0-9]+", item["id"]) and item.get("source") == "core://assistant/context"
                                  or re.fullmatch(r"read\.(balance|cards|disputes|transactions|contacts|wealth_products|wealth_holdings|risk_profile|tasks|subscriptions)\.\d+", item["id"])

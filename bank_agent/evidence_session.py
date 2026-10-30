@@ -13,6 +13,20 @@ from security import audit_event
 from workflow_runtime import invoke_json_model as invoke_model
 
 
+def read_failure_documents(failures: Any) -> list[dict[str, Any]]:
+    """Compile fixed descriptions of attempts, without exposing provider errors."""
+    labels = {'balance': '账户余额', 'transactions': '交易流水', 'cards': '卡片记录', 'contacts': '联系人簿',
+              'disputes': '争议工单', 'wealth_products': '在售产品', 'wealth_holdings': '本人持仓',
+              'risk_profile': '风险档案', 'tasks': '待办任务'}
+    failed = {row['tool'] for row in failures if isinstance(row, dict) and isinstance(row.get('tool'), str)
+              and isinstance(row.get('reason'), str) and row['reason'] and row['reason'] != 'UNBOUND_READ_SUBJECT'} if isinstance(failures, list) else set()
+    return [{'id': f'outcome.{tool}.failed', 'source': 'observation://current-read',
+             'fields': ['read_outcome'], 'scope': 'read_outcome', 'resource': tool,
+             'text': f'本轮读取{label}时发生过查询失败。读取失败不代表没有对应记录，也不证明记录存在、已处理或已恢复；'
+                     '当前状态只能依据有效的读取结果核实。若后续读取成功，应另以该次有效记录为准。'}
+            for tool, label in labels.items() if tool in failed]
+
+
 class EvidenceSession:
     def __init__(self, state: Mapping[str, Any], result: Mapping[str, Any] | None = None):
         self.state, self.goals = state, request_goals(state)
@@ -201,7 +215,14 @@ class EvidenceSession:
         # Preserve requested records and material limitations before optional
         # adjacent rules, rather than dropping later domains at the size cap.
         from bank_agent.computations import calculation_evidence
-        documents = [row for row in self.documents.values() if not row.get('source', '').startswith('calculation://')]
+        # Read outcomes are evidence about an attempt, never account records.
+        # Give both the writer and reviewer a citable, server-owned account of
+        # the failure without exposing exception text or asserting absence.
+        outcomes = read_failure_documents(self.failures)
+        documents = [*outcomes, *[row for row in self.documents.values()
+                                  if not row.get('source', '').startswith('calculation://')
+                                  and not row['id'].startswith('outcome.')]]
         documents += calculation_evidence(self.goals, documents)
         return sorted(documents, key=lambda row: (
-            0 if row.get('required') else 1 if row['id'].startswith('read.') else 3 if row.get('context_only') else 2))[:80]
+            0 if row.get('required') or row.get('scope') == 'read_outcome'
+            else 1 if row['id'].startswith('read.') else 3 if row.get('context_only') else 2))[:80]
