@@ -155,6 +155,17 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
                 result.update(date_scope='CUSTOM', date_range=None if bounds.get('error') else bounds)
                 if bounds.get('error'):
                     result['slots'] = {**(result.get('slots') or {}), 'date_range_ambiguous': True}
+            elif (result.get('date_scope') in {None, 'ALL'}
+                  and not re.search(r'今天|今日|本月|这个月|上月|上个月|今年|去年|年度|全年|全部|所有历史', text)
+                  and (re.search(r'刚才|刚刚|上面|上述|这(?:些|几笔|两笔|[0-9一二两三四五六七八九十]+笔)|那(?:些|几笔|两笔|[0-9一二两三四五六七八九十]+笔)|其中', text)
+                       or (result.get('parse_meta') or {}).get('topic_relation') == 'CONTINUE')):
+                for obs in reversed(list(model_context().get('recent_observations') or [])):
+                    tx_ctx = (obs.get('read_contexts') or {}).get('transactions')
+                    if not tx_ctx and obs.get('intent') in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}:
+                        tx_ctx = {'date_scope': obs.get('date_scope'), 'date_range': obs.get('date_range')}
+                    if isinstance(tx_ctx, dict) and (tx_ctx.get('date_range') or tx_ctx.get('date_scope') not in {None, 'ALL'}):
+                        result.update(date_scope=tx_ctx.get('date_scope') or 'ALL', date_range=tx_ctx.get('date_range'))
+                        break
         else:
             # A legacy UNKNOWN parse may see a product duration as an unclear
             # calendar range. Only the transaction reader uses this range;
@@ -325,10 +336,12 @@ def referenced_case(state: Mapping[str, Any]) -> Optional[str]:
 
 def referenced_transactions(state: Mapping[str, Any]) -> tuple[list[str], str]:
     """Resolve a deictic group against verified observations, never its count alone."""
+    from bank_agent.extraction import chinese_number
     text = str(state.get("user_input") or "")
     if state.get("memory_principal") != state.get("user_id") or not re.search(r"这|那|刚才|上述|上面|其中", text):
         return [], ""
-    count = re.search(r"([0-9]{1,3})\s*笔", text)
+    count = re.search(r"([0-9]{1,3})\s*笔|(?:这|那|上述|上面|刚才(?:查到的|那|这)?)\s*([一二两三四五六七八九十]+)\s*笔", text)
+    count_value = (int(count.group(1)) if count.group(1) else chinese_number(count.group(2))) if count else None
     reference = (state.get("slots") or {}).get("read_reference")
     for observation in reversed(list((state.get("observations") or {}).values())):
         ids = _observed_record_ids(observation, 'transactions', 'transaction_ids')
@@ -343,9 +356,9 @@ def referenced_transactions(state: Mapping[str, Any]) -> tuple[list[str], str]:
             return (ids, "TRANSACTION_REFERENCE") if len(ids) == 1 else ([], "")
         if len(ids) == 1 and re.search(r"这笔|那笔|该笔", text):
             return ids, "TRANSACTION_REFERENCE"
-        if anomalies and (reference == "anomalies" or _SUSPICIOUS.search(text) or count and int(count.group(1)) == len(anomalies) != len(ids)):
+        if anomalies and (reference == "anomalies" or _SUSPICIOUS.search(text) or count_value is not None and count_value == len(anomalies) != len(ids)):
             return anomalies, "SUSPICIOUS_TRANSACTIONS"
-        if ids and (reference == "listed_transactions" or count and int(count.group(1)) == len(ids)):
+        if ids and (reference == "listed_transactions" or count_value is not None and count_value == len(ids)):
             return ids, "TRANSACTION_REFERENCE"
         break
     return [], ""

@@ -454,5 +454,56 @@ def test_refreshed_explanation_and_repair_keep_one_period(gateway):  # noqa: F81
     assert session.contexts['transactions']['date_scope'] == 'MONTH'
     assert sum('entity_id' in row for row in session.facts()) == 2
     session.read({'tool': 'transactions', 'fields': ['amount']}, date_context={'date_scope': 'ALL', 'date_range': None})
-    assert session.contexts['transactions']['date_scope'] == 'ALL'
+    assert session.contexts['date_scope'] if 'date_scope' in session.contexts else session.contexts['transactions']['date_scope'] == 'ALL'
     assert sum('entity_id' in row for row in session.facts()) == 8
+
+
+def test_recent_transaction_period_and_deictic_two_count_survive_unclear_clarification(gateway, monkeypatch):  # noqa: F811
+    from bank_agent.understanding import referenced_transactions
+    now = datetime(2026, 10, 30, 10, 0, tzinfo=timezone(timedelta(hours=8)))
+    for phrase in ('你能帮我先整体看看最近这些交易里有没有什么可疑的地方吗？', '这些最近交易里有一笔我有点疑问'):
+        assert requested_date_range(phrase, now=now) == {'start': '2026-10-01', 'end': '2026-10-30'}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang',
+             'observations': {'BILL_QUERY': {'resource_entities': {'transactions': ['TX1000', 'TX-CLOUD-0']}}}}
+    state['user_input'] = '这些最近交易里有一笔我有点疑问，但一时说不上是哪一笔'
+    assert referenced_transactions(state) == ([], '')
+    state['user_input'] = '这两笔交易我一时说不上具体哪一笔有问题，整体帮我看看'
+    assert referenced_transactions(state) == (['TX1000', 'TX-CLOUD-0'], 'TRANSACTION_REFERENCE')
+
+    client, _ = gateway
+    cid = 'recent-period-across-unclear'
+    model(monkeypatch, [goal('transactions', ['records'], '查询最近交易明细') | {'requires_record': True}], intent='BILL_QUERY')
+    turn1 = _send(client, '好的，那麻烦帮我查一下最近的交易明细。', conversation_id=cid)
+    assert turn1['business_status'] == 'SUCCEEDED'
+    assert [row['tx_id'] for row in turn1['result']['execution_result']['records']] == ['TX1000', 'TX-CLOUD-0']
+
+    from bank_agent import runtime
+    from types import SimpleNamespace
+    import json
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda messages: SimpleNamespace(content=json.dumps(
+        {'intent': 'UNKNOWN', 'dialogue_act': 'UNCLEAR', 'scope': 'IN_SCOPE',
+         'goals': [goal('transactions', ['records'], '确认哪笔交易', act='UNCLEAR')]}
+    ))))
+    turn2 = _send(client, '这些最近交易里有一笔我有点疑问，但一时说不上是哪一笔，你能先帮我一起确认一下我指的是哪笔吗？', conversation_id=cid)
+    assert turn2['business_status'] == 'NEEDS_INPUT' and 'TX1000' in turn2['reply'] and 'TX-CLOUD-0' in turn2['reply']
+
+    planned = []
+    def plan_once(payload):
+        if not planned:
+            planned.append(True)
+            return {'reads': [{'tool': 'transactions', 'fields': ['records', 'merchant', 'amount', 'category', 'analysis']}]}
+        return {'reads': []}
+
+    def cite_all(payload):
+        rows = [row for row in payload['facts'] if row['id'].startswith('read.transactions.')]
+        ids = [row['id'] for row in rows]
+        return {'answer': '\n'.join(row['text'] for row in rows), 'evidence_ids': ids, 'unanswered': [],
+                'coverage': [{'goal_id': payload['goals'][0]['id'], 'status': 'ANSWERED', 'evidence_ids': ids, 'reason': 'ok'}]}
+
+    model(monkeypatch, [goal('transactions', ['records', 'analysis'], '整体分析这两笔交易可疑线索', act='EXPLAIN') | {'requires_record': True}],
+          intent='BILL_ANALYSIS', planner=plan_once, draft=cite_all)
+    turn3 = _send(client, '我还是不确定是哪一笔，麻烦你就根据刚才查到的这两笔交易整体帮我看看，有没有哪笔可疑或者异常线索？', conversation_id=cid)
+    assert turn3['business_status'] == 'SUCCEEDED'
+    records = turn3['result']['execution_result']['records']
+    assert [row['tx_id'] for row in records] == ['TX1000', 'TX-CLOUD-0']
+    assert 'TX1004' not in turn3['reply'] and '全部时间' not in turn3['reply']

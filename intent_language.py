@@ -350,8 +350,13 @@ def requested_date_range(text: str, *, now: datetime | None = None) -> dict[str,
     except ValueError:
         return {"error": "DATE_RANGE_INVALID"}
     unresolved = r"过去|季度|半年|前年|半个月|(?:周|星期)[一二三四五六日天]|\d{1,2}月\d{1,2}|\d{4}[-/年]|\d+天|到.*(?:日|号)"
-    recent_query = re.search(r'(?:最近|近期)(?:的|几笔|一些)?\s*(?:交易|流水|账单|消费|收支|转账|支出|明细)', source)
-    if re.search(r'今天|今日|本月|这个月|上月|上个月|今年|年度|全年', source):
+    recent_query = re.search(
+        r'(?:(?:最近|近期)(?:的)?(?:这|那)?(?:些|几笔|两笔|[0-9一二两三四五六七八九十]+笔|一些)?(?:的)?'
+        r'|(?:这|那)(?:些|几笔|两笔|[0-9一二两三四五六七八九十]+笔)(?:最近|近期)(?:的)?)\s*'
+        r'(?:交易|流水|账单|消费|收支|转账|支出|明细|记录)',
+        source,
+    )
+    if re.search(r'今天|今日|本月|这个月|上月|上个月|今年|年度|全年|全部|所有历史', source):
         return None
     if recent_query and not re.search(unresolved, source):
         # A plain "最近" ("recently") is a common, not an ambiguous, request:

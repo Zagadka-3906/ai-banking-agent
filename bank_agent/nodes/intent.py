@@ -511,21 +511,32 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
         # follow-up such as “给同一位再转同样金额” be resolved explicitly,
         # while never carrying tokens, OTPs or free-form model instructions
         # into the next turn.
-        "context": {
-            "intent": parsed.get("intent"),
-            "target": parsed.get("target"),
-            "amount": parsed.get("amount"),
-            "participants": list(parsed.get("participants") or []),
-            "product_ids": list(parsed.get("product_ids") or []),
-            "slots": dict(parsed.get("slots") or {}),
-            "scheduled_at": parsed.get("scheduled_at"),
-            "event_at": parsed.get("event_at"),
-            "date_scope": parsed.get("date_scope"),
-            "date_range": parsed.get("date_range"),
-            "pending_clarification": pending_clarification,
-            "risk_quiz": None,
-            "compound_workflow": compound,
-        },
+        "context": (
+            {
+                **prior_context,
+                "pending_clarification": pending_clarification,
+                "risk_quiz": None,
+                "compound_workflow": compound,
+            }
+            if parsed.get("intent") == Intent.UNKNOWN.value
+            and understood_meta.get("dialogue_act") in {"SOCIAL", "UNSUPPORTED", "UNCLEAR"}
+            and prior_context.get("intent") not in {None, "", Intent.UNKNOWN.value}
+            else {
+                "intent": parsed.get("intent"),
+                "target": parsed.get("target"),
+                "amount": parsed.get("amount"),
+                "participants": list(parsed.get("participants") or []),
+                "product_ids": list(parsed.get("product_ids") or []),
+                "slots": dict(parsed.get("slots") or {}),
+                "scheduled_at": parsed.get("scheduled_at"),
+                "event_at": parsed.get("event_at"),
+                "date_scope": parsed.get("date_scope"),
+                "date_range": parsed.get("date_range"),
+                "pending_clarification": pending_clarification,
+                "risk_quiz": None,
+                "compound_workflow": compound,
+            }
+        ),
         "event_at": parsed.get("event_at"),
         "reminder_at": None,
         "sub_requests": sub_requests or None,
