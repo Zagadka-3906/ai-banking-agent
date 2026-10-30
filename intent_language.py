@@ -190,8 +190,15 @@ def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool
     """A restrictive execution constraint alone is not a cancellation command."""
     source = business_text(text)
     if (_WITHDRAW_QUESTION.search(source)
-            or re.search(r'假设|如果|若是|要是|已经|曾经|已完成|已执行|已扣款|已提交|已成交|[“”"‘’？?]', source)):
+            or re.search(r'假设|如果|若是|要是|已(?:经)?(?:完成|执行|扣款|提交|成交)|[“”"‘’？?]', source)):
         return False
+    # Past context in a separate non-business clause ("已经了解清楚了")
+    # does not make a later decision historical. Completed banking activity
+    # and past cancellations remain protected wherever they appear.
+    for clause in re.split(r'[，,。；;!?！？]', source):
+        if (re.search(r'已经|曾经', clause)
+                and re.search(r'申购|赎回|买|卖|转账|汇款|付款|支付|扣|冻结|解冻|挂失|解挂|预约|锁定|调额|限额|办理|办好|执行|提交|成交|取消|撤销|放弃|停止', clause)):
+            return False
     if _WITHDRAW_NEGATED.search(source):
         return False
     clause = pending_withdrawal_clause(source, current_discussion=True)

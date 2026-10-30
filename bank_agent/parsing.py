@@ -565,6 +565,17 @@ def model_parse(text: str) -> dict[str, Any]:
         parsed = extract_json(content)
         if not isinstance(parsed, Mapping):
             return local
+        # "理财" is also a shipped navigation/quick-question label. Compile
+        # that exact entry to its public shelf, never a personal recommendation,
+        # questionnaire or purchase, even when the classifier asks to clarify.
+        # Free-form questions and named products still use model semantics.
+        if re.fullmatch(r'(?:投资)?理财[。！？!?]?', text.strip()):
+            goals = normalize_goals([{'act': 'QUERY', 'resource': 'wealth_products', 'fields': ['records'],
+                                     'question': '浏览当前在售理财产品'}], text, {})
+            return {**local, 'intent': Intent.WEALTH_QUERY.value, 'confidence': None,
+                    'parse_meta': {**local['parse_meta'], 'source': 'user_entry', 'dialogue_act': 'QUERY',
+                                   'scope': 'IN_SCOPE', 'topic_relation': 'NEW', 'resolution': 'public_catalog_entry',
+                                   'fast_path_eligible': False, 'goals': goals}}
         goal_repair = None
         repair_needed = False
         if (parsed.get('dialogue_act') in {'QUERY', 'EXPLAIN'}

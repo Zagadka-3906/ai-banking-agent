@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.printToLog
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aibanking.agent.data.SessionStore
 import com.aibanking.agent.ui.UiTags
@@ -204,23 +205,36 @@ class LoginAndChatUiTest {
         lateinit var viewModel: ChatViewModel
         lateinit var prompt: String
         var previousMatches = 0
+        // A semantics node can exist while the login IME or a system window
+        // still owns touch focus. Establish the same precondition as typing.
+        Espresso.closeSoftKeyboard()
+        ui.waitUntil(timeoutMillis = LOGIN_TIMEOUT_MS) {
+            ui.activity.hasWindowFocus() &&
+                ui.onAllNodesWithTag(UiTags.QUICK_SUGGESTIONS).fetchSemanticsNodes().isNotEmpty()
+        }
+        ui.waitForIdle()
         ui.runOnIdle {
             viewModel = ViewModelProvider(ui.activity)[ChatViewModel::class.java]
             prompt = viewModel.state.value.suggestions.first()
+            assertTrue("suggestion must be sendable before the single click", !viewModel.state.value.busy)
             previousMatches = viewModel.state.value.messages.count {
                 it.role == ChatRole.USER && it.text == prompt
             }
         }
-        ui.waitUntil(timeoutMillis = LOGIN_TIMEOUT_MS) {
-            ui.onAllNodesWithTag(UiTags.QUICK_SUGGESTIONS).fetchSemanticsNodes().isNotEmpty()
-        }
 
-        ui.onNodeWithTag(UiTags.quickSuggestion(0)).performClick()
+        ui.onNodeWithTag(UiTags.quickSuggestion(0)).assertIsDisplayed().assertIsEnabled().performClick()
 
-        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
-            viewModel.state.value.messages.count {
-                it.role == ChatRole.USER && it.text == prompt
-            } > previousMatches
+        try {
+            ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+                viewModel.state.value.messages.count {
+                    it.role == ChatRole.USER && it.text == prompt
+                } > previousMatches
+            }
+        } catch (failure: ComposeTimeoutException) {
+            val snapshot = viewModel.state.value
+            throw AssertionError("single suggestion click was not accepted: authenticated=${snapshot.authenticated}, " +
+                "busy=${snapshot.busy}, inputBlank=${snapshot.input.isBlank()}, quiz=${snapshot.quiz != null}, " +
+                "stillSuggested=${prompt in snapshot.suggestions}, focus=${ui.activity.hasWindowFocus()}", failure)
         }
         ui.runOnIdle { assertTrue(viewModel.state.value.input.isEmpty()) }
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) { !viewModel.state.value.busy }
