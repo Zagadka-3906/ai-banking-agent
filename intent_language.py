@@ -212,9 +212,15 @@ def workflow_abandonment_clause(text: str) -> str | None:
     reject questions/history and bind the original text to one discussion.
     """
     clauses = [part.strip() for part in re.split(r'[，,。；;!?！？]', business_text(text)) if part.strip()]
-    if clauses and re.fullmatch(r'(?:我)?(?:这次|本次|现在|当前)?(?:不再(?:继续)?|不继续)'
-                                r'(?:提交|办理|办|处理)(?:下去)?了(?:吧)?', clauses[-1]):
-        return clauses[-1]
+    if clauses:
+        terminal = re.search(r'(?:我)?(?:这次|本次|现在|当前)?(?:不再(?:继续)?|不继续)'
+                             r'(?:提交|办理|办|处理)(?:下去)?了(?:吧)?$', clauses[-1])
+        if terminal:
+            prefix = clauses[-1][:terminal.start()].strip()
+            if not prefix or _withdrawal_command_in_clause(prefix):
+                # Keep the full clause, including any named object before
+                # the terminal stop, for the caller's binding checks.
+                return clauses[-1]
     return None
 
 
