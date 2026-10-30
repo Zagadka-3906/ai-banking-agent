@@ -36,6 +36,23 @@ def test_opposite_request_never_reaches_agent_even_if_fidelity_boolean_is_wrong(
     assert env.steps == 0 and row['turns'] == [] and len(row['simulator_goal_checks']) == 1
 
 
+def test_extra_withdrawal_in_an_inquiry_stays_an_error_even_if_fidelity_boolean_is_true():
+    task = next(task for task in load_dataset(Path('tests/data/dialogue_tasks_v3.json'))[0].tasks
+                if task.id == 'pending_inquiries')
+    task = task.model_copy(update={'phases': [task.phases[2]]})
+    env, calls = Environment(), []
+    text = '那先不转这笔了，我想问一下当前账户可用余额是多少？'
+    def user(*args):
+        calls.append(1)
+        return {'text': text}
+    judge = SimpleNamespace(verify_user_goal=lambda *args: check(faithful=True, expected='INQUIRE', actual='MIXED'),
+                            assess=lambda *args: pytest.fail('No rescoring of a drifted inquiry'))
+    row = run_trial(task, env, SimpleNamespace(next=user), judge, seed=1, trial=1,
+                    rubric_version='v3', verify_user_goal=True)
+    assert row['status'] == 'ERROR' and row['error_type'] == 'SimulatorDrift'
+    assert env.steps == 0 and calls == [1] and row['simulator_drift']['user'] == text
+
+
 def test_faithful_user_preflight_runs_before_agent_and_cannot_hide_a_real_agent_failure():
     item, env, order = cancellation_task(), Environment(safe=False), []
     original = env.step
