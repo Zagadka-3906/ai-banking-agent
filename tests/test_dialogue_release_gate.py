@@ -28,12 +28,14 @@ def evidence(tmp_path):
                                               'evidence': {'unit_only': True}}}],
                  'simulator_goal_checks': [{'phase': 1, 'user': '查余额', 'check': deepcopy(proof)}],
                  'evaluation_transport': {'user': [], 'judge': []},
+                 'judge_schema_diagnostics': [],
                  'checks': [{'id': name, 'passed': True} for name in checks],
                  'communication': {'simulator_faithful': True, 'passed': True, 'checks': [{'id': 'phase_1', 'passed': True}]}}
                 for task in tasks for trial in range(1, 6)]
         report = tmp_path / f'{role}-report.json'
         report.write_text(json.dumps({'status': 'COMPLETED', 'dataset_sha256': hashlib.sha256(raw).hexdigest(),
             'evaluation_transport_version': 4,
+            'judge_schema_diagnostics_version': 1,
             'judge_context_version': 2,
             'simulator_goal_check_version': 3, 'user': 'model',
             'source_sha256': {'source.py': 'frozen'}, 'task_ids': [task['id'] for task in tasks], 'rubric_version': 'v3',
@@ -65,6 +67,22 @@ def test_all_required_evidence_can_pass_and_missing_operations_still_blocks(evid
     result = assess_release(groups, {'source.py': 'frozen'})
     assert result['offline_ready'] and not result['accepted']
     assert 'HUMAN_REVIEW_REQUIRED' in result['blockers']
+
+
+@pytest.mark.parametrize('change', [
+    lambda report: report.pop('judge_schema_diagnostics_version'),
+    lambda report: report.update(judge_schema_diagnostics_version=True),
+    lambda report: report['trials'][0].pop('judge_schema_diagnostics'),
+    lambda report: report['trials'][0].update(judge_schema_diagnostics=None),
+    lambda report: report['trials'][0].update(judge_schema_diagnostics=[{
+        'request': 1, 'stage': 'PHASE_JUDGEMENT', 'phase': 1, 'errors': [{'path': ['checks'], 'type': 'missing'}],
+        'response_sha256': '0'*64, 'retried': False}]),
+])
+def test_a_claimed_pass_cannot_omit_schema_diagnostics_or_hide_an_invalid_judge_output(evidence, change):
+    groups, op = evidence
+    mutate(groups[0], change)
+    result = assess_release(groups, {'source.py': 'frozen'}, op)
+    assert not result['accepted'] and any('JUDGE_SCHEMA_DIAGNOSTICS' in blocker for blocker in result['blockers'])
 
 
 @pytest.mark.parametrize('change', [

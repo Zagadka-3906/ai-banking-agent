@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.dialogue_eval.engine import JUDGE_CONTEXT_VERSION, SIMULATOR_GOAL_CHECK_VERSION, run_trial, summarize
 from scripts.dialogue_eval.schema import Task, load_dataset
-from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION
+from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION, JUDGE_SCHEMA_DIAGNOSTICS_VERSION
 from model_config import DEFAULT_MODEL, DEFAULT_THINKING, thinking_options
 from scripts.dialogue_eval.costs import (CostLedger, MeteredModel, add_cost_arguments, configure_budget, evaluation_values)
 
@@ -92,6 +92,7 @@ def worker(job_path: Path) -> int:
             result["model_calls"] = counters
             result['stage_usage'] = stage_usage
             result['evaluation_transport'] = {'user': getattr(user, 'transport_failures', []), 'judge': judge.transport_failures}
+            result['judge_schema_diagnostics'] = judge.schema_failures
             result['cost'] = ledger.snapshot(job['cost_run'])
             if result['cost']['stop_reason']:
                 result.update(status='ERROR', error_type='EvaluationStopped', stop_reason=result['cost']['stop_reason'])
@@ -130,6 +131,7 @@ def main(argv=None) -> int:
     plan = {"status": "PLAN_ONLY", "dataset_sha256": digest, 'dataset_split': dataset.split,
             'evaluation_response_format': 'json_object',
             'evaluation_transport_version': EVALUATION_TRANSPORT_VERSION,
+            'judge_schema_diagnostics_version': JUDGE_SCHEMA_DIAGNOSTICS_VERSION,
             'judge_context_version': JUDGE_CONTEXT_VERSION,
             'goal_evidence_check_version': 2,
             'simulator_goal_check_version': SIMULATOR_GOAL_CHECK_VERSION,

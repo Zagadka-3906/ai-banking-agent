@@ -11,7 +11,8 @@ from pathlib import Path
 from scripts.dialogue_eval.engine import (JUDGE_CONTEXT_VERSION, SIMULATOR_GOAL_CHECK_VERSION, summarize,
                                         goal_evidence_complete, valid_user_goal_record, valid_judge_context)
 from scripts.dialogue_eval.schema import load_dataset
-from scripts.dialogue_eval.models import EVALUATION_TRANSPORT_VERSION, valid_transport_diagnostics
+from scripts.dialogue_eval.models import (EVALUATION_TRANSPORT_VERSION, valid_transport_diagnostics,
+                                         JUDGE_SCHEMA_DIAGNOSTICS_VERSION, valid_judge_schema_diagnostics)
 
 POLICY_VERSION = 'bank-mock-stability-v2'
 REQUIRED_TOPICS = {'general', 'dispute', 'transfer', 'card', 'cross_scene', 'security', 'limits', 'contacts', 'wealth', 'subscription', 'tasks'}
@@ -44,6 +45,9 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             report = json.loads(raw)
             if report.get('evaluation_transport_version') != EVALUATION_TRANSPORT_VERSION:
                 raise ValueError('INVALID_EVALUATION_TRANSPORT_VERSION')
+            if (type(report.get('judge_schema_diagnostics_version')) is not int
+                    or report['judge_schema_diagnostics_version'] != JUDGE_SCHEMA_DIAGNOSTICS_VERSION):
+                raise ValueError('INVALID_JUDGE_SCHEMA_DIAGNOSTICS_VERSION')
             if type(report.get('judge_context_version')) is not int or report['judge_context_version'] != JUDGE_CONTEXT_VERSION:
                 raise ValueError('INVALID_JUDGE_CONTEXT_VERSION')
             if report.get('simulator_goal_check_version') != SIMULATOR_GOAL_CHECK_VERSION or report.get('user') != 'model':
@@ -83,6 +87,9 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
             if sum(identity[0] == 'candidate' for identity in identities) != 1:
                 raise ValueError('MIXED_CANDIDATES')
             for row in report['trials']:
+                schema = row.get('judge_schema_diagnostics')
+                if not valid_judge_schema_diagnostics(schema) or row['status'] == 'PASS' and schema:
+                    raise ValueError('INVALID_JUDGE_SCHEMA_DIAGNOSTICS')
                 transport = row.get('evaluation_transport')
                 if (not isinstance(transport, dict) or set(transport) != {'user', 'judge'}
                         or any(not valid_transport_diagnostics(value, successful=row['status'] == 'PASS') for value in transport.values())
