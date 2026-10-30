@@ -56,15 +56,17 @@ def test_extra_withdrawal_in_an_inquiry_stays_an_error_even_if_fidelity_boolean_
     assert env.steps == 0 and calls == [1] and row['simulator_drift']['user'] == text
 
 
-def test_inquiry_generation_contract_is_public_and_never_rewrites_a_drifted_message():
+@pytest.mark.parametrize('dataset,task_id', [
+    ('dialogue_repair_regression_v4', 'wealth_compare_purchase_amount'), ('dialogue_tasks_v3', 'pending_inquiries'),
+])
+def test_inquiry_generation_contract_is_public_and_never_rewrites_a_drifted_message(dataset, task_id):
     from scripts.dialogue_eval.models import SimulatedUser
     captured = []
     text = '这笔零星宝申购先别提交，我想先问一下申购后是否支持撤单？'
     def invoke(messages):
         captured.append(messages)
         return SimpleNamespace(content=json.dumps({'text': text}))
-    task = next(task for task in load_dataset(Path('tests/data/dialogue_repair_regression_v4.json'))[0].tasks
-                if task.id == 'wealth_compare_purchase_amount')
+    task = next(task for task in load_dataset(Path('tests/data')/(dataset+'.json'))[0].tasks if task.id == task_id)
     phase = task.phases[2]
     user = SimulatedUser(SimpleNamespace(invoke=invoke), 7, 'v3')
     assert user.next(task.user_view(phase, []), 'PRIVATE_FIXED_UTTERANCE') == {'text': text}
@@ -72,6 +74,7 @@ def test_inquiry_generation_contract_is_public_and_never_rewrites_a_drifted_mess
     payload = json.loads(captured[0][-1].content)
     contract = payload['inquiry_phase_contract']
     assert contract['retain_existing_intention'] and contract['operation_rule_questions_allowed']
+    assert contract['approval_hold_preserves_proposal']
     assert payload['current_goal'] == phase.goal and list(payload)[-2:] == ['request_kind', 'current_goal']
     assert phase.criteria not in captured[0][-1].content and 'PRIVATE_FIXED_UTTERANCE' not in captured[0][-1].content
     assert '先别提交' in captured[0][0].content and '否则只问规则或事实' in contract['workflow_instructions']

@@ -177,6 +177,19 @@ _WITHDRAW_NEGATED = re.compile(
     r'(?:不(?:用|必|想|打算|再|需要)?|别|不要|无需)(?:再|先|现在|立即|继续|帮我|替我)*(?:取消|撤销|放弃|停止)')
 
 
+def workflow_abandonment_clause(text: str) -> str | None:
+    """A terminal decision to stop proceeding, rather than a temporary hold.
+
+    This supplies no business identity or undo authority. Callers must still
+    reject questions/history and bind the original text to one discussion.
+    """
+    clauses = [part.strip() for part in re.split(r'[，,。；;!?！？]', business_text(text)) if part.strip()]
+    if clauses and re.fullmatch(r'(?:我)?(?:这次|本次|现在|当前)?(?:不再(?:继续)?|不继续)'
+                                r'(?:提交|办理|办|处理)(?:下去)?了(?:吧)?', clauses[-1]):
+        return clauses[-1]
+    return None
+
+
 def bare_withdrawal_clause(text: str) -> str | None:
     """A closing imperative may omit the object; binding belongs to the caller."""
     clauses = [part.strip() for part in re.split(r'[，,。；;!?！？]', business_text(text)) if part.strip()]
@@ -306,6 +319,7 @@ def execution_constraint(text: str, *, current_discussion: bool = False) -> str 
     # Keep this restriction at the execution boundary, so a negated operation
     # can still accompany a genuine read or explanation in the same turn.
     if (pending_withdrawal_clause(source, current_discussion=current_discussion)
+            or workflow_abandonment_clause(source)
             or re.search(r"(?:放弃|暂停|暂缓|停止|搁置)[^，,。；;!?！？]{0,12}(?:" + mutation + r"|办理)", source)
             or re.search(r'取消(?:这次|这个|本次|当前|刚才)?的?(?:申购|转账|调额|冻结)(?:意向|计划|讨论|提案|办理)', source)
             # An auxiliary verb and current-operation reference do not turn

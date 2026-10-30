@@ -14,10 +14,12 @@ def _withdrawal_input(text: str) -> dict[str, Any]:
     from bank_agent.extraction import PRODUCT_ALIASES, PRODUCT_IDS, target_from_text
     from bank_agent.parsing import _local_parse_rules
     from bank_planning.intents import GREEN_INTENTS
-    from intent_language import ambiguous_target, bare_withdrawal_clause, business_text, pending_withdrawal_clause
+    from intent_language import (ambiguous_target, bare_withdrawal_clause, business_text,
+                                 pending_withdrawal_clause, workflow_abandonment_clause)
 
     whole = business_text(text)
-    clause = pending_withdrawal_clause(text, current_discussion=True) or bare_withdrawal_clause(text)
+    clause = (pending_withdrawal_clause(text, current_discussion=True) or bare_withdrawal_clause(text)
+              or workflow_abandonment_clause(text))
     source = clause or whole
     raw = _local_parse_rules(source)
     products = {product for alias, product in PRODUCT_ALIASES.items() if alias in whole}

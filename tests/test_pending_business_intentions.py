@@ -76,6 +76,39 @@ def pending_quiz():
                                      'origin_target': 'LX00118'}}}
 
 
+@pytest.mark.parametrize('operation,intent,target', [
+    ('申购零星宝', 'WEALTH_PURCHASE', 'LX00118'), ('赎回零星宝', 'WEALTH_REDEEM', 'LX00118'),
+    ('给李四转账', 'TRANSFER', '李四'), ('预约一笔转账给李四', 'SCHEDULED_TRANSFER', '李四'),
+    ('设置CARD-001日限额', 'CARD_LIMIT', 'CARD-001'),
+])
+@pytest.mark.parametrize('ending', ['不继续提交了', '我不再继续办理了', '这次不再处理下去了'])
+def test_abandoning_workflow_binds_the_business_in_the_original_text(operation, intent, target, ending):
+    text = f'我还是想{operation}，不过考虑后决定这次先取消，{ending}。'
+    pending = {'intent': intent, 'missing': ['amount'], 'payload': {'intent': intent, 'target': target}}
+    state = {'user_id': 'user_zhang', 'memory_principal': 'user_zhang', 'context': {},
+             'dialogue_state': {'principal': 'user_zhang', 'tasks': [
+                 {'id': intent, 'intent': intent, 'status': 'PAUSED', 'pending': pending}]}}
+    before = deepcopy(state)
+    assert withdrawal_statement(text, pending_discussion=True)
+    assert execution_constraint(text) == 'NEGATED_ACTION'
+    result = withdraw_known_task(state, withdrawal(text), text)
+    assert result and result['view']['tasks'] == [] and not result['proposal_input']
+    assert state == before
+
+
+@pytest.mark.parametrize('text', [
+    '先别提交', '先不提交了', '暂不提交', '暂时不继续提交了', '不确认',
+    '我想申购恒泉稳利，不继续提交了', '我想申购零星宝和恒泉稳利，不继续提交了',
+    '我已经申购零星宝，不继续提交了', '这笔申购已成交，不继续提交了',
+    '如果申购失败，不继续提交了', '不继续提交了可以吗？', '解释“不继续提交了”',
+    '昨天不继续提交了', '不要取消零星宝的申购，不继续提交了',
+])
+def test_workflow_abandonment_does_not_erase_holds_history_scope_or_identity(text):
+    state = pending_quiz()
+    before = deepcopy(state)
+    assert withdraw_known_task(state, withdrawal(text), text) is None and state == before
+
+
 @pytest.mark.parametrize('operation', ['申购', '赎回', '转账', '预约转账', '冻结', '解冻', '挂失', '调额'])
 @pytest.mark.parametrize('auxiliary', ['办', '办理', '做'])
 def test_negated_auxiliary_and_current_operation_reference_forbid_execution(operation, auxiliary):
@@ -434,6 +467,7 @@ def test_current_operation_reference_binds_only_its_existing_business_discussion
 
 
 @pytest.mark.parametrize('cancellation', [
+    '我还是想申购零星宝，不过考虑后决定这次先取消，不继续提交了。',
     '我之前想申购零星宝，现在决定取消，先不办这笔申购了。',
     '我之前想申购零星宝，现在决定取消，暂时不办理这次申购了。',
     '我前面想申购零星宝，现在决定取消了，先不办了。',
