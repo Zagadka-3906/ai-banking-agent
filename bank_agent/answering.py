@@ -101,6 +101,45 @@ _IDENTIFIER = re.compile(r"(?i)(?:TXN?[A-Z0-9-]{3,}|CASE-[A-Z0-9-]+|CARD-[A-Z0-9
 _WRITE_CLAIM = re.compile(r"(?:已|已经|成功)(?:为您|帮您|替您|完成了|完成)?(?:冻结|解冻|挂失|转账|退款|扣款|调额|撤销|下单|创建.{0,6}工单)")
 
 
+def _validate_projection_absence(text: str, facts: list[dict[str, Any]]) -> None:
+    """Reject explicit absence claims contradicted by the same current row.
+
+    This checks field presence, never infers a missing value or an account
+    state. Ambiguous subjects and ordinary conditional explanations remain
+    for independent semantic review.
+    """
+    labels = {'status': r'(?:登记|冻结(?:或挂失)?|挂失|当前)?状态', 'amount': '金额', 'card_id': '卡片编号',
+              'channels': r'(?:交易)?渠道', 'daily_limit': r'日(?:额度|限额)', 'run_at': '计划执行时间',
+              'time': r'(?:交易|消费)时间', 'category': r'(?:交易|消费)?分类', 'principal': '持仓本金',
+              'min_amount': '起购金额', 'next_charge': r'(?:扣款|计划)日期'}
+    resources = {'cards': r'卡片|银行卡|这张卡|该卡', 'transactions': r'流水|交易|消费',
+                 'tasks': r'待办|任务', 'subscriptions': r'订阅|会员',
+                 'wealth_holdings': r'持仓', 'wealth_products': r'产品|货架'}
+    rows = [row for row in facts if row.get('entity_id') and row.get('source', '').startswith('core://')]
+    for sentence in re.split(r'[。；;\n]', text):
+        if not re.search(r'记录|数据|字段', sentence):
+            continue
+        if re.search(r'并非|不是说|不代表|不等于|不能说|不能据此|如果|假如|你(?:提到|声称)|用户', sentence):
+            continue
+        explicit = [row for row in rows if str(row['entity_id']) in sentence]
+        if _IDENTIFIER.search(sentence) and not explicit:
+            continue
+        candidates = explicit if len(explicit) == 1 else [] if explicit else [
+            row for row in rows if re.search(resources.get(row['source'][7:], r'(?!)'), sentence)]
+        # Without an explicit ID, never merge fields from different records.
+        if len(candidates) != 1:
+            continue
+        row = candidates[0]
+        present = set(row.get('fields', [])) | set(row.get('omitted_fields', []))
+        for field, label in labels.items():
+            if field not in present:
+                continue
+            missing = r'(?:未(?:显示|包含|返回|提供)|没有(?:显示|包含|返回|提供)?|缺少|缺失)'
+            if (re.search(missing + r'(?:任何|该|所问的?|对应的?|明确的)?\s*' + label, sentence)
+                    or re.search(label + r'(?:字段)?(?:未返回|缺失|缺少)', sentence)):
+                raise DraftValidationError('PROJECTED_FIELD_ABSENCE', evidence_id=row['id'], fragment=sentence)
+
+
 def _anchored_facts(facts: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
     anchors: dict[str, dict[str, str]] = {}
     masked = []
@@ -202,6 +241,7 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
         if not conditional and match.group() not in evidence:
             raise DraftValidationError("UNVERIFIED_OPERATION_CLAIM",
                 fragment=clause_prefix[-60:] + rendered[match.start():match.end() + 60])
+    _validate_projection_absence(rendered, facts)
     # Required complete record sets and material limitations stay server-owned.
     for item in facts:
         if item.get("required") and item["text"] not in rendered:

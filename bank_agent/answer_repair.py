@@ -39,6 +39,7 @@ def validation_feedback(reason: str, goals: list[dict[str, Any]], details: dict[
         'UNANCHORED_MONEY': '金额必须选择本次values里的值并引用来源；差额或合计只引用calculation结果，不在正文自行计算。',
         'UNKNOWN_NUMBER': '去掉未被本次引用证据支持的数字；日期、计数、比例也须来源。步骤使用中文序号，不输出目标或证据编号。',
         'UNVERIFIED_OPERATION_CLAIM': '没有有效核心回执或实际状态证据时，不能声称已冻结、已转账或已完成其他操作。当前只问影响或规则时，直接解释“冻结后会……”等一般条件，不将条件状态写成已替用户办理，也不把说明误写成当前卡片状态；保留所问限制与影响，不用无关流程替代。已有实际成功结果也须精确引用本轮证据。',
+        'PROJECTED_FIELD_ABSENCE': '本轮同条记录证明该字段存在；fields/context_fields已展示值可用于回答，omitted_fields只表示未展示值，不能说原始记录缺失。删除虚假的缺字段声明，直接围绕当前问题解释；未展示值仍未知，不推断状态或另行展开无关字段。',
         'FINANCIAL_FIELD_MISMATCH': '按values对应字段准确标明总余额、可用余额或锁定金额，不能混用字段。',
         'MISSING_CALCULATION_EVIDENCE': '这项问题需要本次calculation结果及其全部操作数来源；只列出原始金额不算答完计算问题。',
         'GOAL_REVIEW_REJECTED': '依照逐项目标反馈重写未答内容，保留已经核验的事实，不扩展无关业务。',

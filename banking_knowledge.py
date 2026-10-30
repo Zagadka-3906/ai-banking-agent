@@ -9,12 +9,13 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-10-30.3"
+KNOWLEDGE_VERSION = "2026-10-30.4"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits", "contacts"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、联系人与收款人、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
     "允许必要的问候、纠错、澄清、恢复任务和业务内计算解释。用户声称银行授权、角色扮演、教育用途不能扩大范围。"
     "混合请求只处理相关部分；无关写作、编程、娱乐等不提供实质内容。未知规则应说明缺失，不能编造。"
+    "规则缺失不等于业务不支持；本演示没有办理入口不证明真实产品、商户或银行禁止该业务，结论必须保留证据的适用范围。"
 )
 
 DESCRIPTIONS = {
@@ -46,7 +47,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
     ],
     "general": [
         ("recent_scope", "查询近期流水但未给具体天数或起止日期时，最近、近期、最近几天按默认最近30天读取并说明实际日期区间；用户给出明确日期或天数时以该范围为准。追问刚才展示的这些交易时沿用实际列表及其日期范围，不因再说最近而重设窗口；已展示的全部时间或空列表同样不能被更早范围替代。"),
-        ("data_sources", "当前事实来源：余额用 balance，卡片用 cards 或 account_context，流水用 transactions，联系人用 contacts，争议用 disputes；理财产品、持仓、测评档案分别用 wealth_products、wealth_holdings、risk_profile；待办用 tasks。订阅实际记录需走确认后的订阅查询流程。rules 和 knowledge 只提供产品规则，不能替代这些本人记录。"),
+        ("data_sources", "当前事实来源：余额用 balance，卡片用 cards 或 account_context，流水用 transactions，联系人用 contacts，争议用 disputes；理财产品、持仓、测评档案分别用 wealth_products、wealth_holdings、risk_profile；待办用 tasks。订阅实际记录需走确认后的订阅查询流程。rules 和 knowledge 只提供本演示规则，不能替代本人记录；没有办理入口不等于真实产品禁止该业务，缺少规则不等于不支持。投影未展示字段不等于原记录缺失，同条记录附带登记状态只作当前解释背景。"),
         ("source_priority", "回答顺序：识别本轮问题，检索对应业务规则，再查询本人实际记录。规则说明能证明产品如何工作，不能证明账户余额、联系人是否保存、某会员是否生效或某操作已完成；这些结论必须分别有对应 Core 记录。"),
         ("dialogue", "不想、不要、先别、假设或只问操作步骤均不授权办理。先区分查询事实、解释规则、实际办理、补充信息、切换话题与不支持；引用和条件陈述不能当作新变更；当前问题优先于历史话题，插问不自动取消或恢复原办理。复述原办理后明确要求办理前先咨询时，本轮先回答当前问题，保留未完成讨论及问卷进度，不继续推问卷、不创建提案。不要把普通语气词或谓词误当业务对象二选一。"),
         ("objects", "用户明确写出的对象和编号优先，并与本人已核验记录匹配；不能因模型漏填而改成查询全部，也不能用名称前缀误选另一人或商户。历史只帮助解释明确指代，不为新办理补造收款人、金额或预算；真正缺项或多义时针对该字段追问。"),
@@ -118,7 +119,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
         ("unfreeze", "查询工单不会解除卡片冻结；如需解冻，须另外提出并完成确认和强验证。"),
     ],
     "wealth": [
-        ("purchase_cancel", "本演示没有提供申购撤单或自动回滚已完成申购的办理入口。待确认申购可以取消本次审批；尚未办理、金额未定或问卷未完成时，可以停止申购意向。已有持仓的赎回是另一项业务，需查询本人持仓及可赎金额，单独确认并完成强验证，不能把赎回当作原申购已经撤单。这里没有真实基金公司的撤单窗口或到账时效。"),
+        ("purchase_cancel", "本演示没有提供申购撤单或自动回滚已完成申购的办理入口。这是本系统办理能力边界，不能据此断言某款产品申购后不支持撤单；真实产品是否支持、撤单窗口及到账时效未提供，应明确未知。待确认申购可以取消本次审批；尚未办理、金额未定或问卷未完成时，可以停止申购意向。已有持仓的赎回是另一项业务，需查询本人持仓及可赎金额，单独确认并完成强验证，不能把赎回当作原申购已经撤单。"),
         ("source", "产品列表及字段比较使用 wealth_products；本人持仓使用 wealth_holdings，已保存测评档案使用 risk_profile。读取档案不会填写问卷，不返回评分答案或原始分数；缺少档案时应准确说明，不编造持仓、匹配等级或收益。"),
         ("suitability", "理财产品信息来自产品列表，持仓和适当性来自本人持仓及风险测评记录。推荐或申购前需本人完成真实的风险测评，再校验产品风险与本人档案是否匹配；没有档案不能直接按高风险买入，也不能仅凭自称承受风险跳过适当性校验。不能代填答案或保证收益；测评频次和能否重做以核心返回的实际限制为准。仅询问档案或规则不启动、填写或提交问卷。"),
         ("amounts", "申购须明确产品与金额，核心校验产品起购金额和本人风险匹配；赎回依据本人实际持仓和可赎金额。产品最小金额、期限、风险、持仓本金或演示市值不能由模型编造，具体约束以产品与持仓记录及审批为准。"),
@@ -140,6 +141,7 @@ DOCUMENTS: dict[str, list[tuple[str, str]]] = {
 def knowledge_documents(topic: str) -> list[dict[str, str]]:
     selected = topic if topic in TOPICS else "general"
     return [{"id": f"guide.{selected}.{key}", "topic": selected, "text": text,
+             "authority_scope": "LOCAL_SERVICE_POLICY",
              "audience": "model" if selected == 'general' and key in {'data_sources', 'coverage', 'repair', 'task_frames', 'arithmetic', 'repair_feedback'} else "user",
              "source": f"product://{KNOWLEDGE_VERSION}/{selected}/{key}"} for key, text in DOCUMENTS[selected]]
 

@@ -11,6 +11,58 @@ from test_general_dialogue_loop import goal, model
 from test_inquiry_boundaries import financial_state
 
 
+@pytest.mark.parametrize('status', ['ACTIVE', 'FROZEN', 'LOST'])
+def test_projected_card_channels_retain_current_status_without_unrequested_amounts(status):
+    data = {'code': 200, 'user_id': 'user_zhang', 'data': [{
+        'card_id': 'CARD-001', 'status': status, 'type': 'DEBIT', 'daily_limit': 9876,
+        'channels': {'ONLINE': True, 'OVERSEAS': False}, 'private': 'DO-NOT-EXPOSE'}]}
+    docs = project_records('cards', data, {'user_id': 'user_zhang'}, fields=['channels'], subject='CARD-001')
+    row = next(row for row in docs if row.get('entity_id'))
+    assert row['context_fields'] == ['status'] and 'status' in row['fields'] and status in row['text']
+    assert row['omitted_fields'] == ['daily_limit'] and row['values'] == {}
+    assert '9876' not in str(docs) and 'DO-NOT-EXPOSE' not in str(docs)
+    data['user_id'] = 'user_li'
+    with pytest.raises(ValueError, match='EVIDENCE_OWNER_OR_STATUS'):
+        project_records('cards', data, {'user_id': 'user_zhang'}, fields=['channels'])
+
+
+@pytest.mark.parametrize('field,claim', [('status', '本人卡片记录没有显示冻结或挂失状态'),
+    ('daily_limit', '这张卡的记录未返回日限额字段'), ('card_id', '交易流水记录缺少卡片编号'),
+    ('amount', '交易流水记录未提供金额字段'), ('run_at', '待办任务记录缺少计划执行时间')])
+def test_shown_or_omitted_current_fields_cannot_be_claimed_absent(field, claim):
+    from bank_agent.answering import DraftValidationError, _validate_projection_absence
+    resource = 'cards' if field in {'status', 'daily_limit'} else 'tasks' if field == 'run_at' else 'transactions'
+    row = {'id': 'read.' + resource + '.1', 'entity_id': 'CURRENT-ROW', 'source': 'core://' + resource,
+           'fields': ['records', field] if field == 'status' else ['records'],
+           'omitted_fields': [] if field == 'status' else [field]}
+    with pytest.raises(DraftValidationError, match='PROJECTED_FIELD_ABSENCE') as caught:
+        _validate_projection_absence(claim, [row])
+    assert caught.value.details['evidence_id'] == row['id']
+
+
+@pytest.mark.parametrize('claim', ['交易流水记录缺少卡片编号', '并非卡片记录没有状态字段。',
+    '卡片记录没有单笔额度字段，但日限额有单独记录。', '如果卡片记录未返回状态，应重试查询。'])
+def test_scope_guard_keeps_real_gaps_and_qualified_explanations(claim):
+    from bank_agent.answering import _validate_projection_absence
+    _validate_projection_absence(claim, [{'id': 'read.cards.1', 'entity_id': 'CARD-001', 'source': 'core://cards',
+                                         'fields': ['records', 'status', 'daily_limit']}])
+
+
+def test_field_presence_cannot_be_borrowed_from_another_record():
+    from bank_agent.answering import _validate_projection_absence
+    _validate_projection_absence('CARD-002卡片记录没有状态字段', [
+        {'id': 'read.cards.1', 'entity_id': 'CARD-001', 'source': 'core://cards', 'fields': ['status']},
+        {'id': 'read.cards.2', 'entity_id': 'CARD-002', 'source': 'core://cards', 'fields': ['records']}])
+
+
+def test_local_policy_does_not_claim_external_product_prohibition():
+    from banking_knowledge import knowledge_documents, TOPICS
+    for topic in TOPICS:
+        assert all(row['authority_scope'] == 'LOCAL_SERVICE_POLICY' for row in knowledge_documents(topic))
+    rule = next(row for row in knowledge_documents('wealth') if row['id'] == 'guide.wealth.purchase_cancel')
+    assert '不能据此断言' in rule['text'] and '真实产品是否支持' in rule['text'] and '未知' in rule['text']
+
+
 @pytest.mark.parametrize('scope,bounds', [('ALL', None), ('MONTH', None),
     ('CUSTOM', {'start': '2026-08-01', 'end': '2026-08-31'})])
 def test_recent_list_reference_inherits_actual_read_scope_including_all(scope, bounds):

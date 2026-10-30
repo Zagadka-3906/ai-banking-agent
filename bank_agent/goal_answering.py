@@ -109,7 +109,11 @@ def _projection_contract(goals: list[dict[str, Any]], facts: list[dict[str, Any]
     return {'records_are_projected': True, 'goals': [
         {'goal_id': goal['id'], 'requested_fields': sorted(goal['fields'] or ['records']),
          'missing_requested_fields': sorted(_missing_record_fields(goal, _matching(goal, facts))) if needs_record(goal) else []}
-        for goal in goals]}
+        for goal in goals], 'records': [
+            {'evidence_id': row['id'], 'entity_id': row['entity_id'], 'source': row['source'],
+             'displayed_fields': row.get('fields', []), 'context_fields': row.get('context_fields', []),
+             'omitted_fields': row.get('omitted_fields', [])}
+            for row in facts if row.get('entity_id') and row.get('source', '').startswith('core://')]}
 
 
 def _record_gap_feedback(goals: list[dict[str, Any]], session: EvidenceSession) -> list[dict[str, Any]]:
@@ -288,6 +292,9 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 '若用户同时要求实际状态，该项仍须有效记录；没有记录依据时用TOOL_FAILED，不将解释成功当作查询成功。'
                 'record_scope=PUBLIC_CATALOG的产品货架只证明公开产品与起购等条件，不能称为本人持有或本人资产；个人持仓只能由wealth_holdings证明。'
                 '读取记录按所问字段投影，未出现的字段不等于原始记录缺失或功能不存在；projection_contract只登记所问字段的缺口。'
+                'projection_contract.records的context_fields是同次本人读取的背景状态，omitted_fields是原记录存在但没有展示值的字段，均不能声称字段缺失。'
+                '以当前登记状态解释所问配置，不因用户已说过该状态而拒绝承接；背景状态不是办理回执，也不要展开无关字段。'
+                'authority_scope=LOCAL_SERVICE_POLICY只说明本演示能力：没有办理入口不证明真实产品禁止、不支持或不能办理；没有真实产品规则时明确未知。'
                 '不能把未读取金额等未询问字段说成账本没有该字段，不能由此声称无法计算或能力不支持。概念解释不额外制造缺数问题；确需补读时才报告真实缺口。'
                 'request.amount仅为本轮用户询问数值，每项复述至少一次明确称“你询问的金额”或“拟设额度”，后文可自然承接，不必反复标注；不能作余额、已生效额度或批准结果，所有占位符仍须引用。'
                 '多个request.amount分别来自本轮输入；可用“你提到的合计”引用用户自报合计，不因此声称已核验。'
@@ -337,6 +344,8 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 '只问失败含义且已解释清楚即可ANSWERED，不要求额外查明未询问的实际状态；同时问实际状态时须分别保留查询失败。'
                 'PUBLIC_CATALOG是公共产品货架，不证明本人持有；将货架匹配数称为本人产品或持仓必须拒绝并REWRITE。'
                 '证据是所问字段投影，不是原始记录全貌。按projection_contract核对真实所问缺口；把未请求、未投影字段说成记录缺失或系统不能计算，必须拒绝并REWRITE。'
+                '逐条核对projection_contract.records的displayed_fields、context_fields与omitted_fields；存在的背景或未展示字段不能判缺失，背景状态可直接说明当前配置影响。'
+                '逐条核对否定结论的主语和证据范围：LOCAL_SERVICE_POLICY没有入口只证明本演示不能办理，不能推成某产品/商户/基金公司禁止或不支持。未知必须保留未知，范围扩大即grounded=false并REWRITE。'
                 'user://current-request仅证明用户本轮提出的询问参数，不能证明实际余额、已生效额度、批准或办理结果。'
                 'request.subject只是本轮问题对象的引用；resource_policy是全资源规则。两者均不证明某条记录存在或其个人状态。'
                 '先核对目标act：EXPLAIN询问流程、规则或如何准备，不等于请求实际办理；'

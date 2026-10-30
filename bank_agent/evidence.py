@@ -144,7 +144,12 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
         if resource == 'subscriptions':
             identity = str(row['merchant']) + '（' + identity + '）'
         parts, available, numeric_values = [], [], {}
-        for key in keys:
+        # Status is current context for a record's configuration/amount, not
+        # an inference from the user's words or an earlier answer. Keep this
+        # bounded context on the same authenticated row, without copying any
+        # other omitted values (balances, amounts or private payloads).
+        context_fields = ['status'] if resource in {'cards', 'subscriptions', 'tasks'} and 'status' not in keys else []
+        for key in [*keys, *context_fields]:
             value = row.get(key)
             if resource == 'tasks' and key == 'amount':
                 value = (row.get('payload') or {}).get('amount')
@@ -185,6 +190,8 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
             documents.append({**_document(resource, len(documents), identity + '：' + '；'.join(parts) + '。', ['records', *available],
                                           subject or row.get('merchant') or row.get('name') or row.get('product_id')),
                               'entity_names': entities, 'entity_id': record_id, 'values': numeric_values,
+                              'context_fields': [key for key in context_fields if key in available],
+                              'omitted_fields': [key for key in ROW_FIELDS[resource] if key not in available and row.get(key) is not None],
                               **({'card_last4': row['last4']} if resource == 'cards' and isinstance(row.get('last4'), str)
                                  and re.fullmatch(r'\d{4}', row['last4']) else {})})
     for name in missing_selectors:

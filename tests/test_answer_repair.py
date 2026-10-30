@@ -200,3 +200,37 @@ def test_cached_policy_prefix_still_reads_changed_balance_for_each_question(gate
     assert '15,000.00' in first['reply'] and '14,987.50' in second['reply']
     assert '15,000.00' not in second['reply']
     assert sum(method == 'GET' and path.endswith('/balance') for method, path in reads) == 2
+
+
+def test_projected_field_absence_is_rewritten_before_review_without_extra_reads(gateway, monkeypatch):  # noqa: F811
+    import main
+    from bank_agent import runtime
+    client, _ = gateway
+    main.CARDS['user_zhang'][0]['status'] = 'FROZEN'
+    seen, reads = [], []
+    original = runtime._http
+    def http(method, path, **kwargs):
+        reads.append((method, path))
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', http)
+    def draft(payload):
+        seen.append((payload, len(reads)))
+        row = next(row for row in payload['facts'] if row.get('entity_id') == 'CARD-001')
+        policy = next(row for row in payload['facts'] if row['id'] == 'guide.card.receive')
+        answer = ('本人卡片记录只包含渠道字段，没有显示冻结或挂失状态。' if len(seen) == 1
+                  else row['text'] + policy['text'])
+        ids = [row['id'], policy['id']]
+        return {'answer': answer, 'evidence_ids': ids, 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': ids, 'reason': '渠道与冻结区别'}]}
+    calls = model(monkeypatch, [goal('cards', ['channels'], '当前渠道配置与冻结区别', subject='CARD-001')], draft=draft)
+    before = financial_state()
+    reply = _send(client, '查询CARD-001的网上支付和境外渠道，目前配置与冻结有何区别？', conversation_id='projection-context')
+    assert len(seen) == 2 and reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED'
+    assert 'FROZEN' in reply['reply'] and '限制该卡付款' in reply['reply']
+    assert 'PROJECTED_FIELD_ABSENCE' not in reply['reply'] and reply['approval'] is None
+    assert seen[0][1] == seen[1][1] and financial_state() == before
+    feedback = seen[1][0]['feedback'][0]
+    assert feedback['action'] == 'REWRITE' and '没有显示冻结或挂失状态' in feedback['reason']
+    reviews = [payload for system, payload in calls if '独立银行回答核验器' in system]
+    assert len(reviews) == 1 and reviews[0]['projection_contract'] == seen[1][0]['projection_contract']
+    assert all(method == 'GET' for method, _ in reads)
