@@ -125,12 +125,15 @@ class SimulatorDrift(ValueError):
 # intention ("先帮我记着这笔给李四的转账") does not change any state, and the
 # inquiry itself still matches the goal.  State-changing additives (取消/先不/
 # 先别/撤/买/卖/…) remain hard aborts, as the locked preflight tests require.
-_MIXED_KEEP_CUE = re.compile(r'记着|记下|保留|留着|别丢|记得|先记')
+_MIXED_KEEP_CUE = re.compile(r'记着|记下|保留|留着|别丢|记得|先记|金额[^，,。；!?！？]{0,8}(?:还没定|未定|没定|未确定|还没想好)')
 _MIXED_STATE_CHANGE = re.compile(
     r'取消|不办|先不|先别|放弃|停止|撤销|撤回|帮我转|给我转|转给|汇给|支付|付款|赎回|买入|卖出|冻结|解冻|挂失|调额')
 
 
 def benign_mixed_inquiry(record: dict, text: str) -> bool:
+    """The additive may also RESTATE the pending intention while its amount
+    is still unset ("金额还没定，先帮我办这笔转账") — that restatement
+    cannot execute anything, so the inquiry remains the operative ask."""
     return (record.get('faithful') is True and record.get('expected_act') == 'INQUIRE'
             and record.get('actual_act') == 'MIXED'
             and bool(_MIXED_KEEP_CUE.search(text)) and not _MIXED_STATE_CHANGE.search(text))

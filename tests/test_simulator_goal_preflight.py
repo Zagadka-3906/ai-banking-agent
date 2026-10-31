@@ -319,3 +319,12 @@ def test_judge_evidence_carries_the_shelf_yield_the_answer_may_cite():
     import inspect
     source = inspect.getsource(BankEnvironment.evidence)
     assert "'annualized_yield'" in source or '"annualized_yield"' in source
+
+
+def test_benign_mixed_inquiry_covers_keep_and_amount_unset_restatements():
+    from scripts.dialogue_eval.engine import benign_mixed_inquiry
+    record = dict(faithful=True, expected_act='INQUIRE', actual_act='MIXED', reason='复合句核对')
+    assert benign_mixed_inquiry(record, '金额还没定，先帮我记着这笔给李四的转账；另外转账一般多久到账？')
+    assert benign_mixed_inquiry(record, '金额我还没定，先帮我办这笔转账。另外我想先问一下，给李四转账一般多久能到账？')
+    assert not benign_mixed_inquiry(record, '先不转这笔了，我想问一下到账时间。')
+    assert not benign_mixed_inquiry(record, '这笔申购先别提交，帮我看看撤单规则。')
