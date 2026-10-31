@@ -42,7 +42,8 @@ def _bind_frame_references(parsed: dict[str, Any], source: str, rows: list[dict[
     for reference, extended in _frame_references(source).items():
         # A literal real label wins, including a label containing business words.
         matches = labels.get(reference) or labels.get(extended) or {identity for name, ids in labels.items()
-            if re.fullmatch(re.escape(name) + _PAYEE_FRAME_SUFFIX, extended) for identity in ids}
+            if (re.fullmatch(re.escape(name) + _PAYEE_FRAME_SUFFIX, extended)
+                or (reference.endswith('的') and name == reference[:-1])) for identity in ids}
         if len(matches) != 1:
             return parsed
         identity = next(iter(matches))
@@ -69,7 +70,7 @@ def bind_payee(state: Mapping[str, Any], parsed: dict[str, Any], text: str) -> d
             raw = category.group(1)
             parsed = {**parsed, 'target': raw}
     frame_ambiguity = (parsed.get('slots') or {}).get('target_ambiguous') is True and any(
-        re.search(_PAYEE_FRAME_SUFFIX + '$', value) for value in _frame_references(source).values())
+        re.search(_PAYEE_FRAME_SUFFIX + '$', value) or value.endswith('的') for value in _frame_references(source).values())
     reference = isinstance(raw, str) and bool(re.fullmatch(r'(?:他|她|同一位|同一个收款人)(?:办|办理|安排)(?:一笔)?', raw))
     verb_suffix = isinstance(raw, str) and bool(re.search(_PAYEE_BUSINESS_SUFFIX + '$', raw)
         and re.search(re.escape(raw) + r'(?:一笔)?(?:预约|定时)?(?:转账|汇款)', source))

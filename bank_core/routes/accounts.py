@@ -107,8 +107,10 @@ def assistant_context(x_user_id: Optional[str] = Header(None, alias="X-User-Id")
                  and 0 <= now - float(row.get("at", 0)) <= behavior_window_seconds()}
         reasons = [row["description"] for row in BEHAVIOR_STEP_UP_RULES if all(name in names for name in row["requires"])]
         labels = {"ACTIVE": "正常", "FROZEN": "已冻结", "LOST": "已挂失"}
-        facts = [{"id": "context.daily_spent", "text": f"当前账户今日已转出 ¥{daily_spent(actor):,.2f}。"},
-                 {"id": "context.limit_max", "text": f"当前演示卡片日额度最多可设置为 ¥{CARD_MAX_DAILY_LIMIT:,.2f}，不支持无限额度。"}]
+        facts: list[dict[str, Any]] = [
+            {"id": "context.daily_spent", "text": f"当前账户今日已转出 ¥{daily_spent(actor):,.2f}。"},
+            {"id": "context.limit_max", "text": f"当前演示卡片日额度最多可设置为 ¥{CARD_MAX_DAILY_LIMIT:,.2f}，不支持无限额度。"}
+        ]
         for index, card in enumerate(user_cards(actor)):
             facts.append({"id": f"context.card.{index}", "text": f"卡片 {card['card_id']} 当前状态为{labels.get(str(card.get('status')), '未知')}，日额度 ¥{float(card.get('daily_limit') or 0):,.2f}。",
                           "entity_id": card["card_id"], "card_id": card["card_id"], "entity_names": [card["card_id"]]})
