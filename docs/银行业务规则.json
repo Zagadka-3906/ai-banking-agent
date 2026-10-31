@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-31.9",
-  "rules_version": "189d0a3c5a64d9ff8f430d3a50b43a3753c33200cc9c1284ef038987471072f1",
+  "rules_version": "b77f9286ce6241d12e52b811e4e6195209cf909bcbe155d9aea043039beecebf",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "622de2f484f8b6095e16002ac1aa3fb873ea0971533cfed7afd1ef7ffcd04d4f",
@@ -44,7 +44,7 @@
     "bank_planning/requests.py": "f2fbedccc96b898912ebce77df15be9c429e66c8c0881e1d8c1503d99c8373e4",
     "bank_security/authorization.py": "652fe51c1fd7d96fbc580661f4352a2ceaafc00fb2cd85cb1aa5c47387ac48c7",
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
-    "banking_knowledge.py": "411ae18eff102472510dffe89fd4da14bb3c1b8b81d690becf8b4df78b507d90",
+    "banking_knowledge.py": "c5286354445f6705aa868f22e40fe6b984d0f2e5d67d9d08ccf5ee1d8687a737",
     "banking_rules.py": "50b8ad144373e8b3243d1e4cbdf69c57ca3bfbb1122411385aab412715b6922a",
     "intent_language.py": "08ac735a5dd247811b9ee4be822dd306b93185c9a35a1a82f01c4be52dec538d",
     "model_config.py": "2ce2f0b20b18d920968ad385b88f9d9ca30ca6a37425ca33af1ca7215ca0b701",
@@ -210,6 +210,21 @@
       "audience": "user",
       "source": "product://2026-10-31.9/contacts/saved",
       "title": "联系人与收款人：是否已保存联系人必须查询本人的联系人簿，不能凭转",
+      "kind": "policy",
+      "code_refs": [
+        "bank_core/routes/contacts.py",
+        "bank_agent/query_focus.py",
+        "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt"
+      ]
+    },
+    {
+      "id": "guide.contacts.status",
+      "topic": "contacts",
+      "text": "联系人页面的保存状态表示该联系人是否已保存在本人联系人簿中（即是否已保存），不区分其他复杂业务状态；是否已保存须查询本人联系人簿，本产品没有单独的常用频率标记，已保存与交易频率是不同信息。",
+      "authority_scope": "LOCAL_SERVICE_POLICY",
+      "audience": "user",
+      "source": "product://2026-10-31.9/contacts/status",
+      "title": "联系人与收款人：联系人页面的保存状态表示该联系人是否已保存在本人",
       "kind": "policy",
       "code_refs": [
         "bank_core/routes/contacts.py",
