@@ -41,7 +41,6 @@ def assess(judge):
     (lambda row: row['checks'][0].update(reason='x'*501), 'string_too_long'),
     (lambda row: row['checks'][0].update(reason=''), 'string_too_short'),
     (lambda row: row.pop('simulator_faithful'), 'missing'),
-    (lambda row: row['checks'][0].update(simulator_faithful=True), 'extra_forbidden'),
 ])
 def test_phase_schema_errors_record_field_codes_and_never_retry_or_rescore(change, code):
     raw = valid()
@@ -105,3 +104,15 @@ def test_schema_diagnostics_enforce_bounds_and_request_order():
     assert not valid_judge_schema_diagnostics([row, deepcopy(row)])
     assert not valid_judge_schema_diagnostics([row]*17)
     assert not valid_judge_schema_diagnostics(None)
+
+
+def test_extra_key_only_verdict_is_degraded_with_audit_not_retried():
+    """20261101 保留集：checks[0] 的未知键降级剥离并审计，试验不再终止。"""
+    raw = valid()
+    raw['checks'][0].update(simulator_faithful=True, extra_note='判官自带的额外说明')
+    judge, calls = judge_for(raw)
+    verdict = assess(judge)
+    assert verdict['checks'][0]['passed'] is False  # 保留原始判定值，只剥离未知键
+    assert any(all(item['type'] == 'extra_forbidden' for item in row['errors'])
+               for row in judge.schema_failures)
+    assert len(calls) == judge.requests == 1  # 降级不是重试：判官只被调用一次

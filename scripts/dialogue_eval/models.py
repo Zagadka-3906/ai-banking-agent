@@ -1,6 +1,66 @@
 """Model-backed user and post-hoc judge with disjoint views and no bank tools."""
 from __future__ import annotations
 
+import types
+from typing import Union, get_args, get_origin
+
+
+def _model_of(annotation):
+    """The pydantic model inside an annotation, unwrapping list[...] and Optional[...]."""
+    if getattr(annotation, 'model_fields', None) is not None:
+        return annotation
+    origin = get_origin(annotation)
+    if origin is list:
+        args = get_args(annotation)
+        if args and getattr(args[0], 'model_fields', None) is not None:
+            return args[0]
+    if origin is Union or origin is types.UnionType:
+        for arg in get_args(annotation):
+            if arg is type(None):
+                continue
+            model = _model_of(arg)
+            if model is not None:
+                return model
+    return None
+
+
+def _strip_unknown_keys(schema, raw):
+    """Recursively drop keys the schema does not declare; None when nothing changed."""
+    fields = getattr(schema, 'model_fields', None)
+    if fields is None or not isinstance(raw, dict):
+        return None
+    out, changed = {}, False
+    for key, value in raw.items():
+        field = fields.get(key)
+        if field is None:
+            changed = True
+            continue
+        item_model = _model_of(field.annotation)
+        if item_model is not None and isinstance(value, list):
+            items, item_changed = [], False
+            for item in value:
+                if isinstance(item, dict):
+                    stripped_item = _strip_unknown_keys(item_model, item)
+                    if stripped_item is not None:
+                        item_changed = True
+                        items.append(stripped_item)
+                    else:
+                        items.append(item)
+                else:
+                    items.append(item)
+            out[key] = items
+            changed = changed or item_changed
+        elif item_model is not None and isinstance(value, dict):
+            stripped = _strip_unknown_keys(item_model, value)
+            if stripped is None:
+                out[key] = value
+            else:
+                changed = True
+                out[key] = stripped
+        else:
+            out[key] = value
+    return out if changed else None
+
 import hashlib
 import json
 import re
@@ -175,7 +235,6 @@ class SimulatedUser:
         return ask(self.model, """你在测试一个银行演示助手，扮演中文用户，不是助手或评委。
 仅依据输入中的目标、人物、已知事实和聊天内容，围绕 current_goal 发出下一句自然问话。
 每条消息只提出 current_goal 这一阶段的请求；不得提前添加其他阶段的咨询或办理。
-current_goal 同时包含多项请求（如既查询又写内容）时，一句话必须完整表达全部各项，不能只挑其中一项；漏项会被判定偏移。
 known_facts 仅为背景，不能把其中其他请求自动附加到本轮。目标只要求办理或补充信息时，不额外追问规则、费用或流程；
 目标未提供金额时只说明金额未定，不为凑完整问句增加其他咨询。只有 current_goal 明确包含的查询才在本轮提出。
 当前目标只要求查询或解释时，保留原有办理意向，不为过渡话题添加取消、暂停、放弃或修改操作。
@@ -241,6 +300,14 @@ class ConversationJudge:
                 self.schema_failures.append({'request': self.requests, 'stage': stage, 'phase': phase, 'errors': failures,
                     'response_sha256': hashlib.sha256(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
                     'retried': False})
+            # A verdict whose ONLY violations are unknown keys carries valid
+            # required fields and a wrong extra annotation; strip the extras
+            # and accept, with the stripped paths audited above.  Missing or
+            # invalid required fields still raise.
+            if failures and all(item['type'] == 'extra_forbidden' for item in failures):
+                stripped = _strip_unknown_keys(schema, raw)
+                if stripped is not None:
+                    return schema.model_validate(stripped)
             raise
 
     def verify_user_goal(self, view, text):
@@ -288,7 +355,6 @@ reason必须为非空字符串，最多500个字符；faithful必须为JSON布�
             self.requests += 1
             prompt = """你是银行对话单阶段评测员，不是被测助手，也不参与用户模拟。只评当前阶段，不推测尚未发生的对话。
 先核对 current_phase.goal 和本轮 user，再按 assertion 判断答复。背景事实和前文只用于指代与事实限制，不能覆盖本轮目标。
-assertion 是本阶段唯一判定标准：assertion 明文禁止的内容（如"不生成诗歌正文"）即使未生成也完全符合要求，不得因"未满足用户表层请求"判负；assertion 明文要求的边界（如"简洁说明业务范围"）也不得被要求超越。
 检查是否回答具体问题、是否编造能力/时限/已执行状态、是否答非所问或重复旧答。可信记录只用来核验已陈述事实，不自动增加必答字段。
 判漏答时必须说明当前目标或本轮提问中哪项明确要求未满足；不能因账本包含更多字段而要求全部展示，不能借其他阶段的问题补写本轮义务。
 可信账本包含其他日期和对象的记录，不能要求回答所有历史数据。按本轮明确日期、对象及承接的已查列表核对，不能将范围外可疑标签自动当成用户指代。
