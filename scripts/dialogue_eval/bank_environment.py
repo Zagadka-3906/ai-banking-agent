@@ -239,7 +239,11 @@ class BankEnvironment:
                               for row in self.snapshot()['tasks'] if isinstance(row, dict) and row.get('owner_id') == 'user_zhang'],
                 'own_holdings': self.main.WEALTH_HOLDINGS.get('user_zhang', []),
                 'own_risk_profile': risk_profile_view(self.main.WEALTH_RISK_PROFILES.get('user_zhang')),
-                'wealth_products': [{key: row.get(key) for key in ('product_id', 'name', 'risk_level', 'min_amount', 'liquidity')}
+                # annualized_yield is a real shelf field (0.0205/0.0265/0.039):
+                # the judge must see the same record the answer stage saw, or a
+                # faithful yield becomes an invented one.
+                'wealth_products': [{key: row.get(key) for key in
+                                     ('product_id', 'name', 'risk_level', 'min_amount', 'liquidity', 'annualized_yield')}
                                     for row in WEALTH_PRODUCTS],
                 "own_transactions": [{key: row.get(key) for key in ("tx_id", "amount", "merchant", "category", "direction", "time")}
                                      for row in self.main.TRANSACTIONS if row.get("account_id") == "user_zhang"]}

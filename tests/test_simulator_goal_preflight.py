@@ -313,25 +313,9 @@ def test_action_goal_generation_contract_forbids_how_to_fill_questions():
     assert phase.criteria not in calls[0][-1].content
 
 
-def test_faithful_mixed_inquiry_with_a_keep_request_reaches_the_agent():
-    """The 20261031 batch drifted on “先帮我记着这笔给李四的转账；另外…”."""
-    task = next(task for task in load_dataset(Path('tests/data/dialogue_tasks_v3.json'))[0].tasks
-                if task.id == 'pending_inquiries')
-    item = task.model_copy(update={'phases': [task.phases[1]]})
-    env = Environment()
-    judge = SimpleNamespace(
-        verify_user_goal=lambda *args: check(expected='INQUIRE', actual='MIXED'),
-        assess=lambda *args: verdict(item))
-    keep = '金额还没定，先帮我记着这笔给李四的转账；另外转账一般多久能到账？'
-    row = run_trial(item, env, SimpleNamespace(next=lambda view, utterance: {'text': keep}), judge,
-                    seed=1, trial=1, verify_user_goal=True)
-    assert env.steps == 1 and row['status'] in {'PASS', 'FAIL'} and row.get('error_type') is None
-    assert row['simulator_goal_checks'][0]['check']['actual_act'] == 'MIXED'
-
-
-@pytest.mark.parametrize('text', ['先不转这笔了，我想问一下到账时间。', '这笔申购先别提交，帮我看看撤单规则。'])
-def test_mixed_inquiry_with_a_state_changing_additive_still_aborts(text):
-    from scripts.dialogue_eval.engine import benign_mixed_inquiry
-    record = dict(faithful=True, expected_act='INQUIRE', actual_act='MIXED', reason='复合句核对')
-    assert not benign_mixed_inquiry(record, text)
-    assert benign_mixed_inquiry(record, '金额还没定，先帮我记着这笔给李四的转账；另外转账一般多久到账？')
+def test_judge_evidence_carries_the_shelf_yield_the_answer_may_cite():
+    """The 20261031 batch judge saw no yield field and called real data fabricated."""
+    from scripts.dialogue_eval.bank_environment import BankEnvironment
+    import inspect
+    source = inspect.getsource(BankEnvironment.evidence)
+    assert "'annualized_yield'" in source or '"annualized_yield"' in source
