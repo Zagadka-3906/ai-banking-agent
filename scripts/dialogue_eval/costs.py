@@ -61,7 +61,7 @@ def token_usage(answer: Any) -> dict[str, int] | None:
         return None
     incoming = meta.get('input_tokens', raw.get('prompt_tokens'))
     outgoing = meta.get('output_tokens', raw.get('completion_tokens'))
-    if not isinstance(incoming, int) or not isinstance(outgoing, int) or incoming < 0 or outgoing < 0:
+    if type(incoming) is not int or type(outgoing) is not int or incoming < 0 or outgoing < 0:
         return None
     details = meta.get('input_token_details') or {}
     raw_details = raw.get('prompt_tokens_details') or {}

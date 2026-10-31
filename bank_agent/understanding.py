@@ -127,6 +127,9 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
             result["slots"] = {"help_topic": help_topic(text)}
             result["parse_meta"]["dialogue_act"] = "EXPLAIN"
             act = "EXPLAIN"
+        elif constraint == 'PRIOR_INQUIRY' and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
+            result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
+            act = "EXPLAIN"
     if act == "UNSUPPORTED" and route and route[1].get("help_topic") in {"cross_scene", "limits", "contacts"}:
         # Explain the genuine nearby capability without opening a write flow.
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}

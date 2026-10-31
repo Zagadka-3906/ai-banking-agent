@@ -71,6 +71,16 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
     task_due_payment = (bool(re.search(r'待办|任务|预约', text))
                         and bool(re.search(r'(?:到期|到时间|到点|届时|自动).{0,10}(?:自动)?(?:扣款|付款|扣钱|划扣|支付|把钱扣掉)', text))
                         and not bool(re.search(r'订阅|代扣|续费|自动扣费|周期扣款|乱扣费|莫名扣|偷偷扣|会员|apple|苹果|视频', text, re.I)))
+    # When a user turn states background/uncommitted task intent alongside genuine consultation questions,
+    # strip redundant discussion-state goals (e.g. act='SLOT_REPLY') so they don't corrupt read-only inquiry goals.
+    inquiry_goals = [item for item in value if isinstance(item, dict) and item.get('act') in {'QUERY', 'EXPLAIN'}]
+    cleaned_value = []
+    for item in value:
+        if isinstance(item, dict) and item.get('act') in {'SLOT_REPLY', 'PAUSE', 'WITHDRAW'} and inquiry_goals:
+            continue
+        cleaned_value.append(item)
+    if cleaned_value:
+        value = cleaned_value
     goals = []
     for index, item in enumerate(value):
         if isinstance(item, dict) and task_due_payment and (item.get('resource') == 'subscriptions' or item.get('topic') == 'subscription'):

@@ -368,10 +368,16 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
 
 def local_parse(text: str) -> dict[str, Any]:
     original = text
-    parts = split_tasks(text)
-    source = business_text(parts[0] if len(parts) > 1 else text)
+    from intent_language import prior_inquiry_clause
+    inquiry = prior_inquiry_clause(text)
+    if inquiry:
+        source = business_text(inquiry)
+        parts = [inquiry]
+    else:
+        parts = split_tasks(text)
+        source = business_text(parts[0] if len(parts) > 1 else text)
     parsed = _local_parse_rules(source)
-    parsed = enforce_inquiry(parsed, source)
+    parsed = enforce_inquiry(parsed, original if inquiry else source)
     parsed["extra_info"] = original
     intent = parsed["intent"]
     if intent in {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.WEALTH_PURCHASE.value, Intent.WEALTH_REDEEM.value}:
@@ -487,6 +493,7 @@ def model_parse(text: str) -> dict[str, Any]:
         + '。必须另输出goals数组，逐项描述本轮最多5个诉求。每项为'
         '{"act":"QUERY或EXPLAIN或ACTION或UNSUPPORTED或UNCLEAR","resource":"下列资源名",'
         '"question":"本轮具体问题","fields":["所问字段"],"subject":"原文或已核验实体名称；无对象则null","topic":"知识主题"}。'
+        'goals各项的act必须严格从QUERY、EXPLAIN、ACTION、UNSUPPORTED、UNCLEAR中选择，严禁填写SLOT_REPLY、WITHDRAW等非准入值。'
         '比较多个对象用subjects数组分别填写对象，不把几个人或产品拼成一个subject。'
         'subject是姓名或编号本身，不含“联系人”“收款人”等类别词；原文的类别词留在其他描述里，不并入subject。'
         '查询整个集合时subject为null，不把“在售产品”“我的持仓”“我的卡片”等集合描述当作具体实体名称。'
@@ -533,6 +540,7 @@ def model_parse(text: str) -> dict[str, Any]:
         "用户明确说先了解可行性或先问行不行时，本轮先回答可行性和已知条件，不生成办理提案；之后明确要求办理才进入审批。暂不确认本身不撤销已明确的办理目标。"
         "用户复述原办理后明确说‘办理前先问一下’或‘在继续之前先确认规则’时，本轮优先QUERY/EXPLAIN回答该问题；原办理是背景，保留讨论及问卷进度，不重推问卷、不生成提案，goals仅列当前前置问题。"
         "先表达办理愿望或缺项，再完整询问时效、费用、条件或影响，且没有另行明确要求现在办理时，也先回答当前咨询；不要求用户必须说‘办理前先问’。缺少历史意向或前轮理解失败不能让咨询变成补金额。独立明确办理仍保留混合请求语义。"
+        "复述原办理、保留任务或金额未定背景同时询问时效/费用/规则/流程时，原办理仅是背景，保留讨论进度；goals 仅列当前咨询问题（act='EXPLAIN' 或 'QUERY'），严禁把未定的原办理背景列为 goals 目标。"
         "SOCIAL 时必须在顶层填写 social_kind：问候选 greeting，致谢选 thanks，告别选 goodbye，问能力选 capabilities；其他模式填 null。"
         "‘查这笔转账记录’是 BILL_QUERY；‘我的卡是不是冻结了’是 CARD_QUERY；‘冻结后有什么影响’是 BANKING_HELP。"
         "‘那5笔’须结合已核验观察理解是哪组交易；可在 slots.read_reference 指定 anomalies 或 listed_transactions，不能编造编号。"
@@ -646,7 +654,7 @@ def model_parse(text: str) -> dict[str, Any]:
                 normalized_repair = normalize_goals(repaired_goals, business_text(text), model_context())
                 if not read_only_goals(normalized_repair):
                     raise ValueError('REPAIR_CANNOT_ADD_ACTION')
-                if policy_reference_repairs or record_reference_repairs:
+                if (policy_reference_repairs or record_reference_repairs) and not prior_inquiry:
                     if len(normalized_repair) != len(checked_goals):
                         raise ValueError('REPAIR_CANNOT_CHANGE_READ_SCOPE')
                     for index, repaired_goal in enumerate(normalized_repair):
