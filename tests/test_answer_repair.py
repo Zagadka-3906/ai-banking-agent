@@ -490,3 +490,13 @@ def test_step_self_reference_converted_before_number_check():
     with pytest.raises(ValueError, match='UNKNOWN_NUMBER'):
         bad = answer.replace('第 1 步', '第 9 步')
         _validate_draft({'answer': bad, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+
+
+def test_inline_list_numbers_not_flagged_as_unknown_number():
+    """Inline procedure list numbers after punctuation (e.g. 1. ...; 2. ...) must not trip UNKNOWN_NUMBER."""
+    from bank_agent.answering import _validate_draft
+    facts = [{'id': 'guide.security.factors', 'text': '强验证的步骤是核对本次审批卡，用户确认，填写一次性验证码，再由登记设备完成签名；以本次审批卡列出的实际要求为准。'}]
+    answer = '强验证的步骤是：1. 核对本次审批卡；2. 由你确认；3. 填写一次性验证码；4. 由登记设备完成签名。具体以本次审批卡列出的实际要求为准。'
+    text, ids = _validate_draft({'answer': answer, 'evidence_ids': ['guide.security.factors'], 'unanswered': []}, facts, {})
+    assert '1.' in text
+    assert ids == ['guide.security.factors']
