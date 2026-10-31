@@ -231,3 +231,39 @@ def test_resume_payee_grammar_never_overrides_inquiry_negation_or_recipient_choi
     monkeypatch.setattr(runtime, '_http', lambda *args, **kwargs: pytest.fail('binding must not read or select a payee'))
     parsed = local_parse(text)
     assert bind_payee({'user_id': 'user_zhang'}, parsed, text) == parsed
+
+
+@pytest.mark.parametrize('text', ['我想恢复给李四的那笔300元转账，继续办理。', '把给李四的那笔300元转账恢复出来吧。'])
+def test_stacked_possessive_measure_suffix_still_binds_the_exact_name(monkeypatch, text):
+    """The 20261031 formal batch failed to bind “李四的那笔” with the verb up front."""
+    responses(monkeypatch, [], [{'display_name': '李四', 'contact_id': 'recipient-current'},
+                                {'display_name': '王美', 'contact_id': 'spouse'}])
+    parsed = {'intent': 'TRANSFER', 'target': '李四的那笔', 'amount': 300, 'slots': {},
+              'parse_meta': {'dialogue_act': 'ACTION'}}
+    bound = bind_payee({'user_id': 'user_zhang'}, parsed, text)
+    assert bound['target'] == '李四' and bound['amount'] == 300
+    assert bound['parse_meta']['target_binding']['entity_id'] == 'recipient-current'
+
+
+def test_literal_label_containing_stacked_suffixes_wins_over_stripping(monkeypatch):
+    responses(monkeypatch, [], [{'display_name': '李四的那笔', 'contact_id': 'literal'},
+                                {'display_name': '李四', 'contact_id': 'short'}])
+    text = '我想恢复给李四的那笔300元转账，继续办理。'
+    parsed = {'intent': 'TRANSFER', 'target': '李四的那笔', 'amount': 300, 'slots': {},
+              'parse_meta': {'dialogue_act': 'ACTION'}}
+    assert bind_payee({'user_id': 'user_zhang'}, parsed, text)['target'] == '李四的那笔'
+
+
+def test_drifted_resume_message_with_stacked_suffix_creates_the_proposal(gateway, monkeypatch):  # noqa: F811
+    """End-to-end replay of the 20261031 formal-batch phase 3 failure."""
+    client, _ = gateway
+    cid = 'drifted-resume-stacked-suffix'
+    action_model = SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps(
+        {'intent': 'TRANSFER', 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE', 'target': '李四的那笔'})))
+    monkeypatch.setattr(runtime, 'llm', action_model)
+    before = financial_state()
+    first = _send(client, '我想给李四转一笔钱，金额还没定，先帮我办这笔转账。', conversation_id=cid)
+    assert first['approval'] is None and '金额' in first['reply']
+    resumed = _send(client, '我想恢复给李四的那笔300元转账，继续办理。', conversation_id=cid)
+    assert resumed['approval'] and all(value in resumed['approval']['summary'] for value in ('李四', '300'))
+    assert financial_state()[:4] == before[:4]

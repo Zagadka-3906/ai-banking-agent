@@ -9,6 +9,8 @@ from bank_agent.state import BankingAgentState
 from intent_language import ambiguous_target, business_text, execution_constraint, recipient_references
 
 _PAYEE_SUFFIX = r'(?:吧|呀|啊|的|这笔|那笔|的事|这件事|那件事)'
+# The suffix may stack ("李四的那笔"); at most three discourse particles are stripped.
+_PAYEE_SUFFIX_RUN = r'(?:' + _PAYEE_SUFFIX + r'){1,3}'
 _PAYEE_BUSINESS_SUFFIX = r'(?:办|办理|安排)(?:一笔)?'
 _PAYEE_RESUME_SUFFIX = r'(?:恢复|继续|接着|重新办理)(?:(?:刚才|之前)?(?:这|那))?(?:一)?笔'
 # The resume verb may precede the object ("恢复转给某人的转账提案")
@@ -105,8 +107,11 @@ def bind_payee(state: Mapping[str, Any], parsed: dict[str, Any], text: str) -> d
     for row in rows:
         name = row.get('name') or row.get('display_name')
         identity = row.get('account_id') or row.get('contact_id')
+        # "恢复给李四的那笔300元转账" puts the verb before the name and stacks
+        # the possessive onto the measure word; both are discourse glue, and a
+        # real label still wins before any of this stripping runs.
         if (isinstance(name, str) and isinstance(identity, str) and identity != owner
-                and (re.fullmatch(re.escape(name) + _PAYEE_SUFFIX, raw)
+                and (re.fullmatch(re.escape(name) + _PAYEE_SUFFIX_RUN, raw)
                      or verb_suffix and re.fullmatch(re.escape(name) + _PAYEE_BUSINESS_SUFFIX, raw)
                      or resume_suffix and re.fullmatch(re.escape(name) + _PAYEE_RESUME_SUFFIX, raw)
                      or reference and any(value in previous_names for value in (name, row.get('contact_id'), identity)))):
