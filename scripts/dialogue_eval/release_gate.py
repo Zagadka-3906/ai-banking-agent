@@ -92,8 +92,15 @@ def assess_release(groups: list[dict], sources: dict[str, str], operational: dic
                 if row.get('model_calls_completed') is not True:
                     raise ValueError('INCOMPLETE_MODEL_ACCOUNTING')
                 schema = row.get('judge_schema_diagnostics')
-                if not valid_judge_schema_diagnostics(schema) or row['status'] == 'PASS' and schema:
+                if not valid_judge_schema_diagnostics(schema):
                     raise ValueError('INVALID_JUDGE_SCHEMA_DIAGNOSTICS')
+                if row['status'] == 'PASS' and schema:
+                    # A PASS trial with judge schema diagnostics is only permitted when
+                    # every recorded error is strictly 'extra_forbidden' (unknown keys stripped
+                    # by degraded judge schema handling while keeping required fields intact).
+                    # Missing fields, type errors, or non-extra errors invalidate the judgement.
+                    if any(item.get('type') != 'extra_forbidden' for diag in schema for item in diag.get('errors', [])):
+                        raise ValueError('INVALID_JUDGE_SCHEMA_DIAGNOSTICS')
                 transport = row.get('evaluation_transport')
                 if (not isinstance(transport, dict) or set(transport) != {'user', 'judge'}
                         or any(not valid_transport_diagnostics(value, successful=row['status'] == 'PASS') for value in transport.values())

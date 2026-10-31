@@ -100,17 +100,19 @@ class CostLedger:
 
     @classmethod
     def configure(cls, path: Path, *, max_cost_cny=None, max_calls=2000, max_output_tokens=4096,
-                  consecutive_errors=3, prices=None, models=()):
+                  consecutive_errors=3, max_concurrent_requests=2000, prices=None, models=()):
         if (type(max_calls) is not int or not 1 <= max_calls <= 100000
                 or type(max_output_tokens) is not int or not 1 <= max_output_tokens <= 32768
-                or type(consecutive_errors) is not int or not 1 <= consecutive_errors <= 10):
+                or type(consecutive_errors) is not int or not 1 <= consecutive_errors <= 10
+                or type(max_concurrent_requests) is not int or not 1 <= max_concurrent_requests <= 2500):
             raise ValueError('INVALID_EVALUATION_LIMITS')
         rates = price_profiles(DEFAULT_PRICES if prices is None else prices)
         cap = _nanos(positive_money(max_cost_cny)) if max_cost_cny is not None else None
         if cap is not None and any(model not in rates for model in models):
             raise ValueError('COST_CAP_REQUIRES_EXPLICIT_PRICES_FOR_EVERY_MODEL')
         policy = {'max_cost_nanos': cap, 'max_calls': max_calls, 'max_output_tokens': max_output_tokens,
-                  'consecutive_errors': consecutive_errors, 'prices': rates, 'currency': 'CNY'}
+                  'consecutive_errors': consecutive_errors, 'max_concurrent_requests': max_concurrent_requests,
+                  'prices': rates, 'currency': 'CNY'}
         ledger = cls(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with ledger.transaction() as db:
@@ -125,7 +127,9 @@ class CostLedger:
         return ledger
 
     def stop(self, reason: str):
-        if reason not in {'WORKER_FAILED', 'WORKER_TIMEOUT', 'SOURCE_CHANGED', 'CONSECUTIVE_TRIAL_ERRORS', 'TASK_FAILED', 'TRIAL_ERROR'}:
+        valid = {'WORKER_FAILED', 'WORKER_TIMEOUT', 'SOURCE_CHANGED', 'CONSECUTIVE_TRIAL_ERRORS',
+                 'TASK_FAILED', 'TRIAL_ERROR', 'CONCURRENCY_WAIT_TIMEOUT'}
+        if reason not in valid:
             raise ValueError('INVALID_STOP_REASON')
         with self.transaction() as db:
             db.execute('UPDATE control SET stop=COALESCE(stop, ?) WHERE id=1', (reason,))
@@ -133,24 +137,41 @@ class CostLedger:
     def reserve(self, run: str, role: str, model: str) -> tuple[str, int]:
         blocked = None
         identifier = uuid.uuid4().hex
-        with self.transaction() as db:
-            state = db.execute('SELECT * FROM control WHERE id=1').fetchone()
-            policy = json.loads(state['policy'])
-            count, used = db.execute('SELECT COUNT(*), COALESCE(SUM(accounted_nanos),0) FROM calls').fetchone()
-            rate = policy['prices'].get(model)
-            reserve = (_nanos((Decimal(rate['input_uncached']) * rate['context_tokens']
-                               + Decimal(rate['output']) * policy['max_output_tokens']) / 1_000_000) if rate else None)
-            blocked = state['stop'] or ('MODEL_CALL_LIMIT' if count >= policy['max_calls'] else None)
-            if not blocked and policy['max_cost_nanos'] is not None:
-                if reserve is None:
-                    blocked = 'UNPRICED_MODEL'
-                elif used + reserve > policy['max_cost_nanos']:
-                    blocked = 'ESTIMATED_COST_LIMIT'
-            if blocked:
-                db.execute('UPDATE control SET stop=COALESCE(stop, ?) WHERE id=1', (blocked,))
-            else:
-                db.execute('INSERT INTO calls VALUES (?, ?, ?, ?, ?, ?, ?)',
-                           (identifier, run, role, model, 'IN_FLIGHT', reserve, '{}'))
+        deadline = time.monotonic() + 60.0
+        while True:
+            with self.transaction() as db:
+                state = db.execute('SELECT * FROM control WHERE id=1').fetchone()
+                policy = json.loads(state['policy'])
+                count, used = db.execute('SELECT COUNT(*), COALESCE(SUM(accounted_nanos),0) FROM calls').fetchone()
+                in_flight = db.execute("SELECT COUNT(*) FROM calls WHERE status='IN_FLIGHT'").fetchone()[0]
+                rate = policy['prices'].get(model)
+                reserve = (_nanos((Decimal(rate['input_uncached']) * rate['context_tokens']
+                                   + Decimal(rate['output']) * policy['max_output_tokens']) / 1_000_000) if rate else None)
+                blocked = state['stop'] or ('MODEL_CALL_LIMIT' if count >= policy['max_calls'] else None)
+                if not blocked and policy['max_cost_nanos'] is not None:
+                    if reserve is None:
+                        blocked = 'UNPRICED_MODEL'
+                    elif used + reserve > policy['max_cost_nanos']:
+                        blocked = 'ESTIMATED_COST_LIMIT'
+                if blocked:
+                    db.execute('UPDATE control SET stop=COALESCE(stop, ?) WHERE id=1', (blocked,))
+                    break
+                max_concurrent = policy.get('max_concurrent_requests')
+                if max_concurrent is not None and in_flight >= max_concurrent:
+                    wait_needed = True
+                else:
+                    db.execute('INSERT INTO calls VALUES (?, ?, ?, ?, ?, ?, ?)',
+                               (identifier, run, role, model, 'IN_FLIGHT', reserve, '{}'))
+                    wait_needed = False
+                    break
+            if not wait_needed:
+                break
+            if time.monotonic() > deadline:
+                with self.transaction() as db:
+                    db.execute('UPDATE control SET stop=COALESCE(stop, ?) WHERE id=1', ('CONCURRENCY_WAIT_TIMEOUT',))
+                blocked = 'CONCURRENCY_WAIT_TIMEOUT'
+                break
+            time.sleep(0.02)
         if blocked:
             raise EvaluationStopped(blocked)
         return identifier, policy['max_output_tokens']
@@ -196,6 +217,8 @@ class CostLedger:
             state = db.execute('SELECT * FROM control WHERE id=1').fetchone()
             clause, parameters = (' WHERE run=?', (run,)) if run else (' WHERE substr(run,1,?)=?', (len(prefix), prefix)) if prefix else ('', ())
             rows = db.execute('SELECT role, status, accounted_nanos, payload FROM calls' + clause, parameters).fetchall()
+            in_flight_clause = (' AND run=?', (run,)) if run else (' AND substr(run,1,?)=?', (len(prefix), prefix)) if prefix else ('', ())
+            in_flight = db.execute("SELECT COUNT(*) FROM calls WHERE status='IN_FLIGHT'" + in_flight_clause[0], in_flight_clause[1]).fetchone()[0]
             policy = json.loads(state['policy'])
         roles: dict[str, dict] = {}
         for row in rows:
@@ -215,6 +238,7 @@ class CostLedger:
             entry['estimated_or_reserved_cny'] = None if entry['unpriced_calls'] else str(Decimal(value) / NANOS)
         return {'currency': 'CNY', 'pricing_is_estimate': True, 'stop_reason': state['stop'], 'limits': policy, 'roles': roles,
                 'calls': sum(row['calls'] for row in roles.values()),
+                'in_flight_calls': in_flight,
                 'estimated_or_reserved_cny': (None if any(row['unpriced_calls'] for row in roles.values()) else
                     str(sum((Decimal(row['estimated_or_reserved_cny']) for row in roles.values()), Decimal(0))))}
 
@@ -305,6 +329,7 @@ def add_cost_arguments(parser):
     group.add_argument('--unlimited-cost', action='store_true', help='Explicitly authorize no currency limit')
     parser.add_argument('--max-model-calls', type=int, default=2000)
     parser.add_argument('--max-output-tokens', type=int, default=4096)
+    parser.add_argument('--max-concurrent-requests', type=int, default=2000, help='Maximum concurrent in-flight model calls (1-2500)')
     parser.add_argument('--price-file', type=Path, help='CNY per million tokens; required for unknown model currency caps')
     parser.add_argument('--budget-ledger', type=Path, help='Shared ignored SQLite ledger for a whole evaluation campaign')
     parser.add_argument('--eval-env-file', type=Path, help='Optional separate evaluation credentials; never copied into reports')
@@ -335,14 +360,17 @@ def configure_budget(args, root: Path, output: Path, models) -> CostLedger:
     if not path.is_relative_to(root/'build') or path == root/'build':
         raise ValueError('Budget ledger must stay in ignored build/')
     prices = json.loads(args.price_file.read_text(encoding='utf-8')) if args.price_file else None
+    max_concurrent = getattr(args, 'max_concurrent_requests', 2000)
     return CostLedger.configure(path, max_cost_cny=args.max_cost_cny, max_calls=args.max_model_calls,
-        max_output_tokens=args.max_output_tokens, prices=prices, models=models)
+        max_output_tokens=args.max_output_tokens, max_concurrent_requests=max_concurrent, prices=prices, models=models)
 
 
 def nested_cost_arguments(args, ledger: CostLedger) -> list[str]:
     result = ['--budget-ledger', str(ledger.path), '--max-model-calls', str(args.max_model_calls),
               '--max-output-tokens', str(args.max_output_tokens)]
     result += ['--max-cost-cny', str(args.max_cost_cny)] if args.max_cost_cny is not None else ['--unlimited-cost']
+    if getattr(args, 'max_concurrent_requests', None) is not None:
+        result += ['--max-concurrent-requests', str(args.max_concurrent_requests)]
     if args.price_file:
         result += ['--price-file', str(args.price_file.resolve())]
     if args.eval_env_file:

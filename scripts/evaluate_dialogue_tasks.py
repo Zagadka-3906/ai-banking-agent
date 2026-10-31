@@ -115,6 +115,7 @@ def main(argv=None) -> int:
     parser.add_argument("--cases", type=Path, default=ROOT / "tests/data/dialogue_tasks.json")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--trials", type=int, default=3)
+    parser.add_argument("--concurrency", type=int, default=1, help="Concurrent trial workers (1-64)")
     parser.add_argument("--seed", type=int, default=20261025)
     parser.add_argument("--task", action="append", default=[])
     parser.add_argument("--user", choices=["model", "scripted"], default="model")
@@ -128,6 +129,8 @@ def main(argv=None) -> int:
         return worker(args._worker)
     if not 1 <= args.trials <= 10:
         parser.error("--trials must be between 1 and 10")
+    if not 1 <= args.concurrency <= 64:
+        parser.error("--concurrency must be between 1 and 64")
     dataset, digest = load_dataset(args.cases)
     from bank_agent.prompt_preferences import validate_instructions
     bundle_bytes = args.prompt_bundle.read_bytes() if args.prompt_bundle else b'{}'
@@ -143,6 +146,8 @@ def main(argv=None) -> int:
             'judge_context_version': JUDGE_CONTEXT_VERSION,
             'goal_evidence_check_version': 2,
             'simulator_goal_check_version': SIMULATOR_GOAL_CHECK_VERSION,
+            'concurrency': args.concurrency,
+            'max_concurrent_requests': args.max_concurrent_requests,
             'prompt_bundle_sha256': hashlib.sha256(bundle_bytes).hexdigest(), "task_ids": [task.id for task in tasks], "user": args.user,
             "trials_per_task": args.trials, "planned_trials": len(tasks) * args.trials,
             "max_agent_turns": sum(len(task.phases) for task in tasks) * args.trials}
@@ -197,57 +202,116 @@ def main(argv=None) -> int:
                 "source_sha256": source_fingerprints(),
                 'credential_mode': 'evaluation_override' if args.eval_env_file or values.get('BANK_EVAL_AGENT_API_KEY') else 'main_configuration_fallback'}
 
+    import threading
+    save_lock = threading.RLock()
+    stop_event = threading.Event()
+    consecutive_errors = 0
+    task_positions = {task.id: index for index, task in enumerate(dataset.tasks)}
+
     def save():
-        report = {**metadata, "summary": summarize(tasks, args.trials, rows), "trials": rows,
-                  'cost': {'campaign': ledger.snapshot(), 'run': ledger.snapshot(prefix=str(output)+'#')}}
-        (output / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-        return report
+        with save_lock:
+            sorted_rows = sorted(rows, key=lambda r: (task_positions.get(r.get('task_id', ''), 0), r.get('trial', 0)))
+            report = {**metadata, "summary": summarize(tasks, args.trials, sorted_rows), "trials": sorted_rows,
+                      'cost': {'campaign': ledger.snapshot(), 'run': ledger.snapshot(prefix=str(output)+'#')}}
+            temp_path = output / "report.json.tmp"
+            temp_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            temp_path.replace(output / "report.json")
+            return report
 
     save()
-    task_positions = {task.id: index for index, task in enumerate(dataset.tasks)}
-    consecutive_errors = 0
-    for task in tasks:
-        for trial in range(1, args.trials + 1):
-            if ledger.snapshot()['stop_reason']:
-                break
-            trial_seed = args.seed + task_positions[task.id] * 100 + trial
-            result_path = output / f"{task.id}-{trial}.json"
-            job = {"task": task.model_dump(), "trial": trial, "seed": trial_seed, "result": str(result_path),
-                   "models": models, "user": args.user, 'instructions': instructions, 'rubric_version': dataset.rubric_version,
-                   'budget_ledger': str(ledger.path), 'cost_run': str(output)+'#'+task.id+'-'+str(trial)}
-            job_path = output / "worker-job.json"
-            job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
-            try:
-                if source_fingerprints() != metadata["source_sha256"] or hashlib.sha256(args.cases.read_bytes()).hexdigest() != digest:
-                    ledger.stop('SOURCE_CHANGED')
-                    raise RuntimeError("Candidate sources or dataset changed during evaluation")
-                if args.prompt_bundle and args.prompt_bundle.read_bytes() != bundle_bytes:
-                    ledger.stop('SOURCE_CHANGED')
-                    raise RuntimeError('Instruction candidate changed during evaluation')
-                process = subprocess.run([sys.executable, "-m", "scripts.evaluate_dialogue_tasks", "--_worker", str(job_path)],
-                                         cwd=ROOT, env=child_env, capture_output=True, timeout=600)
-                if process.returncode != 0 or not result_path.exists():
-                    # Retain private diagnostics locally; provider errors never enter the public summary.
-                    (output / f"{task.id}-{trial}.worker.log").write_bytes(process.stdout + process.stderr)
-                    raise RuntimeError("Evaluation worker failed")
-                row = json.loads(result_path.read_text(encoding="utf-8"))
-                if source_fingerprints() != metadata["source_sha256"]:
-                    raise RuntimeError("Candidate sources changed during evaluation")
-            except (subprocess.TimeoutExpired, OSError, ValueError, RuntimeError) as error:
-                row = {"task_id": task.id, "trial": trial, "seed": trial_seed, "status": "ERROR", "error_type": type(error).__name__}
-                ledger.stop('WORKER_TIMEOUT' if isinstance(error, subprocess.TimeoutExpired) else 'WORKER_FAILED')
+
+    def run_trial_job(task, trial):
+        nonlocal consecutive_errors
+        if stop_event.is_set() or ledger.snapshot()['stop_reason']:
+            return None
+        trial_seed = args.seed + task_positions[task.id] * 100 + trial
+        result_path = output / f"{task.id}-{trial}.json"
+        job = {"task": task.model_dump(), "trial": trial, "seed": trial_seed, "result": str(result_path),
+               "models": models, "user": args.user, 'instructions': instructions, 'rubric_version': dataset.rubric_version,
+               'budget_ledger': str(ledger.path), 'cost_run': str(output)+'#'+task.id+'-'+str(trial)}
+        job_path = output / f"worker-job-{task.id}-{trial}.json"
+        job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+        try:
+            if source_fingerprints() != metadata["source_sha256"] or hashlib.sha256(args.cases.read_bytes()).hexdigest() != digest:
+                ledger.stop('SOURCE_CHANGED')
+                stop_event.set()
+                raise RuntimeError("Candidate sources or dataset changed during evaluation")
+            if args.prompt_bundle and args.prompt_bundle.read_bytes() != bundle_bytes:
+                ledger.stop('SOURCE_CHANGED')
+                stop_event.set()
+                raise RuntimeError('Instruction candidate changed during evaluation')
+            process = subprocess.run([sys.executable, "-m", "scripts.evaluate_dialogue_tasks", "--_worker", str(job_path)],
+                                     cwd=ROOT, env=child_env, capture_output=True, timeout=600)
+            if process.returncode != 0 or not result_path.exists():
+                (output / f"{task.id}-{trial}.worker.log").write_bytes(process.stdout + process.stderr)
+                raise RuntimeError("Evaluation worker failed")
+            row = json.loads(result_path.read_text(encoding="utf-8"))
+            if source_fingerprints() != metadata["source_sha256"]:
+                raise RuntimeError("Candidate sources changed during evaluation")
+        except (subprocess.TimeoutExpired, OSError, ValueError, RuntimeError) as error:
+            row = {"task_id": task.id, "trial": trial, "seed": trial_seed, "status": "ERROR", "error_type": type(error).__name__}
+            stop_reason = 'WORKER_TIMEOUT' if isinstance(error, subprocess.TimeoutExpired) else 'WORKER_FAILED'
+            ledger.stop(stop_reason)
+            stop_event.set()
+        finally:
+            job_path.unlink(missing_ok=True)
+
+        with save_lock:
             rows.append(row)
             if args.stop_on_failure and row['status'] in {'FAIL', 'ERROR'}:
-                ledger.stop('TASK_FAILED' if row['status'] == 'FAIL' else 'TRIAL_ERROR')
+                stop_reason = 'TASK_FAILED' if row['status'] == 'FAIL' else 'TRIAL_ERROR'
+                ledger.stop(stop_reason)
+                stop_event.set()
             consecutive_errors = consecutive_errors + 1 if row['status'] == 'ERROR' else 0
             if consecutive_errors >= 3:
                 ledger.stop('CONSECUTIVE_TRIAL_ERRORS')
+                stop_event.set()
             save()
             print(json.dumps({"task_id": task.id, "trial": trial, "status": row["status"],
                               "turns": len(row.get("turns", []))}), flush=True)
-        if ledger.snapshot()['stop_reason']:
-            break
+        return row
+
+    planned_jobs = [(task, trial) for task in tasks for trial in range(1, args.trials + 1)]
+    if args.concurrency == 1:
+        for task, trial in planned_jobs:
+            if stop_event.is_set() or ledger.snapshot()['stop_reason']:
+                break
+            run_trial_job(task, trial)
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+            futures = []
+            for task, trial in planned_jobs:
+                if stop_event.is_set() or ledger.snapshot()['stop_reason']:
+                    break
+                futures.append(executor.submit(run_trial_job, task, trial))
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception:
+                    pass
+                if stop_event.is_set() or ledger.snapshot()['stop_reason']:
+                    for f in futures:
+                        f.cancel()
+
+    for old_job in output.glob("worker-job-*.json"):
+        old_job.unlink(missing_ok=True)
     (output / "worker-job.json").unlink(missing_ok=True)
+    metadata['stop_reason'] = ledger.snapshot()['stop_reason']
+    metadata["status"] = 'STOPPED' if metadata['stop_reason'] else "COMPLETED"
+    report = save()
+    summary = report["summary"]
+    lines = ["# 银行多轮任务评测", "", f"版本：{revision}；工作区有改动：{dirty}；用户模式：{args.user}",
+             f"数据集 SHA256：{digest}", "", "| 任务 | 通过 / 计划 | pass^1 |", "| --- | --- | --- |"]
+    for task in summary["tasks"]:
+        value = task["pass_hat_k"]["1"]
+        lines.append(f"| {task['id']} | {task['passed']} / {task['planned']} | {value if value is not None else '未完整评测'} |")
+    lines.extend(["", "pass^k 是 k 次全部成功的组合估计；缺失/错误不计成功，错误单列。",
+                  "本工具借鉴 tau2-bench 概念，并非官方银行 domain 或排行榜结果。"])
+    (output / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False))
+    print(json.dumps({'cost': report['cost'], 'status': metadata['status']}, ensure_ascii=False))
+    return 2 if metadata['status'] == 'STOPPED' or not summary["complete"] else 1 if summary["failed"] else 0
     metadata['stop_reason'] = ledger.snapshot()['stop_reason']
     metadata["status"] = 'STOPPED' if metadata['stop_reason'] else "COMPLETED"
     report = save()
