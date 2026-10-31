@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from bank_agent.answer_repair import normalize_feedback, validation_feedback
@@ -315,3 +316,34 @@ def test_self_computed_aggregate_converges_by_citing_the_synthesized_calculation
     assert feedback['action']=='REWRITE' and '不自行写出数值' in feedback['reason']
     assert next(row for row in seen[1]['facts'] if row.get('source','').startswith('calculation://'))['input_evidence_ids']
     assert financial_state()==before
+
+
+def test_rejected_draft_capture_is_opt_in_and_stays_out_of_the_audit(gateway, monkeypatch, tmp_path):  # noqa: F811
+    import security
+    client, _ = gateway
+    sink = tmp_path/'rejected-drafts.jsonl'
+    monkeypatch.setenv('BANK_ANSWER_REJECTION_CAPTURE', str(sink))
+    def draft(payload):
+        evidence = next(row for row in payload['facts'] if row['id'] == 'guide.card.receive')
+        return {'answer': '已冻结关联卡片', 'evidence_ids': [evidence['id']], 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': [evidence['id']], 'reason': '说明冻结影响'}]}
+    model(monkeypatch, [goal('general', [], '银行卡冻结后会有什么影响', act='EXPLAIN') | {'topic': 'card'}], draft=draft)
+    reply = _send(client, '我想先了解一下，银行卡冻结以后会有什么影响？', conversation_id='rejection-capture-file')
+    assert reply['result']['answer_presentation']['mode'] == 'FIELD_FALLBACK'
+    rows = [json.loads(line) for line in sink.read_text(encoding='utf8').splitlines()]
+    assert any(row['code'] == 'UNVERIFIED_OPERATION_CLAIM' and '已冻结关联卡片' in row['answer'] for row in rows)
+    events = [row for row in security.get_audit_logs(limit=1000) if row.get('request_id') == reply['request_id']]
+    assert all('已冻结关联卡片' not in str(row) for row in events)
+
+
+def test_rejection_capture_defaults_to_off(gateway, monkeypatch, tmp_path):  # noqa: F811
+    client, _ = gateway
+    monkeypatch.delenv('BANK_ANSWER_REJECTION_CAPTURE', raising=False)
+    def draft(payload):
+        evidence = next(row for row in payload['facts'] if row['id'] == 'guide.card.receive')
+        return {'answer': '已冻结关联卡片', 'evidence_ids': [evidence['id']], 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': [evidence['id']], 'reason': '说明冻结影响'}]}
+    model(monkeypatch, [goal('general', [], '银行卡冻结后会有什么影响', act='EXPLAIN') | {'topic': 'card'}], draft=draft)
+    reply = _send(client, '我想先了解一下，银行卡冻结以后会有什么影响？', conversation_id='rejection-capture-off')
+    assert reply['result']['answer_presentation']['mode'] == 'FIELD_FALLBACK'
+    assert not list(tmp_path.iterdir())

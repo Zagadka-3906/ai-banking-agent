@@ -328,6 +328,7 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
                "missing_evidence": bool((result.get("data") or {}).get("read_failures"))}
     reason = "DRAFT_UNAVAILABLE"
     for attempt in range(2):
+        answer = None
         try:
             answer = invoke_model(runtime.llm, [runtime.SystemMessage(content=(
                 "你是银行业务解答助手。" + SCOPE_POLICY +
@@ -360,6 +361,8 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
             reason = str(exc) if isinstance(exc, ValueError) and re.fullmatch(r"[A-Z_]{3,80}", str(exc)) else type(exc).__name__
             audit_event("ANSWER_REVIEW", user_id=state.get("user_id"), request_id=state.get("request_id"),
                         decision="FALLBACK", outcome="REJECTED", reason=reason, metadata={"attempt": attempt + 1})
+            from bank_agent.goal_answering import capture_rejection
+            capture_rejection(state, reason, attempt + 1, getattr(answer, "content", None))
             if not isinstance(exc, ValueError):
                 break
     # A failed generation/review never leaks its text. Targeted product sections

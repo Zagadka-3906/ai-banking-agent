@@ -177,6 +177,7 @@ def main(argv=None) -> int:
         parser.error(str(error))
     child_env = {**os.environ, "BANK_EVAL_ISOLATED_PROCESS": "1"}
     child_env['BANK_MODEL_THINKING'] = thinking
+    child_env['BANK_ANSWER_REJECTION_CAPTURE'] = str(output/'rejected-drafts.jsonl')
     for key in ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "BANK_LLM_MODEL", "BANK_REVIEW_MODEL"):
         if values.get(key) is not None:
             child_env[key] = str(values[key])
