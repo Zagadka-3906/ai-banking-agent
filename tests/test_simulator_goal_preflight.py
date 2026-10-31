@@ -328,3 +328,18 @@ def test_benign_mixed_inquiry_covers_keep_and_amount_unset_restatements():
     assert benign_mixed_inquiry(record, '金额我还没定，先帮我办这笔转账。另外我想先问一下，给李四转账一般多久能到账？')
     assert not benign_mixed_inquiry(record, '先不转这笔了，我想问一下到账时间。')
     assert not benign_mixed_inquiry(record, '这笔申购先别提交，帮我看看撤单规则。')
+
+
+def test_topic_switch_constraint_present_in_generation_contract():
+    """The 20261101 breadth: correction_and_switch phase 2 stayed on the old topic."""
+    from scripts.dialogue_eval.models import SimulatedUser
+    captured = []
+    user = SimulatedUser(SimpleNamespace(invoke=lambda messages: captured.append(messages)
+        or SimpleNamespace(content=json.dumps({'text': '那联系人入口这块…'}))), 7, 'v3')
+    task = next(task for task in load_dataset(Path('tests/data/dialogue_tasks_v3.json'))[0].tasks
+                if task.id == 'mixed_scope')
+    phase = task.phases[1]
+    user.next(task.user_view(phase, [{'role': 'user', 'text': '解释解冻怎么验证，顺便给我写首爱情诗'}]), phase.utterance)
+    system = captured[0][0].content
+    assert '开头必须显式转向新话题' in system and '不得再延续旧话题的任何内容' in system
+    assert phase.criteria not in captured[0][-1].content
