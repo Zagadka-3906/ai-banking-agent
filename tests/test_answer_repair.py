@@ -277,3 +277,41 @@ def test_gateway_explains_birthday_dependencies_without_treating_not_completed_a
     assert '预留明确预算' in answer['reply'] and '到期仍需用户再次确认' in answer['reply']
     assert sum('银行业务解答助手' in system for system, _ in calls) == 1
     assert financial_state() == before
+
+
+@pytest.mark.parametrize('code,phrase', [
+    ('UNKNOWN_NUMBER', '不要自行算出该数值'),
+    ('UNANCHORED_MONEY', '不自行汇总'),
+])
+def test_aggregate_repair_feedback_names_the_no_calculation_path(code, phrase):
+    goals=normalize_goals([goal('transactions',['records'],'消费合计与可用余额')],'消费合计与可用余额',{})
+    feedback=validation_feedback(code,goals)
+    assert feedback[0]['action']=='REWRITE' and phrase in feedback[0]['reason']
+    assert 'calculation' in feedback[0]['reason'] and '逐笔记录' in feedback[0]['reason']
+
+
+def test_self_computed_aggregate_converges_by_citing_the_synthesized_calculation(gateway, monkeypatch):  # noqa: F811
+    client,_=gateway
+    seen=[]
+    def draft(payload):
+        seen.append(payload)
+        calc=next((row for row in payload['facts'] if row.get('source','').startswith('calculation://')),None)
+        if calc is None:
+            rows=[row for row in payload['facts'] if row['id'].startswith('read.transactions.')]
+            # Mirror the 20261031 server failure: the draft self-computes the
+            # month total although no calculation evidence exists this round.
+            return {'answer':'本月消费合计为67.8，与可用余额口径不同。','evidence_ids':[row['id'] for row in rows],
+                    'unanswered':[],'coverage':[{'goal_id':'q1','status':'ANSWERED','evidence_ids':[row['id'] for row in rows],'reason':'已给出合计'}]}
+        return {'answer':'本月'+calc['text']+'该合计与可用余额是不同口径，可用余额是当前时点可动用的资金。',
+                'evidence_ids':[calc['id']],'unanswered':[],
+                'coverage':[{'goal_id':'q1','status':'ANSWERED','evidence_ids':[calc['id']],'reason':'引用服务端合计并说明口径'}]}
+    model(monkeypatch,[goal('transactions',['records','amount'],'本月消费合计为什么不等于当前可用余额')],draft=draft)
+    before=financial_state()
+    reply=_send(client,'消费合计为什么不等于当前可用余额？',conversation_id='aggregate-synthesis-cite')
+    assert reply['business_status']=='SUCCEEDED' and len(seen)==2
+    assert reply['result']['answer_presentation']['mode']=='GENERATED_REVIEWED'
+    assert '合计为¥' in reply['reply'] and '¥1,466.70' in reply['reply']
+    feedback=seen[1]['feedback'][0]
+    assert feedback['action']=='REWRITE' and '不自行写出数值' in feedback['reason']
+    assert next(row for row in seen[1]['facts'] if row.get('source','').startswith('calculation://'))['input_evidence_ids']
+    assert financial_state()==before

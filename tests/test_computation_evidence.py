@@ -143,3 +143,29 @@ def test_contact_count_uses_complete_server_count_without_exposing_contact_detai
     results=[row for row in session.facts() if row.get('goal_id')=='q1']
     import main
     assert len(results)==1 and int(results[0]['values']['records'])==len(main.USER_CONTACTS.get('user_zhang',[]))
+
+
+def test_synthesized_aggregate_requires_question_and_complete_collection(gateway):  # noqa: F811
+    from decimal import Decimal
+    request={'user_id':'user_zhang','user_input':'消费合计为什么不等于当前可用余额？','parse_meta':{
+        'goals':normalize_goals([goal('general',[],'消费合计为什么不等于当前可用余额',act='EXPLAIN')],
+                                '消费合计为什么不等于当前可用余额',{})}}
+    session=EvidenceSession(request)
+    assert session.synthesize_aggregate_calculation() is False
+    session.read({'tool':'transactions','fields':['amount']})
+    assert session.synthesize_aggregate_calculation() is True
+    document=session.synthesized[0]
+    assert document['id']=='read.transactions.calculation.q1' and document['source']=='calculation://sum'
+    computed=Decimal(document['values']['amount'])
+    operands=[row for row in session.facts() if row['id'] in document['input_evidence_ids'] and 'values' in row]
+    assert operands and sum((Decimal(row['values']['amount']) for row in operands),Decimal(0))==computed
+    assert all(row['id'] in {row['id'] for row in session.facts()} for row in session.synthesized)
+    assert session.synthesize_aggregate_calculation() is False
+
+
+def test_synthesized_aggregate_ignores_questions_without_a_total(gateway):  # noqa: F811
+    request={'user_id':'user_zhang','user_input':'帮我看下本月流水的类别','parse_meta':{
+        'goals':normalize_goals([goal('transactions',['records'],'本月流水类别')],'本月流水类别',{})}}
+    session=EvidenceSession(request)
+    session.read({'tool':'transactions','fields':['records','amount']})
+    assert session.synthesize_aggregate_calculation() is False

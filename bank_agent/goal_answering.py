@@ -303,6 +303,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 'request.subject仅为本轮询问对象的引用，可称“你所指的对象”，不证明记录存在或状态；resource_policy只说明整个产品适用的规则，不证明某条记录存在。'
                 '金额必须用values中的{{value.N}}并引用对应evidence_id，余额金额标明总余额/可用余额/锁定金额。'
                 '带calculation的目标必须引用服务器calculation证据，不自行算金额；引用计算结果即包含其操作数来源。'
+                '用户提到的合计、差额或数量若本轮没有calculation证据，引用逐笔记录或字段值回答，不自行算出该数值；服务端已算出的合计会以calculation证据出现在facts中，引用它即可给出数值。'
                 '不编造日期、收益、状态、外部服务、UI入口或已执行操作，过期计划日期只称原计划，不推进到下一期。'
                 '每项goals均输出coverage，含goal_id、status、evidence_ids、reason；status为ANSWERED/NEEDS_DATA/NEEDS_CLARIFICATION/NEEDS_CONFIRMATION/UNSUPPORTED/TOOL_FAILED。'
                 '缺少字段时使用NEEDS_DATA并说明具体缺口，系统会尝试补查；只有支持证据充分且正文直接回答时使用ANSWERED。'
@@ -378,8 +379,20 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
             # Preserve a reviewer's specific diagnosis instead of replacing it
             # with an opaque rejection code. Reads are reserved for data gaps.
             if reason != 'GOAL_REVIEW_REJECTED' or not feedback:
-                feedback = ((_record_gap_feedback(goals, session) if reason in {'MISSING_GOAL_RECORD', 'MISSING_SUBJECT_RECORD'} else [])
-                            or validation_feedback(reason, goals, exc.details if isinstance(exc, DraftValidationError) else None))
+                if (reason in {'UNKNOWN_NUMBER', 'UNANCHORED_MONEY'}
+                        and not any(goal.get('calculation') for goal in goals)
+                        and session.synthesize_aggregate_calculation()):
+                    # The draft wanted a total this round never anchored.  The
+                    # server has now computed one from the complete cited
+                    # collection with operand provenance, so the next attempt
+                    # can cite it instead of restating the invented number.
+                    feedback = normalize_feedback([{'goal_id': goal['id'], 'status': 'NEEDS_DATA', 'action': 'REWRITE',
+                                                    'reason': '本轮已由服务端按完整记录算出合计并附全部操作数来源；'
+                                                              '引用该calculation证据作答，不自行写出数值。'}
+                                                   for goal in goals], goals)
+                else:
+                    feedback = ((_record_gap_feedback(goals, session) if reason in {'MISSING_GOAL_RECORD', 'MISSING_SUBJECT_RECORD'} else [])
+                                or validation_feedback(reason, goals, exc.details if isinstance(exc, DraftValidationError) else None))
                 session.repair(feedback)
     if not generated:
         final_text, final_coverage = _fallback(goals, session)

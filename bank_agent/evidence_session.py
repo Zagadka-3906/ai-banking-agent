@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping
 
 from bank_agent import runtime
@@ -40,6 +41,7 @@ class EvidenceSession:
         self.contexts: dict[str, dict[str, Any]] = dict(budget.get('contexts') or {})
         self.transaction_dates = self.contexts.get('transactions')
         self.counter = len(self.documents)
+        self.synthesized: list[dict[str, Any]] = []
 
     def read(self, step: Mapping[str, Any], *, date_context: Mapping[str, Any] | None = None) -> bool:
         from bank_agent.consultation import read_evidence, valid_read_step
@@ -211,6 +213,47 @@ class EvidenceSession:
                 'facts': [row['text'] for row in rows], 'read_failures': len(self.failures),
                 'read_budget': {'maximum': self.maximum, 'completed': self.completed, 'failures': self.failures, 'rounds': self.rounds, 'contexts': self.contexts}}}
 
+    def synthesize_aggregate_calculation(self) -> bool:
+        """Compute one server-side total the draft tried to state unanchored.
+
+        Fires only when the user's own question asks about a total and this
+        round already holds exactly one complete record collection sharing a
+        calculable field: the server sums the typed operand values with full
+        provenance, so the next draft can cite the calculation instead of
+        inventing the number.  No new reads; validation and review unchanged.
+        """
+        if self.synthesized or not re.search(r'合计|总共|加起来|总额', _safe_text(self.state.get('user_input'), 700)):
+            return False
+        from bank_agent.computations import calculation_evidence
+        from bank_planning.requests import CALCULABLE_FIELDS
+        rows = [row for row in self.documents.values()
+                if str(row.get('source', '')).startswith('core://') and not row.get('derived')]
+        by_resource: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_resource.setdefault(str(row['source'])[len('core://'):], []).append(row)
+        for resource in sorted(by_resource):
+            if resource not in RESOURCES:
+                continue
+            candidates = by_resource[resource]
+            summaries = [row for row in candidates if 'collection_size' in row and row.get('complete') is True]
+            if len(summaries) != 1:
+                continue
+            operands = [row for row in candidates if row.get('entity_id')]
+            if not operands or len(operands) != summaries[0]['collection_size']:
+                continue
+            shared = {field for field in CALCULABLE_FIELDS if all(field in row.get('values', {}) for row in operands)}
+            if len(shared) != 1:
+                continue
+            adhoc: dict[str, Any] = {'id': self.goals[0]['id'] if self.goals else 'aggregate', 'act': 'QUERY', 'resource': resource,
+                     'question': '', 'fields': [], 'subjects': [], 'topic': '', 'requires_record': True,
+                     'calculation': {'operation': 'sum', 'field': next(iter(shared))}}
+            for document in calculation_evidence([adhoc], list(self.documents.values())):
+                self.synthesized.append(document)
+                audit_event('ANSWER_AGGREGATE_SYNTHESIS', user_id=self.state.get('user_id'), request_id=self.state.get('request_id'),
+                            decision='ALLOW', outcome='COMPUTED', metadata={'id': document['id'], 'operands': len(operands)})
+                return True
+        return False
+
     def facts(self) -> list[dict[str, Any]]:
         # Preserve requested records and material limitations before optional
         # adjacent rules, rather than dropping later domains at the size cap.
@@ -219,9 +262,10 @@ class EvidenceSession:
         # Give both the writer and reviewer a citable, server-owned account of
         # the failure without exposing exception text or asserting absence.
         outcomes = read_failure_documents(self.failures)
-        documents = [*outcomes, *[row for row in self.documents.values()
-                                  if not row.get('source', '').startswith('calculation://')
-                                  and not row['id'].startswith('outcome.')]]
+        documents = [*outcomes, *self.synthesized,
+                     *[row for row in self.documents.values()
+                       if not row.get('source', '').startswith('calculation://')
+                       and not row['id'].startswith('outcome.')]]
         documents += calculation_evidence(self.goals, documents)
         return sorted(documents, key=lambda row: (
             0 if row.get('required') or row.get('scope') == 'read_outcome'
