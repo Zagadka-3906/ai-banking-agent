@@ -169,3 +169,23 @@ def test_synthesized_aggregate_ignores_questions_without_a_total(gateway):  # no
     session=EvidenceSession(request)
     session.read({'tool':'transactions','fields':['records','amount']})
     assert session.synthesize_aggregate_calculation() is False
+
+
+def test_amount_less_complete_collection_requests_a_read_then_synthesizes(gateway):  # noqa: F811
+    """The 20261031 batch: the phase-2 read projected no amount column."""
+    request = {'user_id': 'user_zhang', 'user_input': '消费合计为什么不等于当前可用余额？', 'parse_meta': {
+        'goals': normalize_goals([goal('general', [], '消费合计为什么不等于当前可用余额', act='EXPLAIN')],
+                                 '消费合计为什么不等于当前可用余额', {})}}
+    session = EvidenceSession(request)
+    session.read({'tool': 'transactions', 'fields': ['category']})
+    operands = [row for row in session.facts()
+                if row.get('source') == 'core://transactions' and row.get('entity_id')]
+    assert operands and all('amount' not in row.get('values', {}) for row in operands)
+    assert session.aggregate_collection_needs_amount_read() is True
+    session.read({'tool': 'transactions', 'fields': ['records', 'amount']})
+    assert session.synthesize_aggregate_calculation() is True
+    document = session.synthesized[0]
+    from decimal import Decimal
+    computed = Decimal(document['values']['amount'])
+    inputs = [row for row in session.facts() if row['id'] in document['input_evidence_ids'] and 'values' in row]
+    assert inputs and sum((Decimal(row['values']['amount']) for row in inputs), Decimal(0)) == computed

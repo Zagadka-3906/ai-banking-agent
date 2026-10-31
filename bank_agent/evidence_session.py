@@ -254,6 +254,33 @@ class EvidenceSession:
                 return True
         return False
 
+    def aggregate_collection_needs_amount_read(self) -> bool:
+        """A total was asked about; the complete collection is read but the
+        shared calculable field was not projected, so the values needed for
+        the server-side synthesis are missing until a read adds them."""
+        if self.synthesized or not re.search(r'合计|总共|加起来|总额', _safe_text(self.state.get('user_input'), 700)):
+            return False
+        from bank_planning.requests import CALCULABLE_FIELDS
+        rows = [row for row in self.documents.values()
+                if str(row.get('source', '')).startswith('core://') and not row.get('derived')]
+        by_resource: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_resource.setdefault(str(row['source'])[len('core://'):], []).append(row)
+        for resource in sorted(by_resource):
+            if resource not in RESOURCES:
+                continue
+            candidates = by_resource[resource]
+            summaries = [row for row in candidates if 'collection_size' in row and row.get('complete') is True]
+            if len(summaries) != 1:
+                continue
+            operands = [row for row in candidates if row.get('entity_id')]
+            if not operands or len(operands) != summaries[0]['collection_size']:
+                continue
+            shared = {field for field in CALCULABLE_FIELDS if all(field in row.get('values', {}) for row in operands)}
+            if not shared:
+                return True
+        return False
+
     def facts(self) -> list[dict[str, Any]]:
         # Preserve requested records and material limitations before optional
         # adjacent rules, rather than dropping later domains at the size cap.

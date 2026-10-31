@@ -396,6 +396,16 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                                                     'reason': '本轮已由服务端按完整记录算出合计并附全部操作数来源；'
                                                               '引用该calculation证据作答，不自行写出数值。'}
                                                    for goal in goals], goals)
+                elif (reason in {'UNKNOWN_NUMBER', 'UNANCHORED_MONEY'}
+                        and not any(goal.get('calculation') for goal in goals)
+                        and session.aggregate_collection_needs_amount_read()):
+                    # The complete collection is read but the amount column was
+                    # not projected; one bounded read adds it, then the server
+                    # can compute the total on the next rejection.
+                    feedback = normalize_feedback([{'goal_id': goal['id'], 'status': 'NEEDS_DATA', 'action': 'READ',
+                                                    'reason': '本轮问及合计但流水读取未含金额字段；补读金额后再计算合计，'
+                                                              '不自行写出数值。'}
+                                                   for goal in goals], goals)
                 else:
                     feedback = ((_record_gap_feedback(goals, session) if reason in {'MISSING_GOAL_RECORD', 'MISSING_SUBJECT_RECORD'} else [])
                                 or validation_feedback(reason, goals, exc.details if isinstance(exc, DraftValidationError) else None))
