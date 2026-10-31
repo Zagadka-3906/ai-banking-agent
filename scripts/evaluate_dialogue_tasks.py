@@ -37,6 +37,8 @@ def source_fingerprints() -> dict[str, str]:
 
 def isolated_settings(folder: Path) -> dict[str, str]:
     return {"PYTHON_DOTENV_DISABLED": "1", "BANK_EVAL_ISOLATED_PROCESS": "1",
+            "NO_PROXY": os.getenv("NO_PROXY", "api.deepseek.com,14.29.51.120,14.116.174.67"),
+            "no_proxy": os.getenv("no_proxy", "api.deepseek.com,14.29.51.120,14.116.174.67"),
             "BANK_AUTH_SECRET": secrets.token_hex(32), "BANK_TOKEN_SECRET": "",
             "BANK_REQUIRE_SESSION": "1", "BANK_REQUIRE_CLIENT_AUTH": "0", "BANK_DEMO_MODE": "1",
             "BANK_LOGIN_REQUIRE_OTP": "0", "BANK_MFA_DYNAMIC_OTP": "1", "BANK_MFA_OTP": "",
