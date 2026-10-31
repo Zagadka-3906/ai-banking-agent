@@ -321,8 +321,7 @@ def _withdrawal_past_assertion(clause: str) -> bool:
 def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool:
     """A restrictive execution constraint alone is not a cancellation command."""
     source = business_text(text)
-    if (_WITHDRAW_QUESTION.search(source)
-            or re.search(r'假设|如果|若是|要是|已(?:经)?(?:完成|执行|扣款|提交|成交)|[“”"‘’？?]', source)):
+    if re.search(r'假设|如果|若是|要是|已(?:经)?(?:完成|执行|扣款|提交|成交)|[“”"‘’？?]', source):
         return False
     # Scope a past marker to its predicate: understanding banking rules does
     # not execute that business. Completed actions and cancellations remain
@@ -332,6 +331,26 @@ def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool
                 and re.search(r'申购|赎回|买|卖|转账|汇款|付款|支付|扣|冻结|解冻|挂失|解挂|预约|锁定|调额|限额|办理|办好|执行|提交|成交|取消|撤销|放弃|停止', clause)):
             return False
     if _WITHDRAW_NEGATED.search(source):
+        return False
+    # Questions are judged per clause: a question about cancelling ("取消这个
+    # 申购意向会怎样") never withdraws, but a question earlier in the message
+    # ("之前只是问能不能撤单") must not poison a current stop in another
+    # clause.  Each clean clause goes through the SAME validators as before
+    # (span guards, saved-object, pending/current reference), plus the
+    # negated-continuation shape ("这笔申购我不办了") that no single-clause
+    # command pattern covered.
+    clauses = [part.strip() for part in re.split(r'[，,。；;!?！？]', source) if part.strip()]
+    for part in clauses:
+        if (_WITHDRAW_QUESTION.search(part) or _withdrawal_past_assertion(part)
+                or re.search(r'取消了|撤销了', part)
+                or re.search(r'明天|后天|下周|稍后|以后|等会|到时候|下次|客服|经理|听说|据说', part)):
+            continue
+        if pending_withdrawal_clause(part, current_discussion=True):
+            return True
+        if (re.search(r'申购|赎回|转账|汇款|付款|支付|办理|测评|预约|锁定|调额|限额|冻结|解冻|挂失|解挂', part)
+                and re.search(r'不办|不再|不想|不打算|不准备|不继续|不做|不进行', part)):
+            return True
+    if any(_WITHDRAW_QUESTION.search(part) for part in clauses):
         return False
     clause = pending_withdrawal_clause(source, current_discussion=True)
     if clause:

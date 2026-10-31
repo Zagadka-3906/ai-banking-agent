@@ -440,3 +440,26 @@ def test_status_gloss_anchors_the_chinese_form_of_a_cited_enum(monkeypatch):
     other = [{'id': 'guide.test', 'text': '这里只说明业务规则，没有执行操作。'}]
     with pytest.raises(ValueError, match='UNVERIFIED_OPERATION_CLAIM'):
         _validate_draft({'answer': '该卡已冻结。', 'evidence_ids': ['guide.test'], 'unanswered': []}, other, {})
+
+
+import pytest
+from intent_language import withdrawal_statement
+@pytest.mark.parametrize('text,expected', [
+    ('零星宝的申购我不办了，先取消吧。之前只是问能不能撤单，现在决定不继续了。', True),
+    ('我原本想申购零星宝，现在决定先取消，不再继续这笔申购了。', True),
+    ('先不转了，取消吧。', True),
+    ('这笔预约转账帮我取消吧。', True),
+    ('取消这个申购意向会怎样', False),
+    ('那我决定取消这次零星宝申购会怎样', False),
+    ('转账能取消吗？', False),
+    ('怎么取消转账', False),
+    ('不要取消这笔转账。', False),
+    ('我之前已经取消了这笔转账。', False),
+    ('零星宝的申购我明天决定先取消不再办理了', False),
+    ('客服说现在决定先取消不再办理了', False),
+    ('申购零星宝需要什么条件？', False),
+    ('零星宝和恒泉稳利都想申购，现在帮我取消吧。', True),
+    ('如果零星宝申购失败，帮我取消吧。', False),
+])
+def test_withdrawal_statement_judged_per_clause(text, expected):
+    assert withdrawal_statement(text, pending_discussion=True) is expected
