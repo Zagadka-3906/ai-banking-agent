@@ -425,3 +425,18 @@ def test_third_draft_converges_after_step_numbers_and_literal_money(gateway, mon
     # The documented budget is three drafts on this path as well; the first two
     # rejections above must not end the loop before the third try.
     assert len(seen) == 3
+
+
+def test_status_gloss_anchors_the_chinese_form_of_a_cited_enum(monkeypatch):
+    """The 20261031 breadth drafts said “FROZEN（已冻结）” and were rejected."""
+    from bank_agent.answering import _validate_draft
+    facts = [{'id': 'read.cards.1', 'text': 'CARD-001 交易渠道：网上支付=开启；登记状态：FROZEN'}]
+    answer = '该卡登记状态为 FROZEN（已冻结）。渠道配置是交易场景开关，冻结是卡片登记状态。'
+    text, ids = _validate_draft({'answer': answer, 'evidence_ids': ['read.cards.1'], 'unanswered': []}, facts, {})
+    assert '已冻结' in text
+    # The same state claim is anchored whenever the cited row carries the enum.
+    text, ids = _validate_draft({'answer': '您的卡片已冻结。', 'evidence_ids': ['read.cards.1'], 'unanswered': []}, facts, {})
+    assert '已冻结' in text
+    other = [{'id': 'guide.test', 'text': '这里只说明业务规则，没有执行操作。'}]
+    with pytest.raises(ValueError, match='UNVERIFIED_OPERATION_CLAIM'):
+        _validate_draft({'answer': '该卡已冻结。', 'evidence_ids': ['guide.test'], 'unanswered': []}, other, {})

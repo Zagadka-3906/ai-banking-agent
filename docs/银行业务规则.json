@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-31.9",
-  "rules_version": "b76662b510ff5f49d64a95b3c0240ce6996951bf0bc8c5186335e29039509c1e",
+  "rules_version": "844f8164d87f6a2dfe31bcf40fc1e7f954407a95a7642d46852acd2b1a6478e8",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "622de2f484f8b6095e16002ac1aa3fb873ea0971533cfed7afd1ef7ffcd04d4f",
-    "bank_agent/answering.py": "4650333d856edb31a41dfc7c5bdb59ecf0f81d1bee924d9b4e772dff9c90b25d",
+    "bank_agent/answering.py": "5c804676eafa1b4bee1b1e8f09c8d4d6f4565f4f146d8163cd30d23ff9bd7752",
     "bank_agent/computations.py": "9251059f7b787ce7aebe7018da3934973a9660d87beaf26c932c6c81f015c8ab",
     "bank_agent/consultation.py": "bf060ecfe2f4987b7febae22ebe43742fe7ea87ce3b798280bd6cd32fbc27f86",
     "bank_agent/conversation_approvals.py": "d165fae834bdccffb449d3546d91d24e744ab84afe1b682512279db8bd58ce89",

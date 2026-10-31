@@ -99,6 +99,10 @@ _MONEY = re.compile(r"[¥￥]\s*-?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元
 _NUMBER = re.compile(r"\d+(?:[,.]\d+)*")
 _IDENTIFIER = re.compile(r"(?i)(?:TXN?[A-Z0-9-]{3,}|CASE-[A-Z0-9-]+|CARD-[A-Z0-9-]+|TSK[A-Z0-9]{10,}|[A-Z]{2,8}-?\d{3,}[A-Z0-9]*)")
 _WRITE_CLAIM = re.compile(r"(?:已|已经|成功)(?:为您|帮您|替您|完成了|完成)?(?:冻结|解冻|挂失|转账|退款|扣款|调额|撤销|下单|创建.{0,6}工单)")
+# Card states are stored as English enums; the Chinese completion form of a
+# STATE claim ("已冻结") is a translation of the status the cited row carries,
+# not an invented operation.  Operation claims (转账/扣款/下单) stay lexical.
+_STATUS_GLOSS = {"已冻结": ("FROZEN",), "已解冻": ("ACTIVE",), "已挂失": ("LOST",)}
 
 
 def _validate_projection_absence(text: str, facts: list[dict[str, Any]]) -> None:
@@ -243,8 +247,10 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
         # It cannot exempt another assertion later in the same answer.
         denial = bool(re.search(r'(?:不代表|不意味着|不等于|并非|不是|不能据此认定|不能视为|不能当作|不能认为|不能算作)\s*$', clause_prefix))
         if not conditional and not denial and match.group() not in evidence:
-            raise DraftValidationError("UNVERIFIED_OPERATION_CLAIM",
-                fragment=clause_prefix[-60:] + rendered[match.start():match.end() + 60])
+            gloss = _STATUS_GLOSS.get(match.group())
+            if not (gloss and any(value in evidence for value in gloss)):
+                raise DraftValidationError("UNVERIFIED_OPERATION_CLAIM",
+                    fragment=clause_prefix[-60:] + rendered[match.start():match.end() + 60])
     _validate_projection_absence(rendered, facts)
     # Required complete record sets and material limitations stay server-owned.
     for item in facts:
