@@ -327,7 +327,10 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
                "questions": (state.get("parse_meta") or {}).get("questions") or [],
                "missing_evidence": bool((result.get("data") or {}).get("read_failures"))}
     reason = "DRAFT_UNAVAILABLE"
-    for attempt in range(2):
+    # The documented budget is three answer drafts (对话可靠性改造: 初读、失败
+    # 重试和补查共享……三轮规划、三次回答草稿); the non-goal path was running
+    # two, so a converged third draft never happened.
+    for attempt in range(3):
         answer = None
         try:
             answer = invoke_model(runtime.llm, [runtime.SystemMessage(content=(

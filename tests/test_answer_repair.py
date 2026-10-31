@@ -404,3 +404,24 @@ def test_negated_continuation_of_the_business_is_a_withdrawal_statement():
     assert not withdrawal_statement('不要取消这笔转账。', pending_discussion=True)
     assert not withdrawal_statement('申购零星宝需要什么条件？', pending_discussion=True)
     assert not withdrawal_statement('我之前已经取消了这笔转账。', pending_discussion=True)
+
+
+def test_third_draft_converges_after_step_numbers_and_literal_money(gateway, monkeypatch):  # noqa: F811
+    """Replay of the 20261031 batch: draft 1 used numbered steps, draft 2 a literal yuan."""
+    client, _ = gateway
+    seen = []
+    def draft(payload):
+        seen.append(payload)
+        row = next(row for row in payload['facts'] if row['id'].startswith('read.balance.'))
+        if len(seen) == 1:
+            answer = '办理前需要两件事：' + chr(10) + '1. 确定金额；' + chr(10) + '2. 完成核对。'
+        elif len(seen) == 2:
+            answer = '办理前需要确认金额与核对；当前可用余额为15,000元。'
+        else:
+            answer = '当前可用余额为' + row['text']
+        return {'answer': answer, 'evidence_ids': [row['id']], 'unanswered': []}
+    model(monkeypatch, [goal('balance', ['available_balance'], '当前可用余额')], intent='BALANCE', draft=draft)
+    _send(client, '我现在账户里还有多少钱？', conversation_id='third-draft-converges')
+    # The documented budget is three drafts on this path as well; the first two
+    # rejections above must not end the loop before the third try.
+    assert len(seen) == 3
