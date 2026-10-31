@@ -20,6 +20,18 @@ def test_payee_acknowledgement_with_different_subsequent_payee():
     assert target_from_text(text) == "王五"
 
 
+def test_payee_emphasis_adverb_extracts_clean_name():
+    from bank_agent.parsing import local_parse
+    text = "我想预约一笔转账，收款人就是李四，但日期和金额还没定，麻烦先帮我办预约转账。"
+    names = recipient_references(text)
+    assert names == {"李四"}
+    assert ambiguous_target(text) is False
+    assert target_from_text(text) == "李四"
+    parsed = local_parse(text)
+    assert parsed.get("target") == "李四"
+    assert parsed.get("intent") == "SCHEDULED_TRANSFER"
+
+
 def test_possessive_phrase_binds_to_allowed_payee(monkeypatch):
     from bank_agent.parsing import local_parse
     from bank_agent.entities import bind_payee
