@@ -488,6 +488,7 @@ def model_parse(text: str) -> dict[str, Any]:
         '{"act":"QUERY或EXPLAIN或ACTION或UNSUPPORTED或UNCLEAR","resource":"下列资源名",'
         '"question":"本轮具体问题","fields":["所问字段"],"subject":"原文或已核验实体名称；无对象则null","topic":"知识主题"}。'
         '比较多个对象用subjects数组分别填写对象，不把几个人或产品拼成一个subject。'
+        'subject是姓名或编号本身，不含“联系人”“收款人”等类别词；原文的类别词留在其他描述里，不并入subject。'
         '查询整个集合时subject为null，不把“在售产品”“我的持仓”“我的卡片”等集合描述当作具体实体名称。'
         '金额差额、合计和数量也是独立目标，resource指向原始记录而非general；'
         '必须添加calculation={"operation":"difference或sum或count","field":"实际字段名"}。'

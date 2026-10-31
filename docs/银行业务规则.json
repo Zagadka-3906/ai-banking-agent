@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-31.9",
-  "rules_version": "f696716038ecd20a596cf7cb7b1b1cb891a594b9bd16ae82ad521500855ff87e",
+  "rules_version": "be886662f56b6efda7c9cbca70a6c52b0c9b0a8975ac29e440aa88d9f247353d",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "622de2f484f8b6095e16002ac1aa3fb873ea0971533cfed7afd1ef7ffcd04d4f",
@@ -12,7 +12,7 @@
     "bank_agent/dialogue.py": "27899dd3bd9573361d92e1a4067935e9f32f3c2b87b4875bbae12e56686c4b21",
     "bank_agent/dialogue_commands.py": "09b0dbc883d0cf20142e9feee1b631e653508e4df4d9301d59ab95522de8c28f",
     "bank_agent/dialogue_state.py": "83b0304940a8d0422020c881a67b8e2b286644d42430c6f4219c414d84b79910",
-    "bank_agent/entities.py": "e8fe0789e1fda402d2a8c8a6b81b3791517fd9ffd540f7dcbb6ea8dc8b4bcadc",
+    "bank_agent/entities.py": "b9e62364e02d189a24bbc8c7d9169d188828d5a5b9ca21d2da09773a4b6b57ec",
     "bank_agent/evidence.py": "896a5487a223e9f450aaf7070622dc8b429149fb4184f14ab2a77bb44460ab11",
     "bank_agent/evidence_session.py": "1da06baaad314f0628ca0a2ca347be0d579f810039ef307acdd3c8050a6f590d",
     "bank_agent/extraction.py": "2919776f5e0dde95e80f6dbe1f9cc1161c2e47e2e1956633d0be4928beca377f",
@@ -21,7 +21,7 @@
     "bank_agent/nodes/executor.py": "d67e70f01a81e3a18c373f92d74204ea96483e97653bb63ba32aeb3b1bcbc5d4",
     "bank_agent/nodes/intent.py": "b7d53c79fbf68c18020bbc4df6abb3b316ee7e0e104e422b46629d87e128a246",
     "bank_agent/nodes/responder.py": "094d456b286c13ebbf582ab706d9974d60ecdd17d84a528c7080be1a6551a9a2",
-    "bank_agent/parsing.py": "c0322bcec44951e16090bd21e0abf6c49f4f2f51b2be325ff5551efdbbecf8e4",
+    "bank_agent/parsing.py": "4f17fb0f1939a64fd886ab969a5b79ebc49f8d5c664c0025aa32dac7e2e7d1ef",
     "bank_agent/pending_questions.py": "8fcacd7a0468794092f7f9afdf2f331699865d3f1aab82cbb119491c52d8f36f",
     "bank_agent/prompt_preferences.py": "abe306c5a36b06818aebd51fa75873226415dd54996877a44cccccc915f156ce",
     "bank_agent/query_focus.py": "6cce1c2235db1a922ce6368df1fdfc7194f60112439c0bca2a279b1eb4f6a5f0",

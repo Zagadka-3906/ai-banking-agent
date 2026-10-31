@@ -267,3 +267,23 @@ def test_drifted_resume_message_with_stacked_suffix_creates_the_proposal(gateway
     resumed = _send(client, '我想恢复给李四的那笔300元转账，继续办理。', conversation_id=cid)
     assert resumed['approval'] and all(value in resumed['approval']['summary'] for value in ('李四', '300'))
     assert financial_state()[:4] == before[:4]
+
+
+def test_category_word_prefix_on_the_payee_is_discourse_glue(monkeypatch):
+    """The 20261031 breadth failed to bind “联系人李四”."""
+    responses(monkeypatch, [], [{'display_name': '李四', 'contact_id': 'recipient-current'},
+                                {'display_name': '王美', 'contact_id': 'spouse'}])
+    text = '我想预约一笔转账给联系人李四，不过日期和金额还没定，先帮我办这个预约转账吧。'
+    parsed = {'intent': 'SCHEDULED_TRANSFER', 'target': '联系人李四', 'amount': None, 'slots': {},
+              'parse_meta': {'dialogue_act': 'ACTION'}}
+    bound = bind_payee({'user_id': 'user_zhang'}, parsed, text)
+    # The stripped clean name flows to the normal downstream identity check.
+    assert bound['target'] == '李四'
+
+
+def test_category_prefix_with_an_unknown_name_still_refuses_to_guess(monkeypatch):
+    responses(monkeypatch, [], [{'display_name': '王美', 'contact_id': 'spouse'}])
+    parsed = {'intent': 'SCHEDULED_TRANSFER', 'target': '联系人王五', 'amount': None, 'slots': {},
+              'parse_meta': {'dialogue_act': 'ACTION'}}
+    bound = bind_payee({'user_id': 'user_zhang'}, parsed, '我想预约一笔转账给联系人王五。')
+    assert bound['target'] == '王五' and bound['parse_meta'].get('target_binding') is None

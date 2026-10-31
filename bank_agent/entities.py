@@ -60,6 +60,14 @@ def _bind_frame_references(parsed: dict[str, Any], source: str, rows: list[dict[
 def bind_payee(state: Mapping[str, Any], parsed: dict[str, Any], text: str) -> dict[str, Any]:
     raw = parsed.get('target')
     source = business_text(text)
+    # "给联系人李四转账" prefixes the category word onto the name; the model
+    # sometimes copies it into the target.  The category word is discourse
+    # glue, never part of an identity, so strip it against the current source.
+    if isinstance(raw, str):
+        category = re.fullmatch(r'(?:联系人|收款人)(.{1,24})', raw)
+        if category and category.group(1) in source:
+            raw = category.group(1)
+            parsed = {**parsed, 'target': raw}
     frame_ambiguity = (parsed.get('slots') or {}).get('target_ambiguous') is True and any(
         re.search(_PAYEE_FRAME_SUFFIX + '$', value) for value in _frame_references(source).values())
     reference = isinstance(raw, str) and bool(re.fullmatch(r'(?:他|她|同一位|同一个收款人)(?:办|办理|安排)(?:一笔)?', raw))
