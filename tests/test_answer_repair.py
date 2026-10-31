@@ -361,3 +361,36 @@ def test_parse_rejection_capture_records_invalid_goals(gateway, monkeypatch, tmp
     assert reply['business_status'] == 'FAILED'
     rows = [json_module.loads(line) for line in sink.read_text(encoding='utf8').splitlines()]
     assert any(row['code'] == 'INVALID_REQUEST_GOALS' and row.get('detail') for row in rows)
+
+
+def test_negated_completion_predicates_with_extended_denials_pass_validation():
+    """The captured 20261031 drafts all said “不能视为已解冻” and were rejected."""
+    from bank_agent.answering import _validate_draft
+    facts = [{'id': 'guide.test', 'text': '这里只说明业务规则，没有执行操作。解冻须另行提出并完成确认和强验证。'}]
+    answer = ('冻结不会自动解除：需要另行提出解冻，并完成确认和强验证；'
+              '未收到核心成功回执前，不能视为已解冻。以上是演示产品的规则说明，不代表你名下某张卡当前的实际状态。')
+    text, ids = _validate_draft({'answer': answer, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+    assert '不能视为已解冻' in text and ids == ['guide.test']
+    with pytest.raises(ValueError, match='UNVERIFIED_OPERATION_CLAIM'):
+        _validate_draft({'answer': '本卡片已解冻。', 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+
+
+def test_captured_freeze_impact_draft_now_passes_in_one_attempt(gateway, monkeypatch):  # noqa: F811
+    client, _ = gateway
+    captured = ('本演示没有“冻结整个账户”的功能，冻结针对的是单张卡片；你说的“账户冻结”可按卡片冻结来理解。\n\n'
+                '1. 对正常使用的影响：被冻结的卡片会被限制付款，该卡不能用于支付类交易。\n'
+                '2. 对资金进出的影响：冻结只限制这张卡付款，账户本身仍可接收转账，进账不受影响。\n'
+                '3. 冻结不会自动解除：需要另行提出解冻，并完成确认和强验证；未收到核心成功回执前，不能视为已解冻。\n'
+                '4. 冻结与挂失是不同状态：挂失卡须先解除挂失，单纯解冻不能解除挂失。\n\n'
+                '以上是演示产品的规则说明，不代表你名下某张卡当前的实际状态；实际状态需以本人卡片查询结果为准。')
+    calls = []
+    def draft(payload):
+        calls.append(payload)
+        evidence = next(row for row in payload['facts'] if row['id'] == 'guide.card.receive')
+        return {'answer': captured, 'evidence_ids': [evidence['id']], 'unanswered': [], 'coverage': [
+            {'goal_id': 'q1', 'status': 'ANSWERED', 'evidence_ids': [evidence['id']], 'reason': '说明冻结影响'}]}
+    model(monkeypatch, [goal('general', [], '账户冻结对使用和资金的影响', act='EXPLAIN') | {'topic': 'card'}], draft=draft)
+    reply = _send(client, '我想确认一下，如果账户被冻结，会对我正常使用和资金进出产生哪些影响？',
+                  conversation_id='captured-freeze-impact-pass')
+    assert reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED' and len(calls) == 1
+    assert '不能视为已解冻' in reply['reply']
