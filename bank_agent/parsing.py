@@ -668,7 +668,10 @@ def model_parse(text: str) -> dict[str, Any]:
                             raise ValueError('REPAIR_CANNOT_CHANGE_READ_SCOPE')
                 parsed = {**parsed, 'goals': repaired_goals}
                 goal_repair = 'REPAIRED'
-            except Exception:
+            except Exception as goal_error:
+                from bank_agent.diagnostics import capture_rejection
+                capture_rejection({'request_id': local.get('parse_meta', {}).get('request_id')}, 'INVALID_REQUEST_GOALS', 1,
+                                  json.dumps(parsed.get('goals'), ensure_ascii=False), detail=type(goal_error).__name__)
                 local['parse_meta'] = {**(local.get('parse_meta') or {}), 'model_failure': 'MODEL_PROTOCOL_INVALID',
                                        'goal_repair': 'FAILED', 'goal_error': 'INVALID_REQUEST_GOALS'}
                 return local
@@ -859,5 +862,8 @@ def model_parse(text: str) -> dict[str, Any]:
         # to a fabricated success response.
         reason = ('MODEL_CAPACITY_EXHAUSTED' if isinstance(error, TimeoutError) and str(error) == 'MODEL_CAPACITY_EXHAUSTED'
                   else 'MODEL_TIMEOUT' if isinstance(error, TimeoutError) else 'MODEL_UNAVAILABLE')
+        from bank_agent.diagnostics import capture_rejection
+        capture_rejection({'request_id': local.get('parse_meta', {}).get('request_id')}, reason, 1, None,
+                          detail=type(error).__name__)
         local['parse_meta'] = {**(local.get('parse_meta') or {}), 'model_failure': reason}
         return local

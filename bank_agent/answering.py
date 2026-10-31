@@ -361,7 +361,7 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
             reason = str(exc) if isinstance(exc, ValueError) and re.fullmatch(r"[A-Z_]{3,80}", str(exc)) else type(exc).__name__
             audit_event("ANSWER_REVIEW", user_id=state.get("user_id"), request_id=state.get("request_id"),
                         decision="FALLBACK", outcome="REJECTED", reason=reason, metadata={"attempt": attempt + 1})
-            from bank_agent.goal_answering import capture_rejection
+            from bank_agent.diagnostics import capture_rejection
             capture_rejection(state, reason, attempt + 1, getattr(answer, "content", None))
             if not isinstance(exc, ValueError):
                 break

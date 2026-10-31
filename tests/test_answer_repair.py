@@ -347,3 +347,17 @@ def test_rejection_capture_defaults_to_off(gateway, monkeypatch, tmp_path):  # n
     reply = _send(client, '我想先了解一下，银行卡冻结以后会有什么影响？', conversation_id='rejection-capture-off')
     assert reply['result']['answer_presentation']['mode'] == 'FIELD_FALLBACK'
     assert not list(tmp_path.iterdir())
+
+
+def test_parse_rejection_capture_records_invalid_goals(gateway, monkeypatch, tmp_path):  # noqa: F811
+    import json as json_module
+    client, _ = gateway
+    sink = tmp_path/'parse-rejections.jsonl'
+    monkeypatch.setenv('BANK_ANSWER_REJECTION_CAPTURE', str(sink))
+    # A structurally invalid goals payload fails normalization and the repair
+    # round; the turn must be refused and the invalid shape captured on file.
+    model(monkeypatch, [{'bad': True}], draft=lambda payload: pytest.fail('No answer stage may run after a protocol failure'))
+    reply = _send(client, '这两只产品的起购金额分别是多少，哪个门槛更低？', conversation_id='parse-capture-invalid')
+    assert reply['business_status'] == 'FAILED'
+    rows = [json_module.loads(line) for line in sink.read_text(encoding='utf8').splitlines()]
+    assert any(row['code'] == 'INVALID_REQUEST_GOALS' and row.get('detail') for row in rows)

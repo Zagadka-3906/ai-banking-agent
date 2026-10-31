@@ -228,19 +228,6 @@ def _fallback(goals: list[dict[str, Any]], session: EvidenceSession) -> tuple[st
     return '\n\n'.join(lines), coverage
 
 
-def capture_rejection(state: Mapping[str, Any], code: str, attempt: int, answer: Any) -> None:
-    """Opt-in rejection capture; the audit and the trial record stay text-free."""
-    sink = os.getenv('BANK_ANSWER_REJECTION_CAPTURE')
-    if not sink:
-        return
-    try:
-        with open(sink, 'a', encoding='utf8') as log:
-            log.write(json.dumps({'request_id': state.get('request_id'), 'code': code, 'attempt': attempt,
-                                  'answer': str(answer or '')[:1200]}, ensure_ascii=False) + chr(10))
-    except OSError:
-        pass
-
-
 def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[str, Any]:
     from bank_agent.answering import _anchored_facts, _validate_draft, answer_facts, cache_ordered_facts, DraftValidationError
     goals = request_goals(state)
@@ -393,6 +380,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
             # The audit trail must never carry rejected model text, and the
             # trial record only exposes codes; a bounded opt-in sink keeps the
             # exact wording available to the evaluation harness for diagnosis.
+            from bank_agent.diagnostics import capture_rejection
             capture_rejection(state, reason, attempt + 1, (plan if isinstance(plan, dict) else {}).get('answer'))
             # Preserve a reviewer's specific diagnosis instead of replacing it
             # with an opaque rejection code. Reads are reserved for data gaps.
