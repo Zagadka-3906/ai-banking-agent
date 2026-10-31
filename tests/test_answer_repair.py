@@ -394,3 +394,13 @@ def test_captured_freeze_impact_draft_now_passes_in_one_attempt(gateway, monkeyp
                   conversation_id='captured-freeze-impact-pass')
     assert reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED' and len(calls) == 1
     assert '不能视为已解冻' in reply['reply']
+
+
+def test_negated_continuation_of_the_business_is_a_withdrawal_statement():
+    from intent_language import withdrawal_statement
+    assert withdrawal_statement('我原本想申购零星宝，现在决定先取消，不再继续这笔申购了。', pending_discussion=True)
+    assert withdrawal_statement('不再继续这笔申购了', pending_discussion=True)
+    assert withdrawal_statement('先不转了，取消吧。', pending_discussion=True)
+    assert not withdrawal_statement('不要取消这笔转账。', pending_discussion=True)
+    assert not withdrawal_statement('申购零星宝需要什么条件？', pending_discussion=True)
+    assert not withdrawal_statement('我之前已经取消了这笔转账。', pending_discussion=True)

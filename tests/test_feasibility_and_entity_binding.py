@@ -287,3 +287,19 @@ def test_category_prefix_with_an_unknown_name_still_refuses_to_guess(monkeypatch
               'parse_meta': {'dialogue_act': 'ACTION'}}
     bound = bind_payee({'user_id': 'user_zhang'}, parsed, '我想预约一笔转账给联系人王五。')
     assert bound['target'] == '王五' and bound['parse_meta'].get('target_binding') is None
+
+
+def test_quiz_time_negated_continuation_cancels_the_pending_purchase(gateway, monkeypatch):  # noqa: F811
+    """Replay of the 20261031 breadth failure: the cancel wording during the quiz."""
+    client, _ = gateway
+    cid = 'quiz-time-cancel'
+    quiz_model = SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps(
+        {'intent': 'WEALTH_PURCHASE', 'dialogue_act': 'ACTION', 'scope': 'IN_SCOPE', 'target': '零星宝'})))
+    monkeypatch.setattr(runtime, 'llm', quiz_model)
+    first = _send(client, '我想申购零星宝，金额还没定。', conversation_id=cid)
+    assert first['result']['risk_quiz']['active']
+    monkeypatch.setattr(runtime, 'llm', SimpleNamespace(invoke=lambda _: SimpleNamespace(content=json.dumps(
+        {'intent': 'WEALTH_RISK_ASSESSMENT', 'dialogue_act': 'WITHDRAW', 'scope': 'IN_SCOPE'}))))
+    stopped = _send(client, '我原本想申购零星宝，现在决定先取消，不再继续这笔申购了。', conversation_id=cid)
+    assert stopped['business_status'] == 'CANCELLED' and not stopped['result']['risk_quiz']['active']
+    assert '申购意向' in stopped['reply'] and '退出' in stopped['reply']

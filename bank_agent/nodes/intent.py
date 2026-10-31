@@ -18,7 +18,7 @@ from planner import (
 )
 from security import InjectionError, audit_event, sanitize_text
 from bank_agent.understanding import enforce_inquiry, understanding_context
-from intent_language import business_text
+from intent_language import business_text, withdrawal_statement
 from bank_agent import runtime
 from bank_agent.state import (
     BankingAgentState,
@@ -207,9 +207,22 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                         'risk_quiz': {'active': False},
                         'business_status': 'CANCELLED' if transition['type'] == 'CANCEL' else 'NEEDS_INPUT'}
     if understood is not None and (understood.get('parse_meta') or {}).get('dialogue_act') == 'WITHDRAW':
-        from intent_language import withdrawal_statement
         # A semantic label alone cannot cancel a task or authorize any action.
         verified = withdrawal_statement(text)
+        if verified:
+            from bank_agent.dialogue_commands import withdraw_known_task
+            withdrawn = withdraw_known_task(state, understood, text)
+            if withdrawn is not None:
+                return withdrawn
+            active_quiz = (prior_context.get('risk_quiz') if isinstance(prior_context.get('risk_quiz'), dict) else None)
+            if isinstance(active_quiz, dict) and active_quiz.get('origin_intent'):
+                # The questionnaire gates the withdrawn intention: leaving it
+                # abandons the intention, with no answers kept and nothing run.
+                from bank_agent.risk_quiz import _quiz_result
+                audit_event("RISK_QUIZ", user_id=state.get("user_id"), decision="ALLOW", outcome="CANCELLED",
+                            request_id=state.get("request_id"))
+                return {**_quiz_result(state, '已退出风险测评并取消本次申购意向：未提交任何答案，也没有发起或继续办理。', None),
+                        'business_status': 'CANCELLED'}
         return {**empty_state(final_response=('好的，本轮不继续办理，没有发起新操作。' if verified else '请明确希望暂停或放弃哪项办理。')),
                 'request_id': state['request_id'], 'context': prior_context, 'business_status': 'NEEDS_INPUT'}
     if (isinstance(prior_quiz, dict) and not native_quiz_reply and not transition and understood is not None
@@ -240,6 +253,17 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     new_request =(local_parse(text).get("intent") if active_quiz is not None and not compound
                    and not is_quiz_reply(text, active_quiz) else Intent.UNKNOWN.value)
     if new_request in RISK_QUIZ_INTENTS:
+        # A rules-level negated continuation of the underlying intention
+        # ("现在决定先取消，不再继续这笔申购了") leaves the questionnaire and
+        # cancels the discussion instead of being read as another purchase.
+        if withdrawal_statement(business_text(text), pending_discussion=True):
+            from bank_agent.risk_quiz import _quiz_result
+            # Leaving the questionnaire also abandons the intention it gates:
+            # no answers are recorded and nothing is submitted or executed.
+            audit_event("RISK_QUIZ", user_id=state.get("user_id"), decision="ALLOW", outcome="CANCELLED",
+                        request_id=state.get("request_id"))
+            return {**_quiz_result(state, '已退出风险测评并取消本次申购意向：未提交任何答案，也没有发起或继续办理。', None),
+                    'business_status': 'CANCELLED'}
         # Buying, redeeming or a recommendation needs the finished questionnaire:
         # keep the answers so far and say so, rather than restarting it.
         answered = len((active_quiz or {}).get("answers") or {})

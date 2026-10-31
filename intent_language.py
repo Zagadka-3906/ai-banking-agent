@@ -342,6 +342,13 @@ def withdrawal_statement(text: str, *, pending_discussion: bool = False) -> bool
         return True
     if execution_constraint(source) == 'NEGATED_ACTION':
         return True
+    # A negated continuation of the business itself ("现在决定先取消，不再继续
+    # 这笔申购了") abandons the intention; the guards above already excluded
+    # questions, past assertions and negated cancellations.
+    if (re.search(r'申购|赎回|转账|汇款|付款|支付|办理|测评|预约|锁定|调额|限额', source)
+            and re.search(r'(?:不再|不想|不打算|不准备)(?:继续|办理|做|进行)(?:这|那)?(?:一)?笔?', source)
+            and not re.search(r'明天|后天|下周|稍后|以后|等会|到时候|下次|客服|经理|听说|据说|他们|她|他(?!们)', source)):
+        return True
     # A completed cancellation in one clause must not erase a later explicit
     # current command. Without that command, retain the historical safeguard.
     if re.search(r'取消了|撤销了', source):
