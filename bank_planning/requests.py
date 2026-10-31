@@ -48,13 +48,13 @@ _REFERENCE_NOUNS = {
 
 def _observed_reference(selector: str, resource: str, *, act: str) -> bool:
     """Recognize a whole reference, never erase a name, amount or other filter."""
-    if re.fullmatch(r'(?:这|那|该|上述|刚才)(?:一|个|张|笔|项|款)?(?:的)?(?:卡|卡片|银行卡|产品|交易|流水|任务|预约|工单|订阅|会员|联系人|收款人)?', selector):
-        return True
     if act == 'ACTION':
         return False
     nouns = _REFERENCE_NOUNS.get(resource)
     if nouns is None:
         return False
+    if re.fullmatch(r'(?:这|那|该|上述|刚才)(?:一|个|张|笔|项|款)?(?:的)?(?:卡|卡片|银行卡|产品|交易|流水|任务|预约|工单|订阅|会员|联系人|收款人)?', selector):
+        return True
     deictic = r'(?:这|那|该|上述)(?:一)?(?:个|张|笔|项|款)?(?:的)?'
     recent = r'(?:刚才|刚刚|方才)(?:查询|查到|核对|展示|完成|结算|执行|创建|办理)?(?:的)?'
     return bool(re.fullmatch(r'(?:' + deictic + '|' + recent + '(?:' + deictic + r')?)(?:' + nouns + r')?', selector))

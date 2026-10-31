@@ -469,15 +469,24 @@ def remember_reply(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
     if isinstance(supporting, dict):
         observed_entities = [name for row in supporting.get('documents', []) if isinstance(row, dict)
                              for name in row.get('entity_names', []) if isinstance(name, str) and len(name) <= 120]
-        observation['entity_names'] = list(dict.fromkeys([*observation.get('entity_names', []), *observed_entities]))[:30]
+        card_context_names = [match.group(1) for row in supporting.get('documents', []) if isinstance(row, dict)
+                              and str(row.get('id', '')).startswith('context.card.')
+                              for match in [re.search(r'卡片\s*([A-Za-z0-9_-]+)', str(row.get('text', '')))] if match]
+        observation['entity_names'] = list(dict.fromkeys([*observation.get('entity_names', []), *observed_entities, *card_context_names]))[:30]
         resource_entities: dict[str, list[str]] = {}
         for row in supporting.get('documents', []):
             if (isinstance(row, dict) and not row.get('derived')
                     and str(row.get('source', '')).startswith('core://')):
                 resource = row['source'].removeprefix('core://')
-                resource_entities.setdefault(resource, [])
-                if isinstance(row.get('entity_id'), str) and row['entity_id'] not in resource_entities[resource]:
-                    resource_entities[resource].append(row['entity_id'])
+                target_resource = 'cards' if str(row.get('id', '')).startswith('context.card.') else resource
+                resource_entities.setdefault(target_resource, [])
+                entity_id = row.get('entity_id')
+                if not entity_id and str(row.get('id', '')).startswith('context.card.'):
+                    match = re.search(r'卡片\s*([A-Za-z0-9_-]+)', str(row.get('text', '')))
+                    if match:
+                        entity_id = match.group(1)
+                if isinstance(entity_id, str) and entity_id not in resource_entities[target_resource]:
+                    resource_entities[target_resource].append(entity_id)
         # A checked execution receipt is a verified observation too. Its ID
         # selects a fresh read; it is never a substitute for current records.
         if result.get('type') == 'TRANSFER_SUCCESS' and observation['transaction_ids']:
