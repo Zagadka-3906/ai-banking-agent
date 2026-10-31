@@ -121,6 +121,21 @@ class SimulatorDrift(ValueError):
     pass
 
 
+# A faithful MIXED verdict whose additive clause only asks to KEEP the pending
+# intention ("先帮我记着这笔给李四的转账") does not change any state, and the
+# inquiry itself still matches the goal.  State-changing additives (取消/先不/
+# 先别/撤/买/卖/…) remain hard aborts, as the locked preflight tests require.
+_MIXED_KEEP_CUE = re.compile(r'记着|记下|保留|留着|别丢|记得|先记')
+_MIXED_STATE_CHANGE = re.compile(
+    r'取消|不办|先不|先别|放弃|停止|撤销|撤回|帮我转|给我转|转给|汇给|支付|付款|赎回|买入|卖出|冻结|解冻|挂失|调额')
+
+
+def benign_mixed_inquiry(record: dict, text: str) -> bool:
+    return (record.get('faithful') is True and record.get('expected_act') == 'INQUIRE'
+            and record.get('actual_act') == 'MIXED'
+            and bool(_MIXED_KEEP_CUE.search(text)) and not _MIXED_STATE_CHANGE.search(text))
+
+
 def proposal_drift_reason(text: str) -> str | None:
     """Detect explicit consultation-only wording before a proposal reaches the bank."""
     from intent_language import execution_constraint
@@ -149,7 +164,7 @@ def run_trial(task: Task, environment: Any, simulator: Any, judge: Any, *, seed:
                 result['simulator_goal_checks'].append(attempt)
                 goal_check = user_goal_record(judge.verify_user_goal(task.user_view(phase, history), text), phase.goal, text)
                 attempt['check'] = goal_check
-                if not user_goal_matches(goal_check):
+                if not user_goal_matches(goal_check) and not benign_mixed_inquiry(goal_check, text):
                     result['simulator_drift'] = {'phase': index, 'user': text, 'reason': 'USER_GOAL_MISMATCH', 'check': goal_check}
                     raise SimulatorDrift('User goal changed before agent execution')
             if phase.action == 'proposal' and rubric_version == 'v3':
