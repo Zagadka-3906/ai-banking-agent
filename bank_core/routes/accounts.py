@@ -110,7 +110,8 @@ def assistant_context(x_user_id: Optional[str] = Header(None, alias="X-User-Id")
         facts = [{"id": "context.daily_spent", "text": f"当前账户今日已转出 ¥{daily_spent(actor):,.2f}。"},
                  {"id": "context.limit_max", "text": f"当前演示卡片日额度最多可设置为 ¥{CARD_MAX_DAILY_LIMIT:,.2f}，不支持无限额度。"}]
         for index, card in enumerate(user_cards(actor)):
-            facts.append({"id": f"context.card.{index}", "text": f"卡片 {card['card_id']} 当前状态为{labels.get(str(card.get('status')), '未知')}，日额度 ¥{float(card.get('daily_limit') or 0):,.2f}。"})
+            facts.append({"id": f"context.card.{index}", "text": f"卡片 {card['card_id']} 当前状态为{labels.get(str(card.get('status')), '未知')}，日额度 ¥{float(card.get('daily_limit') or 0):,.2f}。",
+                          "entity_id": card["card_id"], "card_id": card["card_id"], "entity_names": [card["card_id"]]})
         facts.append({"id": "context.step_up", "text": "当前存在转账强验证升级条件：" + "；".join(reasons) + "。" if reasons
                       else "当前查询时点没有命中额度调整后的转账验证升级条件；实际要求以本次操作预检与审批卡为准。"})
     audit_event("ASSISTANT_CONTEXT", user_id=actor, request_id=request_id, risk_level="GREEN", decision="ALLOW", outcome="SUCCESS")
