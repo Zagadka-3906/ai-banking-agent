@@ -288,3 +288,26 @@ def test_invalid_declared_simulator_context_fails_before_any_model_call(facts):
         user.next({'request_kind': 'clarify', 'current_goal': '补充金额',
                    'simulation_context': {'persona': '银行客户', 'facts': facts}}, 'PRIVATE_FIXED_UTTERANCE')
     assert user.requests == 0
+
+
+def test_action_goal_generation_contract_forbids_how_to_fill_questions():
+    """The 20261031 formal batch drifted with a “怎么填” suffix on an ACTION goal."""
+    from scripts.dialogue_eval.models import SimulatedUser
+    task = next(task for task in load_dataset(Path('tests/data/dialogue_repair_regression_v4.json'))[0].tasks
+                if task.id == 'transfer_missing_amount_insert_rule_reject')
+    phase = task.phases[0]
+    assert phase.action == 'clarify' and '缺少金额' in phase.goal
+    calls = []
+    user = SimulatedUser(SimpleNamespace(invoke=lambda messages: calls.append(messages)
+        or SimpleNamespace(content=json.dumps({'text': '我想给李四转点钱，金额还没定。'}))), 7, 'v3')
+    env = Environment()
+    judge = SimpleNamespace(verify_user_goal=lambda *args: check(expected='ACTION', actual='ACTION'),
+                            assess=lambda partial, *args: verdict(partial))
+    row = run_trial(task, env, user, judge, seed=7, trial=1, rubric_version='v3', verify_user_goal=True)
+    assert row['status'] == 'FAIL' or row['status'] == 'PASS'
+    payload = json.loads(calls[0][-1].content)
+    assert payload['current_goal'] == phase.goal and payload['request_kind'] == 'clarify'
+    system = calls[0][0].content
+    assert '怎么填' in system and '如何填写的疑问' in system
+    assert '如何填写留给助手追问' in system
+    assert phase.criteria not in calls[0][-1].content
