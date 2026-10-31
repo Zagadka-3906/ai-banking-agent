@@ -203,6 +203,9 @@ def resolve_ellipsis(parsed: dict[str, Any], prior: Mapping[str, Any], text: str
 def split_parts(text: str) -> list[str]:
     """Split a compound utterance on explicit sequencing markers."""
 
+    from intent_language import prior_inquiry_clause
+    if prior_inquiry_clause(text):
+        return [text]
     return split_tasks(text)
 
 
