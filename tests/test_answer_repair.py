@@ -463,3 +463,17 @@ from intent_language import withdrawal_statement
 ])
 def test_withdrawal_statement_judged_per_clause(text, expected):
     assert withdrawal_statement(text, pending_discussion=True) is expected
+
+
+def test_persistence_rules_rescue_reclassifies_out_of_scope_questions():
+    """The 3a0c0eb holdout failure: 写盘失败规则问句被误判非银行请求。"""
+    from bank_agent.understanding import _persistence_rules_rescue
+    rescued = _persistence_rules_rescue('如果写入磁盘时失败了，这算不算交易成功？')
+    assert rescued is not None
+    assert rescued['intent'] == 'BANKING_HELP'
+    assert rescued['parse_meta']['dialogue_act'] == 'EXPLAIN'
+    assert rescued['parse_meta']['scope'] == 'IN_SCOPE'
+    assert rescued['parse_meta']['goals'][0]['act'] == 'EXPLAIN'
+    # 非持久化与普通业务问句不触发救援（保持原判定路径）。
+    assert _persistence_rules_rescue('帮我转账给李四') is None
+    assert _persistence_rules_rescue('查询我的账户余额') is None

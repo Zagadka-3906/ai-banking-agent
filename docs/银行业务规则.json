@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-31.9",
-  "rules_version": "9c21131c013e049d8db594cd3727c425ede02878fccf7cc862d434cb16391e05",
+  "rules_version": "74b6dd5d7c16d00cc7b5e8d498c0c6d6d4909ee088981f4a26dfedb791cccce6",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "622de2f484f8b6095e16002ac1aa3fb873ea0971533cfed7afd1ef7ffcd04d4f",
@@ -26,7 +26,7 @@
     "bank_agent/prompt_preferences.py": "abe306c5a36b06818aebd51fa75873226415dd54996877a44cccccc915f156ce",
     "bank_agent/query_focus.py": "6cce1c2235db1a922ce6368df1fdfc7194f60112439c0bca2a279b1eb4f6a5f0",
     "bank_agent/risk_quiz.py": "c097a37ead293ab95555bc509e61841ffc97407e1a026276c2e276d3036a3755",
-    "bank_agent/understanding.py": "f6359b21b97f64d31b653832b44917d0fd3b5489bc11943f91a3863f8e6ef23a",
+    "bank_agent/understanding.py": "b3deb01c9653e351bcceeda37841b3bffa37e91ff439d5301458fe59ada5267f",
     "bank_core/cards.py": "a603c3a03d48837dee697abb8f57ad4612a87978ac8b9a2c3754a4a52facf844",
     "bank_core/operations.py": "ad55c9aaf1b27496736412a44d46e39bd122ed3d10c9fc90f3a82bab477ad887",
     "bank_core/payments.py": "cdecd1af029798d8980b7c5b44fdc57363b1a471dbcca6292e6444937b042785",

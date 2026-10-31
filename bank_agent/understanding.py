@@ -132,6 +132,9 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
         act = "EXPLAIN"
     if (result.get("parse_meta") or {}).get("scope") == "OUT_OF_SCOPE":
+        rescued = _persistence_rules_rescue(text)
+        if rescued is not None:
+            return rescued
         result.update(intent=Intent.UNKNOWN.value, target=None, amount=None)
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "UNSUPPORTED"}
         return result
@@ -234,6 +237,31 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         result["slots"] = {**(result.get("slots") or {}), "request_ambiguous": True}
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "reason_codes": ["PROTECTIVE_ACTION_NOT_REQUESTED"]}
     return result
+
+
+def _persistence_rules_rescue(text: str) -> Optional[dict[str, Any]]:
+    """写盘、回滚与交易成败语义是银行业务边界规则，不是非银行请求。
+
+    The extractor occasionally files persistence questions ("写入磁盘失败算
+    不算交易成功") under OUT_OF_SCOPE; a rules hit on the commit semantics
+    reclassifies them as a rule explanation instead of a rejection.
+    """
+    from intent_language import business_text
+    from banking_rules import search_rules
+    from planner import validate_intent_payload
+    from bank_planning.requests import normalize_goals
+    if not re.search(r'写盘|落盘|磁盘|回滚', text):
+        return None
+    docs = search_rules('写盘失败 回滚 交易成功', limit=2)
+    if not any(doc.get('id') == 'guide.general.commit' for doc in docs):
+        return None
+    question = business_text(text)[:200]
+    goals = normalize_goals([{'act': 'EXPLAIN', 'resource': 'general', 'question': question,
+                              'fields': [], 'subject': None, 'topic': 'general'}], question, {})
+    return validate_intent_payload({'intent': 'BANKING_HELP', 'slots': {'help_topic': 'general'},
+        'parse_meta': {'source': 'rules_guard', 'dialogue_act': 'EXPLAIN', 'scope': 'IN_SCOPE',
+            'topic': 'general', 'resolution': 'persistence_rules_rescue', 'fast_path_eligible': False,
+            'questions': [question], 'goals': goals}})
 
 
 def unsupported_reply(meta: Mapping[str, Any], *, pending: bool = False) -> str:
