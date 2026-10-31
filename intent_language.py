@@ -116,21 +116,27 @@ _PAYEE_TOKEN = r"((?:我(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)))|(?!�
 
 def recipient_source(text: str) -> str:
     """Separate an instruction to the assistant from a payment recipient."""
-    return re.sub(r'(?:给|向)我(?=(?:先|再|只|仅)?(?:核对|看(?:看|一?下)?|展示|解释|说明|查(?:询|看)?|列出|显示|生成))', '请', business_text(text))
+    source = business_text(text)
+    source = re.sub(r'(?:给|向)我(?=(?:先|再|只|仅)?(?:核对|看(?:看|一?下)?|展示|解释|说明|查(?:询|看)?|列出|显示|生成))', '请', source)
+    source = re.sub(r'(?:^|[，,。；;!?！？])\s*(?:关于)?(?:给|向)[一-龥A-Za-z0-9·_-]{1,12}的\s*(?:知道|明白|了解|看到|清楚|收到)[了吧啊]*[，,。；;!?！？]?\s*', '；', source)
+    return source.strip('；')
 
 
 def recipient_references(text: str) -> set[str]:
     """Literal candidate spans, without treating a grammatical guess as identity."""
     source = recipient_source(text)
     references = re.findall(
-        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为))\s*"
+        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为)?(?:\s*给)?)\s*"
         + _PAYEE_PREFIX + _PAYEE_TOKEN
         + r"(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))",
         source,
     )
     names: set[str] = set()
     for reference in references:
-        names.update(name.strip() for name in re.split(r"或(?:者)?|还是|和|与|、", reference) if name.strip())
+        for name in re.split(r"或(?:者)?|还是|和|与|、", reference):
+            name = re.sub(r"^(?:给|向)", "", name).strip()
+            if name:
+                names.add(name)
     return names
 
 
