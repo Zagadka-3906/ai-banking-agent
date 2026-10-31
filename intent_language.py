@@ -126,7 +126,7 @@ def recipient_references(text: str) -> set[str]:
     """Literal candidate spans, without treating a grammatical guess as identity."""
     source = recipient_source(text)
     references = re.findall(
-        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为)?(?:\s*给)?)\s*"
+        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为|就是|定为|设为)?(?:\s*给)?)\s*"
         + _PAYEE_PREFIX + _PAYEE_TOKEN
         + r"(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$))",
         source,
@@ -134,7 +134,7 @@ def recipient_references(text: str) -> set[str]:
     names: set[str] = set()
     for reference in references:
         for name in re.split(r"或(?:者)?|还是|和|与|、", reference):
-            name = re.sub(r"^(?:给|向)", "", name).strip()
+            name = re.sub(r"^(?:就是|也是|还是|给|向)", "", name).strip()
             if name:
                 names.add(name)
     return names

@@ -155,14 +155,14 @@ def target_from_text(text: str) -> Optional[str]:
     # Extract a stated name even when it is a saved contact's arbitrary label.
     # Resolution/ambiguity checks still belong to the core's contact allow-list.
     explicit = re.search(
-        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为)?(?:\s*给)?)\s*"
+        r"(?:转账给|转给|汇给|打给|给|(?<![意方倾])向|收款人(?:改成|改为|换成|是|为|就是|定为|设为)?(?:\s*给)?)\s*"
         + _PAYEE_PREFIX
         + _PAYEE_TOKEN
         + r"\s*(?=(?:的|那(?:一)?笔|这(?:一)?笔)(?:转账|汇款)|的(?:转账)?(?:金额|款项)(?:就)?(?:按|是|为|改成|补充为)?\s*[¥￥]?\d|预约|定时|转账|转|汇款|打钱|\d+(?:元|块)|[，,。\s]|$)", text,
     )
     if explicit:
         candidate = re.sub(r"再$", "", explicit.group(1))
-        candidate = re.sub(r"^(?:给|向)", "", candidate).strip()
+        candidate = re.sub(r"^(?:就是|也是|还是|给|向)", "", candidate).strip()
         if candidate not in {"他", "她", "它", "同一位", "同一个", "同一个收款人", "刚才那位", "刚才那个", "那个人", "那个", "上次那个"} \
                 and candidate not in GENERIC_PAYEE_WORDS and candidate:
             return candidate
