@@ -84,18 +84,26 @@ FAILURE_CASES = {
 }
 
 
-def run_replay(case_name: str, case_data: dict, client, gateway) -> dict:
+def run_replay(case_name: str, case_data: dict, client_or_env, gateway=None) -> dict:
     conversation_id = f"replay-{uuid.uuid4().hex}"
     results = []
     all_passed = True
+
+    if gateway is None:
+        gw = client_or_env.gateway
+        headers = getattr(client_or_env, "headers", {})
+    else:
+        gw = gateway
+        headers = {}
 
     for idx, turn in enumerate(case_data["turns"], 1):
         user_text = turn["user"]
         expected = turn.get("expected", {})
 
-        response = gateway.post(
+        response = gw.post(
             "/api/v1/agent/messages",
             json={"conversation_id": conversation_id, "text": user_text, "message_id": uuid.uuid4().hex},
+            headers=headers,
         )
         if response.status_code != 200:
             results.append({
@@ -153,36 +161,27 @@ def main(argv=None) -> int:
 
     cases_to_run = FAILURE_CASES if args.case == "all" else {args.case: FAILURE_CASES[args.case]}
 
-    with tempfile.TemporaryDirectory(prefix="replay-dialogue-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="replay-dialogue-", ignore_cleanup_errors=True) as temp_dir:
         settings = isolated_settings(Path(temp_dir))
         os.environ.update(settings)
+        os.environ["BANK_EVAL_ISOLATED_PROCESS"] = "1"
 
-        from fastapi.testclient import TestClient
-        import agent_api
-        import main as bank_main
-        import conversation
+        import types
+        from scripts.dialogue_eval.bank_environment import BankEnvironment
 
-        bank_main.reset_state()
-        conversation.SERVICE.reset()
-
-        core_client = TestClient(bank_main.app)
-        login = core_client.post("/api/v1/auth/login", json={"user_id": "user_zhang", "password": "Bank@2026"})
-        if login.status_code != 200:
-            print("Failed to login test user:", login.text)
-            return 2
-        token = login.json()["session_token"]
-
-        gateway_client = TestClient(agent_api.app)
-        gateway_client.headers["X-Session-Token"] = token
+        task = types.SimpleNamespace(id="replay-dialogue", setup="default")
+        env = BankEnvironment(task)
 
         overall_pass = True
         print(f"=== 对话失败用例回放 (共 {len(cases_to_run)} 项) ===")
         for name, data in cases_to_run.items():
-            result = run_replay(name, data, core_client, gateway_client)
+            result = run_replay(name, data, env)
             mark = "PASS" if result["status"] == "PASS" else "FAIL"
             print(f"[{mark}] {name}: {result['description']}")
             for t in result["turns"]:
                 print(f"   轮次 {t['turn']}: '{t['user']}' -> [{t['status']}] (意图: {t.get('intent')})")
+                if t.get("error"):
+                    print(f"      - 异常: {t['error']}")
                 if t.get("failures"):
                     for f in t["failures"]:
                         print(f"      - 阻断: {f}")

@@ -22,7 +22,7 @@ TOPIC_NAMES = {'general': '通用对话与事实', 'contacts': '联系人与收�
                'tasks': '待办与撤销', 'dispute': '可疑交易与争议', 'wealth': '理财与测评', 'subscription': '订阅与代扣'}
 ALIASES = {'general': '余额 事实 数据来源 对象 指代 插问 持久化 写盘失败 回执', 'contacts': '联系人 通讯录 常用收款人 已保存',
            'transfer': '转账 汇款 预约 AA 收款 到账', 'card': '卡片 银行卡 解冻 冻结 挂失 渠道',
-           'limits': '限额 日额度 无限 调额', 'security': '确认 验证 验证码 签名 MFA 设备 权限 飞书',
+           'limits': '额度 限额 日额度 卡片额度 无限 调额 额度限制', 'security': '确认 验证 验证码 签名 MFA 设备 权限 飞书',
            'cross_scene': '生日 订花 鲜花 蛋糕 预算 锁资', 'tasks': '待办 任务 撤销 暂停 人工处理',
            'dispute': '争议 工单 可疑 盗刷 核对', 'wealth': '理财 产品 持仓 申购 赎回 风险测评',
            'subscription': '订阅 会员 代扣 续费 扣款 视频 Apple'}
@@ -133,7 +133,7 @@ def search_rules(query: str, *, limit: int = 5) -> list[dict[str, Any]]:
     frequency = Counter(token for vector in vectors for token in vector)
     # Navigation words are shared across domains and should not outrank the
     # business object (e.g. "查看我的理财持仓" must not retrieve contact navigation).
-    asked = _tokens(re.sub(r'如何|怎么|查看|我的|一下|帮我', ' ', query))
+    asked = _tokens(re.sub(r'如何|怎么|查看|我的|一下|帮我|我想问|请问|本产品|这款产品|咱们产品|本行|本演示|是怎样的|怎样的|是怎样', ' ', query))
     scored = []
     for item, vector in zip(documents, vectors):
         score = sum(math.log(1 + (len(documents) - frequency[token] + .5)/(frequency[token] + .5))

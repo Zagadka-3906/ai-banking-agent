@@ -541,6 +541,7 @@ def model_parse(text: str) -> dict[str, Any]:
         "业务说明的 slots.help_topic 只能为 general,dispute,transfer,card,wealth,subscription,security,cross_scene,tasks,limits。"
         "生日订花尚无真实配送，但已有预算锁定、提醒和模拟订单草稿；缺预算时解释并澄清，不能笼统说全部不支持。"
         "取消限额不等于调额；询问能否或请求无限额时先BANKING_HELP说明限制，不发起CARD_LIMIT。"
+        "用户询问本产品信用卡或卡片额度（限制）规则时，属于 limits 主题的 BANKING_HELP（act=EXPLAIN, resource=general, topic=limits）；先说明本产品无信用卡授信额度，并解释演示卡有限日额度规则（只能设置明确的有限日额度、按当日累计支付校验、不支持取消限额或设为无限、需明确卡片与新额度并确认强验证），不编造信用卡授信能力。"
         "额度限制说明后用户若补充明确的新数值并要求改额度（即使附带‘先别确认，帮我看看怎么办理’），只要未问‘行不行/是否可行/在不在允许范围’，应判CARD_LIMIT和SLOT_REPLY（或ACTION），提出有限额度调整提案，仍须确认强验证。"
         "不支持撤销争议工单时回答规则，不能再创建工单。闲聊、不支持或纠错不能强行映射到相近写操作。"
         "缺失收款人或金额时填 null，不要猜测。"

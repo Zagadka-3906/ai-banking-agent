@@ -41,7 +41,7 @@ def _nanos(value: Decimal) -> int:
 def price_profiles(value: Any) -> dict:
     if not isinstance(value, dict) or len(value) > 30:
         raise ValueError('INVALID_PRICE_PROFILES')
-    result = {}
+    result: dict[str, dict[str, Any]] = {}
     for model, row in value.items():
         if (not isinstance(model, str) or not 1 <= len(model) <= 120 or not isinstance(row, dict)
                 or set(row) != {'input_cached', 'input_uncached', 'output', 'context_tokens'}
@@ -61,7 +61,7 @@ def token_usage(answer: Any) -> dict[str, int] | None:
         return None
     incoming = meta.get('input_tokens', raw.get('prompt_tokens'))
     outgoing = meta.get('output_tokens', raw.get('completion_tokens'))
-    if any(type(value) is not int or value < 0 for value in (incoming, outgoing)):
+    if not isinstance(incoming, int) or not isinstance(outgoing, int) or incoming < 0 or outgoing < 0:
         return None
     details = meta.get('input_token_details') or {}
     raw_details = raw.get('prompt_tokens_details') or {}
@@ -206,7 +206,7 @@ class CostLedger:
             state = db.execute('SELECT * FROM control WHERE id=1').fetchone()
             errors = state['errors'] + 1
             threshold = json.loads(state['policy'])['consecutive_errors']
-            stop = terminal.get(status) or ('CONSECUTIVE_PROVIDER_ERRORS' if errors >= threshold else None)
+            stop = (terminal.get(status) if status is not None else None) or ('CONSECUTIVE_PROVIDER_ERRORS' if errors >= threshold else None)
             # Only errors known to reject the request release its reservation.
             db.execute('UPDATE calls SET status=?, accounted_nanos=CASE WHEN ? THEN 0 ELSE accounted_nanos END, payload=? WHERE id=?',
                        ('PROVIDER_ERROR', status in terminal, json.dumps({'http_status': status}), identifier))

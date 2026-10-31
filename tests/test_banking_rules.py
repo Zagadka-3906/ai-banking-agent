@@ -48,6 +48,9 @@ def test_catalog_covers_all_intents_and_topics_without_private_account_values():
     ('如何查看我的理财持仓', {'guide.wealth.source', 'capability.WEALTH_HOLDINGS'}),
     ('已完成转账能撤销吗', {'guide.transfer.completed'}),
     ('验证码能代替设备签名吗', {'guide.security.device', 'guide.security.factors'}),
+    ('本产品信用卡的额度限制规则是怎样的', {'guide.limits.finite'}),
+    ('我想问一下，本产品信用卡的额度限制规则是怎样的？', {'guide.limits.finite'}),
+    ('卡片额度限制规则是怎样的', {'guide.limits.finite'}),
 ])
 def test_natural_language_questions_retrieve_the_relevant_current_rules(question, expected):
     matches = search_rules(question)
