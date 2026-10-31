@@ -176,8 +176,16 @@ class BankEnvironment:
                        "SCOPE_OR_CLARIFICATION" if envelope.get("intent") == "UNKNOWN" else "CANONICAL")
         import security
         diagnostics = answer_diagnostics(security.get_audit_logs(limit=1000), envelope.get('request_id'))
+        # Row counts per read resource: the answer stage's own fact view, so a
+        # "matched 0 rows" reply can be checked against what was actually read.
+        read_rows: dict[str, int] = {}
+        for row in ((envelope.get('execution_result') or {}).get('data') or {}).get('documents') or []:
+            if isinstance(row, dict) and str(row.get('source', '')).startswith('core://'):
+                resource = str(row['source'])[len('core://'):]
+                read_rows[resource] = read_rows.get(resource, 0) + 1
         # No tokens, opaque handles, internal parsed state or raw account snapshots in transcripts.
         return {"reply": reply, "intent": envelope.get("intent"), "mode": mode, "answer_kind": answer_kind,
+                'read_rows': read_rows,
                 'coverage': [{'goal_id': row.get('goal_id'), 'status': row.get('status'),
                               'resource': next((goal['resource'] for goal in ((self.graph_state().get('parse_meta') or {}).get('goals') or [])
                                                 if goal['id'] == row.get('goal_id')), None)}
