@@ -477,3 +477,16 @@ def test_persistence_rules_rescue_reclassifies_out_of_scope_questions():
     # 非持久化与普通业务问句不触发救援（保持原判定路径）。
     assert _persistence_rules_rescue('帮我转账给李四') is None
     assert _persistence_rules_rescue('查询我的账户余额') is None
+
+
+def test_step_self_reference_converted_before_number_check():
+    """The 557db6e batch: “建议先按第 1 步核对” tripped UNKNOWN_NUMBER."""
+    from bank_agent.answering import _validate_draft
+    facts = [{'id': 'guide.test', 'text': '在对话页输入“我的卡片”并发送，核对目标卡片及其当前状态。输入“解冻”加该卡片编号并发送，核对红色审批卡。'}]
+    answer = ('App 内解冻可按以下步骤操作：\n1. 在对话页输入“我的卡片”并发送，核对目标卡片及其当前状态。\n'
+              '2. 输入“解冻”加该卡片编号并发送，核对红色审批卡。\n建议先按第 1 步核对。')
+    text, ids = _validate_draft({'answer': answer, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+    assert '第一步' in text and '第 1 步' not in text
+    with pytest.raises(ValueError, match='UNKNOWN_NUMBER'):
+        bad = answer.replace('第 1 步', '第 9 步')
+        _validate_draft({'answer': bad, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})

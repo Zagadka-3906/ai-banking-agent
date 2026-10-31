@@ -188,6 +188,13 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
         if re.search(r"(?:下次|下一次).{0,4}扣款[^。；\n]{0,15}" + re.escape(stale), rendered):
             raise ValueError("STALE_SCHEDULE_CLAIM")
     numbers = {Decimal(value.replace(',', '')).normalize() for value in _NUMBER.findall(evidence)}
+    # "第 1 步" self-references to the answer's own numbered list are
+    # structural, not facts; when the draft carries such a list, render the
+    # references in Chinese numerals so they never count as unanchored data.
+    list_numbers = {int(m.group(1)) for m in re.finditer(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?([1-9])(?:\.(?!\d)|[、)）])", rendered)}
+    if list_numbers:
+        digits_map = {'1': '一', '2': '二', '3': '三', '4': '四', '5': '五', '6': '六', '7': '七', '8': '八', '9': '九'}
+        rendered = re.sub(r'第\s*([1-9])\s*步', lambda m: '第' + digits_map[m.group(1)] + '步' if int(m.group(1)) in list_numbers else m.group(0), rendered)
     numeric_text = re.sub(r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?(?:[1-9](?:\.(?!\d)|[、)）])|[（(][1-9][）)])(?:\*\*)?\s*", "", rendered)
     # Names are identity evidence, not numeric attributes. A verified product
     # called "60天持有" can be named without proving a separate 60-day term.
