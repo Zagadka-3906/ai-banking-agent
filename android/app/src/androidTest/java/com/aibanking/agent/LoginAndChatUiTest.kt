@@ -395,12 +395,25 @@ class RedTierUiTest {
         // surface only as a confusing timeout.  Fail here instead, naming the
         // reason: no usable authenticator on this device.
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).assertIsEnabled()
-        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
+        ui.confirmRedApproval()
 
         // A disabled button (no usable authenticator on the device) would make
         // this a silent no-op; assert we got past the gate instead.
-        ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
-            ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()
+        try {
+            ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {
+                ui.onAllNodesWithTag(UiTags.APPROVAL_APPROVE).fetchSemanticsNodes().isEmpty()
+            }
+        } catch (timeout: ComposeTimeoutException) {
+            // A bare timeout says only that something is missing.  The credential
+            // prompt is a system window this process cannot observe, so surface
+            // what the app itself reported (e.g. a biometric error) before
+            // dumping the tree, exactly like the wait for the card above.
+            ui.runOnIdle {
+                val state = ViewModelProvider(ui.activity)[ChatViewModel::class.java].state.value
+                check(state.approvalError == null) { "red approval reported: ${state.approvalError}" }
+            }
+            ui.onRoot().printToLog("REDTIER")
+            throw timeout
         }
         ui.returnFromOutcome(settleMs = TURN_TIMEOUT_MS)
         ui.waitUntil(timeoutMillis = TURN_TIMEOUT_MS) {

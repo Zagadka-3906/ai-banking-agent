@@ -62,6 +62,22 @@ internal fun ComposeContentTestRule.submitLoginForm() {
 }
 
 /**
+ * Confirm the red approval with the one click the card allows.
+ *
+ * The SMS field leaves the system IME owning window focus, and a synthetic
+ * click lands on whatever window currently has focus - the swallowed click
+ * then surfaces far away as a bare timeout on "the approve button never went
+ * away" (two pipeline LIVE_RED failures) instead of at the actual cause.
+ * Close the keyboard first and settle the inset animation, then verify the
+ * button is on screen and enabled before its single click.
+ */
+internal fun ComposeContentTestRule.confirmRedApproval() {
+    Espresso.closeSoftKeyboard()
+    waitForIdle()
+    onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+}
+
+/**
  * Type and send one instruction, and verify the app actually took it.
  *
  * A synthetic click is occasionally swallowed while a system window momentarily
