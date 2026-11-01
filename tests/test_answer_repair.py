@@ -260,6 +260,23 @@ def test_a_completion_denial_cannot_mask_another_positive_claim(text):
         _validate_draft({'answer': text, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
 
 
+@pytest.mark.parametrize('text', [
+    '已创建的争议工单能否撤销：目前没有提供撤回、取消或删除争议工单的功能。',
+    '取消订阅并不等同于成功退款，退款须向商户另行申请。',
+    '取消订阅后不会自动成功退款。',
+    '已扣款项不会自动退款，已扣款项不是成功退款。',
+    '如果转账时提示写盘失败，系统会自动回滚，并不算成功转账。',
+    '写盘失败意味着转账未成功，并未成功转账。',
+    '付款超时后请先确认是否已扣款，不要重复提交。',
+    '请先核对是否已转账。',
+])
+def test_valid_inquiry_and_negative_rules_not_blocked_as_operation_claims(text):
+    from bank_agent.answering import _validate_draft
+    facts = [{'id': 'guide.test', 'text': '这里只解释步骤，没有执行操作。'}]
+    answer, _ = _validate_draft({'answer': text, 'evidence_ids': ['guide.test'], 'unanswered': []}, facts, {})
+    assert answer == text
+
+
 def test_gateway_explains_birthday_dependencies_without_treating_not_completed_as_completed(gateway, monkeypatch):  # noqa: F811
     client, _ = gateway
     def draft(payload):

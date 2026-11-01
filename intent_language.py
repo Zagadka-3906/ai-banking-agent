@@ -161,7 +161,9 @@ def nonexecuting_action(text: str) -> bool:
     mutation = r"转账|给.{1,20}转|申购|赎回|买入|冻结|解冻|挂失|解挂|锁定|取消.{0,12}订阅"
     if re.search(r"(?:假设|如果|若是|要是)", source) and re.search(mutation, source):
         return True
-    return bool(re.search(r"如何|怎么(?:样)?(?:才能|操作|办理|给|把)|怎样|有什么(?:要求|条件)|需要什么", source) and re.search(mutation, source))
+    if re.search(r"(?:如何|怎么(?:样)?(?:才能|操作|办理|给|把)|怎样|有什么(?:要求|条件)|需要什么)", source) and re.search(mutation, source):
+        return True
+    return bool(re.search(r"(?:能否|是否|能不能|会不会|可以.*吗|能.*吗|会.*吗|是不是)", source) and re.search(mutation, source))
 
 
 def action_request_clause(text: str) -> str | None:

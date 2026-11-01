@@ -135,7 +135,7 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
         act = "EXPLAIN"
     if (result.get("parse_meta") or {}).get("scope") == "OUT_OF_SCOPE":
-        rescued = _persistence_rules_rescue(text)
+        rescued = _persistence_rules_rescue(text) or _limits_security_rules_rescue(text)
         if rescued is not None:
             return rescued
         result.update(intent=Intent.UNKNOWN.value, target=None, amount=None)
@@ -264,6 +264,23 @@ def _persistence_rules_rescue(text: str) -> Optional[dict[str, Any]]:
     return validate_intent_payload({'intent': 'BANKING_HELP', 'slots': {'help_topic': 'general'},
         'parse_meta': {'source': 'rules_guard', 'dialogue_act': 'EXPLAIN', 'scope': 'IN_SCOPE',
             'topic': 'general', 'resolution': 'persistence_rules_rescue', 'fast_path_eligible': False,
+            'questions': [question], 'goals': goals}})
+
+
+def _limits_security_rules_rescue(text: str) -> Optional[dict[str, Any]]:
+    """额度执行与核心限制规则是银行业务边界规则，不是非银行请求。"""
+    from intent_language import business_text
+    from planner import validate_intent_payload
+    from bank_planning.requests import normalize_goals
+    if not (re.search(r'(?:额度|限额|限制|风控|权限).*(?:绕过|绕开|换.*模型|模型)', text)
+            or re.search(r'(?:绕过|绕开|换.*模型|模型).*(?:额度|限额|限制|风控|权限)', text)):
+        return None
+    question = business_text(text)[:200]
+    goals = normalize_goals([{'act': 'EXPLAIN', 'resource': 'general', 'question': question,
+                              'fields': [], 'subject': None, 'topic': 'limits'}], question, {})
+    return validate_intent_payload({'intent': 'BANKING_HELP', 'slots': {'help_topic': 'limits'},
+        'parse_meta': {'source': 'rules_guard', 'dialogue_act': 'EXPLAIN', 'scope': 'IN_SCOPE',
+            'topic': 'limits', 'resolution': 'limits_rules_rescue', 'fast_path_eligible': False,
             'questions': [question], 'goals': goals}})
 
 
