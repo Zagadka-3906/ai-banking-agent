@@ -1,10 +1,8 @@
 package com.aibanking.agent.ui.chat
 
-import android.os.SystemClock
 import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.data.GatewayException
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -55,17 +53,23 @@ fun ChatViewModel.startTransferTo(name: String) {
 }
 
 fun ChatViewModel.refreshContacts() {
+    if (_state.value.contactDeletingId != null) return
     val principal = _state.value.principal
+    val revision = contactsRevision
     sessionWork.launch {
         try {
             val rows = io { contacts.list(principal, credential().orEmpty()) }
-            _state.update { it.copy(contacts = rows.filterNot { row -> row.contactId in it.pendingContactDeletions || row.contactId in it.removedContactIds }, panelBusy = false, panelError = null) }
+            if (revision != contactsRevision) return@launch
+            _state.update { it.copy(contacts = rows, panelBusy = false, panelError = null,
+                contactDeleteId = it.contactDeleteId?.takeIf { id -> rows.any { row -> row.contactId == id } }) }
         } catch (failure: GatewayException) {
             check()
+            if (revision != contactsRevision) return@launch
             applyPanelFailure(failure)
         } catch (failure: Exception) {
             if (failure is CancellationException) throw failure
             check()
+            if (revision != contactsRevision) return@launch
             applyPanelFailure(failure)
         }
     }
@@ -144,62 +148,63 @@ fun ChatViewModel.addContact() {
     }
 }
 
-/** Optimistically hide one row; no backend mutation occurs before the five-second deadline. */
-internal const val CONTACT_UNDO_MILLIS = 5_000L
-
-fun ChatViewModel.removeContact(contactId: String) {
+/** Opening or dismissing the confirmation never changes the book. */
+fun ChatViewModel.requestContactRemoval(contactId: String) {
     val current = _state.value
-    if (!current.authenticated || current.panelBusy || contactId in current.pendingContactDeletions) return
-    val index = current.contacts.indexOfFirst { it.contactId == contactId }
-    if (index < 0) return
-    val pending = PendingContactDeletion(current.contacts[index], index, SystemClock.elapsedRealtime() + CONTACT_UNDO_MILLIS)
+    if (!current.authenticated || current.panelBusy || current.contactDeletingId != null) return
+    if (current.contacts.none { it.contactId == contactId }) return
+    markUserActivity()
+    _state.update { it.copy(contactDeleteId = contactId) }
+}
+
+fun ChatViewModel.dismissContactRemoval() = _state.update { it.copy(contactDeleteId = null) }
+
+/** Send immediately after confirmation; remove locally only after server evidence. */
+fun ChatViewModel.confirmContactRemoval() {
+    val current = _state.value
+    val contactId = current.contactDeleteId ?: return
+    val contact = current.contacts.firstOrNull { it.contactId == contactId } ?: return
+    if (!current.authenticated || current.panelBusy || current.contactDeletingId != null) return
     val principal = current.principal
     markUserActivity()
+    contactsRevision++ // A GET started before this mutation cannot restore stale rows.
     _state.update {
-        it.copy(contacts = it.contacts.filterNot { row -> row.contactId == contactId },
-            contactsScreen = ContactsScreen.LIST, selectedContactId = null,
-            pendingContactDeletions = it.pendingContactDeletions + (contactId to pending),
-            contactUndoId = contactId)
+        it.copy(contactDeleteId = null, contactDeletingId = contactId, panelBusy = true, error = null, panelError = null)
     }
-    // The login owns this timer: logging out or process exit before the deadline cancels deletion.
     sessionWork.launch {
-        delay((pending.deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0))
-        check()
-        if (_state.value.pendingContactDeletions[contactId] != pending) return@launch
-        _state.update { it.copy(pendingContactDeletions = it.pendingContactDeletions - contactId,
-            removedContactIds = it.removedContactIds + contactId,
-            contactUndoId = it.contactUndoId.takeUnless { id -> id == contactId }) }
         try {
             io { contacts.remove(contactId, principal, credential().orEmpty()) }
+            contactsRevision++
+            _state.update { it.copy(contacts = it.contacts.filterNot { row -> row.contactId == contactId },
+                contactsScreen = ContactsScreen.LIST, selectedContactId = null, contactDeletingId = null,
+                panelBusy = false, notice = "已删除联系人 ${contact.name}") }
+            refreshContacts()
         } catch (failure: Exception) {
             if (failure is CancellationException) throw failure
             check()
-            _state.update { it.copy(removedContactIds = it.removedContactIds - contactId,
-                contacts = restoreContactRow(it.contacts, pending)) }
-            if (failure is GatewayException && failure.sessionExpired) applyPanelFailure(failure)
-            else {
-                _state.update { it.copy(error = "联系人删除结果未确认，正在刷新列表核对。") }
-                refreshContacts()
+            if (failure is GatewayException && failure.sessionExpired) {
+                _state.update { it.copy(contactDeletingId = null) }
+                applyPanelFailure(failure)
+                return@launch
+            }
+            // A lost/invalid receipt may follow a successful server commit.
+            // Read once to reconcile; never recreate the row or resend deletion.
+            try {
+                val rows = io { contacts.list(principal, credential().orEmpty()) }
+                contactsRevision++
+                val removed = rows.none { it.contactId == contactId }
+                _state.update { it.copy(contacts = rows, contactDeletingId = null, panelBusy = false,
+                    contactsScreen = if (removed) ContactsScreen.LIST else it.contactsScreen,
+                    selectedContactId = if (removed) null else it.selectedContactId,
+                    notice = if (removed) "已删除联系人 ${contact.name}" else null,
+                    error = if (removed) null else "删除未完成，联系人仍保留，请重试。") }
+            } catch (readFailure: Exception) {
+                if (readFailure is CancellationException) throw readFailure
+                check()
+                _state.update { it.copy(contactDeletingId = null, panelBusy = false,
+                    error = "删除结果暂时无法确认，请刷新联系人列表核对。") }
+                if (readFailure is GatewayException && readFailure.sessionExpired) applyPanelFailure(readFailure)
             }
         }
     }
 }
-
-/** Restore the original in-memory row, including its ID; never create a replacement contact. */
-fun ChatViewModel.undoRemoveContact(contactId: String) {
-    val pending = _state.value.pendingContactDeletions[contactId] ?: return
-    if (SystemClock.elapsedRealtime() >= pending.deadlineMillis) return
-    markUserActivity()
-    _state.update {
-        if (it.pendingContactDeletions[contactId] != pending) it else it.copy(
-            pendingContactDeletions = it.pendingContactDeletions - contactId,
-            contacts = restoreContactRow(it.contacts, pending),
-            notice = "已撤销删除 ${pending.contact.name}",
-            contactUndoId = it.contactUndoId.takeUnless { id -> id == contactId })
-    }
-}
-
-private fun restoreContactRow(rows: List<ContactView>, pending: PendingContactDeletion): List<ContactView> =
-    if (rows.any { it.contactId == pending.contact.contactId }) rows else rows.toMutableList().apply {
-        add(pending.index.coerceIn(0, size), pending.contact)
-    }

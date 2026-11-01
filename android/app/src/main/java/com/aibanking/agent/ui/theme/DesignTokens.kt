@@ -4,13 +4,12 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * Light-theme palette in the style of conversational assistants such as the
- * Gemini mobile app: white canvas, cool grey containers, one blue accent and a
- * blue → violet → rose gradient reserved for the brand mark and greeting.
+ * Shared palette: white canvas, cool grey containers and one solid blue accent.
  *
  * Screens should prefer [androidx.compose.material3.MaterialTheme] colours so
  * dark mode follows; these constants remain for fixed-colour surfaces (risk
@@ -19,7 +18,7 @@ import androidx.compose.ui.unit.dp
 object BankPalette {
     val Ink = Color(0xFF1F1F1F)
     val Wisteria = Color(0xFFD3E3FD)
-    val DeepPurple = Color(0xFF0B57D0)
+    val Accent = Color(0xFF0B57D0)
     val Lavender = Color(0xFFE9EEF6)
     val Moon = Color(0xFFF0F4F9)
     val Muted = Color(0xFF444746)
@@ -33,10 +32,6 @@ object BankPalette {
     val Blue = Color(0xFF4285F4)
     val Neutral = Color(0xFFE3E3E3)
 
-    /** Brand gradient stops: blue, violet, rose. */
-    val GradientBlue = Color(0xFF4285F4)
-    val GradientViolet = Color(0xFF9B72CB)
-    val GradientRose = Color(0xFFD96570)
 }
 
 /** Shared geometry used by every banking surface. */
@@ -75,16 +70,17 @@ data class BankSemanticColors(
     val cardVirtual: Color,
     val positiveGradient: Brush,
     val primaryGradient: Brush,
-    /** Blue → violet → rose, for the brand mark, greeting and "thinking" accents. */
+    /** Solid brush shared by the brand mark, greeting and thinking accents. */
     val brandGradient: Brush,
     val brandGradientColors: List<Color>,
 )
 
-private val BrandStops = listOf(BankPalette.GradientBlue, BankPalette.GradientViolet, BankPalette.GradientRose)
-private val DarkBrandStops = listOf(Color(0xFF669DF6), Color(0xFFB388FF), Color(0xFFF07B86))
+// Equal stops retain text reveal/opacity animations without colour gradients.
+private val BrandStops = List(3) { BankPalette.Accent }
+private val DarkBrandStops = List(3) { Color(0xFFA8C7FA) }
 
 private val LightSemanticColors = BankSemanticColors(
-    inputFocus = BankPalette.DeepPurple,
+    inputFocus = BankPalette.Accent,
     // Chinese finance convention: red means gain, green means loss.
     positive = Color(0xFFD93025),
     negative = Color(0xFF188038),
@@ -97,15 +93,15 @@ private val LightSemanticColors = BankSemanticColors(
     riskRedContainer = Color(0xFFFAD2CF),
     onRiskContainer = Color(0xFF1F1F1F),
     chartPrimary = Color(0xFFD93025),
-    chartBenchmark = Color(0xFF7A5BB5),
+    chartBenchmark = Color(0xFF5C6B7A),
     chartGrid = Color(0xFFE1E3E1),
     cardActive = Color(0xFF1B2A4A),
     cardFrozen = BankPalette.YellowSoft,
     cardLost = BankPalette.RedSoft,
-    cardVirtual = Color(0xFFE8DEF8),
+    cardVirtual = Color(0xFFE9EEF6),
     positiveGradient = Brush.horizontalGradient(listOf(Color(0xFFEA4335), Color(0xFFB3261E))),
-    primaryGradient = Brush.linearGradient(listOf(Color(0xFFD3E3FD), Color(0xFFE8DEF8))),
-    brandGradient = Brush.linearGradient(BrandStops),
+    primaryGradient = SolidColor(Color(0xFFD3E3FD)),
+    brandGradient = SolidColor(BankPalette.Accent),
     brandGradientColors = BrandStops,
 )
 
@@ -122,15 +118,15 @@ private val DarkSemanticColors = BankSemanticColors(
     riskRedContainer = Color(0xFF8C1D18),
     onRiskContainer = Color(0xFFF1F1F1),
     chartPrimary = Color(0xFFF28B82),
-    chartBenchmark = Color(0xFFC3A6F0),
+    chartBenchmark = Color(0xFFAAB7C4),
     chartGrid = Color(0xFF3C4043),
     cardActive = Color(0xFF1B2A4A),
     cardFrozen = BankPalette.YellowSoft,
     cardLost = BankPalette.RedSoft,
-    cardVirtual = Color(0xFFE8DEF8),
+    cardVirtual = Color(0xFF273849),
     positiveGradient = Brush.horizontalGradient(listOf(Color(0xFFF6AEA9), Color(0xFFF28B82))),
-    primaryGradient = Brush.linearGradient(listOf(Color(0xFF0842A0), Color(0xFF4A3A6B))),
-    brandGradient = Brush.linearGradient(DarkBrandStops),
+    primaryGradient = SolidColor(Color(0xFF0842A0)),
+    brandGradient = SolidColor(Color(0xFFA8C7FA)),
     brandGradientColors = DarkBrandStops,
 )
 

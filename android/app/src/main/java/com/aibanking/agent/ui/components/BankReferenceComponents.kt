@@ -120,7 +120,7 @@ fun BankBottomSheet(
     }
 }
 
-/** Small eyebrow label: a brand-gradient dot followed by muted text. */
+/** Small eyebrow label: a solid brand dot followed by muted text. */
 @Composable
 fun BankSticker(text: String, modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {

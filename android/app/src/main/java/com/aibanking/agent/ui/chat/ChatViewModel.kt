@@ -84,6 +84,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     internal var cardCreateAttempt: CreateAttempt? = null
     internal var contactCreateAttempt: CreateAttempt? = null
+    internal var contactsRevision: Long = 0
 
     /** Replaced even for the same user; token renewal keeps this generation. */
     private fun replaceSession() {

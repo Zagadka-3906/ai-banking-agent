@@ -35,9 +35,9 @@ class UiClosureComponentsTest {
         lateinit var host: SnackbarHostState
         render {
             host = remember { SnackbarHostState() }
-            ChatMessageEffects(null, message.value, null, host, { _, notice ->
+            ChatMessageEffects(null, message.value, host, { _, notice ->
                 if (message.value == notice) message.value = null
-            }, {})
+            })
             SnackbarHost(host)
         }
         ui.onNodeWithText("第一条通知").assertIsDisplayed()
@@ -53,8 +53,8 @@ class UiClosureComponentsTest {
         val notice = mutableStateOf<String?>("旧账号通知")
         render {
             val host = remember { SnackbarHostState() }
-            ChatMessageEffects(null, notice.value, null, host,
-                { _, consumed -> if (notice.value == consumed) notice.value = null }, {}, owner.value)
+            ChatMessageEffects(null, notice.value, host,
+                { _, consumed -> if (notice.value == consumed) notice.value = null }, owner.value)
             SnackbarHost(host)
         }
         ui.onNodeWithText("旧账号通知").assertIsDisplayed()
@@ -66,28 +66,19 @@ class UiClosureComponentsTest {
         ui.onNodeWithText("旧账号排队通知").assertDoesNotExist()
     }
 
-    @Test fun undo_notice_is_owned_by_the_original_contact_and_survives_notice_consumption() {
+    @Test fun deleting_a_contact_requires_a_named_confirmation_and_cancel_keeps_it() {
         val contact = ContactView(contactId = "original", name = "李四", phone = "12345")
-        val pending = mutableStateOf<PendingContactDeletion?>(null)
-        val notice = mutableStateOf<String?>("先前通知")
-        lateinit var host: SnackbarHostState
-        var restored: String? = null
-        render {
-            host = remember { SnackbarHostState() }
-            ChatMessageEffects(null, notice.value, pending.value, host,
-                { _, consumed -> if (notice.value == consumed) notice.value = null },
-                { restored = it; pending.value = null })
-            SnackbarHost(host)
-        }
-        ui.onNodeWithText("先前通知").assertIsDisplayed()
-        ui.runOnIdle { notice.value = "排队通知" }
-        ui.waitForIdle()
-        ui.runOnIdle { pending.value = PendingContactDeletion(contact, 0, SystemClock.elapsedRealtime() + 60_000) }
-        ui.onNodeWithText("撤销").assertIsDisplayed().performClick()
-        ui.runOnIdle { assertEquals("original", restored) }
-        ui.onNodeWithText("先前通知").assertIsDisplayed()
-        ui.runOnIdle { host.currentSnackbarData!!.dismiss() }
-        ui.onNodeWithText("排队通知").assertIsDisplayed()
+        val model = model(ChatUiState(authenticated = true, showContacts = true, contactsScreen = ContactsScreen.DETAIL,
+            selectedContactId = contact.contactId, contacts = listOf(contact)))
+        render { val state by model.state.collectAsState(); ContactsUi(state, model) }
+        ui.onNodeWithTag(UiTags.CONTACT_REMOVE).performClick()
+        ui.onNodeWithText("删除联系人？").assertIsDisplayed()
+        ui.onNodeWithText("确定删除“李四”？该联系人将从通讯录移除，已有转账记录不受影响。").assertIsDisplayed()
+        ui.runOnIdle { assertEquals(listOf(contact), model.state.value.contacts) }
+        screenshot("contact-delete-confirmation")
+        ui.onNodeWithTag(UiTags.CONTACT_REMOVE_CANCEL).performClick()
+        ui.onNodeWithText("删除联系人？").assertDoesNotExist()
+        ui.runOnIdle { assertEquals(listOf(contact), model.state.value.contacts); assertNull(model.state.value.contactDeleteId) }
     }
 
     @Test fun one_yuan_purchase_shortcuts_and_invalid_input_feedback_keep_the_actual_amount() {

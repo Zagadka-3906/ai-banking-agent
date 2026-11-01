@@ -59,7 +59,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
@@ -315,12 +314,9 @@ private fun CardFace(card: CardView) {
     }
     val dark = base.luminance() < 0.4f
     val foreground = if (dark) Color.White else BankPalette.Ink
-    // Active debit cards get a deep blue-to-violet face; other states keep their tonal colour.
-    val face = if (base == semantic.cardActive) Brush.linearGradient(listOf(Color(0xFF1B2A4A), Color(0xFF3B2F6B), Color(0xFF6B3F73)))
-        else Brush.linearGradient(listOf(base, base))
     Box(
         Modifier.fillMaxWidth()
-            .background(face)
+            .background(base)
             .cardHolographicSheen()
             .padding(24.dp),
     ) {

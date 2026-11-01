@@ -76,9 +76,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val listState = rememberLazyListState()
-    ChatMessageEffects(state.error, state.notice,
-        state.contactUndoId?.let { state.pendingContactDeletions[it] },
-        snackbar, viewModel::consumeMessages, viewModel::undoRemoveContact, owner = state.principal)
+    ChatMessageEffects(state.error, state.notice, snackbar, viewModel::consumeMessages, owner = state.principal)
     // The deadline survives destination changes and Activity recreation.
     val approvalDeadlineMillis = rememberSaveable(state.pending?.approvalId) {
         state.pending?.let { SystemClock.elapsedRealtime() + it.expiresIn.coerceAtLeast(0) * 1_000L } ?: 0L
@@ -304,7 +302,7 @@ private fun DrawerItem(entry: DrawerEntry, selected: Boolean, open: Boolean = fa
     }
 }
 
-/** Initial-letter avatar on the brand gradient. */
+/** Initial-letter avatar on the solid brand colour. */
 @Composable
 internal fun AccountAvatar(principal: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val initial = principal.removePrefix("user_").firstOrNull()?.uppercaseChar()?.toString() ?: "我"

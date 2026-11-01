@@ -181,6 +181,44 @@ def test_the_book_survives_a_restart(tmp_path, monkeypatch):
     assert main.ACCOUNTS[restored["account_id"]]["balance"] == 0.0
 
 
+def test_delete_is_persisted_and_absent_from_server_panel_after_reload(client, tmp_path, monkeypatch):
+    import json
+    from bank_core import persistence
+    from bank_core.admin_accounts import account_snapshot
+    from scheduler import TASK_STORE
+    store = tmp_path / 'contacts-ledger.json'
+    monkeypatch.setenv('BANK_LEDGER_STORE_PATH', str(store))
+    main.load_ledger_store()
+    created = _add(client, {'name': '同步删除', 'phone': '13700019999', 'relationship': '朋友'}).json()['data']
+    before = json.loads(store.read_text(encoding='utf-8'))['state']
+    result = client.post(f"/api/v1/contacts/user_zhang/book/{created['contact_id']}/remove", headers={'X-User-Id': 'user_zhang'})
+    assert result.status_code == 200
+    saved = json.loads(store.read_text(encoding='utf-8'))['state']
+    assert all(row['contact_id'] != created['contact_id'] for row in saved['USER_CONTACTS']['user_zhang'])
+    assert saved['ACCOUNTS'] == before['ACCOUNTS'] and saved['TRANSACTIONS'] == before['TRANSACTIONS']
+    assert saved['USER_CONTACTS'].get('user_li') == before['USER_CONTACTS'].get('user_li')
+    main.reset_state()
+    assert main.load_ledger_store()['loaded_state']
+    state = {**persistence.LEDGER_COLLECTIONS, 'TASK_STORE': TASK_STORE.export_records()}
+    assert all(row['contact_id'] != created['contact_id'] for row in account_snapshot(state, 'user_zhang')['contacts'])
+
+
+def test_delete_commit_failure_keeps_the_server_contact(client, tmp_path, monkeypatch):
+    from bank_core import persistence
+    store = tmp_path / 'contacts-ledger.json'
+    monkeypatch.setenv('BANK_LEDGER_STORE_PATH', str(store))
+    main.load_ledger_store()
+    created = _add(client, {'name': '删除失败保留', 'phone': '13700018888', 'relationship': '朋友'}).json()['data']
+    before = store.read_bytes()
+    def unavailable(*args, **kwargs):
+        raise OSError('isolated disk failure')
+    monkeypatch.setattr(persistence.os, 'replace', unavailable)
+    result = client.post(f"/api/v1/contacts/user_zhang/book/{created['contact_id']}/remove", headers={'X-User-Id': 'user_zhang'})
+    assert result.status_code == 503
+    assert store.read_bytes() == before
+    assert any(row['contact_id'] == created['contact_id'] for row in main.USER_CONTACTS['user_zhang'])
+
+
 # ---------------------------------------------------------------------------
 # 亲属称呼转账：“给我爱人转 200” 由核心把称呼解析成联系人簿里的具体收款人
 # ---------------------------------------------------------------------------

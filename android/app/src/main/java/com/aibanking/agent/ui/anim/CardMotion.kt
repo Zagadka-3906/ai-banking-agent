@@ -52,9 +52,9 @@ fun Modifier.cardHolographicSheen(active: Boolean = true): Modifier = composed {
         val sheenBrush = Brush.linearGradient(
             colors = listOf(
                 Color.Transparent,
-                Color(0x1500E5FF), // soft cyan
-                Color(0x20D0BCFF), // soft violet
-                Color(0x18FFF59D), // soft gold
+                Color(0x10FFFFFF),
+                Color(0x20FFFFFF),
+                Color(0x10FFFFFF),
                 Color.Transparent,
             ),
             start = Offset(x, 0f),

@@ -25,7 +25,7 @@ import com.valentinilk.shimmer.defaultShimmerTheme
 
 // Retain these names for screens that already consume the shared theme.
 val BankNavy = BankPalette.Ink
-val BankCobalt = BankPalette.DeepPurple
+val BankCobalt = BankPalette.Accent
 val BankCyan = BankPalette.Blue
 val BankGold = BankPalette.Yellow
 val BankSurfaceBg = BankPalette.Moon
@@ -41,10 +41,10 @@ private val LightColors = lightColorScheme(
     primaryContainer = Color(0xFFD3E3FD),
     onPrimaryContainer = Color(0xFF041E49),
     inversePrimary = Color(0xFFA8C7FA),
-    secondary = Color(0xFF6E4FA8),
+    secondary = Color(0xFF52606D),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFEDE3F9),
-    onSecondaryContainer = Color(0xFF26104A),
+    secondaryContainer = Color(0xFFE9EEF6),
+    onSecondaryContainer = Color(0xFF253443),
     tertiary = Color(0xFF8A5A00),
     onTertiary = Color.White,
     tertiaryContainer = Color(0xFFFEF3D6),
@@ -80,10 +80,10 @@ private val DarkColors = darkColorScheme(
     primaryContainer = Color(0xFF0842A0),
     onPrimaryContainer = Color(0xFFD3E3FD),
     inversePrimary = Color(0xFF0B57D0),
-    secondary = Color(0xFFD0BCFF),
-    onSecondary = Color(0xFF381E72),
-    secondaryContainer = Color(0xFF3B2D58),
-    onSecondaryContainer = Color(0xFFEADDFF),
+    secondary = Color(0xFFBBC7D6),
+    onSecondary = Color(0xFF243447),
+    secondaryContainer = Color(0xFF303C49),
+    onSecondaryContainer = Color(0xFFDEE8F3),
     tertiary = Color(0xFFFDD663),
     onTertiary = Color(0xFF3F2E00),
     tertiaryContainer = Color(0xFF3A2E10),

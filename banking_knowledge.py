@@ -9,7 +9,7 @@ from typing import Any
 
 from planner import ALL_INTENTS, GREEN_INTENTS, RED_INTENTS, missing_slots
 
-KNOWLEDGE_VERSION = "2026-11-01.1"
+KNOWLEDGE_VERSION = "2026-11-01.2"
 TOPICS = {"general", "dispute", "transfer", "card", "wealth", "subscription", "security", "cross_scene", "tasks", "limits", "contacts"}
 SCOPE_POLICY = (
     "只处理本银行演示产品的账户、交易、联系人与收款人、卡片、理财、订阅、争议、验证、待办及生日联动，以及相关产品使用和能力说明。"
@@ -40,7 +40,7 @@ DESCRIPTIONS = {
 # Core separately instead of silently duplicating configurable limits here.
 DOCUMENTS: dict[str, list[tuple[str, str]]] = {
     "contacts": [
-        ("source", "确认联系人是否保存应使用 contacts 工具读取本人联系人簿，不能用转账次数代替。当前聊天工具支持读取；添加、删除及撤销删除在 App 联系人页面办理，不应在聊天中虚构已完成这些变更。"),
+        ("source", "确认联系人是否保存应使用 contacts 工具读取本人联系人簿，不能用转账次数代替。当前聊天工具支持读取；添加与删除在 App 联系人页面办理，不应在聊天中虚构已完成变更。删除先弹窗核对姓名，取消不修改；确认后立即提交服务器，以成功结果或查询核实已删除后更新列表，不再提供删除撤销提示。"),
         ("entry", "查看收款人列表：打开 App 侧边栏 → 联系人，可查看本人已保存联系人、搜索姓名并选择收款人。"),
         ("saved", "实际转账成功后，个人收付款方默认保存到各自联系人列表，包含即时转账、预约实际付款和AA实际付款；历史转账在加载旧账本时补齐可唯一识别的账户。同一账户或手机号不重复添加，不覆盖已有姓名、关系和生日。商户消费、不成功的转账、无法核实身份或联系方式的旧记录不自动添加；联系人已满时保留上限。删除后不会因读取或重启恢复，之后再次实际转账会重新保存。具体某人当前是否仍保存，查询本人联系人簿确认。"),
         ("status", "联系人页面显示当前保存的联系人。张三、李四和王美这些演示账户默认加入各演示用户的联系人列表，排除本人；同时支持手动添加与成功转账后自动保存个人收付款方。可在侧边栏 → 联系人中按姓名搜索。"),

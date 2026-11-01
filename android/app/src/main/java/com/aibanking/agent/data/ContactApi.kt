@@ -120,7 +120,9 @@ class ContactRepository(private val api: ContactApi) {
     }
 
     suspend fun remove(contactId: String, principal: String, sessionToken: String) = try {
-        api.remove(userId = principal, contactId = contactId, userIdHeader = principal, sessionToken = sessionToken)
+        api.remove(userId = principal, contactId = contactId, userIdHeader = principal, sessionToken = sessionToken).also {
+            if (it.code != 200 || it.status != "REMOVED") throw GatewayException(null, "服务器未返回有效的删除结果", 502)
+        }
     } catch (failure: HttpException) {
         throw failure.asGatewayException()
     } catch (failure: IOException) {

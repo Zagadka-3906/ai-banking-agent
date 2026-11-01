@@ -68,9 +68,6 @@ data class ChatMessage(
 
 data class QuizOptionUi(val key: String, val label: String)
 
-/** The original row stays on the server throughout the undo window. */
-data class PendingContactDeletion(val contact: ContactView, val index: Int, val deadlineMillis: Long)
-
 data class QuizQuestionUi(val number: Int, val text: String, val options: List<QuizOptionUi>)
 
 /** 逐题作答的问卷组件状态：answers.size 即当前题号。 */
@@ -151,9 +148,8 @@ data class ChatUiState(
     val contactRelationship: String = "朋友",
     val contactBirthday: String = "",
     val contactFormError: String? = null,
-    val pendingContactDeletions: Map<String, PendingContactDeletion> = emptyMap(),
-    val removedContactIds: Set<String> = emptySet(),
-    val contactUndoId: String? = null,
+    val contactDeleteId: String? = null,
+    val contactDeletingId: String? = null,
     val panelBusy: Boolean = false,
     val taskSubmitting: Boolean = false,
     /**

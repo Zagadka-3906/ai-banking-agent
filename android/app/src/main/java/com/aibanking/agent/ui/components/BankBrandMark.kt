@@ -26,7 +26,7 @@ fun BankBrandMark(modifier: Modifier = Modifier, tint: Color = LocalContentColor
     )
 }
 
-/** The brand mark filled with the blue → violet → rose gradient. */
+/** Shared brand brush uses a single colour in light and dark themes. */
 @Composable
 fun BankGradientMark(modifier: Modifier = Modifier) {
     val gradient = LocalBankSemanticColors.current.brandGradient

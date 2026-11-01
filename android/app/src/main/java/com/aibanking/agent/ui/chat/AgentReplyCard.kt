@@ -50,7 +50,7 @@ internal fun AgentReplyCard(
     var showDetails by rememberSaveable(message.id) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val motion = LocalBankMotionEnabled.current
-    // Assistant turns sit directly on the canvas, led by the gradient brand mark.
+    // Assistant turns sit directly on the canvas, led by the solid brand mark.
     CompositionLocalProvider(LocalCountUpAllowed provides freshReveal) {
         Row(
             modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("reply_card_${message.id}"),

@@ -80,6 +80,21 @@ fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
             }
         }
     }
+    state.contacts.firstOrNull { it.contactId == state.contactDeleteId }?.let { contact ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissContactRemoval,
+            title = { Text("删除联系人？") },
+            text = { Text("确定删除“${contact.name}”？该联系人将从通讯录移除，已有转账记录不受影响。") },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmContactRemoval, modifier = Modifier.testTag(UiTags.CONTACT_REMOVE_CONFIRM)) {
+                    Text("确定删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissContactRemoval, modifier = Modifier.testTag(UiTags.CONTACT_REMOVE_CANCEL)) { Text("取消") }
+            },
+        )
+    }
 }
 
 private data class ContactSection(val letter: String, val contacts: List<ContactView>)
@@ -307,7 +322,7 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
                     IconButton(onClick = viewModel::backToContactList) { BankIcon(BankIconKind.ArrowBack, contentDescription = "返回列表") }
                 },
                 actions = {
-                    IconButton(onClick = { rendered?.contactId?.let(viewModel::removeContact) }, enabled = rendered != null && !state.panelBusy,
+                    IconButton(onClick = { rendered?.contactId?.let(viewModel::requestContactRemoval) }, enabled = rendered != null && !state.panelBusy,
                         modifier = Modifier.testTag(UiTags.CONTACT_REMOVE)) {
                         Icon(Icons.Default.Delete, contentDescription = "删除联系人", tint = MaterialTheme.colorScheme.error)
                     }

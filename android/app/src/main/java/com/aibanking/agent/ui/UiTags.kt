@@ -90,6 +90,8 @@ object UiTags {
     const val TASK_CANCEL = "task_cancel"
     const val CONTACT_ADD = "contact_add"
     const val CONTACT_REMOVE = "contact_remove"
+    const val CONTACT_REMOVE_CONFIRM = "contact_remove_confirm"
+    const val CONTACT_REMOVE_CANCEL = "contact_remove_cancel"
 
     const val APPROVAL_APPROVE = "approval_approve"
     const val APPROVAL_REJECT = "approval_reject"
