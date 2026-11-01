@@ -180,6 +180,10 @@ android {
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -196,6 +200,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.animation)
     // Material 3 1.4 no longer brings the icons used by existing screens.
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.compose.shimmer)

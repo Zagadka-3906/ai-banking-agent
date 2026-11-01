@@ -1,6 +1,15 @@
 package com.aibanking.agent.ui.chat
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -43,10 +52,15 @@ import androidx.compose.ui.unit.dp
 import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.BankHaptics
+import com.aibanking.agent.ui.anim.CONTAINER_TRANSFORM_DURATION_MILLIS
+import com.aibanking.agent.ui.anim.ContainerTransformEasing
+import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonRow
+import com.aibanking.agent.ui.anim.bankContainerTransform
 import com.aibanking.agent.ui.anim.cascadeItem
+import com.aibanking.agent.ui.anim.containerTransformBoundsTransform
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import com.aibanking.agent.ui.components.*
@@ -59,23 +73,50 @@ import java.util.Locale
 import kotlin.math.abs
 
 /** Contact destinations share the app-level message host. */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        PredictiveBackPreview(
-            enabled = state.contactsScreen != ContactsScreen.LIST,
-            onBack = viewModel::backToContactList,
-            beneath = { ContactListScreen(state, viewModel) },
-        ) {
-            AnimatedContent(
-                targetState = state.contactsScreen,
-                transitionSpec = { pageSlideSpec(ContactsScreen::ordinal) },
-                label = "contactsScreen",
-            ) { screen ->
-                when (screen) {
-                    ContactsScreen.LIST -> ContactListScreen(state, viewModel)
-                    ContactsScreen.DETAIL -> ContactDetailScreen(state, viewModel)
-                    ContactsScreen.ADD -> ContactAddScreen(state, viewModel)
+    SharedTransitionLayout {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            PredictiveBackPreview(
+                enabled = state.contactsScreen != ContactsScreen.LIST,
+                onBack = viewModel::backToContactList,
+                beneath = { ContactListScreen(state, viewModel) },
+            ) {
+                val motion = LocalBankMotionEnabled.current
+                AnimatedContent(
+                    targetState = state.contactsScreen,
+                    transitionSpec = {
+                        if ((initialState == ContactsScreen.LIST && targetState == ContactsScreen.DETAIL) ||
+                            (initialState == ContactsScreen.DETAIL && targetState == ContactsScreen.LIST)
+                        ) {
+                            if (motion) {
+                                fadeIn(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing)) togetherWith
+                                    fadeOut(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing))
+                            } else {
+                                fadeIn(snap()) togetherWith fadeOut(snap())
+                            }
+                        } else {
+                            pageSlideSpec(ContactsScreen::ordinal)
+                        }
+                    },
+                    label = "contactsScreen",
+                ) { screen ->
+                    when (screen) {
+                        ContactsScreen.LIST -> ContactListScreen(
+                            state = state,
+                            viewModel = viewModel,
+                            sharedTransitionScope = this@SharedTransitionLayout,
+                            animatedVisibilityScope = this@AnimatedContent,
+                        )
+                        ContactsScreen.DETAIL -> ContactDetailScreen(
+                            state = state,
+                            viewModel = viewModel,
+                            sharedTransitionScope = this@SharedTransitionLayout,
+                            animatedVisibilityScope = this@AnimatedContent,
+                        )
+                        ContactsScreen.ADD -> ContactAddScreen(state, viewModel)
+                    }
                 }
             }
         }
@@ -101,7 +142,12 @@ private data class ContactSection(val letter: String, val contacts: List<Contact
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
+private fun ContactListScreen(
+    state: ChatUiState,
+    viewModel: ChatViewModel,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+) {
     val sections = remember(state.contacts, state.contactSearch) { groupContacts(state.contacts, state.contactSearch) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -198,7 +244,12 @@ private fun ContactListScreen(state: ChatUiState, viewModel: ChatViewModel) {
                                     SectionHeader(section.letter, Modifier.cascadeItem(cascade, headerIndex))
                                 }
                                 itemsIndexed(section.contacts, key = { _, contact -> contact.contactId }) { offset, contact ->
-                                    ContactRow(contact, Modifier.cascadeItem(cascade, firstRowIndex + offset)) {
+                                    ContactRow(
+                                        contact = contact,
+                                        modifier = Modifier.cascadeItem(cascade, firstRowIndex + offset),
+                                        sharedTransitionScope = sharedTransitionScope,
+                                        animatedVisibilityScope = animatedVisibilityScope,
+                                    ) {
                                         focus.clearFocus()
                                         viewModel.showContactDetail(contact.contactId)
                                     }
@@ -260,11 +311,31 @@ private fun SectionHeader(letter: String, modifier: Modifier = Modifier) {
     )
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun ContactRow(
+    contact: ContactView,
+    modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    onClick: () -> Unit,
+) {
     Surface(
         onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .bankContainerTransform(
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                key = "contact-container-${contact.contactId}",
+                cardCorner = 16.dp,
+                detailCorner = 0.dp,
+                cardElevation = 2.dp,
+                elevatedElevation = 8.dp,
+                detailElevation = 0.dp,
+                containerColor = MaterialTheme.colorScheme.background,
+                isDetail = false,
+            ),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.background,
     ) {
@@ -273,7 +344,18 @@ private fun ContactRow(contact: ContactView, modifier: Modifier = Modifier, onCl
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            ContactAvatar(contact.name, 48.dp)
+            val avatarModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                with(sharedTransitionScope) {
+                    Modifier.sharedBounds(
+                        sharedContentState = rememberSharedContentState(key = "contact-avatar-${contact.contactId}"),
+                        animatedVisibilityScope = animatedVisibilityScope,
+                        boundsTransform = containerTransformBoundsTransform(LocalBankMotionEnabled.current),
+                    )
+                }
+            } else Modifier
+            Box(avatarModifier) {
+                ContactAvatar(contact.name, 48.dp)
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(contact.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(contact.phone, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -304,15 +386,34 @@ private fun AlphabetRail(letters: List<String>, onSelect: (String) -> Unit, modi
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
-private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
+private fun ContactDetailScreen(
+    state: ChatUiState,
+    viewModel: ChatViewModel,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+) {
     val contact = state.contacts.firstOrNull { it.contactId == state.selectedContactId }
     // Retain the contact only during exit; deleted live contacts still get an honest empty state.
     var lastRendered by remember { mutableStateOf<ContactView?>(null) }
     SideEffect { if (contact != null) lastRendered = contact }
     val rendered = if (state.contactsScreen == ContactsScreen.DETAIL) contact else lastRendered
     Scaffold(
+        modifier = if (rendered != null) {
+            Modifier.fillMaxSize().bankContainerTransform(
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                key = "contact-container-${rendered.contactId}",
+                cardCorner = 16.dp,
+                detailCorner = 0.dp,
+                cardElevation = 2.dp,
+                elevatedElevation = 8.dp,
+                detailElevation = 0.dp,
+                containerColor = MaterialTheme.colorScheme.background,
+                isDetail = true,
+            )
+        } else Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
@@ -352,7 +453,18 @@ private fun ContactDetailScreen(state: ChatUiState, viewModel: ChatViewModel) {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        ContactAvatar(rendered.name, 80.dp, MaterialTheme.typography.headlineLarge)
+                        val avatarModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                            with(sharedTransitionScope) {
+                                Modifier.sharedBounds(
+                                    sharedContentState = rememberSharedContentState(key = "contact-avatar-${rendered.contactId}"),
+                                    animatedVisibilityScope = animatedVisibilityScope,
+                                    boundsTransform = containerTransformBoundsTransform(LocalBankMotionEnabled.current),
+                                )
+                            }
+                        } else Modifier
+                        Box(avatarModifier) {
+                            ContactAvatar(rendered.name, 80.dp, MaterialTheme.typography.headlineLarge)
+                        }
                         Text(rendered.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                         BankStatusChip(rendered.relationshipLabel.ifBlank { rendered.relationship }, BankSemanticStatus.RiskGreen)
                         Text(rendered.phone, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)

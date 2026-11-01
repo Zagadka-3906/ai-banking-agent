@@ -6,7 +6,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -75,16 +82,20 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.aibanking.agent.data.CardRevealView
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.ui.UiTags
-import com.aibanking.agent.ui.anim.ShimmerSwitch
-import com.aibanking.agent.ui.anim.cardHolographicSheen
-import com.aibanking.agent.ui.anim.card3dFlip
-import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import com.aibanking.agent.ui.anim.CONTAINER_TRANSFORM_DURATION_MILLIS
+import com.aibanking.agent.ui.anim.ContainerTransformEasing
+import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
+import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonBlock
+import com.aibanking.agent.ui.anim.bankContainerTransform
+import com.aibanking.agent.ui.anim.card3dFlip
+import com.aibanking.agent.ui.anim.cardHolographicSheen
 import com.aibanking.agent.ui.anim.cascadeItem
+import com.aibanking.agent.ui.anim.containerTransformBoundsTransform
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import com.aibanking.agent.ui.components.BankBottomSheet
@@ -119,7 +130,7 @@ import kotlinx.coroutines.Job
  * 黄色操作，需用户明确确认后提交并审计。
  */
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
     var showAdd by remember { mutableStateOf(false) }
@@ -136,6 +147,81 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             cardsBeforeSubmit = null
         }
     }
+
+    SharedTransitionLayout {
+        val motion = LocalBankMotionEnabled.current
+        AnimatedContent(
+            targetState = selectedCard,
+            transitionSpec = {
+                if ((initialState == null && targetState != null) || (initialState != null && targetState == null)) {
+                    if (motion) {
+                        fadeIn(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing)) togetherWith
+                            fadeOut(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing))
+                    } else {
+                        fadeIn(snap()) togetherWith fadeOut(snap())
+                    }
+                } else {
+                    pageSlideSpec { if (it == null) 0 else 1 }
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+            label = "cardDetailTransition",
+        ) { card ->
+            if (card == null) {
+                CardsListScreen(
+                    state = state,
+                    viewModel = viewModel,
+                    onSelectCard = { selectedCard = it },
+                    onOpenAdd = { showAdd = true },
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@AnimatedContent,
+                )
+            } else {
+                CardDetail(
+                    card = card,
+                    revealCard = viewModel::revealCard,
+                    onTransfer = { viewModel.prefillCardTransfer(card) },
+                    onWealth = viewModel::openWealth,
+                    onBack = { selectedCard = null },
+                    sharedTransitionScope = this@SharedTransitionLayout,
+                    animatedVisibilityScope = this@AnimatedContent,
+                )
+            }
+        }
+    }
+
+    if (showAdd) {
+        AddCardSheet(
+            visible = true,
+            formError = state.cardFormError,
+            busy = state.panelBusy,
+            cardType = state.cardType,
+            label = state.cardLabel,
+            onFieldChange = viewModel::onCardFormChange,
+            onAdd = { number, source ->
+                if (!state.panelBusy) {
+                    cardsBeforeSubmit = state.cards.size
+                    viewModel.addCard(number, source)
+                }
+            },
+            onDismiss = {
+                showAdd = false
+                cardsBeforeSubmit = null
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
+@Composable
+private fun CardsListScreen(
+    state: ChatUiState,
+    viewModel: ChatViewModel,
+    onSelectCard: (CardView) -> Unit,
+    onOpenAdd: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -168,7 +254,7 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { showAdd = true },
+                onClick = onOpenAdd,
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 shape = RoundedCornerShape(16.dp),
@@ -196,7 +282,14 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
                     count = state.cards.size,
                     key = { state.cards[it].cardId },
                 ) { index ->
-                    BankCardVisual(state.cards[index], viewModel, Modifier.cascadeItem(cascade, index)) { selectedCard = state.cards[index] }
+                    BankCardVisual(
+                        card = state.cards[index],
+                        viewModel = viewModel,
+                        modifier = Modifier.cascadeItem(cascade, index),
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                        onOpen = { onSelectCard(state.cards[index]) },
+                    )
                 }
                 if (state.cards.isEmpty() && !state.panelBusy) {
                     item {
@@ -228,40 +321,6 @@ fun CardsUi(state: ChatUiState, viewModel: ChatViewModel) {
             }
         }
     }
-    if (showAdd) {
-        AddCardSheet(
-            visible = true,
-            formError = state.cardFormError,
-            busy = state.panelBusy,
-            cardType = state.cardType,
-            label = state.cardLabel,
-            onFieldChange = viewModel::onCardFormChange,
-            onAdd = { number, source ->
-                if (!state.panelBusy) {
-                    cardsBeforeSubmit = state.cards.size
-                    viewModel.addCard(number, source)
-                }
-            },
-            onDismiss = {
-                showAdd = false
-                cardsBeforeSubmit = null
-            },
-        )
-    }
-    AnimatedContent(
-        targetState = selectedCard,
-        transitionSpec = { pageSlideSpec { if (it == null) 0 else 1 } },
-        modifier = Modifier.fillMaxSize(),
-        label = "cardDetail",
-    ) { card ->
-        if (card != null) CardDetail(
-            card = card,
-            revealCard = viewModel::revealCard,
-            onTransfer = { viewModel.prefillCardTransfer(card) },
-            onWealth = viewModel::openWealth,
-            onBack = { selectedCard = null },
-        )
-    }
 }
 
 /** 加载中的卡面骨架：与真实卡片排版一致的占位块（含高光扫过）。 */
@@ -277,14 +336,48 @@ private fun CardsSkeleton() {
     }
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun BankCardVisual(card: CardView, viewModel: ChatViewModel, modifier: Modifier = Modifier, onOpen: () -> Unit = {}) {
+private fun BankCardVisual(
+    card: CardView,
+    viewModel: ChatViewModel,
+    modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    onOpen: () -> Unit = {},
+) {
     BankCard(
-        modifier = modifier.fillMaxWidth().testTag("${UiTags.CARD_DETAIL}:${card.cardId}").clickable(onClick = onOpen),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("${UiTags.CARD_DETAIL}:${card.cardId}")
+            .bankContainerTransform(
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                key = "card-container-${card.cardId}",
+                cardCorner = 24.dp,
+                detailCorner = 0.dp,
+                cardElevation = 2.dp,
+                elevatedElevation = 8.dp,
+                detailElevation = 0.dp,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                isDetail = false,
+            )
+            .clickable(onClick = onOpen),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        CardFace(card)
+        val faceModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+            with(sharedTransitionScope) {
+                Modifier.sharedBounds(
+                    sharedContentState = rememberSharedContentState(key = "card-face-${card.cardId}"),
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    boundsTransform = containerTransformBoundsTransform(LocalBankMotionEnabled.current),
+                )
+            }
+        } else Modifier
+        Box(faceModifier) {
+            CardFace(card)
+        }
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 CardLimitMetric("每日限额", "¥%,.0f".format(Locale.CHINA, card.dailyLimit), Modifier.weight(1f))
@@ -521,13 +614,15 @@ private fun CardNumberLuhn(number: String): Boolean = number.length in 12..19 &&
 internal fun extractCardNumber(text: String): String? = Regex("(?<!\\d)(?:\\d[ -]?){12,19}(?!\\d)").findAll(text).map { it.value.filter(Char::isDigit) }.firstOrNull { CardNumberLuhn(it) }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 internal fun CardDetail(
     card: CardView,
     revealCard: suspend (String, String) -> CardRevealView,
     onTransfer: () -> Unit,
     onWealth: () -> Unit,
     onBack: () -> Unit,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
     var pin by remember(card.cardId) { mutableStateOf("") }
     var reveal by remember(card.cardId) { mutableStateOf<CardRevealView?>(null) }
@@ -569,6 +664,21 @@ internal fun CardDetail(
     }
     if (reveal != null) androidx.compose.ui.platform.LocalView.current.let { view -> androidx.compose.runtime.DisposableEffect(Unit) { val window = (view.context as? android.app.Activity)?.window; window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE); onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) } } }
     Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .bankContainerTransform(
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                key = "card-container-${card.cardId}",
+                cardCorner = 24.dp,
+                detailCorner = 0.dp,
+                cardElevation = 2.dp,
+                elevatedElevation = 8.dp,
+                detailElevation = 0.dp,
+                containerColor = MaterialTheme.colorScheme.background,
+                isDetail = true,
+            ),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(title = { Text("卡片详情", fontWeight = FontWeight.SemiBold) }, navigationIcon = {
                 IconButton(onClick = dismiss) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
@@ -585,9 +695,21 @@ internal fun CardDetail(
                 animationSpec = if (motion) tween(450, easing = FastOutSlowInEasing) else snap(),
                 label = "cardFlip",
             )
+            val faceModifier = if (sharedTransitionScope != null && animatedVisibilityScope != null) {
+                with(sharedTransitionScope) {
+                    Modifier.sharedBounds(
+                        sharedContentState = rememberSharedContentState(key = "card-face-${card.cardId}"),
+                        animatedVisibilityScope = animatedVisibilityScope,
+                        boundsTransform = containerTransformBoundsTransform(LocalBankMotionEnabled.current),
+                    )
+                }
+            } else Modifier
             BankCard(
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().card3dFlip(if (flipAngle >= 90f) flipAngle - 180f else flipAngle),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .card3dFlip(if (flipAngle >= 90f) flipAngle - 180f else flipAngle)
+                    .then(faceModifier),
             ) { CardFace(card) }
             Text(
                 "${card.type} · 尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}",
