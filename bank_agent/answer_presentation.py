@@ -31,6 +31,19 @@ _LABELS = {
 _TOKEN = re.compile(r'[A-Za-z][A-Za-z0-9_-]*')
 
 
+def question_facts(facts: list[dict[str, Any]], question: str) -> list[dict[str, Any]]:
+    """Keep a frequency policy out of unrelated contact answers, not Core reads."""
+    if re.search(r'常用|频率|经常|频繁|次数|多次|常转|多不多', question):
+        return facts
+    return [row for row in facts if row['id'] != 'guide.contacts.common_flag']
+
+
+def validate_answer_focus(text: str, question: str) -> None:
+    if (re.search(r'常用频率|频率标记', text)
+            and not re.search(r'常用|频率|经常|频繁|次数|多次|常转|多不多', question)):
+        raise ValueError('UNREQUESTED_CONTACT_FREQUENCY')
+
+
 def customer_language(text: str, facts: list[dict[str, Any]]) -> str:
     """Translate whole known tokens, protecting verified names and identifiers."""
     protected = {value for row in facts for value in

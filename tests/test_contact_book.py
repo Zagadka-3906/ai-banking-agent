@@ -22,6 +22,9 @@ from bank_core.routes import contacts as contact_routes  # noqa: E402
 @pytest.fixture()
 def client():
     main.reset_state()
+    # CRUD/consent cases exercise an explicitly empty custom address book.
+    # The default demo books are covered in test_transfer_contacts instead.
+    main.USER_CONTACTS.clear()
     yield TestClient(main.app)
     main.reset_state()
 
@@ -173,9 +176,9 @@ def test_the_book_survives_a_restart(tmp_path, monkeypatch):
     summary = main.load_ledger_store()
     assert summary["loaded_state"] is True
     rows = main.USER_CONTACTS["user_zhang"]
-    assert rows[0]["name"] == "王五"
+    restored = next(row for row in rows if row['name'] == '王五')
     # The provisioned shadow payee account came back with it.
-    assert main.ACCOUNTS[rows[0]["account_id"]]["balance"] == 0.0
+    assert main.ACCOUNTS[restored["account_id"]]["balance"] == 0.0
 
 
 # ---------------------------------------------------------------------------

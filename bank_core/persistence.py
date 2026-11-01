@@ -145,6 +145,10 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
     for user_id, record in accounts.items():
         if not _account_record_valid(str(user_id), record):
             return False
+        if 'transfer_contacts_backfilled' in record and type(record['transfer_contacts_backfilled']) is not bool:
+            return False
+        if 'demo_contacts_seeded' in record and type(record['demo_contacts_seeded']) is not bool:
+            return False
     for name in ("CONTACTS", "DAILY_TRANSFER_DATE", "CARD_DAILY_SPENT_DATE"):
         container = state.get(name)
         if not isinstance(container, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in container.items()):
@@ -236,7 +240,7 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
             # ``owner_id``/``link_verification`` are consent bookkeeping added
             # later; snapshots written before them must still load (consent is
             # recomputed on read anyway), so only validate the shape when present.
-            for key in ("owner_id", "link_verification"):
+            for key in ("owner_id", "link_verification", "source"):
                 if key in row and not isinstance(row.get(key), str):
                     return False
     try:
@@ -463,6 +467,9 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
         from bank_core.wealth_data import WEALTH_CATALOGUE
 
         LEDGER_COLLECTIONS["WEALTH_PRODUCTS"][:] = deepcopy(WEALTH_CATALOGUE)
+        from bank_core.contacts import backfill_transfer_contacts, seed_demo_contacts
+        demo_contacts_seeded = seed_demo_contacts()
+        contacts_backfilled = backfill_transfer_contacts()
     _LEDGER_STORE_LOAD_SUMMARY = {
         "loaded_state": True,
         "path": target,
@@ -470,6 +477,8 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
         "keyed": bool(keyed),
         "accounts": len(state.get("ACCOUNTS") or {}),
         "transactions": len(state.get("TRANSACTIONS") or []),
+        "contacts_backfilled": contacts_backfilled,
+        "demo_contacts_seeded": demo_contacts_seeded,
     }
     return _LEDGER_STORE_LOAD_SUMMARY
 

@@ -28,7 +28,7 @@ ALIASES = {'general': '余额 事实 数据来源 对象 指代 插问 持久化
            'subscription': '订阅 会员 代扣 续费 扣款 视频 Apple'}
 REFERENCES = {
     'general': ['bank_agent/understanding.py', 'bank_agent/query_focus.py', 'bank_agent/answering.py', 'bank_core/routes/accounts.py', 'bank_core/persistence.py'],
-    'contacts': ['bank_core/routes/contacts.py', 'bank_agent/query_focus.py', 'android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt'],
+    'contacts': ['bank_core/routes/contacts.py', 'bank_core/contacts.py', 'bank_core/ledger.py', 'bank_core/routes/tasks.py', 'bank_agent/query_focus.py', 'android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt'],
     'transfer': ['bank_core/routes/approvals.py', 'bank_core/routes/execution.py', 'bank_core/payments.py'],
     'card': ['bank_core/cards.py', 'bank_core/routes/approvals.py', 'bank_core/routes/execution.py'],
     'limits': ['bank_core/cards.py', 'bank_core/operations.py', 'bank_core/routes/execution.py'],

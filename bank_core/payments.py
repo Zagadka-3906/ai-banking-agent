@@ -43,10 +43,10 @@ def resolve_payee(value: Optional[str], *, from_user: Optional[str] = None) -> t
         contact: Optional[dict[str, Any]] = None
         with STATE_LOCK:
             rows = USER_CONTACTS.get(from_user, [])
-            contact = next(
-                (row for row in rows if safe_value in {str(row.get("name") or ""), str(row.get("phone") or "")}),
-                None,
-            )
+            matches = [row for row in rows if safe_value in {str(row.get("name") or ""), str(row.get("phone") or "")}]
+            if len({row.get('account_id') for row in matches}) > 1:
+                raise SecurityError('有多位同名联系人，请提供具体手机号或账户编号', 409, 'CONTACT_TARGET_AMBIGUOUS')
+            contact = matches[0] if matches else None
             if contact is None:
                 category = CONTACT_RELATION_SYNONYMS.get(safe_value) or (safe_value if safe_value in CONTACT_RELATIONSHIP_LABELS else None)
                 if category:
@@ -99,7 +99,7 @@ def resolve_payee(value: Optional[str], *, from_user: Optional[str] = None) -> t
 
 
 def inbound_transaction(*, account_id: str, payer_name: str, amount: float, remark: str = "",
-                        category: str = "转账收入", merchant: Optional[str] = None) -> dict[str, Any]:
+                        category: str = "转账收入", merchant: Optional[str] = None, payer_id: Optional[str] = None) -> dict[str, Any]:
     """The payee-side statement row for money received.
 
     Before this, a transfer changed the payee's balance with no row in their
@@ -117,6 +117,7 @@ def inbound_transaction(*, account_id: str, payer_name: str, amount: float, rema
         "direction": "IN",
         "remark": remark,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **({'counterparty_id': payer_id} if payer_id else {}),
     }
 
 

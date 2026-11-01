@@ -294,6 +294,8 @@ class EvidenceSession:
                        if not row.get('source', '').startswith('calculation://')
                        and not row['id'].startswith('outcome.')]]
         documents += calculation_evidence(self.goals, documents)
+        from bank_agent.answer_presentation import question_facts
+        documents = question_facts(documents, str(self.state.get('user_input') or ''))
         return sorted(documents, key=lambda row: (
             0 if row.get('required') or row.get('scope') == 'read_outcome'
             else 1 if row['id'].startswith('read.') else 3 if row.get('context_only') else 2))[:80]

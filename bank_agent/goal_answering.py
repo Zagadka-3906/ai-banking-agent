@@ -17,7 +17,7 @@ from bank_planning.requests import STATUSES, needs_record, request_goals
 from bank_agent.state import extract_json
 from bank_agent.understanding import _safe_text, model_context, understanding_context
 from banking_knowledge import SCOPE_POLICY
-from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language
+from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language, validate_answer_focus
 from security import audit_event
 from workflow_runtime import invoke_json_model as invoke_model
 
@@ -342,6 +342,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
             coverage = _validate_coverage(plan['coverage'], goals, facts)
             plan = _compile_citations(plan, coverage)
             text, ids = _validate_draft(_bind_literal_values({key: plan[key] for key in ('answer', 'evidence_ids', 'unanswered')}, facts, anchors), facts, anchors)
+            validate_answer_focus(text, str(state.get('user_input') or ''))
             failed_tools = {item['tool'] for item in session.failures if item['reason'] != 'UNBOUND_READ_SUBJECT'}
             for goal in goals:
                 item = next(row for row in coverage if row['goal_id'] == goal['id'])

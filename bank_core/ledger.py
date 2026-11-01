@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from notification_outbox import OUTBOX
@@ -42,8 +43,8 @@ CONTACTS: dict[str, str] = {
     "13700137000": "user_wife",
 }
 
-# Per-user contact book: contacts the user added through the app (name, phone,
-# relationship, birthday).  A contact whose phone matches an existing account is
+# Per-user contact book: manual entries and actual transfer counterparties
+# (name, phone, relationship, birthday). A matching existing account is
 # *linked* to it; anything else gets a zero-balance shadow payee account so a
 # transfer to the new contact settles end to end in the mock.  Shadow accounts
 # carry an unusable password digest, so enrollment can never become a login.
@@ -111,6 +112,28 @@ TRANSACTIONS: list[dict[str, Any]] = [
 ]
 DISPUTE_CASES: list[dict[str, Any]] = []
 
+DEMO_ACCOUNT_IDS = ('user_zhang', 'user_li', 'user_wife')
+
+
+def transfer_contact_id(owner_id: str, counterparty_id: str) -> str:
+    return 'CTT' + uuid.uuid5(uuid.NAMESPACE_URL, f'bank-transfer-contact:{owner_id}:{counterparty_id}').hex[:20].upper()
+
+
+def demo_contact_rows(owner_id: str) -> list[dict[str, Any]]:
+    return [{
+        'contact_id': transfer_contact_id(owner_id, uid), 'owner_id': owner_id,
+        'name': ACCOUNTS[uid]['name'], 'phone': ACCOUNTS[uid]['phone'],
+        'relationship': 'OTHER', 'birthday': None, 'account_id': uid,
+        'linked_existing': True, 'link_verification': LINK_UNVERIFIED, 'source': 'DEMO_SEED',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    } for uid in DEMO_ACCOUNT_IDS if uid != owner_id and uid in ACCOUNTS]
+
+
+for _owner_id in DEMO_ACCOUNT_IDS:
+    USER_CONTACTS[_owner_id] = demo_contact_rows(_owner_id)[:CONTACT_MAX_PER_USER]
+    ACCOUNTS[_owner_id]['demo_contacts_seeded'] = True
+    ACCOUNTS[_owner_id]['transfer_contacts_backfilled'] = True
+
 # Ledger collections by name, for the transaction snapshot below and the
 # durable store. Every module that owns ledger state registers its containers
 # here at import; ``main`` imports them all before serving a request.
@@ -142,6 +165,7 @@ def ledger_transaction():
 
     names = (
         "ACCOUNTS",
+        "USER_CONTACTS",
         "DAILY_TRANSFERS",
         "DAILY_TRANSFER_DATE",
         "CARD_DAILY_SPENT",

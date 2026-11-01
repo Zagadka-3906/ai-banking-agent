@@ -10,6 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from bank_core.undo import release_locks, undo_candidate, undo_task
+from bank_core.contacts import remember_transfer_parties
 from bank_core.access import (
     get_actor,
     request_session_token,
@@ -151,15 +152,16 @@ def execute_transfer(req: TransferExecuteRequest, request: Request = None, x_aut
                 if int(round(amount * 100)) >= behavior_large_amount_cents():
                     record_behavior_signal(req.from_user, "LARGE_TRANSFER", metadata={"amount_cents": int(round(amount * 100)), "target_id": target_id}, request_id=request_id)
                 txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
-                TRANSACTIONS.append({"tx_id": txn_id, "account_id": req.from_user, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": remark, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                TRANSACTIONS.append({"tx_id": txn_id, "account_id": req.from_user, "counterparty_id": target_id, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": remark, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                 split_id = split_id_from_remark(remark)
                 # The payee's statement records the credit too; ``direction``
                 # keeps it out of spending totals (bank_planning.bill_analysis).
                 TRANSACTIONS.append(inbound_transaction(
-                    account_id=target_id, payer_name=sender["name"], amount=amount, remark=remark,
+                    account_id=target_id, payer_name=sender["name"], payer_id=req.from_user, amount=amount, remark=remark,
                     category="AA 收款" if split_id else "转账收入",
                     merchant=f"AA 收款 - {sender['name']}" if split_id else None,
                 ))
+                remember_transfer_parties(req.from_user, target_id)
                 if split_id:
                     record_split_payment(split_id=split_id, payer_id=req.from_user, recipient_id=target_id, amount=amount, transaction_id=txn_id)
                     enqueue_notification(f"AA_PAID:{split_id}:{req.from_user}", owner_id=target_id, recipient_id=req.from_user, split_id=split_id, amount=amount, outcome="COLLECTED", message=f"AA 份额已支付 {amount:.2f} 元")

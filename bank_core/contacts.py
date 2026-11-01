@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import uuid
+import math
+import re
+from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
 
 from bank_core.ledger import (
     ACCOUNTS,
     CONTACT_RELATIONSHIP_LABELS,
     CONTACTS,
+    CONTACT_MAX_PER_USER,
+    CONTACT_PHONE_RE,
     LINK_UNVERIFIED,
     LINK_VERIFIED,
     USER_CONTACTS,
+    TRANSACTIONS,
+    demo_contact_rows,
+    transfer_contact_id,
 )
 from bank_core.models import (
     StrictModel,
@@ -95,6 +103,8 @@ def _contact_consent(account_id: str, phone: str, *, caller_id: Optional[str]) -
     if caller_id and str(caller_id) == account_id:
         return LINK_VERIFIED
     for row in USER_CONTACTS.get(account_id, []):
+        if row.get('source') in {'TRANSFER_HISTORY', 'DEMO_SEED'}:
+            continue
         if str(row.get("phone") or "") == phone:
             return LINK_VERIFIED
     # The caller's own number for this account may have been registered by the
@@ -103,6 +113,8 @@ def _contact_consent(account_id: str, phone: str, *, caller_id: Optional[str]) -
     if caller:
         caller_phone = str(caller.get("phone") or "")
         for row in USER_CONTACTS.get(account_id, []):
+            if row.get('source') in {'TRANSFER_HISTORY', 'DEMO_SEED'}:
+                continue
             if caller_phone and str(row.get("phone") or "") == caller_phone:
                 return LINK_VERIFIED
     return LINK_UNVERIFIED
@@ -126,6 +138,8 @@ def aa_request_eligible(user_id: str, name: str) -> bool:
             if name in {str(row.get("name") or ""), str(row.get("phone") or "")}:
                 if str(row.get("account_id") or "") not in ACCOUNTS:
                     return False
+                if row.get('source') in {'TRANSFER_HISTORY', 'DEMO_SEED'} and CONTACTS.get(name) == row.get('account_id'):
+                    return True  # Existing built-in permission, not consent from an automatic row.
                 return _contact_consent(str(row.get("account_id") or ""), str(row.get("phone") or ""), caller_id=user_id) == LINK_VERIFIED
     return name in CONTACTS
 
@@ -161,5 +175,94 @@ def resolve_contact_account(name: str, phone: str, *, caller_id: Optional[str] =
             # store's structural validation instead.
             "password_hash": "!contact-book-no-login",
             "source": "CONTACT_BOOK",
+            "transfer_contacts_backfilled": True,
+            "demo_contacts_seeded": True,
         }
         return account_id, False, LINK_UNVERIFIED
+
+
+def _save_transfer_contact(owner_id: str, counterparty_id: str) -> bool:
+    """Caller holds STATE_LOCK and the transfer's ledger transaction."""
+    account = ACCOUNTS.get(counterparty_id)
+    if owner_id == counterparty_id or owner_id not in ACCOUNTS or not account:
+        return False
+    name, phone = account.get('name'), account.get('phone')
+    if (not isinstance(name, str) or not name.strip() or len(name) > 120
+            or not isinstance(phone, str) or not CONTACT_PHONE_RE.fullmatch(phone)):
+        return False
+    rows = USER_CONTACTS.get(owner_id, [])
+    if (any(row.get('account_id') == counterparty_id or row.get('phone') == phone for row in rows)
+            or len(rows) >= CONTACT_MAX_PER_USER):
+        return False
+    USER_CONTACTS.setdefault(owner_id, []).append({
+        'contact_id': transfer_contact_id(owner_id, counterparty_id),
+        'owner_id': owner_id, 'name': name, 'phone': phone, 'relationship': 'OTHER', 'birthday': None,
+        'account_id': counterparty_id, 'linked_existing': account.get('source') != 'CONTACT_BOOK',
+        'link_verification': LINK_UNVERIFIED, 'source': 'TRANSFER_HISTORY',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    })
+    return True
+
+
+def backfill_transfer_contacts(*, user_ids: tuple[str, ...] | None = None) -> int:
+    """Migrate trusted statement counterparties once; never turn GET into a write.
+
+    Old rows have only a rendered party name. Resolve those only when the
+    canonical account name is unique; current rows carry an explicit ID.
+    The per-owner marker is persisted with deletions, so a restart cannot
+    recreate a contact the user removed. A later new transfer can save it again.
+    """
+    with STATE_LOCK:
+        owners = {uid for uid in (user_ids if user_ids is not None else tuple(ACCOUNTS))
+                  if uid in ACCOUNTS and ACCOUNTS[uid].get('transfer_contacts_backfilled') is not True}
+        names: dict[str, list[str]] = {}
+        for uid, account in ACCOUNTS.items():
+            if isinstance(account.get('name'), str):
+                names.setdefault(account['name'], []).append(uid)
+        added = 0
+        for tx in TRANSACTIONS:
+            owner = tx.get('account_id')
+            amount = tx.get('amount')
+            if (owner not in owners or tx.get('category') not in {'转账支出', '转账收入', 'AA 收款'}
+                    or not isinstance(amount, (int, float)) or isinstance(amount, bool) or not math.isfinite(amount) or amount <= 0
+                    or tx.get('status', 'SUCCESS') not in {'SUCCESS', 'SUCCEEDED', 'COMPLETED', 'SETTLED'}):
+                continue
+            counterparty = tx.get('counterparty_id')
+            if counterparty is None:
+                merchant = str(tx.get('merchant') or '')
+                pattern = (r'转账给 (.+)' if tx['category'] == '转账支出' else
+                           r'AA 收款 - (.+)' if tx['category'] == 'AA 收款' else r'来自 (.+) 的转账')
+                match = re.fullmatch(pattern, merchant)
+                candidates = names.get(match[1], []) if match else []
+                counterparty = candidates[0] if len(candidates) == 1 else None
+            if isinstance(counterparty, str):
+                added += int(_save_transfer_contact(owner, counterparty))
+        for owner in owners:
+            ACCOUNTS[owner]['transfer_contacts_backfilled'] = True
+        return added
+
+
+def seed_demo_contacts() -> int:
+    """Upgrade older books once, preserving edits and later explicit deletions."""
+    added = 0
+    with STATE_LOCK:
+        for owner, account in ACCOUNTS.items():
+            if account.get('source') == 'CONTACT_BOOK' or account.get('demo_contacts_seeded') is True:
+                continue
+            for row in demo_contact_rows(owner):
+                rows = USER_CONTACTS.get(owner, [])
+                if (len(rows) >= CONTACT_MAX_PER_USER or any(
+                    old.get('account_id') == row['account_id'] or old.get('phone') == row['phone'] for old in rows
+                )):
+                    continue
+                USER_CONTACTS.setdefault(owner, []).append(row)
+                added += 1
+            account['demo_contacts_seeded'] = True
+    return added
+
+
+def remember_transfer_parties(sender_id: str, receiver_id: str) -> None:
+    """Save both parties inside the same atomic boundary as actual settlement."""
+    with STATE_LOCK:
+        _save_transfer_contact(sender_id, receiver_id)
+        _save_transfer_contact(receiver_id, sender_id)

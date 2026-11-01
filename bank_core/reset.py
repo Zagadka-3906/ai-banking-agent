@@ -50,6 +50,7 @@ from security import (
 # production callers must use a transactional rollback workflow instead.
 _INITIAL_ACCOUNTS = deepcopy(ACCOUNTS)
 _INITIAL_CONTACTS = deepcopy(CONTACTS)
+_INITIAL_USER_CONTACTS = deepcopy(USER_CONTACTS)
 _INITIAL_TRANSACTIONS = deepcopy(TRANSACTIONS)
 _INITIAL_WEALTH_HOLDINGS = deepcopy(WEALTH_HOLDINGS)
 _INITIAL_WEALTH_RISK_PROFILES = deepcopy(WEALTH_RISK_PROFILES)
@@ -80,6 +81,7 @@ def reset_state() -> None:
         CONTACTS.clear()
         CONTACTS.update(deepcopy(_INITIAL_CONTACTS))
         USER_CONTACTS.clear()
+        USER_CONTACTS.update(deepcopy(_INITIAL_USER_CONTACTS))
         TRANSACTIONS[:] = deepcopy(_INITIAL_TRANSACTIONS)
         DAILY_TRANSFERS.clear()
         DAILY_TRANSFERS["user_zhang"] = 0.0

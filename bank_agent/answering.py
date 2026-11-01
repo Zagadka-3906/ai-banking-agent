@@ -14,7 +14,7 @@ from bank_agent.state import extract_json
 from bank_agent.understanding import READ_INTENTS, _safe_text, model_context, understanding_context
 from bank_agent.verification import valid_text_field
 from banking_knowledge import SCOPE_POLICY
-from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language, append_required_fact
+from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language, append_required_fact, question_facts, validate_answer_focus
 
 
 class DraftValidationError(ValueError):
@@ -343,7 +343,7 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
             or response.get("business_status") in {"FAILED", "BLOCKED"}
             or state.get("business_status") in {"FAILED", "BLOCKED"}):
         return response
-    facts = cache_ordered_facts(answer_facts(state, response))
+    facts = cache_ordered_facts(question_facts(answer_facts(state, response), str(state.get('user_input') or '')))
     if not facts or len(facts) > 80 or sum(len(item["text"]) for item in facts) > 12000:
         return response
     with understanding_context(state):
@@ -376,6 +376,7 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
                     {"code": reason, "repair": "删除不在本轮facts中的数字、历史编号和版本号；步骤改用中文序号，金额仍须绑定值。"}
                     if attempt and reason == "UNKNOWN_NUMBER" else reason if attempt else None)}, ensure_ascii=False))])
             rendered, ids = _validate_draft(extract_json(answer.content), facts, anchors)
+            validate_answer_focus(rendered, str(state.get('user_input') or ''))
             if not _review(state, rendered, facts, ids, context):
                 raise ValueError("RELEVANCE_OR_SUPPORT_REJECTED")
             audit_event("ANSWER_REVIEW", user_id=state.get("user_id"), request_id=state.get("request_id"),

@@ -60,7 +60,10 @@ def contact_documents(data: Mapping[str, Any], state: Mapping[str, Any]) -> list
             texts.append("这里只展示前45位，请在侧边栏 → 联系人查看完整列表。")
     else:
         texts = ["已读取本人的完整联系人簿，未找到与本轮所问姓名匹配的已保存联系人；这不表示该人没有银行账户或不能收款。"]
-    return [{"id": f"read.contacts.{index}", "source": "core://contacts", "text": text, "required": True}
+    # Complete lists stay server-owned. A targeted yes/no fact is checked by
+    # coverage and semantic review; forcing its full sentence into the answer
+    # duplicates the model's direct answer and adds unrelated limitations.
+    return [{"id": f"read.contacts.{index}", "source": "core://contacts", "text": text, "required": listing and not selected}
             for index, text in enumerate(texts)]
 
 

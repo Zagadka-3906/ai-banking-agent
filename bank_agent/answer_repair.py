@@ -29,6 +29,7 @@ def normalize_feedback(value: Any, goals: list[dict[str, Any]]) -> list[dict[str
 def validation_feedback(reason: str, goals: list[dict[str, Any]], details: dict[str, str] | None = None) -> list[dict[str, Any]]:
     action = 'READ' if reason in READ_ERRORS else 'CALCULATE' if reason == 'MISSING_CALCULATION_EVIDENCE' else 'REWRITE'
     advice = {
+        'UNREQUESTED_CONTACT_FREQUENCY': '用户没有询问常用或交易频率，删除常用频率标记的介绍；只回答本轮联系人保存、搜索或页面入口的问题，不额外读取账户。',
         'DRAFT_ANSWER_INVALID': 'answer必须是非空字符串，正文不超过3000字；保留直接回答本轮问题的内容。',
         'DRAFT_CITATION_SCHEMA': 'evidence_ids必须是含1至35项的JSON字符串数组；按实际引用选择facts里的id，不能为null或对象。',
         'UNKNOWN_EVIDENCE_ID': 'evidence_ids和coverage.evidence_ids只能使用本轮facts里实际出现的id，不得引用目录编号、旧证据或自行拼凑编号；检查本轮facts列表中的确切id并精确对照替换，彻底去除任何不在本轮facts中的编号；对应金额也须引用其values来源。',

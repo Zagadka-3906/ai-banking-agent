@@ -14,6 +14,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from bank_core.undo import UNDOABLE_TASK_TYPES, cancel_task_branch, undo_candidate, undo_summary
+from bank_core.contacts import remember_transfer_parties
 from bank_core.access import (
     get_actor,
     request_session_token,
@@ -416,8 +417,9 @@ def execute_task(task_id: str, req: TaskExecuteRequest, request: Request = None,
                     record_transfer_spend(actor, amount)
                     record_card_spend(actor, amount, card=paying_card)
                     txn_id = f"TXN{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:4].upper()}"
-                    TRANSACTIONS.append({"tx_id": txn_id, "account_id": actor, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": "预约转账", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-                    TRANSACTIONS.append(inbound_transaction(account_id=target_id, payer_name=account["name"], amount=amount, remark="预约转账"))
+                    TRANSACTIONS.append({"tx_id": txn_id, "account_id": actor, "counterparty_id": target_id, "merchant": f"转账给 {receiver['name']}", "category": "转账支出", "amount": amount, "remark": "预约转账", "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                    TRANSACTIONS.append(inbound_transaction(account_id=target_id, payer_name=account["name"], payer_id=actor, amount=amount, remark="预约转账"))
+                    remember_transfer_parties(actor, target_id)
                     schedule["status"] = "SETTLED"
                     schedule["settled_at"] = datetime.now().isoformat()
                     result = {"execution_mode": "LEDGER", "transaction_id": txn_id, "transferred_amount": amount, "sender_balance": account["balance"]}
