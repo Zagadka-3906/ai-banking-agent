@@ -1,0 +1,10 @@
+flowchart LR
+ A[Android 客户端] -->|文字与 SSE| G[Agent Gateway / LangGraph]
+ A -->|登录、设备、通讯录| C[Mock Core]
+ F[飞书私聊 / 可选只读] --> G
+ G <-->|理解、取证规划、生成与核验| M[模型服务]
+ G -->|受限 GET / 授权办理| C
+ C -->|持久提交与回执| L[(签名账本 / 任务)]
+ G --> S[(SQLite 会话)]
+ C --> U[(审计与设备公钥)]
+ P[运维面板] -->|停服务、备份、离线校验| L

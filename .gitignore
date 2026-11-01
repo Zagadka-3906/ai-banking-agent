@@ -57,3 +57,7 @@ test-shots/
 .coverage
 .coverage.*
 htmlcov/
+
+# 交付二进制由审核后的材料和已提交源码生成
+/submission/
+/.claude/
