@@ -32,6 +32,16 @@ def test_payee_emphasis_adverb_extracts_clean_name():
     assert parsed.get("intent") == "SCHEDULED_TRANSFER"
 
 
+def test_payee_nominal_suffix_in_transfer_resume():
+    from bank_agent.parsing import local_parse
+    text = "那这笔转给李四的钱，金额就定300元吧，先不确认。"
+    assert target_from_text(text) == "李四"
+    parsed = local_parse(text)
+    assert parsed.get("target") == "李四"
+    assert parsed.get("amount") == 300.0
+    assert parsed.get("intent") == "TRANSFER"
+
+
 def test_possessive_phrase_binds_to_allowed_payee(monkeypatch):
     from bank_agent.parsing import local_parse
     from bank_agent.entities import bind_payee
