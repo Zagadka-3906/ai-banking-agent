@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-31.9",
-  "rules_version": "5c53ec65125cedb23013d6e023fab13c5b8e30714966895fcbc8850517ff0eb1",
+  "rules_version": "2dfa5e5c81b6e2956b7b930dce4c9501a67556a107b176672b6be0a64500fc16",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "39046a8b2201ee3d58b8c87d89d0277ce7e8ee32bc88542b9388261eef870645",
@@ -16,7 +16,7 @@
     "bank_agent/evidence.py": "cbb35a9af6ba735e9e55415730f9321cc65c630f4742c4bf312f404465b22369",
     "bank_agent/evidence_session.py": "901ee2f1e13203db9aa56d0d925c61b537e186152c4f04f8a5fe7072f73b8f7c",
     "bank_agent/extraction.py": "8e51101a9437029a8b69c8dc5cd7f30de4855ea7f1578c804709e80251dc8005",
-    "bank_agent/goal_answering.py": "4f81b6062d654c6601ef6e9e0189837ac3a839d04786305fa725d5b172c5911b",
+    "bank_agent/goal_answering.py": "d5a6de784dfe3820a6f92f176b7217b0fce7f6598c51cf4b3c19f290b81e86c5",
     "bank_agent/goal_fidelity.py": "4fe84bea8292809eaa133be4fd0ac4d25c4647e82209e90a2f9c057f42db4523",
     "bank_agent/nodes/executor.py": "d67e70f01a81e3a18c373f92d74204ea96483e97653bb63ba32aeb3b1bcbc5d4",
     "bank_agent/nodes/intent.py": "ab206ea0fb8ece98b7c841895f91bb04fcbae882abb3aea0ee08cf48f0ab646e",
@@ -26,7 +26,7 @@
     "bank_agent/prompt_preferences.py": "abe306c5a36b06818aebd51fa75873226415dd54996877a44cccccc915f156ce",
     "bank_agent/query_focus.py": "6cce1c2235db1a922ce6368df1fdfc7194f60112439c0bca2a279b1eb4f6a5f0",
     "bank_agent/risk_quiz.py": "c097a37ead293ab95555bc509e61841ffc97407e1a026276c2e276d3036a3755",
-    "bank_agent/understanding.py": "e8424fc9d1ada5f259b42efb773f5dcf0512ada3768ba6ce53c17deb41362333",
+    "bank_agent/understanding.py": "cb5e9acb92bdf52ba31cfce538dfcd4e743863060915fdb2d15adae40fafa2a3",
     "bank_core/cards.py": "a603c3a03d48837dee697abb8f57ad4612a87978ac8b9a2c3754a4a52facf844",
     "bank_core/operations.py": "ad55c9aaf1b27496736412a44d46e39bd122ed3d10c9fc90f3a82bab477ad887",
     "bank_core/payments.py": "cdecd1af029798d8980b7c5b44fdc57363b1a471dbcca6292e6444937b042785",

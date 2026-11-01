@@ -143,10 +143,10 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         # Explain the genuine nearby capability without opening a write flow.
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
         act = "EXPLAIN"
+    rescued = _persistence_rules_rescue(text) or _limits_security_rules_rescue(text)
+    if rescued is not None:
+        return rescued
     if (result.get("parse_meta") or {}).get("scope") == "OUT_OF_SCOPE":
-        rescued = _persistence_rules_rescue(text) or _limits_security_rules_rescue(text)
-        if rescued is not None:
-            return rescued
         result.update(intent=Intent.UNKNOWN.value, target=None, amount=None)
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "UNSUPPORTED"}
         return result
