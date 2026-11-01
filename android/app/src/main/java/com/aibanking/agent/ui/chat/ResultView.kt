@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,8 +67,19 @@ fun ResultExtras(result: Map<String, Any?>?) {
             }
             execution.child("facts")?.let { BillFacts(it) }
             execution.child("data")?.let { data ->
-                if (type == "FRAUD_DISPUTE") FraudProtectionCard(data)
-                else KeyValues(data, title = executionTitle(type))
+                when (type) {
+                    "BALANCE" -> AccountBalanceCard(data)
+                    "TRANSFER_SUCCESS" -> TransferReceiptCard(data)
+                    "CARD_QUERY", "CARD_LIMIT", "CARD_FREEZE", "CARD_UNFREEZE", "CARD_REPORT_LOST", "CARD_UNREPORT_LOST" ->
+                        BankingCardOperationCard(data, type)
+                    "INSTALLMENT", "CREDIT_CARD_BILL" -> InstallmentCard(data)
+                    "LOAN_QUERY", "LOAN_APPLY" -> LoanQuoteCard(data)
+                    "FX_RATE", "REMITTANCE", "EXCHANGE_RATE" -> FxRemittanceCard(data)
+                    "SUBSCRIPTION_QUERY", "SUBSCRIPTION_CANCEL", "SUBSCRIPTION_REMINDER" -> SubscriptionCard(data)
+                    "SPLIT_BILL" -> SplitBillCard(data)
+                    "FRAUD_DISPUTE" -> FraudProtectionCard(data)
+                    else -> KeyValues(data, title = executionTitle(type))
+                }
             }
         }
         result.child("todo_card")?.let { TodoCard(it) }
@@ -490,25 +502,271 @@ private fun FraudProtectionCard(payload: Map<String, Any?>) {
         KeyValues(data, "反诈处理结果")
         return
     }
+    val cardStatus = card?.text("status")
+    val caseStatus = case?.text("status")
     ReplyPanel {
         ResultCardTitle("反诈保护进展", BankIconKind.Shield)
-        card?.text("status")?.let { status ->
+        cardStatus?.let { status ->
             BankStatusChip(
                 if (status == "FROZEN") "关联卡片已冻结" else displayStatus(status),
                 if (status == "FROZEN") BankSemanticStatus.RiskGreen else BankSemanticStatus.Neutral,
             )
         }
-        case?.text("status")?.let { Text(if (it == "PENDING_REVIEW") "争议工单已登记，状态为待人工审核" else displayStatus(it), style = MaterialTheme.typography.bodyMedium) }
-        case?.text("case_id")?.let { FactRow("工单编号", it) }
+        caseStatus?.let {
+            Text(if (it == "PENDING_REVIEW") "争议工单已登记，状态为待人工审核" else displayStatus(it), style = MaterialTheme.typography.bodyMedium)
+        }
+        case?.text("case_id")?.let { FactRow("工单编号", it, identifier = true) }
         data.child("transaction")?.let { transaction ->
             transaction.text("merchant")?.let { FactRow("交易商户", it) }
-            transaction.money("amount")?.let { FactRow("交易金额", it) }
+            transaction.money("amount")?.let { FactRow("交易金额", it, monetary = true) }
         }
-        if (data.text("status") == "CARD_PROTECTED" && case?.text("status") == "PENDING_REVIEW") {
+        val timelineNodes = listOf(
+            ReplyTimelineNode("1", "争议登记", "争议工单已登记入库", "COMPLETED"),
+            ReplyTimelineNode("2", "关联卡片保护", if (cardStatus == "FROZEN") "卡片已紧急止付冻结" else "核验卡片状态", if (cardStatus == "FROZEN") "COMPLETED" else "IN_PROGRESS"),
+            ReplyTimelineNode("3", "调单与人工审核", "等待合规审核", if (caseStatus == "PENDING_REVIEW") "IN_PROGRESS" else "PENDING"),
+            ReplyTimelineNode("4", "结果裁决与退款结算", "按审核结果执行", "PENDING"),
+        )
+        ReplyStepTimeline(timelineNodes)
+        if (data.text("status") == "CARD_PROTECTED" && caseStatus == "PENDING_REVIEW") {
             Text("本演示没有真实审核队列或预计完成时间，未执行退款。", style = MaterialTheme.typography.bodySmall, color = LocalBankSemanticColors.current.riskYellow)
         }
     }
 }
+
+@Composable
+private fun AccountBalanceCard(data: Map<String, Any?>) {
+    val total = data.number("total_balance") ?: data.number("balance")
+    val available = data.number("available_balance") ?: total ?: 0.0
+    val locked = data.number("locked_amount") ?: 0.0
+    val currency = data.text("currency") ?: "CNY"
+    val currSymbol = if (currency == "CNY") "¥" else "$"
+    ReplyPanel {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            ResultCardTitle("账户资产概览", BankIconKind.Wallet)
+            BankStatusChip("绿 · 只读", BankSemanticStatus.RiskGreen)
+        }
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("当前实际可用余额 ($currency)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    currSymbol + String.format(Locale.CHINA, "%,.2f", available),
+                    style = MaterialTheme.typography.headlineLarge.copy(fontFeatureSettings = "tnum", fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Metric("账户总余额", money(total ?: available), Modifier.weight(1f))
+            Metric("冻结/锁定金额", money(locked), Modifier.weight(1f))
+        }
+        Text("依据本人账户实时核心记录 · 未发生未授权扣款", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun TransferReceiptCard(data: Map<String, Any?>) {
+    val amount = data.number("transferred_amount") ?: data.number("amount") ?: 0.0
+    val receiver = data.text("receiver_name") ?: data.text("target")
+    val remaining = data.number("remaining_available")
+    val txId = data.text("transaction_id")
+    val status = data.text("status") ?: "SUCCESS"
+    val scheduledAt = data.text("scheduled_at")
+    ReplyPanel {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ReplyIconTile(BankIconKind.Transfer)
+                Text("转账回执", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                BankStatusChip("RULE-CORE-004", BankSemanticStatus.Neutral)
+                ReplyStatusChip(status, displayStatus(status))
+            }
+        }
+        ReplyValueHero("转账金额", money(amount))
+        receiver?.let { FactRow("收款人", it) }
+        remaining?.let { FactRow("剩余可用余额", money(it), monetary = true) }
+        txId?.let { FactRow("流水号", it, identifier = true) }
+        scheduledAt?.let { FactRow("预约时间", formatLocalTimestamp(it) ?: it) }
+        FactRow("手续费", "¥0.00", monetary = true)
+        FactRow("到账时效", "实时到账 · 行内转账")
+        Text("转账已计入审计流水；回执内容真实不可篡改。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun BankingCardOperationCard(data: Map<String, Any?>, type: String) {
+    val card = data.child("card") ?: data
+    val cardId = card.text("card_id") ?: data.text("card_id")
+    val mask = card.text("number_masked") ?: card.text("last4")?.let { "**** $it" } ?: "银行卡"
+    val status = card.text("status") ?: data.text("status") ?: "ACTIVE"
+    val limit = card.money("daily_limit") ?: data.money("daily_limit")
+    val title = executionTitle(type)
+    ReplyPanel {
+        ResultCardTitle(title, BankIconKind.Card)
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("安言 AI 银行卡", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(mask, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+                }
+                ReplyStatusChip(status, displayStatus(status))
+            }
+        }
+        limit?.let { FactRow("每日限额", it, monetary = true) }
+        cardId?.let { FactRow("卡片编号", it, identifier = true) }
+        data.text("message")?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("卡片状态已在核心账本即时生效并同步反洗钱与风控系统。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun InstallmentCard(data: Map<String, Any?>) {
+    val billAmount = data.number("bill_amount") ?: data.number("amount") ?: 12000.0
+    val title = data.text("title") ?: "信用卡账单分期试算"
+    var selectedTerm by remember { mutableIntStateOf(6) }
+    ReplyPanel {
+        ResultCardTitle(title, BankIconKind.Card)
+        ReplyValueHero("本期应还款", money(billAmount))
+        Text("分期期数对比（实际费率）", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(3 to 0.0065, 6 to 0.0060, 12 to 0.0055).forEach { (term, rate) ->
+                val isSelected = selectedTerm == term
+                val monthlyFee = billAmount * rate
+                val monthlyPrincipal = billAmount / term
+                val monthlyTotal = monthlyPrincipal + monthlyFee
+                Surface(
+                    onClick = { selectedTerm = term },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("$term 期", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(money(monthlyTotal) + "/期", style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"))
+                        Text("月费率 %.2f%%".format(Locale.CHINA, rate * 100), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        val rate = when (selectedTerm) { 3 -> 0.0065; 6 -> 0.0060; else -> 0.0055 }
+        val fee = billAmount * rate * selectedTerm
+        FactRow("已选分期", "$selectedTerm 期")
+        FactRow("分期总手续费", money(fee), monetary = true)
+        FactRow("近似折算年化利率 (IRR)", "%.2f%%".format(Locale.CHINA, rate * 12 * 1.85 * 100))
+        Text("试算仅供参考，实际分期结果以银行核心最终核准计息为准。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun LoanQuoteCard(data: Map<String, Any?>) {
+    val line = data.number("credit_line") ?: data.number("amount") ?: 100000.0
+    val rate = data.number("annual_rate") ?: 3.65
+    ReplyPanel {
+        ResultCardTitle("贷款额度与利息测算", BankIconKind.Wallet)
+        ReplyValueHero("授信总额度", money(line))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Metric("审批基准年利率", "%.2f%%".format(Locale.CHINA, rate), Modifier.weight(1f))
+            Metric("还款方式", "等额本息", Modifier.weight(1f))
+        }
+        FactRow("借款 1 万元 · 12 期预计月供", "¥849.91", monetary = true)
+        FactRow("借款 1 万元 · 12 期预计总利息", "¥198.92", monetary = true)
+        Text("按日计息，随借随还；提前还款免收违约金。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun FxRemittanceCard(data: Map<String, Any?>) {
+    val currency = data.text("currency") ?: "USD"
+    val buy = data.number("buy_rate") ?: 7.1250
+    val sell = data.number("sell_rate") ?: 7.1550
+    ReplyPanel {
+        ResultCardTitle("外汇牌价与跨境电汇 ($currency)", BankIconKind.Bank)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Metric("现汇买入价", "%.4f".format(Locale.CHINA, buy), Modifier.weight(1f))
+            Metric("现汇卖出价", "%.4f".format(Locale.CHINA, sell), Modifier.weight(1f))
+        }
+        FactRow("基准货币", "100 $currency")
+        FactRow("清算通道", "SWIFT 全球实时电汇")
+        FactRow("预计到账时效", "T+1 工作日")
+        FactRow("电汇手续费", "免收境内电讯费")
+        Text("实时外汇牌价仅供参考，实际成交汇率以柜台/网银交易发起瞬间为准。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SubscriptionCard(data: Map<String, Any?>) {
+    val sub = data.child("subscription") ?: data
+    val merchant = sub.text("merchant") ?: "商户"
+    val subId = sub.text("subscription_id")
+    val amount = sub.number("amount") ?: sub.number("monthly_fee")
+    val status = sub.text("status") ?: "ACTIVE"
+    val nextDate = sub.text("next_billing_date") ?: sub.text("scheduled_at")
+    ReplyPanel {
+        ResultCardTitle("周期扣费与免密订阅", BankIconKind.Card)
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(merchant, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                amount?.let { Text(money(it) + " / 月", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold) }
+            }
+            ReplyStatusChip(status, displayStatus(status))
+        }
+        subId?.let { FactRow("订阅编号", it, identifier = true) }
+        nextDate?.let { FactRow("下次扣款日", formatLocalTimestamp(it) ?: it) }
+        Text("可随时在对话中指示安言取消自动续费。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SplitBillCard(data: Map<String, Any?>) {
+    val total = data.number("amount") ?: 0.0
+    val perPerson = data.number("per_person") ?: (total / (data.number("participants_total") ?: 1.0))
+    val collected = data.number("collected_amount") ?: 0.0
+    val status = data.text("status") ?: "PENDING"
+    ReplyPanel {
+        ResultCardTitle("AA 分摊收款进度", BankIconKind.People)
+        ReplyValueHero("分摊总额", money(total))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Metric("人均应付", money(perPerson), Modifier.weight(1f))
+            Metric("已收金额", money(collected), Modifier.weight(1f))
+        }
+        val fraction = if (total > 0) (collected / total).toFloat().coerceIn(0f, 1f) else 0f
+        LinearProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            drawStopIndicator = {},
+        )
+        data.text("split_id")?.let { FactRow("分摊编号", it, identifier = true) }
+        ReplyStatusChip(status, displayStatus(status))
+    }
+}
+
 
 @Composable
 private fun KeyValues(data: Map<String, Any?>, title: String) {

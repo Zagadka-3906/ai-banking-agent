@@ -21,6 +21,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.ui.UiTags
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalView
+import com.aibanking.agent.ui.anim.BankHaptics
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.components.*
 import com.aibanking.agent.ui.theme.BankSpacing
@@ -42,21 +45,46 @@ internal fun ApprovalCard(
     onBiometricApprove: () -> Unit,
     error: String? = null,
 ) {
+    val view = LocalView.current
     val isRed = approval.mfaRequired
     val semantic = LocalBankSemanticColors.current
     val riskColor = if (isRed) semantic.riskRed else semantic.riskYellow
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val otpError = if (otp.isNotEmpty() && !otp.matches(Regex("[0-9]{6}"))) "请输入 6 位数字验证码" else null
+    val motion = LocalBankMotionEnabled.current
     fun secondsLeft(): Int = ((deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999L).div(1_000L).toInt()
     var remainingSeconds by remember(approval.approvalId, deadlineMillis) { mutableIntStateOf(secondsLeft()) }
     LaunchedEffect(approval.approvalId, deadlineMillis) {
         do {
+            val prev = remainingSeconds
             remainingSeconds = secondsLeft()
+            if (remainingSeconds != prev && remainingSeconds in 1..5 && motion) {
+                BankHaptics.tick(view)
+            }
             if (remainingSeconds > 0) delay(250)
         } while (remainingSeconds > 0)
     }
-    BankSectionCard(modifier = modifier.testTag("approval_card"), outlined = true,
+    val isUrgent = remainingSeconds in 1..15
+    val isExpired = remainingSeconds == 0
+    val heartbeatScale = if (isUrgent && motion) {
+        val transition = rememberInfiniteTransition(label = "urgentHeartbeat")
+        transition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.04f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "heartbeatScale",
+        ).value
+    } else 1f
+    val cardAlpha by animateFloatAsState(
+        targetValue = if (isExpired) 0.72f else 1f,
+        animationSpec = if (motion) tween(360) else snap(),
+        label = "approvalCardAlpha",
+    )
+    BankSectionCard(modifier = modifier.graphicsLayer { alpha = cardAlpha }.testTag("approval_card"), outlined = true,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(verticalArrangement = Arrangement.spacedBy(BankSpacing.sm)) {
             BankStatusChip(if (isRed) "红 · 强验证" else "黄 · 需确认", if (isRed) BankSemanticStatus.RiskRed else BankSemanticStatus.RiskYellow)
@@ -89,6 +117,7 @@ internal fun ApprovalCard(
             Surface(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
                 shape = CircleShape,
+                modifier = Modifier.graphicsLayer { scaleX = heartbeatScale; scaleY = heartbeatScale },
             ) {
                 Text(
                     text = if (remainingSeconds > 0) "请在 $remainingSeconds 秒内确认" else "已超时，请重新发起操作",

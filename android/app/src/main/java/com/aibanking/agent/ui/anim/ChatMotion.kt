@@ -218,3 +218,35 @@ fun CountUpText(
         color = color,
     )
 }
+
+/**
+ * Tabular rolling ticker text for monetary figures.
+ * When motion is allowed, digits roll smoothly into position.
+ * Assistive tech and tests read the full exact string from semantics.
+ */
+@Composable
+fun RollingTickerText(
+    value: Double,
+    format: (Double) -> String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = LocalTextStyle.current,
+    color: Color = Color.Unspecified,
+    durationMillis: Int = 680,
+    onceKey: String? = null,
+) {
+    val firstTime = remember(onceKey, value) { onceKey == null || CountUpMemory.firstTime("ticker|$onceKey|$value") }
+    val allowed = if (onceKey != null) firstTime else LocalCountUpAllowed.current
+    val motion = allowed && LocalBankMotionEnabled.current && !LocalInBackPreviewBeneath.current && value.isFinite()
+    val progress = remember(value) { Animatable(if (motion) 0f else 1f) }
+    LaunchedEffect(value) {
+        if (motion) progress.animateTo(1f, tween(durationMillis, easing = FastOutSlowInEasing))
+    }
+    val finalText = format(value)
+    val shown = if (progress.value >= 1f) finalText else format(value * progress.value)
+    Text(
+        shown,
+        modifier.clearAndSetSemantics { text = AnnotatedString(finalText) },
+        style = style.copy(fontFeatureSettings = "tnum"),
+        color = color,
+    )
+}

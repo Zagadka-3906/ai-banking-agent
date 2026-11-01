@@ -1,6 +1,14 @@
 package com.aibanking.agent.ui.chat
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -93,6 +101,19 @@ internal fun ReplyStatusChip(status: String, label: String, modifier: Modifier =
 internal fun WorkflowProgress(stages: List<com.aibanking.agent.data.StageProgress>, showTimings: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val semantic = LocalBankSemanticColors.current
+    val motion = LocalBankMotionEnabled.current
+    val pulsePhase = if (motion) {
+        val transition = rememberInfiniteTransition(label = "workflowLine")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 24f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "flowPhase",
+        ).value
+    } else 0f
     Column(Modifier.fillMaxWidth().testTag("workflow_progress")) {
         stages.forEachIndexed { index, stage ->
             val (label, icon, tint) = when (stage.phase) {
@@ -105,14 +126,32 @@ internal fun WorkflowProgress(stages: List<com.aibanking.agent.data.StageProgres
             val last = index == stages.lastIndex
             Box(Modifier.fillMaxWidth()) {
                 if (!last) Canvas(Modifier.matchParentSize()) {
-                    drawLine(colors.outlineVariant, Offset(14.dp.toPx(), 28.dp.toPx()),
-                        Offset(14.dp.toPx(), size.height), strokeWidth = 1.dp.toPx())
+                    val isFlowing = motion && (stage.phase == "started" || stage.phase == "waiting")
+                    val stroke = if (isFlowing) {
+                        Stroke(
+                            width = 1.5.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(
+                                intervals = floatArrayOf(8.dp.toPx(), 4.dp.toPx()),
+                                phase = pulsePhase,
+                            ),
+                        )
+                    } else {
+                        Stroke(width = 1.dp.toPx())
+                    }
+                    val lineColor = if (isFlowing) colors.primary.copy(alpha = 0.7f) else colors.outlineVariant
+                    drawLine(
+                        color = lineColor,
+                        start = Offset(14.dp.toPx(), 28.dp.toPx()),
+                        end = Offset(14.dp.toPx(), size.height),
+                        strokeWidth = stroke.width,
+                        pathEffect = stroke.pathEffect,
+                    )
                 }
                 Row(Modifier.fillMaxWidth().padding(bottom = if (last) 0.dp else 14.dp)
                     .semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Surface(shape = CircleShape, color = tint.copy(alpha = 0.1f)) {
                         Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
-                            if (stage.phase == "started" && LocalBankMotionEnabled.current) {
+                            if (stage.phase == "started" && motion) {
                                 CircularProgressIndicator(Modifier.size(16.dp), color = tint, strokeWidth = 1.5.dp)
                             } else BankIcon(icon, Modifier.size(16.dp), tint = tint)
                         }
@@ -122,6 +161,73 @@ internal fun WorkflowProgress(stages: List<com.aibanking.agent.data.StageProgres
                             color = colors.onSurface, fontWeight = FontWeight.Medium)
                         val timing = if (showTimings && stage.phase == "completed") " · ${stage.elapsedMs} ms" else ""
                         Text(label + timing, style = MaterialTheme.typography.labelSmall, color = tint)
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal data class ReplyTimelineNode(
+    val step: String,
+    val title: String,
+    val description: String? = null,
+    val status: String = "COMPLETED", // COMPLETED, IN_PROGRESS, PENDING, FAILED
+)
+
+@Composable
+internal fun ReplyStepTimeline(nodes: List<ReplyTimelineNode>, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val semantic = LocalBankSemanticColors.current
+    val motion = LocalBankMotionEnabled.current
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        nodes.forEachIndexed { index, node ->
+            val last = index == nodes.lastIndex
+            val (nodeColor, iconKind) = when (node.status.uppercase()) {
+                "COMPLETED", "SUCCESS", "SUCCEEDED" -> semantic.riskGreen to BankIconKind.Check
+                "IN_PROGRESS", "ACTIVE", "RUNNING" -> colors.primary to BankIconKind.More
+                "FAILED", "ERROR" -> semantic.riskRed to BankIconKind.Close
+                else -> colors.onSurfaceVariant to null
+            }
+            Box(Modifier.fillMaxWidth()) {
+                if (!last) {
+                    Canvas(Modifier.matchParentSize()) {
+                        drawLine(
+                            color = colors.outlineVariant.copy(alpha = 0.6f),
+                            start = Offset(13.dp.toPx(), 26.dp.toPx()),
+                            end = Offset(13.dp.toPx(), size.height),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = if (last) 0.dp else 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = nodeColor.copy(alpha = 0.12f),
+                        modifier = Modifier.size(26.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (iconKind != null) {
+                                BankIcon(iconKind, Modifier.size(14.dp), tint = nodeColor)
+                            } else {
+                                Text(
+                                    node.step,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = nodeColor,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(node.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        if (!node.description.isNullOrBlank()) {
+                            Text(node.description, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                        }
                     }
                 }
             }

@@ -77,6 +77,13 @@ import com.aibanking.agent.data.CardRevealView
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.ShimmerSwitch
+import com.aibanking.agent.ui.anim.cardHolographicSheen
+import com.aibanking.agent.ui.anim.card3dFlip
+import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.pageSlideSpec
@@ -314,6 +321,7 @@ private fun CardFace(card: CardView) {
     Box(
         Modifier.fillMaxWidth()
             .background(face)
+            .cardHolographicSheen()
             .padding(24.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -575,7 +583,16 @@ internal fun CardDetail(
             Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            BankCard(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) { CardFace(card) }
+            val motion = LocalBankMotionEnabled.current
+            val flipAngle by animateFloatAsState(
+                targetValue = if (reveal != null) 180f else 0f,
+                animationSpec = if (motion) tween(450, easing = FastOutSlowInEasing) else snap(),
+                label = "cardFlip",
+            )
+            BankCard(
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().card3dFlip(if (flipAngle >= 90f) flipAngle - 180f else flipAngle),
+            ) { CardFace(card) }
             Text(
                 "${card.type} · 尾号 ${card.last4.ifBlank { card.numberMasked.takeLast(4) }}",
                 style = MaterialTheme.typography.titleLarge,

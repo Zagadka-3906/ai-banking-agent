@@ -106,4 +106,25 @@ class UiEnhancementsTest {
         val style = TextStyle().tabular()
         assertEquals("tnum", style.fontFeatureSettings)
     }
+
+    @Test
+    fun replyTimelineNode_initializesWithExpectedDefaults() {
+        val node = ReplyTimelineNode("1", "登记争议", "争议工单已建立", "COMPLETED")
+        assertEquals("1", node.step)
+        assertEquals("登记争议", node.title)
+        assertEquals("争议工单已建立", node.description)
+        assertEquals("COMPLETED", node.status)
+    }
+
+    @Test
+    fun businessStatusLabels_coverCoreFinancialStates() {
+        assertEquals("已核验", businessStatusLabel("SUCCEEDED"))
+        assertEquals("未完成", businessStatusLabel("FAILED"))
+        assertEquals("未通过核验", businessStatusLabel("BLOCKED"))
+        assertEquals("待补充", businessStatusLabel("NEEDS_INPUT"))
+        assertEquals("待确认", businessStatusLabel("WAITING_APPROVAL"))
+        assertEquals("待核对", businessStatusLabel("PENDING_RECONCILIATION"))
+        assertEquals("部分完成", businessStatusLabel("PARTIAL_SUCCESS"))
+        assertEquals("已取消", businessStatusLabel("CANCELLED"))
+    }
 }
