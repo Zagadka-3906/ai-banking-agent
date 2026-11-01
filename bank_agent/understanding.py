@@ -123,19 +123,24 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     constraint = execution_constraint(text, current_discussion=result.get('intent') != Intent.UNDO_OPERATION.value)
     subscription_confirm_inquiry = bool(re.search(r"需要(?:先)?确认.*[吗么？?]|要(?:先)?确认.*[吗么？?]|需要先确认什么", text))
     if constraint:
+        from intent_language import withdrawal_statement
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "execution_constraint": constraint}
         subscription_read = (result.get('intent') == Intent.SUBSCRIPTION_QUERY.value
                              and not subscription_confirm_inquiry
                              and read_only_goals((result.get('parse_meta') or {}).get('goals') or []))
         if result.get("intent") not in READ_INTENTS and not subscription_read and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
-            result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
-            topic = help_topic(text)
-            result["slots"] = {"help_topic": topic}
-            result["parse_meta"]["dialogue_act"] = "EXPLAIN"
-            act = "EXPLAIN"
-            goals = (result.get("parse_meta") or {}).get("goals") or []
-            if goals:
-                result["parse_meta"]["goals"] = [{**g, "act": "EXPLAIN", "topic": topic if g.get("topic") in ("general", topic) else g.get("topic")} for g in goals]
+            if constraint == 'NEGATED_ACTION' and withdrawal_statement(text, pending_discussion=True):
+                result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "WITHDRAW"}
+                act = "WITHDRAW"
+            else:
+                result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
+                topic = help_topic(text)
+                result["slots"] = {"help_topic": topic}
+                result["parse_meta"]["dialogue_act"] = "EXPLAIN"
+                act = "EXPLAIN"
+                goals = (result.get("parse_meta") or {}).get("goals") or []
+                if goals:
+                    result["parse_meta"]["goals"] = [{**g, "act": "EXPLAIN", "topic": topic if g.get("topic") in ("general", topic) else g.get("topic")} for g in goals]
         elif constraint == 'PRIOR_INQUIRY' and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
             result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
             act = "EXPLAIN"
