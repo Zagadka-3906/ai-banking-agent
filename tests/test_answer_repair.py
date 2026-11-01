@@ -517,3 +517,49 @@ def test_inline_list_numbers_not_flagged_as_unknown_number():
     text, ids = _validate_draft({'answer': answer, 'evidence_ids': ['guide.security.factors'], 'unanswered': []}, facts, {})
     assert '1.' in text
     assert ids == ['guide.security.factors']
+
+
+def test_card_freeze_question_routes_to_card_topic():
+    """Card freeze receiving transfer question routes to card, not transfer."""
+    from bank_agent.understanding import help_topic
+    assert help_topic('换个问题，银行卡冻结之后还能接收转账吗？我只想了解这条规则。') == 'card'
+    assert help_topic('卡片冻结之后还能接收转账吗？') == 'card'
+    assert help_topic('银行卡解冻后怎么转账') == 'card'
+
+
+def test_subscription_confirmation_inquiry_does_not_trigger_approval():
+    """Asking whether confirmation is required before checking subscriptions is an explanation, not a query."""
+    from intent_language import nonexecuting_action, execution_constraint
+    from bank_agent.understanding import enforce_inquiry
+    text = '我想查看自己的订阅记录，需要先确认什么吗？'
+    assert nonexecuting_action(text) is True
+    assert execution_constraint(text) == 'PROCEDURE_QUESTION'
+    parsed = {'intent': 'SUBSCRIPTION_QUERY', 'parse_meta': {
+        'dialogue_act': 'QUERY',
+        'goals': [{'id': 'q1', 'act': 'QUERY', 'resource': 'subscriptions', 'fields': ['records'], 'requires_record': True}]
+    }}
+    res = enforce_inquiry(parsed, text)
+    assert res['intent'] == 'BANKING_HELP'
+    assert res['slots']['help_topic'] == 'subscription'
+    assert res['parse_meta']['dialogue_act'] == 'EXPLAIN'
+
+
+def test_transfer_with_proposal_confirmation_display_creates_proposal():
+    """Explicit transfer with tail '先给我看一下确认要求吧' creates proposal, not banking help."""
+    from bank_agent.parsing import local_parse
+    parsed = local_parse('那我想给李四转300元，先给我看一下确认要求吧。')
+    assert parsed['intent'] == 'TRANSFER'
+    assert parsed['amount'] == 300.0
+    assert parsed['target'] == '李四'
+
+
+def test_validate_coverage_unknown_id_raises_detailed_error():
+    """Unknown evidence id in coverage raises DraftValidationError with actionable code."""
+    from bank_agent.goal_answering import _validate_coverage
+    from bank_agent.answering import DraftValidationError
+    with pytest.raises(DraftValidationError) as exc:
+        _validate_coverage([{'goal_id': 'g1', 'status': 'ANSWERED', 'evidence_ids': ['unknown_id'], 'reason': 'test'}],
+                           [{'id': 'g1', 'act': 'EXPLAIN'}], [])
+    assert str(exc.value) == 'GOAL_COVERAGE_FIELDS'
+    assert exc.value.details.get('evidence_id') == 'unknown_id'
+

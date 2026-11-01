@@ -36,6 +36,7 @@ def validation_feedback(reason: str, goals: list[dict[str, Any]], details: dict[
         'DRAFT_UNANSWERED_SCHEMA': 'unanswered必须是至多五项的JSON字符串数组，每项不超过300字；没有真正未答问题时用[]，不能为null、对象或对象数组。',
         'DRAFT_SCHEMA': '严格输出answer字符串、evidence_ids字符串数组、unanswered字符串数组三个字段，不增加其他字段。',
         'GOAL_DRAFT_SCHEMA': '严格输出answer字符串、evidence_ids字符串数组、unanswered字符串数组、coverage目标数组四个字段，不增加其他字段。',
+        'GOAL_COVERAGE_FIELDS': 'coverage中的evidence_ids必须全部是本轮facts里已有的有效编号，且与本目标字段匹配。去除不在facts中的编号，并保留实际引用的已知来源。',
         'UNGROUNDED_GOAL_ANSWER': '目标仍为UNCLEAR时应明确需要澄清的问题，coverage使用NEEDS_CLARIFICATION，不得声称已答完。明确目标的ANSWERED必须引用本轮已有证据；补足实际引用，不因引用遗漏额外查询账户。',
         'UNANCHORED_MONEY': '金额必须选择本次values里的值并引用来源；差额或合计只引用calculation结果，不在正文自行计算。没有calculation结果时引用逐笔记录或字段值回答，不自行汇总。',
         'UNKNOWN_NUMBER': '去掉未被本次引用证据支持的数字；日期、计数、比例也须来源。问题涉及的合计、差额或数量若没有本轮calculation结果，不要自行算出该数值，改为引用逐笔记录或对应字段回答并说明口径。步骤使用中文序号，不输出目标或证据编号。',

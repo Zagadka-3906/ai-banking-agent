@@ -7,6 +7,7 @@ import os
 from typing import Any, Mapping
 
 from bank_agent import runtime
+from bank_agent.answering import DraftValidationError
 from bank_agent.evidence import LABELS, project_records, document_matches_subject
 from bank_agent.evidence_session import EvidenceSession
 from bank_agent.computations import calculation_for, expand_calculation_citations
@@ -157,7 +158,8 @@ def _validate_coverage(value: Any, goals: list[dict[str, Any]], facts: list[dict
         if (not goal or goal['id'] in seen or item.get('status') not in STATUSES or not isinstance(ids, list)
                 or len(ids) > 30 or any(not isinstance(key, str) or key not in known for key in ids)
                 or len(ids) != len(set(ids)) or not isinstance(item.get('reason'), str) or len(item['reason']) > 300):
-            raise ValueError('GOAL_COVERAGE_FIELDS')
+            unknown = [k for k in ids if not isinstance(k, str) or k not in known] if isinstance(ids, list) else []
+            raise DraftValidationError('GOAL_COVERAGE_FIELDS', evidence_id=','.join(str(k) for k in unknown[:3]))
         if item['status'] == 'ANSWERED':
             if goal['act'] == 'UNCLEAR' or not ids:
                 raise ValueError('UNGROUNDED_GOAL_ANSWER')

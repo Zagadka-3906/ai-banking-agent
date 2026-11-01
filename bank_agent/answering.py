@@ -167,7 +167,8 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
     if not isinstance(ids, list) or not 1 <= len(ids) <= 35:
         raise ValueError('DRAFT_CITATION_SCHEMA')
     if any(not isinstance(key, str) or key not in known for key in ids):
-        raise ValueError('UNKNOWN_EVIDENCE_ID')
+        unknown = [key for key in ids if not isinstance(key, str) or key not in known]
+        raise DraftValidationError('UNKNOWN_EVIDENCE_ID', evidence_id=','.join(str(k) for k in unknown[:3]))
     if len(set(ids)) != len(ids):
         raise ValueError('DUPLICATE_EVIDENCE_ID')
     if not isinstance(unanswered, list) or len(unanswered) > 5 or any(not isinstance(value, str) or len(value) > 300 for value in unanswered):

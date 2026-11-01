@@ -531,7 +531,7 @@ def model_parse(text: str) -> dict[str, Any]:
         '补值时顶层intent保留原业务、dialogue_act为SLOT_REPLY，target/amount只能抽取本轮原文，不能猜测；暂不确认不应变成查询或取消。'
         "先判断本轮言语行为 dialogue_act：QUERY=查已有事实，EXPLAIN=问原因/规则/影响，ACTION=要求实际办理，"
         "SLOT_REPLY=补充上轮缺失信息，UNSUPPORTED=能力未提供，UNCLEAR=对象或诉求不明，SOCIAL=问候致谢或告别。不能把 QUERY/EXPLAIN 选成写操作。"
-        "‘我想给李四转点钱，先看看怎么办理’或‘我想把这张卡的日限额改成10000，先别确认，帮我看看怎么办理’先提出了明确的第一人称办理目标，末尾‘先看看怎么办理/帮我看看怎么办理/看看下一步怎么填’是推进办理提案而非纯规则咨询，选对应写操作intent（如TRANSFER或CARD_LIMIT）及ACTION/SLOT_REPLY（缺金额时追问，有明确金额时展示待确认提案）；不是引用、否定或BANKING_HELP。"
+        "‘我想给李四转点钱，先看看怎么办理’、‘我想把这张卡的日限额改成10000，先别确认，帮我看看怎么办理’或‘我想给李四转300元，先给我看一下确认要求/先展示确认要求’先提出了明确的第一人称办理目标，末尾‘先看看怎么办理/帮我看看怎么办理/看看下一步怎么填/先展示确认要求/先看一下确认要求/先给我看一下确认要求’是推进办理提案而非纯规则咨询，选对应写操作intent（如TRANSFER或CARD_LIMIT）及ACTION/SLOT_REPLY（缺金额时追问，有明确金额时展示待确认提案）；不是引用、否定或BANKING_HELP。"
         "‘如何给李四转账’或‘怎么修改卡片限额’无第一人称办理子句、仅问步骤，选BANKING_HELP/EXPLAIN。‘先别管转账，解释生日联动’只回答新咨询，保留原待补信息任务。"
         "‘先不确认’不等于取消办理目标：明确提出对象和金额时可展示待确认提案，不能自动确认或执行。"
         "明确放弃或否定办理不能映射为被否定的写操作，即使没有已有任务也不能新建审批；有对应讨论任务才用CANCEL。"
@@ -842,9 +842,10 @@ def model_parse(text: str) -> dict[str, Any]:
             act = 'EXPLAIN' if all(goal['act'] == 'EXPLAIN' for goal in goals) else 'QUERY'
             merged['parse_meta']['dialogue_act'] = act
         if read_only_goals(goals) and act in {'QUERY', 'EXPLAIN'}:
-            if any(goal['resource'] == 'subscriptions' and needs_record(goal) for goal in goals):
+            subscription_confirm_inquiry = bool(re.search(r"需要(?:先)?确认.*[吗么？?]|要(?:先)?确认.*[吗么？?]|需要先确认什么", text))
+            if any(goal['resource'] == 'subscriptions' and needs_record(goal) for goal in goals) and not subscription_confirm_inquiry:
                 merged['intent'] = Intent.SUBSCRIPTION_QUERY.value
-            elif merged['intent'] in {Intent.SUBSCRIPTION_QUERY.value, Intent.WEALTH_COMPARE.value} or len(goals) > 1 or any(goal['resource'] in {'tasks', 'risk_profile'} for goal in goals):
+            elif merged['intent'] in {Intent.SUBSCRIPTION_QUERY.value, Intent.WEALTH_COMPARE.value} or len(goals) > 1 or any(goal['resource'] in {'tasks', 'risk_profile'} for goal in goals) or subscription_confirm_inquiry:
                 merged['intent'] = Intent.BANKING_HELP.value
         from bank_agent.dialogue_commands import atomic_action_input
         merged = atomic_action_input(merged, text) or merged
@@ -860,12 +861,12 @@ def model_parse(text: str) -> dict[str, Any]:
                 and (merged.get('parse_meta') or {}).get('scope') != 'OUT_OF_SCOPE'
                 and not re.search(r'查询|解释|说明|怎么|如何|是否|能否|能不能|想知道|想了解|想咨询|想问|[？?]', business_text(text))):
             literal = _local_parse_rules(clause)
-            if literal['intent'] in {'TRANSFER', 'SCHEDULED_TRANSFER', 'WEALTH_PURCHASE', 'WEALTH_REDEEM', 'CARD_LIMIT'} and missing_slots(literal):
-                # Only recover an explicitly stated, incomplete action. This
-                # cannot turn a question into a complete executable proposal.
+            proposal_req = bool(re.search(r'先(?:给我)?(?:看|展示|了解|核对)(?:一下)?确认要求', text))
+            if literal['intent'] in {'TRANSFER', 'SCHEDULED_TRANSFER', 'WEALTH_PURCHASE', 'WEALTH_REDEEM', 'CARD_LIMIT'} and (missing_slots(literal) or proposal_req):
+                # Only recover an explicitly stated, incomplete action or an explicit proposal display request.
                 meta = {key: value for key, value in merged['parse_meta'].items() if key not in {'goals', 'task_command'}}
                 merged = {**literal, 'extra_info': text, 'parse_meta': {**meta, 'dialogue_act': 'ACTION',
-                          'resolution': 'literal_incomplete_action', 'fast_path_eligible': False}}
+                          'resolution': 'literal_proposal_request' if proposal_req else 'literal_incomplete_action', 'fast_path_eligible': False}}
         return merged
     except Exception as error:
         # A model outage must degrade to the conservative local parser, never

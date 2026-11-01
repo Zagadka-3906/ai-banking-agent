@@ -35,6 +35,8 @@ def help_topic(text: str) -> str:
     text = inquiry_focus(text)
     if contact_question(text):
         return "contacts"
+    if re.search(r"卡片|银行卡|卡.{0,4}冻结|冻结.{0,4}卡|解冻|挂失|解挂", text):
+        return "card"
     if re.search(r"生日|跨场景|订花|订.*花|预订.*花|鲜花|蛋糕", text):
         return "cross_scene"
     if re.search(r"限额|额度|上限", text) and not re.search(r"验证|为什么|原因", text):
@@ -119,9 +121,12 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
             result['target'] = literal
     act = (result.get("parse_meta") or {}).get("dialogue_act")
     constraint = execution_constraint(text, current_discussion=result.get('intent') != Intent.UNDO_OPERATION.value)
+    subscription_confirm_inquiry = bool(re.search(r"需要(?:先)?确认.*[吗么？?]|要(?:先)?确认.*[吗么？?]|需要先确认什么", text))
     if constraint:
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "execution_constraint": constraint}
-        subscription_read = result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and read_only_goals((result.get('parse_meta') or {}).get('goals') or [])
+        subscription_read = (result.get('intent') == Intent.SUBSCRIPTION_QUERY.value
+                             and not subscription_confirm_inquiry
+                             and read_only_goals((result.get('parse_meta') or {}).get('goals') or []))
         if result.get("intent") not in READ_INTENTS and not subscription_read and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
             result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
             result["slots"] = {"help_topic": help_topic(text)}
@@ -153,8 +158,11 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         # A mentioned monetary value is a read filter, never an operation amount.
         # Only a goal for actual subscription records enters that confirmation.
         subscription_records = any(goal['resource'] == 'subscriptions' and needs_record(goal) for goal in goals)
-        if result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and not subscription_records:
+        if result.get('intent') == Intent.SUBSCRIPTION_QUERY.value and (not subscription_records or subscription_confirm_inquiry):
             result['intent'] = Intent.BANKING_HELP.value
+            result['slots'] = {'help_topic': 'subscription'}
+            result['parse_meta']['dialogue_act'] = 'EXPLAIN'
+            act = 'EXPLAIN'
         result.update(amount=None, participants=[])
         if any(goal['resource'] == 'transactions' and needs_record(goal) for goal in goals):
             from intent_language import requested_date_range
@@ -435,7 +443,10 @@ def unresolved_transaction_reference(state: Mapping[str, Any]) -> bool:
             or (state.get("slots") or {}).get("transaction_id")
             or _SUSPICIOUS.search(text) or re.search(r"境外|海外|国外", text)):
         return False
-    deictic = re.search(r"(?:这|那|上述|上面)(?:[0-9]{1,3}|[一二两三四五六七八九十]+|几)?笔|刚才.{0,8}(?:转账|交易|流水)", text)
+    if re.search(r"(?:最近|全部|所有|近[一两二三四五六七八九十0-9]+[天周月年]).{0,6}(?:转账|交易|流水|账单|记录)", text):
+        return False
+    cleaned = re.sub(r"(?:这|那)(?:笔|笔钱)?(?:先)?(?:不要|别|不用|停止|无需)(?:再)?(?:转|汇|扣|付)[^，。！？,.!?]*", "", text)
+    deictic = re.search(r"(?:这|那|上述|上面)(?:[0-9]{1,3}|[一二两三四五六七八九十]+|几)?笔|刚才.{0,8}(?:转账|交易|流水)", cleaned)
     return bool(deictic and not referenced_transactions(state)[0])
 
 
