@@ -33,8 +33,8 @@ const advancedAccountSections={
 function accountInput(key,title,value,numeric=false){
   return `<label>${esc(title)}<input data-account-field="${esc(key)}" type="${numeric?'number':'text'}" ${numeric?'min="0" step="0.01"':''} value="${esc(value??'')}"></label>`;
 }
-async function loadAccounts(){
-  if(accountBusy)return;
+async function loadAccounts(force=false){
+  if(accountBusy&&!force)return;
   if(accountDirty&&!confirm('丢弃未保存的编辑并重新加载？'))return;
   accountDirty=false;accountCatalog=await api('/api/accounts');accountRevision=accountCatalog.revision;
   $('#tab-accounts').innerHTML=`<p class="sub">管理虚构账户与演示场景。保存或重置会自动备份，并短暂重载银行服务；所有手机需重新登录。初始状态包含密码及业务数据，历史回执与审计保留。</p>
@@ -53,8 +53,8 @@ function renderAccountList(search){
   $('#accountList').innerHTML=rows.map(a=>`<button class="btn" data-select-account="${esc(a.user_id)}"><b>${esc(a.name)}</b><br><span class="sub">${esc(a.user_id)} · ${money(a.balance)}${a.shadow?' · 收款账户':''}<br>${a.baseline_at?'已保存初始状态':'尚未保存初始状态'}</span></button>`).join('')||'<p class="muted">没有匹配账户</p>';
   document.querySelectorAll('[data-select-account]').forEach(b=>b.onclick=()=>selectAccount(b.dataset.selectAccount).catch(e=>toast(e.message)));
 }
-async function selectAccount(uid){
-  if(accountBusy)return;if(accountDirty&&!confirm('丢弃未保存的修改并切换账户？'))return;
+async function selectAccount(uid,force=false){
+  if(accountBusy&&!force)return;if(accountDirty&&!confirm('丢弃未保存的修改并切换账户？'))return;
   const data=await api('/api/accounts/'+encodeURIComponent(uid));accountDraft=copyAccount(data.data);accountRevision=data.revision;accountIsNew=false;accountDirty=false;
   document.querySelectorAll('[data-select-account]').forEach(b=>b.classList.toggle('selected',b.dataset.selectAccount===uid));renderAccountEditor(data.baseline_at);
 }
@@ -123,7 +123,7 @@ async function accountAction(action){
     if(!confirm(`${names[action]}？会自动备份并短暂重载服务，所有手机需重新登录。${action==='reset'?'该账户创建／保存初始状态后的修改将被替换，其他账户及历史回执不变。':''}${action==='baseline'?'未保存的编辑内容不会进入初始状态。':''}`))return;
     accountBusy=true;document.querySelectorAll('#tab-accounts button').forEach(b=>b.disabled=true);if($('#accountError'))$('#accountError').textContent='正在备份并保存，请稍候…';
     const response=await api(`/api/accounts/${encodeURIComponent(uid)}/${action}`,{method:'POST',body:JSON.stringify(body)});
-    accountDirty=false;accountBusy=false;toast(response.result);await loadAccounts();if(action!=='initialize')await selectAccount(uid);
+    accountDirty=false;toast(response.result);await loadAccounts(true);if(action!=='initialize')await selectAccount(uid,true);accountBusy=false;
   }catch(e){accountBusy=false;document.querySelectorAll('#tab-accounts button').forEach(b=>b.disabled=false);if($('#accountError'))$('#accountError').textContent=e.message;else toast(e.message);}
 }
 window.addEventListener('beforeunload',e=>{if(accountDirty){e.preventDefault();e.returnValue='';}});
