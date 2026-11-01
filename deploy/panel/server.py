@@ -33,6 +33,7 @@ from typing import Any, Iterable, Optional
 
 from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 DATA_DIR = Path(os.getenv("ANYAN_DATA_DIR", "/var/lib/anyan"))
 ENV_FILE = Path(os.getenv("ANYAN_ENV_FILE", "/etc/anyan/anyan.env"))
@@ -57,6 +58,8 @@ RESETTABLE = ("ledger.json", "devices.json", "conversations.sqlite3", "conversat
               "conversations.sqlite3-shm", "conversations.sqlite3.approvals.json")
 
 app = FastAPI(title="安言运维台", docs_url=None, redoc_url=None, openapi_url=None)
+if LOCAL_MODE:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost'])
 _sessions: dict[str, float] = {}
 _account_lock = threading.Lock()
 
@@ -296,6 +299,8 @@ def _expected_token() -> str:
 
 
 def _require(session: Optional[str]) -> None:
+    if LOCAL_MODE:
+        return
     expires = _sessions.get(session or "")
     if not expires or expires < time.time():
         _sessions.pop(session or "", None)
@@ -304,7 +309,8 @@ def _require(session: Optional[str]) -> None:
 
 def _require_write(session: Optional[str], requested_by: Optional[str]) -> None:
     _require(session)
-    # A cross-site form cannot set this header; the cookie is also SameSite=Strict.
+    # A cross-site form cannot set this header. Local mode additionally restricts
+    # Host to loopback names; server sessions use a SameSite=Strict cookie.
     if requested_by != CSRF_HEADER:
         raise HTTPException(403, "缺少操作确认头")
 
@@ -322,11 +328,13 @@ def account_script() -> FileResponse:
 @app.get('/api/panel-info')
 def panel_info() -> dict[str, Any]:
     return {'mode': 'local' if LOCAL_MODE else 'server', 'services': list(SERVICES),
-            'token_file': str(TOKEN_FILE) if LOCAL_MODE else '/etc/anyan/panel.token'}
+            'requires_login': not LOCAL_MODE, 'token_file': None if LOCAL_MODE else '/etc/anyan/panel.token'}
 
 
 @app.post("/api/login")
 async def login(request: Request, response: Response) -> dict[str, Any]:
+    if LOCAL_MODE:
+        return {'ok': True, 'requires_login': False}
     body = await request.json()
     expected = _expected_token()
     if not expected or not hmac.compare_digest(expected, str(body.get("token", "")).strip()):

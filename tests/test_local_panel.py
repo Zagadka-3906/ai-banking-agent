@@ -48,11 +48,11 @@ def test_settings_imports_existing_stores_without_changing_originals(tmp_path):
     with sqlite3.connect(data / 'conversations.sqlite3') as conn:
         assert conn.execute('SELECT body FROM conversations').fetchone()[0] == 'existing-history'
     assert all(p.read_bytes() == content for p, content in originals.items())
-    token = (data / 'panel.token').read_bytes()
+    assert not (data / 'panel.token').exists()
     (data / 'devices.json').write_text('new-local-enrollment', encoding='utf-8')
     runtime.prepare_settings(data, root, ports)
     assert (data / 'devices.json').read_text() == 'new-local-enrollment'
-    assert (data / 'panel.token').read_bytes() == token
+    assert not (data / 'panel.token').exists()
 
 
 def test_foreign_port_is_never_adopted_or_stopped(tmp_path):
@@ -113,10 +113,13 @@ def test_real_local_panel_create_edit_reset_restart_and_control_auth(local_stack
         assert client.post(control['url'] + '/control', json={'operation': 'shutdown'}).status_code == 403
         assert client.post(control['url'] + '/control', headers={'X-Local-Control': control['token']},
                            json={'operation': 'stop', 'units': ['sshd']}).status_code == 503
-        assert client.get('/api/accounts').status_code == 401
+        assert not (data / 'panel.token').exists()
+        assert client.get('/api/accounts').status_code == 200
+        assert client.get('/api/accounts', headers={'Host': 'untrusted.example'}).status_code == 400
+        assert client.post('/api/accounts/local_created/save', json={}).status_code == 403
         info = client.get('/api/panel-info').json()
         assert info['mode'] == 'local' and info['services'] == ['anyan-core', 'anyan-gateway']
-        assert client.post('/api/login', json={'token': (data / 'panel.token').read_text().strip()}).status_code == 200
+        assert info['requires_login'] is False and info['token_file'] is None
         overview = client.get('/api/overview')
         assert overview.status_code == 200, overview.text
         assert all(row['active'] == 'active' for row in overview.json()['services'])
@@ -166,6 +169,6 @@ def test_real_local_panel_create_edit_reset_restart_and_control_auth(local_stack
         assert all(runtime.port_free(p) for p in ports.values())
         restarted = subprocess.run([*args, 'start'], capture_output=True, text=True, encoding='utf-8', timeout=85)
         assert restarted.returncode == 0, restarted.stderr
-        # The panel session resets with its process; durable business data stays.
-        client.post('/api/login', json={'token': (data / 'panel.token').read_text().strip()})
+        # Fresh process remains accessible without a panel login or cookie.
+        assert not client.cookies
         assert client.get('/api/accounts/local_created').json()['data']['account']['balance'] == 15000

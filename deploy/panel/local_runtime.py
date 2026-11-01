@@ -111,9 +111,6 @@ def prepare_settings(data: Path, root: Path, ports: dict[str, int]) -> Path:
         env_file.write_text(content, encoding='utf-8')
         env_file.chmod(0o600)
         (data / 'imports.json').write_text(json.dumps(imports, ensure_ascii=False, indent=2), encoding='utf-8')
-    if not (data / 'panel.token').exists():
-        (data / 'panel.token').write_text(secrets.token_hex(32) + '\n', encoding='utf-8')
-        (data / 'panel.token').chmod(0o600)
     return env_file
 
 
@@ -121,7 +118,7 @@ def runtime_env(data: Path, env_file: Path, ports: dict[str, int]) -> dict[str, 
     from dotenv import dotenv_values
     env = {**os.environ, **{k: v for k, v in dotenv_values(env_file).items() if v is not None}}
     env.update({'ANYAN_PANEL_MODE': 'local', 'ANYAN_DATA_DIR': str(data), 'ANYAN_ENV_FILE': str(env_file),
-                'PANEL_TOKEN_FILE': str(data / 'panel.token'), 'ANYAN_LOCAL_CONTROL_FILE': str(data / 'local-control.json'),
+                'ANYAN_LOCAL_CONTROL_FILE': str(data / 'local-control.json'),
                 'ANYAN_CORE_PORT': str(ports['anyan-core']), 'ANYAN_GATEWAY_PORT': str(ports['anyan-gateway']),
                 'BANK_API_BASE': f'http://127.0.0.1:{ports["anyan-core"]}/api/v1',
                 'PYTHONIOENCODING': 'utf-8'})
@@ -347,7 +344,7 @@ def main() -> int:
         raise RuntimeError('Local controller belongs to another checkout')
     url = f'http://127.0.0.1:{status["services"]["anyan-panel"]["port"]}'
     print('本地后台：' + url)
-    print('访问令牌文件：' + str(data / 'panel.token'))
+    print('本地面板无需登录令牌。')
     print('本地数据目录：' + str(data))
     if not args.no_browser:
         webbrowser.open(url)

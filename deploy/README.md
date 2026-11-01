@@ -98,7 +98,7 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
 
 ## 本地电脑使用同一面板
 
-Windows 在项目根目录双击 `start-local-panel.bat`，或运行 `.\.venv\Scripts\python.exe scripts\serve_local_panel.py start`。浏览器进入 `http://127.0.0.1:9100`，令牌文件位置由启动器和登录页显示。无需安装 systemd、Nginx 或 SSH 隧道。
+Windows 在项目根目录双击 `start-local-panel.bat`，或运行 `.\.venv\Scripts\python.exe scripts\serve_local_panel.py start`。浏览器进入 `http://127.0.0.1:9100` 即可使用，无需登录令牌。服务器模式继续要求令牌登录。本机无需安装 systemd、Nginx 或 SSH 隧道。
 
 本地模式沿用账户管理、初始状态恢复、备份、审计和运维页面；服务控制改由本机启动器管理 Core/Gateway，日志改为读取本机文件。仅监听回环地址。Windows 后台进程隐藏运行，通过各自的停止标记正常退出；不会按端口查杀或接管原有进程。全部停止用 `scripts/serve_local_panel.py stop`，再次启动沿用同一数据。
 

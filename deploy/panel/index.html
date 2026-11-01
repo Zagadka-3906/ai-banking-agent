@@ -341,11 +341,11 @@ async function loadOps() {
 api('/api/panel-info').then(info=>{
   if(info.mode==='local'){
     document.title='安言本地后台';document.querySelectorAll('h1').forEach(h=>h.textContent='安言本地后台');
-    $('#panelLoginHint').textContent='输入本机访问令牌。令牌文件：'+info.token_file;
+    $('#logout').classList.add('hidden');
     $('#logUnit option[value="nginx"]')?.remove();
   }
-}).catch(()=>{});
-api("/api/actions").then(showApp).catch(() => showLogin());
+  return api('/api/actions');
+}).then(showApp).catch(()=>showLogin());
 </script>
 </body>
 </html>
