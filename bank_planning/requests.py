@@ -140,12 +140,15 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
         # a generic self label is not a separately selected person or account.
         subjects = [name for name in subjects if name not in self_names]
         if calculation and calculation['operation'] == 'difference' and len(subjects) != 2:
-            mentioned = [name for name in known if literal_selector_mentioned(name, text) or literal_selector_mentioned(name, str(question))]
-            resolved_mentioned = list(dict.fromkeys(aliases.get(m, m) for m in mentioned if m not in self_names))
-            if len(resolved_mentioned) == 2:
-                subjects = resolved_mentioned
+            if not subjects:
+                mentioned = [name for name in known if literal_selector_mentioned(name, text) or literal_selector_mentioned(name, str(question))]
+                resolved_mentioned = list(dict.fromkeys(aliases.get(m, m) for m in mentioned if m not in self_names))
+                if len(resolved_mentioned) == 2:
+                    subjects = resolved_mentioned
+                else:
+                    calculation = None
             else:
-                calculation = None
+                raise ValueError('CALCULATION_OPERANDS_REQUIRED')
         resolved, unclear_reference = [], False
         for name in subjects:
             if _observed_reference(name, item['resource'], act=item['act']):

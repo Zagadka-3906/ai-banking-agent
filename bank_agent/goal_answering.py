@@ -320,7 +320,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 'request.subject仅为本轮询问对象的引用，可称“你所指的对象”，不证明记录存在或状态；resource_policy只说明整个产品适用的规则，不证明某条记录存在。'
                 '金额必须用values中的{{value.N}}并引用对应evidence_id，余额金额标明总余额/可用余额/锁定金额。'
                 '带calculation的目标必须引用服务器calculation证据，不自行算金额；引用计算结果即包含其操作数来源。'
-                '用户提到的合计、差额或数量若本轮没有calculation证据，引用逐笔记录或字段值回答，不自行算出该数值；服务端已算出的合计会以calculation证据出现在facts中，引用它即可给出数值。'
+                '用户提到的合计、差额或数量若本轮没有calculation证据，引用逐笔记录或字段值回答并说明明细及口径，作为已完成解答（coverage标ANSWERED），严禁标为NEEDS_DATA或写进unanswered，不自行算出该数值；服务端已算出的合计会以calculation证据出现在facts中，引用它即可给出数值。'
                 '不编造日期、收益、状态、外部服务、UI入口或已执行操作，过期计划日期只称原计划，不推进到下一期。'
                 '每项goals均输出coverage，含goal_id、status、evidence_ids、reason；status为ANSWERED/NEEDS_DATA/NEEDS_CLARIFICATION/NEEDS_CONFIRMATION/UNSUPPORTED/TOOL_FAILED。'
                 '缺少字段时使用NEEDS_DATA并说明具体缺口，系统会尝试补查；只有支持证据充分且正文直接回答时使用ANSWERED。'
@@ -354,8 +354,13 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
             if any(key not in ids for item in coverage for key in item['evidence_ids']):
                 raise ValueError('UNCITED_GOAL_EVIDENCE')
             gaps = [item for item in coverage if item['status'] == 'NEEDS_DATA']
-            if gaps and session.repair(gaps):
-                feedback = normalize_feedback(gaps, goals)
+            if gaps and (session.repair(gaps) or session.synthesize_aggregate_calculation()):
+                if any(row.get('source', '').startswith('calculation://') for row in session.facts()):
+                    feedback = normalize_feedback([{'goal_id': item['goal_id'], 'status': 'NEEDS_DATA', 'action': 'REWRITE',
+                                                    'reason': '本轮已由服务端按完整记录算出合计并附全部操作数来源；引用该calculation证据作答，不自行写出数值。'}
+                                                   for item in gaps], goals)
+                else:
+                    feedback = normalize_feedback(gaps, goals)
                 continue
             reviewer = runtime.answer_reviewer or runtime.llm
             verdict = invoke_model(reviewer, [runtime.SystemMessage(content=(

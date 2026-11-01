@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-10-31.9",
-  "rules_version": "822d4eec785f86301b55263b525a3e537b87d4eb154857a23d8d853bd1cd1e4a",
+  "rules_version": "61d5a3db334ea4591f6e4c27139962ca79248ae5b373d31e0a7ebe912afe0d37",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_repair.py": "39046a8b2201ee3d58b8c87d89d0277ce7e8ee32bc88542b9388261eef870645",
@@ -16,7 +16,7 @@
     "bank_agent/evidence.py": "cbb35a9af6ba735e9e55415730f9321cc65c630f4742c4bf312f404465b22369",
     "bank_agent/evidence_session.py": "901ee2f1e13203db9aa56d0d925c61b537e186152c4f04f8a5fe7072f73b8f7c",
     "bank_agent/extraction.py": "8e51101a9437029a8b69c8dc5cd7f30de4855ea7f1578c804709e80251dc8005",
-    "bank_agent/goal_answering.py": "d5a6de784dfe3820a6f92f176b7217b0fce7f6598c51cf4b3c19f290b81e86c5",
+    "bank_agent/goal_answering.py": "8deb3dea22126f0eff8142dd23910e8d79f115c1e79a6f90e0e9aa900f51f569",
     "bank_agent/goal_fidelity.py": "4fe84bea8292809eaa133be4fd0ac4d25c4647e82209e90a2f9c057f42db4523",
     "bank_agent/nodes/executor.py": "d67e70f01a81e3a18c373f92d74204ea96483e97653bb63ba32aeb3b1bcbc5d4",
     "bank_agent/nodes/intent.py": "ab206ea0fb8ece98b7c841895f91bb04fcbae882abb3aea0ee08cf48f0ab646e",
@@ -41,12 +41,12 @@
     "bank_core/task_scheduler.py": "9b25be1958280c5d94bc682e126158d23c6f4ba9262f570be3f400981d89230b",
     "bank_core/undo.py": "1ee25b1f649779ec73343e201273f1efbd9d134a20e16ec072cc0cfc3bd30fbf",
     "bank_planning/intents.py": "332b187e7b39649bd6fc6172915fb6c09aac933aca66c34bc38fc2b855432dbb",
-    "bank_planning/requests.py": "f2fbedccc96b898912ebce77df15be9c429e66c8c0881e1d8c1503d99c8373e4",
+    "bank_planning/requests.py": "2936956483eabe37d1dc96900fac585deb6e897f7262af2139873f7d959ca65b",
     "bank_security/authorization.py": "652fe51c1fd7d96fbc580661f4352a2ceaafc00fb2cd85cb1aa5c47387ac48c7",
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "c5286354445f6705aa868f22e40fe6b984d0f2e5d67d9d08ccf5ee1d8687a737",
     "banking_rules.py": "50b8ad144373e8b3243d1e4cbdf69c57ca3bfbb1122411385aab412715b6922a",
-    "intent_language.py": "d6c4883440fd8997c4207ed13e420264c3cc2eaf00c09ea226c9dd9d8be3228c",
+    "intent_language.py": "37920899cb31a94763b606862337c46dfca6cb925ea527fa37f8283ddec1048b",
     "model_config.py": "2ce2f0b20b18d920968ad385b88f9d9ca30ca6a37425ca33af1ca7215ca0b701",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f",
     "workflow_runtime.py": "a2f4b3abde690dd80fd2b90bad65c8577b9ca264a9ed877e161ac82426b29b2b"
