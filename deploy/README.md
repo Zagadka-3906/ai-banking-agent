@@ -76,7 +76,11 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
 - **服务日志**：查看三个服务最近的日志，可以只看警告和错误。
 - **运维操作**：重启服务、恢复演示数据，以及操作记录。恢复演示数据时，旧数据移到 `/var/lib/anyan/backup/<时间>/`，不会删除；审计记录保留。
 
-它只监听服务器本机的 9100 端口，公网访问不到；打开时还要输入访问令牌（`/etc/anyan/panel.token`，部署时随机生成）。使用方法：
+公网浏览器可打开 `https://47.107.49.125/panel/`（其他部署替换为自己的 IP 或域名），HTTPS 首页会跳转到面板。服务器面板仍需输入访问令牌（`/etc/anyan/panel.token`，部署时随机生成）。首次在其他电脑打开时，因当前证书由项目自建 CA 签发，浏览器会提示不受信任；可将项目 CA 公共证书导入信任库后访问。密钥文件不能当作 CA 公共证书分发。
+
+面板进程仍只监听服务器本机的 9100 端口，由 Nginx 的 HTTPS `/panel/` 入口转发，不直接开放 9100。登录和其他面板请求分别限流，HTTPS 登录 Cookie 带 Secure、HttpOnly、SameSite=Strict 且作用于 `/panel/`；写操作继续要求操作确认头。原银行 `/core/`、`/gateway/` 入口保持原路由。
+
+也可以继续使用 SSH 隧道：
 
 1. 在部署这台电脑的 Git Bash 里运行下面这条命令。它会先显示访问令牌，再建立隧道；窗口保持打开。
 
@@ -84,8 +88,8 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
    deploy/deploy.sh panel 47.107.49.125
    ```
 
-   用 PowerShell 也可以：先用 `ssh -i $HOME\.ssh\id_anyan_deploy root@47.107.49.125 cat /etc/anyan/panel.token` 查看令牌，再运行 `ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 9100:127.0.0.1:9100 root@47.107.49.125`。
-2. 浏览器打开 `http://localhost:9100`，粘贴令牌，登录。登录状态保持 12 小时。
+   用 PowerShell 也可以：先用 `ssh -i $HOME\.ssh\id_anyan_deploy root@47.107.49.125 cat /etc/anyan/panel.token` 查看令牌，再运行 `ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 19100:127.0.0.1:9100 root@47.107.49.125`。
+2. 浏览器打开 `http://localhost:9100`（上述 PowerShell 示例为 `http://localhost:19100`），粘贴令牌，登录。登录状态保持 12 小时。
 3. 用完关掉命令窗口，或按 Ctrl+C。
 
 ### 账户初始状态与单账户重置

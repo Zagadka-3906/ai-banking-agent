@@ -86,6 +86,7 @@ systemctl restart anyan-gateway
 
 echo "== nginx"
 install -m 644 "$APP_DIR/app/deploy/nginx-anyan-stream.conf" /etc/nginx/anyan-stream.conf
+install -m 644 "$APP_DIR/app/deploy/nginx-anyan-panel.conf" /etc/nginx/anyan-panel.conf
 sed "s|__SERVER_NAME__|$HOST|" "$APP_DIR/app/deploy/nginx-anyan.conf" > /etc/nginx/sites-available/anyan.conf
 ln -sf /etc/nginx/sites-available/anyan.conf /etc/nginx/sites-enabled/anyan.conf
 rm -f /etc/nginx/sites-enabled/default
@@ -104,7 +105,7 @@ systemctl restart cockpit.socket
 # Root may not log in to Cockpit; "panel" (sudo) gets its password from `passwd panel`.
 id panel >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo panel
 
-echo "== 安言运维台 (127.0.0.1:9100, SSH tunnel + access token)"
+echo "== 安言运维台 (HTTPS /panel/ or SSH tunnel + access token)"
 [ -s "$CONF_DIR/panel.token" ] || (umask 077 && openssl rand -hex 32 > "$CONF_DIR/panel.token")
 chmod 600 "$CONF_DIR/panel.token"
 install -m 644 "$APP_DIR/app/deploy/anyan-panel.service" /etc/systemd/system/anyan-panel.service

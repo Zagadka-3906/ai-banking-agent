@@ -173,9 +173,10 @@ const settingText = (v) => v === "1" ? "开启" : v === "0" ? "关闭" : (v || "
 const money = (v) => typeof v === "number" ? "¥" + v.toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2}) : "—";
 const when = (iso) => iso ? new Date(iso).toLocaleString("zh-CN", {hour12: false}) : "—";
 let current = "overview", timer = null;
+const PANEL_BASE = location.pathname.replace(/\/$/, '');
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {credentials: "same-origin", ...options,
+  const response = await fetch(PANEL_BASE + path, {credentials: "same-origin", ...options,
     headers: {"Content-Type": "application/json", ...(options.method === "POST" ? {"X-Requested-By": "anyan-panel"} : {}), ...(options.headers || {})}});
   if (response.status === 401 && !path.endsWith("/login")) { showLogin(); throw new Error("未登录"); }
   const body = await response.json().catch(() => ({}));
@@ -336,7 +337,7 @@ async function loadOps() {
 }
 
 </script>
-<script src="/accounts.js"></script>
+<script src="accounts.js"></script>
 <script>
 api('/api/panel-info').then(info=>{
   if(info.mode==='local'){

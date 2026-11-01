@@ -1,6 +1,6 @@
 """安言运维台: a server back office for one 安言 deployment.
 
-It listens on 127.0.0.1 only and is reached through an SSH tunnel; an access
+It listens on 127.0.0.1 only, behind HTTPS /panel/ or an SSH tunnel; an access
 token (``/etc/anyan/panel.token``) guards it on top of that. Everything it shows
 is read from the machine - systemd, the journal, the Nginx access log, the
 audit files and the ledger snapshot - and secrets are reported only as
@@ -342,15 +342,21 @@ async def login(request: Request, response: Response) -> dict[str, Any]:
         raise HTTPException(401, "访问令牌不正确")
     session = secrets.token_urlsafe(32)
     _sessions[session] = time.time() + SESSION_SECONDS
-    response.set_cookie("anyan_panel", session, max_age=SESSION_SECONDS, httponly=True, samesite="strict")
+    response.set_cookie("anyan_panel", session, max_age=SESSION_SECONDS, httponly=True, samesite="strict",
+                        secure=request.url.scheme == 'https', path=_cookie_path(request))
     return {"ok": True}
 
 
 @app.post("/api/logout")
-def logout(response: Response, anyan_panel: Optional[str] = Cookie(None)) -> dict[str, Any]:
+def logout(request: Request, response: Response, anyan_panel: Optional[str] = Cookie(None)) -> dict[str, Any]:
     _sessions.pop(anyan_panel or "", None)
-    response.delete_cookie("anyan_panel")
+    response.delete_cookie("anyan_panel", path=_cookie_path(request))
     return {"ok": True}
+
+
+def _cookie_path(request: Request) -> str:
+    # Nginx overwrites this header. Keep tunnel/root sessions working as well.
+    return '/panel/' if request.headers.get('x-forwarded-prefix') == '/panel' else '/'
 
 
 # --- read endpoints ----------------------------------------------------------

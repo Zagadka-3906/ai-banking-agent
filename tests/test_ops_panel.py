@@ -142,3 +142,35 @@ def test_overview_never_contains_secret_values(panel):
     _login(client)
     body = client.get("/api/overview").text
     assert "sk-secret-value" not in body and "abc" not in json.loads(body)["config"]["settings"].values()
+
+
+def test_https_panel_prefix_keeps_login_cookie_scoped_secure_and_revokes_it(panel):
+    from fastapi import FastAPI
+    module, _, _, calls = panel
+    proxy = FastAPI()
+    proxy.mount('/panel', module.app)
+    with TestClient(proxy, base_url='https://panel.example', headers={'X-Forwarded-Prefix': '/panel'}) as client:
+        assert client.get('/panel/api/actions').status_code == 401
+        assert client.post('/panel/api/restart/anyan-core', headers={'X-Requested-By': 'anyan-panel'}).status_code == 401
+        assert client.get('/panel/').status_code == 200
+        assert client.get('/panel/accounts.js').status_code == 200
+        logged_in = client.post('/panel/api/login', json={'token': TOKEN})
+        assert logged_in.status_code == 200
+        cookie = logged_in.headers['set-cookie']
+        assert 'Path=/panel/' in cookie and 'Secure' in cookie and 'HttpOnly' in cookie and 'SameSite=strict' in cookie
+        assert client.get('/panel/api/actions').status_code == 200
+        assert client.post('/panel/api/restart/anyan-core').status_code == 403
+        assert not calls  # No business/service changes in an authentication test.
+        logged_out = client.post('/panel/api/logout')
+        assert 'Path=/panel/' in logged_out.headers['set-cookie'] and 'Max-Age=0' in logged_out.headers['set-cookie']
+        assert client.get('/panel/api/actions').status_code == 401
+
+
+def test_plain_http_tunnel_still_uses_root_cookie(panel):
+    _, client, *_ = panel
+    response = client.post('/api/login', json={'token': TOKEN})
+    assert response.status_code == 200
+    assert 'Path=/' in response.headers['set-cookie'] and '; Secure' not in response.headers['set-cookie']
+    assert client.get('/api/actions').status_code == 200
+    client.post('/api/logout')
+    assert client.get('/api/actions').status_code == 401

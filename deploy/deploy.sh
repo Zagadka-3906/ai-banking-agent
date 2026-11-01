@@ -57,7 +57,7 @@ print(\"updated:\", \", \".join(sorted(keys)) or \"nothing\")
     "${SSH[@]}" 'systemctl --no-pager --lines=0 status anyan-core anyan-gateway nginx | grep -E "●|Active:"; curl -fsS http://127.0.0.1:8000/healthz; echo; curl -fsS http://127.0.0.1:8100/healthz; echo'
     ;;
   panel)
-    # The back office listens on the server's 127.0.0.1 only; this tunnel is the way in.
+    # An optional alternative to the public HTTPS /panel/ entry.
     echo "安言运维台: open http://localhost:9100 and paste this access token:"
     "${SSH[@]}" 'cat /etc/anyan/panel.token'
     echo "Ctrl+C closes the tunnel."
