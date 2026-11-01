@@ -42,6 +42,8 @@ internal fun ConversationList(
     suspend fun scrollToLatest() {
         if (itemCount == 0) return
         snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it >= itemCount }
+        // Already settled at the very bottom; avoid redundant or backward scroll to the item top.
+        if (!listState.canScrollForward) return
         if (motion) listState.animateScrollToItem(itemCount - 1) else listState.scrollToItem(itemCount - 1)
         if (ensureLastCardVisible) {
             // Tall approval/quiz cards must keep their bottom controls reachable.
@@ -63,7 +65,9 @@ internal fun ConversationList(
         if (dragged) following = false
         else if (!listState.isScrollInProgress && atBottom) following = true
     }
-    LaunchedEffect(contentRevision, following, latestUserMessageId, followUpdates) {
+    // Note: 'following' is intentionally NOT a key here; when user scrolls to bottom and following
+    // becomes true, they are already at the bottom and must not be jerked back to the top of the item.
+    LaunchedEffect(contentRevision, latestUserMessageId, followUpdates) {
         if (latestUserMessageId != previousUserMessageId) {
             previousUserMessageId = latestUserMessageId
             following = true
