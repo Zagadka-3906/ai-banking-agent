@@ -158,7 +158,7 @@ def ambiguous_target(text: str) -> bool:
 
 def nonexecuting_action(text: str) -> bool:
     source = business_text(text)
-    mutation = r"转账|给.{1,20}转|申购|赎回|买入|冻结|解冻|挂失|解挂|锁定|(?:取消|查看|查询).{0,12}(?:订阅|代扣)"
+    mutation = r"转账|给.{1,20}转|付款|支付|扣款|申购|赎回|买入|冻结|解冻|挂失|解挂|锁定|(?:取消|查看|查询).{0,12}(?:订阅|代扣)"
     if re.search(r"(?:假设|如果|若是|要是)", source) and re.search(mutation, source):
         return True
     if re.search(r"(?:如何|怎么(?:样)?(?:才能|操作|办理|给|把)|怎样|有什么(?:要求|条件)|需要什么)", source) and re.search(mutation, source):

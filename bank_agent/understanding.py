@@ -129,9 +129,13 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
                              and read_only_goals((result.get('parse_meta') or {}).get('goals') or []))
         if result.get("intent") not in READ_INTENTS and not subscription_read and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
             result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)
-            result["slots"] = {"help_topic": help_topic(text)}
+            topic = help_topic(text)
+            result["slots"] = {"help_topic": topic}
             result["parse_meta"]["dialogue_act"] = "EXPLAIN"
             act = "EXPLAIN"
+            goals = (result.get("parse_meta") or {}).get("goals") or []
+            if goals:
+                result["parse_meta"]["goals"] = [{**g, "act": "EXPLAIN", "topic": topic if g.get("topic") in ("general", topic) else g.get("topic")} for g in goals]
         elif constraint == 'PRIOR_INQUIRY' and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
             result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "EXPLAIN"}
             act = "EXPLAIN"
