@@ -407,7 +407,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     else:
         plan = build_task_plan(parsed, plan_id=f"plan_{uuid.uuid4().hex[:12]}")
     clarification = needs_clarification(parsed) if not sub_requests else False
-    if parsed.get('intent') == Intent.BANKING_HELP.value and semantic_read and read_only_goals(semantic_goals):
+    if (consultation or semantic_read) and read_only_goals(semantic_goals):
         # A read can answer known goals and clarify only the unclear goals;
         # global operation confidence must not suppress the whole response.
         clarification = False
