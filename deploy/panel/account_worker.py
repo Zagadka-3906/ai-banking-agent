@@ -34,8 +34,8 @@ def run(command: dict) -> dict:
     revision = hashlib.sha256(ledger.read_bytes()).hexdigest()
     state = {name: deepcopy(persistence.LEDGER_COLLECTIONS[name]) for name in persistence.LEDGER_STATE_NAMES}
     state['TASK_STORE'] = TASK_STORE.export_records()
-    action = command.get('action')
-    uid = command.get('user_id')
+    action = command.get('action', '')
+    uid = command.get('user_id', '')
     baselines = state['ACCOUNT_INITIAL_STATES']
     if action == 'list':
         return {'revision': revision, 'accounts': [
@@ -69,6 +69,10 @@ def run(command: dict) -> dict:
 
 
 def main() -> None:
+    # The panel protocol is UTF-8 JSON even on Windows with a GBK console.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
     try:
         command = json.loads(sys.stdin.read(2_000_001))
         if not isinstance(command, dict):

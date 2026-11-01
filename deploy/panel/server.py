@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import shutil
 import subprocess
 import sys
@@ -39,8 +40,12 @@ TOKEN_FILE = Path(os.getenv("PANEL_TOKEN_FILE", "/etc/anyan/panel.token"))
 ACCESS_LOG = Path(os.getenv("NGINX_ACCESS_LOG", "/var/log/nginx/access.log"))
 ACTION_LOG = DATA_DIR / "panel-actions.jsonl"
 STATIC = Path(__file__).with_name("index.html")
+LOCAL_MODE = os.getenv('ANYAN_PANEL_MODE') == 'local'
+LOCAL_CONTROL_FILE = Path(os.getenv('ANYAN_LOCAL_CONTROL_FILE', str(DATA_DIR / 'local-control.json')))
+CORE_PORT = int(os.getenv('ANYAN_CORE_PORT', '8000'))
+GATEWAY_PORT = int(os.getenv('ANYAN_GATEWAY_PORT', '8100'))
 
-SERVICES = ("anyan-core", "anyan-gateway", "nginx")
+SERVICES = ("anyan-core", "anyan-gateway") if LOCAL_MODE else ("anyan-core", "anyan-gateway", "nginx")
 SESSION_SECONDS = 12 * 3600
 CSRF_HEADER = "anyan-panel"
 # Settings shown as configured / not configured, never by value.
@@ -209,13 +214,19 @@ def _read_jsonl(path: Path, limit: int = 20000) -> list[dict[str, Any]]:
 
 def _http_json(url: str) -> Optional[dict[str, Any]]:
     try:
-        with urllib.request.urlopen(url, timeout=3) as response:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(url, timeout=3) as response:
             return json.loads(response.read().decode("utf-8"))
     except (OSError, ValueError):
         return None
 
 
 def _service(unit: str) -> dict[str, Any]:
+    if LOCAL_MODE:
+        from deploy.panel.local_runtime import control_request
+        try:
+            return control_request(LOCAL_CONTROL_FILE, 'status')['services'][unit]
+        except (OSError, ValueError, KeyError):
+            return {'unit': unit, 'active': 'unknown', 'sub': '', 'since': '', 'restarts': '', 'memory_mb': None}
     info = parse_systemctl_show(_run("systemctl", "show", unit, "--property=ActiveState,SubState,ActiveEnterTimestamp,MemoryCurrent,NRestarts"))
     memory = info.get("MemoryCurrent", "")
     return {"unit": unit, "active": info.get("ActiveState", "unknown"), "sub": info.get("SubState", ""),
@@ -245,10 +256,22 @@ def _system() -> dict[str, Any]:
                 network[name.strip()] = {"rx": int(fields[0]), "tx": int(fields[8])}
     except (OSError, ValueError, IndexError):
         pass
-    disk = shutil.disk_usage("/")
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = [('length', wintypes.DWORD), ('load', wintypes.DWORD)] + [
+                (key, ctypes.c_ulonglong) for key in ('total', 'available', 'page_total', 'page_available', 'virtual_total', 'virtual_available', 'extended')]
+        status = MemoryStatus()
+        status.length = ctypes.sizeof(status)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            meminfo.update(MemTotal=status.total, MemAvailable=status.available)
+        ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+        uptime = ctypes.windll.kernel32.GetTickCount64() / 1000
+    disk = shutil.disk_usage(DATA_DIR if DATA_DIR.is_dir() else Path.cwd())
     data_bytes = sum(f.stat().st_size for f in DATA_DIR.rglob("*") if f.is_file()) if DATA_DIR.is_dir() else 0
     return {
-        "hostname": os.uname().nodename if hasattr(os, "uname") else "",
+        "hostname": socket.gethostname(),
         "cpus": os.cpu_count(), "load": load, "uptime_hours": round(uptime / 3600, 1),
         "memory": {"total": meminfo.get("MemTotal"), "available": meminfo.get("MemAvailable"),
                    "swap_total": meminfo.get("SwapTotal"), "swap_free": meminfo.get("SwapFree")},
@@ -257,6 +280,7 @@ def _system() -> dict[str, Any]:
 
 
 def _record_action(action: str, result: str) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     with ACTION_LOG.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"at": datetime.now(timezone.utc).isoformat(), "action": action, "result": result},
                                 ensure_ascii=False) + "\n")
@@ -293,6 +317,12 @@ def index() -> FileResponse:
 @app.get('/accounts.js')
 def account_script() -> FileResponse:
     return FileResponse(STATIC.with_name('accounts.js'), media_type='application/javascript', headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/panel-info')
+def panel_info() -> dict[str, Any]:
+    return {'mode': 'local' if LOCAL_MODE else 'server', 'services': list(SERVICES),
+            'token_file': str(TOKEN_FILE) if LOCAL_MODE else '/etc/anyan/panel.token'}
 
 
 @app.post("/api/login")
@@ -332,11 +362,12 @@ def overview(anyan_panel: Optional[str] = Cookie(None)) -> dict[str, Any]:
         env = {"secrets": {}, "settings": {}}
     return {
         "now": now.isoformat(),
+        'mode': 'local' if LOCAL_MODE else 'server',
         "services": [_service(unit) for unit in SERVICES],
-        "health": {"core": _http_json("http://127.0.0.1:8000/healthz"), "gateway": _http_json("http://127.0.0.1:8100/healthz"),
-                   "security": _http_json("http://127.0.0.1:8000/api/v1/security/health")},
+        "health": {"core": _http_json(f"http://127.0.0.1:{CORE_PORT}/healthz"), "gateway": _http_json(f"http://127.0.0.1:{GATEWAY_PORT}/healthz"),
+                   "security": _http_json(f"http://127.0.0.1:{CORE_PORT}/api/v1/security/health")},
         "system": _system(),
-        "traffic": access_summary(lines, now),
+        "traffic": {**access_summary(lines, now), 'available': not LOCAL_MODE},
         "activity": audit_summary(events, now),
         "config": env,
     }
@@ -376,6 +407,12 @@ def logs(unit: str = "anyan-gateway", lines: int = 150, issues: bool = False,
     _require(anyan_panel)
     if unit not in SERVICES:
         raise HTTPException(400, "未知服务")
+    if LOCAL_MODE:
+        path = DATA_DIR / 'logs' / (unit + '.log')
+        rows = path.read_text(encoding='utf-8', errors='replace').splitlines() if path.is_file() else []
+        if issues:
+            rows = [row for row in rows if re.search(r'warning|error|exception|failed', row, re.I)]
+        return {'unit': unit, 'text': '\n'.join(rows[-max(10, min(lines, 1000)):])}
     args = ["journalctl", "-u", unit, "-n", str(max(10, min(lines, 1000))), "--no-pager", "-o", "short-iso"]
     if issues:
         args += ["-p", "warning"]
@@ -385,7 +422,7 @@ def logs(unit: str = "anyan-gateway", lines: int = 150, issues: bool = False,
 @app.get("/api/actions")
 def actions(anyan_panel: Optional[str] = Cookie(None)) -> dict[str, Any]:
     _require(anyan_panel)
-    return {"actions": list(reversed(_read_jsonl(ACTION_LOG, limit=50)))}
+    return {"actions": list(reversed(_read_jsonl(ACTION_LOG, limit=50))), 'services': list(SERVICES), 'local': LOCAL_MODE}
 
 
 # --- write endpoints ---------------------------------------------------------
@@ -422,6 +459,13 @@ def account_detail(user_id: str, anyan_panel: Optional[str] = Cookie(None)) -> d
 
 
 def _checked_service(command: str, *units: str) -> None:
+    if LOCAL_MODE:
+        from deploy.panel.local_runtime import control_request
+        try:
+            control_request(LOCAL_CONTROL_FILE, command, units)
+            return
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, '本机服务控制未完成，请检查本地运行日志') from exc
     result = subprocess.run(['systemctl', command, *units], capture_output=True, text=True, timeout=60)
     if result.returncode:
         raise HTTPException(503, '服务' + ('停止' if command == 'stop' else '启动') + '失败，请检查运维日志')
@@ -485,7 +529,7 @@ def _change_account_stopped(user_id: str, action: str, body: dict[str, Any]) -> 
                 finally:
                     _checked_service('start', 'anyan-gateway')
         if written:
-            for port in (8000, 8100):
+            for port in (CORE_PORT, GATEWAY_PORT):
                 for attempt in range(30):
                     if _http_json(f'http://127.0.0.1:{port}/healthz'):
                         break
@@ -513,6 +557,10 @@ def restart(unit: str, anyan_panel: Optional[str] = Cookie(None),
     _require_write(anyan_panel, x_requested_by)
     if unit not in SERVICES:
         raise HTTPException(400, "未知服务")
+    if LOCAL_MODE:
+        _checked_service('restart', unit)
+        _record_action('重启 ' + unit, '成功（本机托管服务）')
+        return {'ok': True, 'result': '成功'}
     if unit == "nginx":
         test = subprocess.run(["nginx", "-t"], capture_output=True, text=True, check=False)
         if test.returncode:
@@ -531,7 +579,7 @@ def reset_demo(anyan_panel: Optional[str] = Cookie(None), x_requested_by: Option
 
     _require_write(anyan_panel, x_requested_by)
     backup = DATA_DIR / "backup" / datetime.now().strftime("%Y%m%d-%H%M%S")
-    subprocess.run(["systemctl", "stop", "anyan-gateway", "anyan-core"], check=False, timeout=60)
+    _checked_service('stop', 'anyan-gateway', 'anyan-core')
     moved = []
     try:
         backup.mkdir(parents=True, exist_ok=True)
@@ -541,9 +589,9 @@ def reset_demo(anyan_panel: Optional[str] = Cookie(None), x_requested_by: Option
                 shutil.move(str(source), str(backup / name))
                 moved.append(name)
     finally:
-        subprocess.run(["systemctl", "start", "anyan-core"], check=False, timeout=60)
+        _checked_service('start', 'anyan-core')
         time.sleep(2)
-        subprocess.run(["systemctl", "start", "anyan-gateway"], check=False, timeout=60)
+        _checked_service('start', 'anyan-gateway')
     outcome = f"已恢复演示数据，旧数据移到 {backup}（{len(moved)} 个文件）"
     _record_action("恢复演示数据", outcome)
     return {"ok": True, "result": outcome, "backup": str(backup), "moved": moved}

@@ -111,13 +111,32 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 建议把 `BANK_AUTH_SECRET` 换成随机长密钥。全部变量见 [`.env.example`](.env.example)。
 
-**一键启动**会启动 Core 与 Gateway，构建并安装 Debug APK，再打开模拟器：
+**一键启动**会启动 Core、Gateway 和本地管理面板，构建并安装 Debug APK，再打开模拟器：
 
 ```powershell
 .\start-emulator.bat
 ```
 
-也可以分别启动两个服务（只监听 `127.0.0.1`）：
+只启动电脑后端和管理面板，可双击根目录的 `start-local-panel.bat`，或运行：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\serve_local_panel.py start
+```
+
+浏览器打开 `http://127.0.0.1:9100`。登录令牌保存在启动输出提示的 `panel.token` 文件中；页面也显示文件位置。进入“账户管理”即可新增账户、编辑账户和关联业务数据、重新保存初始状态，或将单个账户恢复到创建／首次保存时的状态。保存前自动备份，保存后自动重载本机银行服务；修改或重置后 App 需重新登录。该面板只管理电脑上的数据，与云服务器分开。
+
+首次启动会将根目录 `.env` 复制为独立的 `local.env`，并保留签名密钥；若原先配置了本地账本，则复制其文件，同时复制已有设备登记、通过 SQLite 备份导入会话，原文件保留。管理数据保存在 `%LOCALAPPDATA%\bank-agent\local-panel\<仓库标识>`，不进入 Git。已有账户在首次启用时保存初始状态；新账户在创建时保存。本机默认关闭飞书事件接收，避免与云端重复接收。
+
+后续模型等配置请修改该目录的 `local.env`，再在面板中重启对应服务。不要随意更换账本签名密钥或管理数据路径。查看状态、停止这套本机服务：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\serve_local_panel.py status
+.\.venv\Scripts\python.exe scripts\serve_local_panel.py stop
+```
+
+启动器只管理自己创建的进程。若端口被原先手动启动的服务占用，会提示占用并退出；请先正常结束原服务，再重新启动面板。Core、Gateway、面板和内部控制均只监听 `127.0.0.1`；内部控制需要独立随机令牌，页面操作仍需登录与操作确认头。电脑关闭后重新运行启动入口即可恢复。
+
+仅调试原始服务时，也可分别运行（此方式不提供本地面板的服务管理和数据导入）：
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
@@ -178,7 +197,7 @@ cd ..
 ├─ scripts/              端到端探针、场景评测、设备回归、交付打包
 ├─ tools/usability/      可用性测试记录页
 ├─ tests/                后端测试
-├─ deploy/               云服务器部署：安装脚本、systemd、Nginx、部署命令、安言运维台（deploy/panel）
+├─ deploy/               云服务器部署及本地后台：安装脚本、systemd、Nginx、安言运维台（deploy/panel）
 ├─ docs/                 参赛文档；docs/过程记录/ 为历次检查与升级记录
 └─ start-emulator.bat    一键启动
 ```

@@ -22,42 +22,6 @@ $package = 'com.aibanking.agent'
 $logDir = Join-Path $repoRoot 'build\quick-start'
 $runId = Get-Date -Format 'yyyyMMdd-HHmmss'
 
-function Get-BackendHealth([int]$Port) {
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -TimeoutSec 2 -UseBasicParsing
-    } catch { return $null }
-}
-
-function Start-Backend([string]$Module, [int]$Port, [string]$Service) {
-    $health = Get-BackendHealth $Port
-    if ($health -and $health.status -eq 'ok' -and $health.service -eq $Service) {
-        Write-Host "  Reusing $Service on port $Port."
-        return
-    }
-    if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {
-        throw "Port $Port is occupied but $Service is not healthy. Check the existing service first."
-    }
-    $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
-    if (-not (Test-Path -LiteralPath $python)) {
-        throw 'Missing .venv\Scripts\python.exe. Set up the backend environment as described in README.md.'
-    }
-    $errorLog = Join-Path $logDir "$Module-$runId.err.log"
-    Start-Process -FilePath $python -WorkingDirectory $repoRoot -WindowStyle Hidden `
-        -ArgumentList '-m', 'uvicorn', "${Module}:app", '--host', '127.0.0.1', '--port', "$Port" `
-        -RedirectStandardOutput (Join-Path $logDir "$Module-$runId.log") `
-        -RedirectStandardError $errorLog | Out-Null
-    $deadline = (Get-Date).AddSeconds(45)
-    do {
-        $health = Get-BackendHealth $Port
-        if ($health -and $health.status -eq 'ok' -and $health.service -eq $Service) {
-            Write-Host "  $Service is ready on port $Port."
-            return
-        }
-        Start-Sleep -Seconds 1
-    } while ((Get-Date) -lt $deadline)
-    throw "The $Service startup timed out. See $errorLog"
-}
-
 function Find-Emulator {
     # Ignore transient offline transports while the emulator is starting.
     $ErrorActionPreference = 'Continue'
@@ -131,9 +95,11 @@ try {
     } finally { Pop-Location }
     if (-not (Test-Path -LiteralPath $apk)) { throw "Build output missing: $apk" }
 
-    Write-Host '[3/5] Checking local backend services...'
-    Start-Backend 'main' 8000 'mock-banking-core'
-    Start-Backend 'agent_api' 8100 'banking-agent-gateway'
+    Write-Host '[3/5] Starting local backend services and management panel...'
+    $python = Join-Path $repoRoot '.venv\Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $python)) { throw 'Missing .venv\Scripts\python.exe. Follow README.md.' }
+    & $python (Join-Path $repoRoot 'scripts\serve_local_panel.py') start --no-browser
+    if ($LASTEXITCODE -ne 0) { throw 'Local backend startup failed. See the local panel supervisor log.' }
 
     Write-Host "[4/5] Starting or reusing emulator $AvdName..."
     & $adb start-server

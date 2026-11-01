@@ -97,7 +97,7 @@ select, input, textarea { font: inherit; padding: 7px 10px; border: 1px solid va
 <section id="login" class="login hidden">
   <div class="logo"></div>
   <h1>安言运维台</h1>
-  <p class="sub">输入访问令牌。令牌在服务器的 /etc/anyan/panel.token 中，<br>部署电脑上运行 <code>deploy/deploy.sh panel</code> 时会显示。</p>
+  <p class="sub" id="panelLoginHint">输入访问令牌。令牌位于服务器的 /etc/anyan/panel.token。</p>
   <input id="token" type="password" placeholder="访问令牌" autocomplete="current-password">
   <div class="error" id="loginError"></div>
   <button class="btn primary" id="loginBtn" style="width:100%">登录</button>
@@ -224,24 +224,24 @@ async function loadOverview() {
   $("#tab-overview").innerHTML = `
     <div class="grid">
       <div class="card"><h2>整体状态</h2><div class="big">${allUp ? "正常" : "需要处理"}</div>
-        <div class="sub">${allUp ? "核心、网关与 Nginx 都在运行，健康检查通过" : "有服务未运行或健康检查失败，见下方"}</div></div>
+        <div class="sub">${allUp ? (d.mode==='local'?'本机核心与网关运行正常，健康检查通过':'核心、网关与 Nginx 都在运行，健康检查通过') : "有服务未运行或健康检查失败，见下方"}</div></div>
       <div class="card"><h2>今日登录（24 小时）</h2><div class="big">${a.logins}</div><div class="sub">${a.active_users} 个账户 · 失败 ${a.login_failures} 次</div></div>
       <div class="card"><h2>对话轮数（24 小时）</h2><div class="big">${a.turns}</div><div class="sub">模型调用 ${a.model_calls} 次 · 资金操作 ${a.money_moves} 笔</div></div>
-      <div class="card"><h2>安全拦截（24 小时）</h2><div class="big">${a.blocked}</div><div class="sub">注入拦截 ${a.injections} 次 · 限流 ${t.rate_limited} 次</div></div>
+      <div class="card"><h2>安全拦截（24 小时）</h2><div class="big">${a.blocked}</div><div class="sub">注入拦截 ${a.injections} 次${t.available===false?'':' · 限流 '+t.rate_limited+' 次'}</div></div>
     </div>
     <div class="grid section">
       <div class="card"><h2>服务</h2>${d.services.map((x) => `<div class="svc"><div><b>${esc(x.unit)}</b>
         <div class="sub">${x.since ? "启动于 " + esc(x.since) : ""}${x.memory_mb != null ? " · 内存 " + x.memory_mb + " MB" : ""}${x.restarts ? " · 自动重启 " + esc(x.restarts) + " 次" : ""}</div></div>${stateBadge(x.active)}</div>`).join("")}
         <div class="svc"><div><b>健康检查</b><div class="sub">核心 ${d.health.core ? "通过" : "失败"} · 网关 ${d.health.gateway ? "通过" : "失败"}</div></div>
           <span class="pill ${d.health.core && d.health.gateway ? "ok" : "bad"}">${d.health.core && d.health.gateway ? "通过" : "失败"}</span></div></div>
-      <div class="card"><h2>服务器资源</h2>
+      <div class="card"><h2>${d.mode==='local'?'电脑资源':'服务器资源'}</h2>
         <div class="kv"><span>CPU</span><span>${s.cpus} 核 · 负载 ${(s.load || []).join(" / ")}</span>
           <span>运行时长</span><span>${s.uptime_hours} 小时</span></div>
         <div class="sub" style="margin-top:12px">内存 ${mb(memUsed)} / ${mb(mem.total)}</div>
         <div class="bar"><i style="width:${memUsed && mem.total ? Math.round(memUsed / mem.total * 100) : 0}%"></i></div>
         <div class="sub" style="margin-top:10px">磁盘 ${mb(s.disk.used)} / ${mb(s.disk.total)} · 业务数据 ${mb(s.data_bytes)}</div>
         <div class="bar"><i style="width:${Math.round(s.disk.used / s.disk.total * 100)}%"></i></div>
-        <div class="sub" style="margin-top:10px">开机以来网络：出 ${mb(tx)} · 入 ${mb(rx)}（按流量计费看“出”）</div></div>
+        <div class="sub" style="margin-top:10px">${Object.keys(s.network||{}).length?'开机以来网络：出 '+mb(tx)+' · 入 '+mb(rx):'网络流量未采集'}</div></div>
       <div class="card"><h2>安全与配置</h2><div class="kv">
         <span>活跃会话</span><span>${esc(sec.active_sessions)}</span>
         <span>已登记设备</span><span>${esc((sec.devices || {}).enrolled)}</span>
@@ -256,6 +256,10 @@ async function loadOverview() {
 }
 
 function renderTraffic(t) {
+  if(t.available===false){
+    $('#tab-traffic').innerHTML='<div class="card"><h2>访问与流量</h2><p class="sub">本机直连服务尚未采集访问流量统计。登录、查询和业务操作记录可在“审计事件”中查看。</p></div>';
+    return;
+  }
   const max = Math.max(1, ...t.hourly.map((h) => h.requests));
   const total = Math.max(1, t.requests);
   $("#tab-traffic").innerHTML = `
@@ -309,7 +313,7 @@ async function loadOps() {
   $("#tab-ops").innerHTML = `
     <div class="grid">
       <div class="card"><h2>重启服务</h2><p class="sub">服务异常或修改配置后使用。重启期间几秒内 App 请求会失败。</p>
-        <div class="row">${["anyan-core", "anyan-gateway", "nginx"].map((u) => `<button class="btn" data-restart="${u}">重启 ${u}</button>`).join("")}</div></div>
+        <div class="row">${(d.services || ["anyan-core", "anyan-gateway", "nginx"]).map((u) => `<button class="btn" data-restart="${u}">重启 ${u}</button>`).join("")}</div></div>
       <div class="card"><h2>全局出厂重置</h2><p class="sub">所有账户、设备和对话恢复出厂演示数据，自建账户与保存的初始状态会清除。仅重置单个账户请使用“账户管理”。旧数据移到备份目录；审计保留。</p>
         <button class="btn danger" id="resetDemo">全局恢复出厂演示数据</button></div>
     </div>
@@ -333,6 +337,15 @@ async function loadOps() {
 
 </script>
 <script src="/accounts.js"></script>
-<script>api("/api/actions").then(showApp).catch(() => showLogin());</script>
+<script>
+api('/api/panel-info').then(info=>{
+  if(info.mode==='local'){
+    document.title='安言本地后台';document.querySelectorAll('h1').forEach(h=>h.textContent='安言本地后台');
+    $('#panelLoginHint').textContent='输入本机访问令牌。令牌文件：'+info.token_file;
+    $('#logUnit option[value="nginx"]')?.remove();
+  }
+}).catch(()=>{});
+api("/api/actions").then(showApp).catch(() => showLogin());
+</script>
 </body>
 </html>
