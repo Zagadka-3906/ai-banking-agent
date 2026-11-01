@@ -175,7 +175,7 @@ def test_two_goals_read_different_sources_and_answer_both_without_regex_reclassi
     before=financial_state()
     reply=_send(client,'我现在能动用多少，再核实一下银行卡状态',conversation_id='two-independent-goals')
     assert reply['intent']=='BANKING_HELP' and reply['business_status']=='SUCCEEDED' and reply['approval'] is None
-    assert '可用余额' in reply['reply'] and 'ACTIVE' in reply['reply']
+    assert '可用余额' in reply['reply'] and '正常' in reply['reply'] and 'ACTIVE' not in reply['reply']
     coverage=reply['result']['answer_presentation']['coverage']
     assert len(coverage)==2 and all(row['status']=='ANSWERED' for row in coverage)
     assert financial_state()==before
@@ -197,7 +197,7 @@ def test_rules_cannot_count_as_personal_record_evidence_even_with_permissive_rev
     before=financial_state()
     reply=_send(client,'我的银行卡现在处于什么状态',conversation_id='not-rule-fact')
     assert reply['result']['answer_presentation']['mode']=='FIELD_FALLBACK'
-    assert '被冻结' not in reply['reply'] and 'ACTIVE' in reply['reply']
+    assert '被冻结' not in reply['reply'] and '正常' in reply['reply'] and 'ACTIVE' not in reply['reply']
     assert financial_state()==before
 
 

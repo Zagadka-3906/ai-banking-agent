@@ -14,6 +14,7 @@ from bank_agent.state import extract_json
 from bank_agent.understanding import READ_INTENTS, _safe_text, model_context, understanding_context
 from bank_agent.verification import valid_text_field
 from banking_knowledge import SCOPE_POLICY
+from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language, append_required_fact
 
 
 class DraftValidationError(ValueError):
@@ -167,8 +168,8 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
     if not isinstance(ids, list) or not 1 <= len(ids) <= 35:
         raise ValueError('DRAFT_CITATION_SCHEMA')
     if any(not isinstance(key, str) or key not in known for key in ids):
-        unknown = [key for key in ids if not isinstance(key, str) or key not in known]
-        raise DraftValidationError('UNKNOWN_EVIDENCE_ID', evidence_id=','.join(str(k) for k in unknown[:3]))
+        unknown_ids = [key for key in ids if not isinstance(key, str) or key not in known]
+        raise DraftValidationError('UNKNOWN_EVIDENCE_ID', evidence_id=','.join(str(k) for k in unknown_ids[:3]))
     if len(set(ids)) != len(ids):
         raise ValueError('DUPLICATE_EVIDENCE_ID')
     if not isinstance(unanswered, list) or len(unanswered) > 5 or any(not isinstance(value, str) or len(value) > 300 for value in unanswered):
@@ -273,15 +274,15 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
     _validate_projection_absence(rendered, facts)
     # Required complete record sets and material limitations stay server-owned.
     for item in facts:
-        if item.get("required") and item["text"] not in rendered:
-            rendered += "\n" + item["text"]
-    return rendered.strip(), ids
+        if item.get("required"):
+            rendered = append_required_fact(rendered, item)
+    return customer_language(rendered.strip(), facts), ids
 
 
 def _review(state: Mapping[str, Any], text: str, facts: list[dict[str, Any]], ids: list[str], context: dict[str, Any]) -> bool:
     reviewer = runtime.answer_reviewer or runtime.llm
     answer = invoke_model(reviewer, [runtime.SystemMessage(content=(
-        "你是独立银行回答核验器。" + SCOPE_POLICY +
+        "你是独立银行回答核验器。" + SCOPE_POLICY + REVIEW_STYLE +
         "核验候选答复是否：在业务范围内；每项事实均被证据支持；直接覆盖当前问题；安全且无虚构操作、时效或承诺。"
         "不能因为引用了事实就认定答到点。问怎么验证必须解释具体要素；问柜台应回答是否能App办理；问怎么撤销应说明步骤；"
         "问联系人是否保存必须依据read.contacts的通讯录记录，交易流水不能证明保存状态；"
@@ -359,7 +360,7 @@ def compose_answer(state: Mapping[str, Any], response: dict[str, Any]) -> dict[s
         answer = None
         try:
             answer = invoke_model(runtime.llm, [runtime.SystemMessage(content=(
-                "你是银行业务解答助手。" + SCOPE_POLICY +
+                "你是银行业务解答助手。" + SCOPE_POLICY + ANSWER_STYLE +
                 "自由组织清楚自然的中文，理解用户真实问题、前后指代、纠正和新话题；先直接回答，再解释必要步骤或条件。"
                 "规则检索结果用于选择正确流程和数据源，不要把检索片段拼贴给用户；除非用户询问实现，不输出内部意图名、代码路径或接口。"
                 "允许基于证据归纳、比较、解释原因和提出有依据的下一步，不必照抄原句。不得编造事实、承诺、办理状态或外部服务。"

@@ -17,6 +17,7 @@ from bank_planning.requests import STATUSES, needs_record, request_goals
 from bank_agent.state import extract_json
 from bank_agent.understanding import _safe_text, model_context, understanding_context
 from banking_knowledge import SCOPE_POLICY
+from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language
 from security import audit_event
 from workflow_runtime import invoke_json_model as invoke_model
 
@@ -299,7 +300,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                    'read_failures': session.failures, 'feedback': feedback}
         try:
             draft = invoke_model(runtime.llm, [runtime.SystemMessage(content=(
-                '你是银行业务解答助手。' + SCOPE_POLICY +
+                '你是银行业务解答助手。' + SCOPE_POLICY + ANSWER_STYLE +
                 '围绕用户本轮全部goals自然组织回答，先答所问字段再说明必要条件；不要拼贴知识、重复上轮或附带无关列表。'
                 '引用全部用到的字段及计数证据，不在正文输出内部goal_id、source、接口或证据编号。步骤用中文序号。'
                 'audience=model的规则只约束内部推理，除非用户明确询问实现，不向用户复述工具、协议或读取预算。'
@@ -365,7 +366,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 continue
             reviewer = runtime.answer_reviewer or runtime.llm
             verdict = invoke_model(reviewer, [runtime.SystemMessage(content=(
-                '你是独立银行回答核验器。' + SCOPE_POLICY +
+                '你是独立银行回答核验器。' + SCOPE_POLICY + REVIEW_STYLE +
                 '逐项对照原始问题与goals，检查有没有漏问、问题被改写、无关展开、重复、错误主体或无依据状态。'
                 '每项个人事实必须来自对应读取源；规则不能当账户事实。核验金额字段、过期日期、订阅登记与真实权益区别。'
                 'scope=read_outcome只证明本轮读取尝试失败，可支持解释“失败不代表没有记录”；不支持记录存在、不存在、已处理或已恢复。'
@@ -438,6 +439,7 @@ def compose_goal_answer(state: Mapping[str, Any], response: dict[str, Any]) -> d
                 session.repair(feedback)
     if not generated:
         final_text, final_coverage = _fallback(goals, session)
+        final_text = customer_language(final_text, session.facts())
     complete = all(item['status'] in {'ANSWERED', 'UNSUPPORTED'} for item in final_coverage)
     status = 'SUCCEEDED' if complete else 'PARTIAL_SUCCESS' if any(item['status'] == 'ANSWERED' for item in final_coverage) else 'NEEDS_INPUT'
     updated = session.result()

@@ -227,7 +227,7 @@ def test_projected_field_absence_is_rewritten_before_review_without_extra_reads(
     before = financial_state()
     reply = _send(client, '查询CARD-001的网上支付和境外渠道，目前配置与冻结有何区别？', conversation_id='projection-context')
     assert len(seen) == 2 and reply['result']['answer_presentation']['mode'] == 'GENERATED_REVIEWED'
-    assert 'FROZEN' in reply['reply'] and '限制该卡付款' in reply['reply']
+    assert 'FROZEN' not in reply['reply'] and '冻结' in reply['reply'] and '限制该卡付款' in reply['reply']
     assert 'PROJECTED_FIELD_ABSENCE' not in reply['reply'] and reply['approval'] is None
     assert seen[0][1] == seen[1][1] and financial_state() == before
     feedback = seen[1][0]['feedback'][0]
