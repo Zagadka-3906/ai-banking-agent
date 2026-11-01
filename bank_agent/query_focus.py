@@ -26,7 +26,18 @@ def contact_question(text: str) -> bool:
 
 
 def needs_contact_records(text: str) -> bool:
-    return not bool(re.search(r"(?:怎么|如何|哪里|哪儿).{0,8}(?:查看|打开|找到|进入).{0,8}(?:列表|联系人|通讯录)|(?:列表|联系人|通讯录).{0,6}(?:在哪|入口)", text))
+    return not contact_navigation_only(text)
+
+
+def contact_navigation_only(text: str) -> bool:
+    """A page/search-entry question, without an accompanying record query."""
+    if not re.search(r'联系人|通讯录|收款人(?:列表|页面)', text):
+        return False
+    if re.search(r'有没有|是否|有谁|有哪些|名单|多少|几位|几人|列出|列一下|核对|核实|查一下|查查|查出|余额|额度|流水|转账|付款|扣款|冻结|解冻|挂失|撤销|添加|删除|保存.{0,4}联系人', text):
+        return False
+    return bool(re.search(
+        r'入口|(?:哪里|哪儿|哪|怎么|如何).{0,12}(?:进|打开|看|找|操作|搜索)|'
+        r'(?:页面|列表|联系人|通讯录).{0,10}(?:在哪|哪里|哪儿)|按.{0,5}(?:姓名|名字)搜索', text))
 
 
 def literal_records(rows: list[dict[str, Any]], question: str, fields: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -63,7 +74,9 @@ def contact_documents(data: Mapping[str, Any], state: Mapping[str, Any]) -> list
     # Complete lists stay server-owned. A targeted yes/no fact is checked by
     # coverage and semantic review; forcing its full sentence into the answer
     # duplicates the model's direct answer and adds unrelated limitations.
-    return [{"id": f"read.contacts.{index}", "source": "core://contacts", "text": text, "required": listing and not selected}
+    return [{"id": f"read.contacts.{index}", "source": "core://contacts", "text": text, "required": listing and not selected,
+             **({'contact_listing': {'total': len(rows), 'names': [row['name'] for row in rows[:45]]}}
+                if listing and not selected and index == 0 else {})}
             for index, text in enumerate(texts)]
 
 

@@ -115,6 +115,12 @@ def normalize_goals(value: Any, text: str, context: Mapping[str, Any]) -> list[d
             raise ValueError('INVALID_GOAL_FIELDS')
         if subject is not None and (not isinstance(subject, str) or not 1 <= len(subject.strip()) <= 120):
             raise ValueError('INVALID_GOAL_SUBJECT')
+        from bank_agent.query_focus import contact_navigation_only
+        if (item['resource'] == 'contacts' and item['act'] in {'QUERY', 'EXPLAIN'}
+                and not calculation and not subject and not subjects
+                and contact_navigation_only(text) and contact_navigation_only(question)):
+            item = {**item, 'act': 'EXPLAIN', 'requires_record': False}
+            fields = []
         aliases = context.get('grounded_aliases') or {}
         known = {*observed, *aliases.keys(), *aliases.values()}
         known.update(name for row in context.get('recent_observations', [])

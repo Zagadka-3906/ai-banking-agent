@@ -14,7 +14,7 @@ from bank_agent.state import extract_json
 from bank_agent.understanding import READ_INTENTS, _safe_text, model_context, understanding_context
 from bank_agent.verification import valid_text_field
 from banking_knowledge import SCOPE_POLICY
-from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language, append_required_fact, question_facts, validate_answer_focus
+from bank_agent.answer_presentation import ANSWER_STYLE, REVIEW_STYLE, customer_language, append_required_fact, question_facts, validate_answer_focus, covered_contact_listing
 
 
 class DraftValidationError(ValueError):
@@ -273,8 +273,9 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
                     fragment=clause_prefix[-60:] + rendered[match.start():match.end() + 60])
     _validate_projection_absence(rendered, facts)
     # Required complete record sets and material limitations stay server-owned.
+    covered_contacts = covered_contact_listing(rendered, facts)
     for item in facts:
-        if item.get("required"):
+        if item.get("required") and item['id'] not in covered_contacts:
             rendered = append_required_fact(rendered, item)
     return customer_language(rendered.strip(), facts), ids
 

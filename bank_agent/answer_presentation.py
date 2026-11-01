@@ -33,6 +33,37 @@ _LABELS = {
 _TOKEN = re.compile(r'[A-Za-z][A-Za-z0-9_-]*')
 
 
+def covered_contact_listing(text: str, facts: list[dict[str, Any]]) -> set[str]:
+    """An exact positive list may satisfy the same server-owned list facts.
+
+    Match count and the complete multiset of displayed names together. Merely
+    mentioning names, a partial list, negation or a hypothetical never suffices.
+    Truncation limitations remain required even when displayed names match.
+    """
+    covered: set[str] = set()
+    for row in facts:
+        listing = row.get('contact_listing')
+        if row.get('source') != 'core://contacts' or not isinstance(listing, dict):
+            continue
+        names, total = listing.get('names'), listing.get('total')
+        if not isinstance(names, list) or not names or type(total) is not int:
+            continue
+        name_pattern = '|'.join(re.escape(name) for name in sorted(set(names), key=len, reverse=True))
+        start = (r'(?:已保存的?联系人(?:有|共)|(?:你|您|本人)的?联系人簿(?:当前|目前|现在)?(?:共)?保存)'
+                 r'\s*' + str(total) + r'\s*位(?:联系人)?\s*[:：]\s*')
+        body = r'(?:' + name_pattern + r')(?:\s*[、，,]\s*(?:' + name_pattern + r'))*'
+        for match in re.finditer(r'(?:^|(?<=[。！？\n]))\s*' + start + '(' + body + r')\s*[。]', text):
+            shown = re.findall(name_pattern, match[1])
+            if sorted(shown) != sorted(names):
+                continue
+            covered.add(row['id'])
+            for fact in facts:
+                if (fact.get('source') == 'core://contacts'
+                        and fact['text'] in {'已保存联系人：' + name + '。' for name in names}):
+                    covered.add(fact['id'])
+    return covered
+
+
 def question_facts(facts: list[dict[str, Any]], question: str) -> list[dict[str, Any]]:
     """Keep a frequency policy out of unrelated contact answers, not Core reads."""
     if re.search(r'常用|频率|经常|频繁|次数|多次|常转|多不多', question):

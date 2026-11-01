@@ -225,6 +225,9 @@ def consult(state: Mapping[str, Any]) -> dict[str, Any]:
 
     def execute(step: dict[str, Any]) -> None:
         nonlocal failures, reads
+        from bank_agent.query_focus import contact_navigation_only
+        if step.get('tool') in {'contacts', 'cards', 'balance', 'account_context', 'transactions', 'tasks', 'disputes', 'risk_profile', 'wealth_products', 'wealth_holdings'} and contact_navigation_only(str(state.get('user_input') or '')):
+            return
         signature = json.dumps(step, sort_keys=True)
         if signature in completed or reads >= 5:
             return

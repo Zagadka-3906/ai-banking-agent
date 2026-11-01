@@ -45,6 +45,9 @@ class EvidenceSession:
 
     def read(self, step: Mapping[str, Any], *, date_context: Mapping[str, Any] | None = None) -> bool:
         from bank_agent.consultation import read_evidence, valid_read_step
+        from bank_agent.query_focus import contact_navigation_only
+        if step.get('tool') in RESOURCES and contact_navigation_only(str(self.state.get('user_input') or '')):
+            return False
         step = dict(step)
         if step.get('tool') == 'transactions':
             date_context = date_context if date_context is not None else self.transaction_dates
@@ -139,7 +142,9 @@ class EvidenceSession:
                         grouped[key]['subjects'] = list(dict.fromkeys([*old, *new]))
                 else:
                     grouped[key] = step
-        if (all(goal['act'] == 'EXPLAIN' for goal in self.goals)
+        from bank_agent.query_focus import contact_navigation_only
+        if (not contact_navigation_only(str(self.state.get('user_input') or ''))
+                and all(goal['act'] == 'EXPLAIN' for goal in self.goals)
                 and self.state.get('memory_principal') == self.state.get('user_id')):
             previous = list((self.state.get('observations') or {}).values())[-1:]
             for observation in previous:
