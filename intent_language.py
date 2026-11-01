@@ -135,7 +135,7 @@ def recipient_references(text: str) -> set[str]:
     for reference in references:
         for name in re.split(r"或(?:者)?|还是|和|与|、", reference):
             name = re.sub(r"^(?:就是|也是|还是|给|向)", "", name).strip()
-            if name and not re.search(r"麻烦|核对|确认|帮我|请帮|一下|查看|查询|解释|说明|展示|办理|看看|是否|要求|信息|金额|流水|记录", name):
+            if name and not re.search(r"麻烦|核对|确认|帮我|请帮|一下|查看|查询|解释|说明|展示|办理|看看|是否|要求|信息|金额|流水|记录|这[个两笔位项点次样]|那[个两笔位项点次样]|上述|以上|两者|两者都|两样|前述", name):
                 names.add(name)
     return names
 
