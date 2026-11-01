@@ -53,6 +53,7 @@ import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.BankHaptics
 import com.aibanking.agent.ui.anim.CONTAINER_TRANSFORM_DURATION_MILLIS
+import com.aibanking.agent.ui.anim.CascadeEntranceSpec
 import com.aibanking.agent.ui.anim.ContainerTransformEasing
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
@@ -228,7 +229,10 @@ private fun ContactListScreen(
                     skeleton = { ContactsSkeleton() },
                 ) {
                     Box(Modifier.fillMaxSize()) {
-                        val cascade = rememberCascadeEntrance(ready = state.contacts.isNotEmpty())
+                        val cascade = rememberCascadeEntrance(
+                            ready = !state.panelBusy && state.contacts.isNotEmpty(),
+                            state.contacts,
+                        )
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
@@ -241,12 +245,19 @@ private fun ContactListScreen(
                                 val firstRowIndex = flat
                                 flat += section.contacts.size
                                 stickyHeader(key = "header-${section.letter}") {
-                                    SectionHeader(section.letter, Modifier.cascadeItem(cascade, headerIndex))
+                                    SectionHeader(
+                                        section.letter,
+                                        Modifier.cascadeItem(cascade, headerIndex, CascadeEntranceSpec.ContactCascade),
+                                    )
                                 }
                                 itemsIndexed(section.contacts, key = { _, contact -> contact.contactId }) { offset, contact ->
                                     ContactRow(
                                         contact = contact,
-                                        modifier = Modifier.cascadeItem(cascade, firstRowIndex + offset),
+                                        modifier = Modifier.cascadeItem(
+                                            cascade,
+                                            firstRowIndex + offset,
+                                            CascadeEntranceSpec.ContactCascade,
+                                        ),
                                         sharedTransitionScope = sharedTransitionScope,
                                         animatedVisibilityScope = animatedVisibilityScope,
                                     ) {
