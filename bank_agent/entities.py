@@ -8,7 +8,7 @@ from bank_agent import runtime
 from bank_agent.state import BankingAgentState
 from intent_language import ambiguous_target, business_text, execution_constraint, recipient_references
 
-_PAYEE_SUFFIX = r'(?:吧|呀|啊|的|这笔|那笔|的事|这件事|那件事)'
+_PAYEE_SUFFIX = r'(?:吧|呀|啊|的|这笔|那笔|的事|这件事|那件事|的钱|的款|的款项)'
 # The suffix may stack ("李四的那笔"); at most three discourse particles are stripped.
 _PAYEE_SUFFIX_RUN = r'(?:' + _PAYEE_SUFFIX + r'){1,3}'
 _PAYEE_BUSINESS_SUFFIX = r'(?:办|办理|安排)(?:一笔)?'
