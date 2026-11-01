@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from copy import deepcopy
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
 
 from bank_core.ledger import register_collections
@@ -324,7 +325,11 @@ _WEALTH_DETAIL_FIXTURES: dict[str, dict[str, Any]] = {
 _WEALTH_NAV_BASE = ("2025-09-15", "2025-10-15", "2025-11-17", "2025-12-15", "2026-01-15", "2026-02-13", "2026-03-16", "2026-04-15", "2026-05-15", "2026-06-15", "2026-07-15", "2026-08-15", "2026-09-15")
 
 
-def _normalized_wealth_series(detail: dict[str, Any]) -> list[dict[str, Any]]:
+def wealth_as_of_date() -> date:
+    return datetime.now(timezone(timedelta(hours=8))).date()
+
+
+def _normalized_wealth_series(detail: dict[str, Any], as_of: Optional[date] = None) -> list[dict[str, Any]]:
     """Build a stable chart whose labeled period returns are mathematically true.
 
     This is a normalized performance chart, deliberately separate from the
@@ -355,14 +360,16 @@ def _normalized_wealth_series(detail: dict[str, Any]) -> list[dict[str, Any]]:
         product_anchors[6] = product_last / (1.0 + float(history["近6月"]["product_return_pct"]) / 100.0)
         benchmark_anchors[6] = benchmark_last / (1.0 + float(history["近6月"]["benchmark_return_pct"]) / 100.0)
     series = []
-    for index, date in enumerate(_WEALTH_NAV_BASE):
+    shift = (as_of or wealth_as_of_date()) - date.fromisoformat(_WEALTH_NAV_BASE[-1])
+    dates = [(date.fromisoformat(value) + shift).isoformat() for value in _WEALTH_NAV_BASE]
+    for index, stamp in enumerate(dates):
         left = max(anchor for anchor in product_anchors if anchor <= index)
         right = min(anchor for anchor in product_anchors if anchor >= index)
         ratio = 0.0 if left == right else (index - left) / (right - left)
         product_nav = product_anchors[left] + (product_anchors[right] - product_anchors[left]) * ratio
         benchmark_nav = benchmark_anchors[left] + (benchmark_anchors[right] - benchmark_anchors[left]) * ratio
-        series.append({"date": date, "nav": round(product_nav, 6), "benchmark_nav": round(benchmark_nav, 6)})
-    if has_extended_history and detail.get("established_at", "") < _WEALTH_NAV_BASE[0]:
+        series.append({"date": stamp, "nav": round(product_nav, 6), "benchmark_nav": round(benchmark_nav, 6)})
+    if has_extended_history and detail.get("established_at", "") < dates[0]:
         series.insert(0, {"date": detail["established_at"], "nav": 1.0, "benchmark_nav": 1.0})
     return series
 
@@ -376,7 +383,9 @@ def wealth_product_view(product: Mapping[str, Any]) -> dict[str, Any]:
     detail = _WEALTH_DETAIL_FIXTURES.get(str(product.get("product_id")))
     if detail is None:
         return view
-    view.update({"data_source": "MOCK_FIXTURE", "as_of_date": "2026-09-15", "nav_series": _normalized_wealth_series(detail), **deepcopy(detail)})
+    as_of = wealth_as_of_date()
+    view.update({**deepcopy(detail), "data_source": "MOCK_FIXTURE", "as_of_date": as_of.isoformat(),
+                 "net_value_date": as_of.isoformat(), "nav_series": _normalized_wealth_series(detail, as_of)})
     return view
 WEALTH_HOLDINGS: dict[str, list[dict[str, Any]]] = {"user_zhang": []}
 # 风险档案与账户分开存储，初始为空：用户首次咨询理财业务时由 Agent 触发

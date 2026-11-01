@@ -3,11 +3,32 @@
 from __future__ import annotations
 
 import math
+from datetime import date as calendar_date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 import main
+from bank_core import wealth_data
+
+
+@pytest.fixture(autouse=True)
+def fixed_market_date(monkeypatch):
+    monkeypatch.setattr(wealth_data, 'wealth_as_of_date', lambda: calendar_date(2026, 9, 15))
+
+
+def test_market_dates_follow_today_without_compressing_history_or_changing_values(monkeypatch):
+    product = main.WEALTH_PRODUCTS[0]
+    original = main.wealth_product_view(product)
+    monkeypatch.setattr(wealth_data, 'wealth_as_of_date', lambda: calendar_date(2026, 11, 1))
+    fresh = main.wealth_product_view(product)
+    assert fresh['as_of_date'] == fresh['net_value_date'] == fresh['nav_series'][-1]['date'] == '2026-11-01'
+    assert fresh['performance_history'] == original['performance_history']
+    old_rows, new_rows = original['nav_series'][-13:], fresh['nav_series'][-13:]
+    for old, new in zip(old_rows, new_rows):
+        assert calendar_date.fromisoformat(new['date']) - calendar_date.fromisoformat(old['date']) == timedelta(days=47)
+        assert (old['nav'], old['benchmark_nav']) == (new['nav'], new['benchmark_nav'])
+    assert 'nav_series' not in product
 
 
 @pytest.fixture()
