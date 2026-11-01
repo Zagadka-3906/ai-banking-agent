@@ -117,6 +117,7 @@ _PAYEE_TOKEN = r"((?:我(?=\s*(?:转账|转|汇款|打钱|\d+(?:元|块)))|(?!�
 def recipient_source(text: str) -> str:
     """Separate an instruction to the assistant from a payment recipient."""
     source = business_text(text)
+    source = re.sub(r'(?:按|对|就|按着|按照)?(?:这[个两笔位项]|那[个两笔位项]|该|原|此|上述|本)收款人', '', source)
     source = re.sub(r'(?:给|向)我(?=(?:先|再|只|仅)?(?:核对|看(?:看|一?下)?|展示|解释|说明|查(?:询|看)?|列出|显示|生成))', '请', source)
     source = re.sub(r'(?:^|[，,。；;!?！？])\s*(?:关于)?(?:给|向)[一-龥A-Za-z0-9·_-]{1,12}的\s*(?:知道|明白|了解|看到|清楚|收到)[了吧啊]*[，,。；;!?！？]?\s*', '；', source)
     return source.strip('；')
@@ -135,7 +136,7 @@ def recipient_references(text: str) -> set[str]:
     for reference in references:
         for name in re.split(r"或(?:者)?|还是|和|与|、", reference):
             name = re.sub(r"^(?:就是|也是|还是|给|向)", "", name).strip()
-            if name and not re.search(r"麻烦|核对|确认|帮我|请帮|一下|查看|查询|解释|说明|展示|办理|看看|是否|要求|信息|金额|流水|记录|这[个两笔位项点次样]|那[个两笔位项点次样]|上述|以上|两者|两者都|两样|前述", name):
+            if name and not re.search(r"麻烦|核对|确认|帮我|请帮|一下|查看|查询|解释|说明|展示|办理|看看|是否|要求|信息|金额|流水|记录|准备|打算|计划|先|现在|直接|发起|提交|执行|处理|转账|支付|付款|操作|这[个两笔位项点次样]|那[个两笔位项点次样]|上述|以上|两者|两者都|两样|前述", name):
                 names.add(name)
     return names
 
