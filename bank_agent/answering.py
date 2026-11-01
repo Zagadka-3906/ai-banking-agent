@@ -98,7 +98,7 @@ def answer_facts(state: Mapping[str, Any], response: Mapping[str, Any]) -> list[
 _MONEY = re.compile(r"[¥￥]\s*-?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:元|块钱|万元)")
 _NUMBER = re.compile(r"\d+(?:[,.]\d+)*")
 _IDENTIFIER = re.compile(r"(?i)(?:TXN?[A-Z0-9-]{3,}|CASE-[A-Z0-9-]+|CARD-[A-Z0-9-]+|TSK[A-Z0-9]{10,}|[A-Z]{2,8}-?\d{3,}[A-Z0-9]*)")
-_WRITE_CLAIM = re.compile(r"(?:已|已经|成功)(?:为您|帮您|替您|完成了|完成)?(?:冻结|解冻|挂失|转账|退款|扣款|调额|撤销|下单|创建.{0,6}工单)")
+_WRITE_CLAIM = re.compile(r"(?:已|已经|成功)(?:为您|帮您|替您|完成了|完成)?(?:冻结|解冻|挂失|转账|退款|扣款|调额|撤销|下单|创建(?!的).{0,6}工单)")
 # Card states are stored as English enums; the Chinese completion form of a
 # STATE claim ("已冻结") is a translation of the status the cited row carries,
 # not an invented operation.  Operation claims (转账/扣款/下单) stay lexical.
@@ -249,13 +249,22 @@ def _validate_draft(plan: dict[str, Any], facts: list[dict[str, Any]], anchors: 
             labels = [(found.start(), name) for name, pattern in balance_labels.items() for found in re.finditer(pattern, prefix)]
             if not labels or max(labels)[1] != field:
                 raise ValueError("FINANCIAL_FIELD_MISMATCH")
+    denial_pattern = (r'(?:不代表|并不代表|不意味着|并不意味着|不意味|并不意味|不等于|并不等于|不等同于|并不等同于|并非|并不是|不是|'
+                      r'不能据此认定|不能据此认为|不能视为|不可视为|不得视为|不能当作|不能认为|不能算作|不能算|不算|并不算|'
+                      r'并未|并没有|未曾|未实际|未|不会|并不会|不会自动|不能自动|不能|并不能|无法|并无法|不属于|并不属于)\s*$')
+    inquiry_pattern = r'(?:是否|能否|可否|会否|何种情况|怎么|如何|看是否|确认是否|核对是否|核实是否|检查是否|查询是否)\s*$'
     for match in _WRITE_CLAIM.finditer(rendered):
         clause_prefix = re.split(r"[，,。；;\n]", rendered[:match.start()])[-1]
-        conditional = bool(re.search(r"如果|假如|一旦|若", clause_prefix))
+        sentence_prefix = re.split(r"[。；;\n]", rendered[:match.start()])[-1]
+        conditional = bool(re.search(r"如果|假如|一旦|若|当.*时", sentence_prefix))
+        inquiry = bool(re.search(inquiry_pattern, clause_prefix))
         # Negation must immediately govern this matched completion predicate.
         # It cannot exempt another assertion later in the same answer.
-        denial = bool(re.search(r'(?:不代表|不意味着|不等于|并非|不是|不能据此认定|不能视为|不能当作|不能认为|不能算作)\s*$', clause_prefix))
-        if not conditional and not denial and match.group() not in evidence:
+        denial = bool(re.search(denial_pattern, clause_prefix))
+        postfix = rendered[match.end():match.end() + 20]
+        object_topic = bool(re.search(r'(?:退回|退还|追回|关于|对于|针对|讨论)\s*$', clause_prefix))
+        attributive = match.group().endswith('扣款') and (postfix.startswith(('项', '的')) or postfix.startswith(('不是同一件事', '不等于', '不同于', '不代表同一')))
+        if not conditional and not denial and not inquiry and not object_topic and not attributive and match.group() not in evidence:
             gloss = _STATUS_GLOSS.get(match.group())
             if not (gloss and any(value in evidence for value in gloss)):
                 raise DraftValidationError("UNVERIFIED_OPERATION_CLAIM",

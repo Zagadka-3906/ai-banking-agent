@@ -95,7 +95,7 @@ def project_records(resource: str, data: Mapping[str, Any], state: Mapping[str, 
         if not valid_balance_payload(data):
             raise ValueError('BALANCE_FIELDS_INVALID')
         keys = ['total_balance', 'available_balance', 'locked_amount'] if 'records' in selected else selected
-        aliases = [state['user_id'], '我', '本人', '我的账户', '当前账户']
+        aliases = [state['user_id'], '我', '本人', '我的账户', '当前账户', '卡', '卡片', '银行卡', '这张卡', '该卡', '主卡', '工资卡']
         if valid_text_field(data.get('user_name'), max_length=120):
             aliases.append(data['user_name'])
         return [{**_document(resource, index, f'{LABELS[key]}为¥{float(data[key]):,.2f}。', [key]), 'entity_names': aliases,

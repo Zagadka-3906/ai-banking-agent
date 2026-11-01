@@ -84,7 +84,12 @@ def _matching(goal: Mapping[str, Any], facts: list[dict[str, Any]]) -> list[dict
         rows += [row for row in facts if row.get('source') == 'approval://current' and row['id'] in {'pending.operation', 'pending.status', 'pending.verification'}]
     selectors = goal.get('subjects') or ([goal['subject']] if goal.get('subject') else [])
     if selectors:
-        rows = [row for row in rows if any(document_matches_subject(row, name) for name in selectors)]
+        matched = [row for row in rows if any(document_matches_subject(row, name) for name in selectors)]
+        if not matched and goal['resource'] == 'balance':
+            card_terms = {'卡', '卡片', '银行卡', '这张卡', '该卡', '主卡', '工资卡'}
+            if any(any(term in s for term in card_terms) or re.search(r'CARD-\d+', s) for s in selectors):
+                matched = rows
+        rows = matched
     elif 'analysis' in goal['fields']:
         rows = [row for row in rows if 'analysis' not in row.get('fields', []) or row.get('subject') is None]
     return rows
@@ -94,8 +99,13 @@ def _missing_record_fields(goal: Mapping[str, Any], rows: list[dict[str, Any]]) 
     required = set(goal['fields'] or ['records'])
     missing = required - {field for row in rows for field in row.get('fields', [])}
     for selector in goal.get('subjects') or []:
-        missing |= required - {field for row in rows if document_matches_subject(row, selector)
-                               for field in row.get('fields', [])}
+        matched_rows = [field for row in rows if document_matches_subject(row, selector)
+                        for field in row.get('fields', [])]
+        if not matched_rows and goal['resource'] == 'balance':
+            card_terms = {'卡', '卡片', '银行卡', '这张卡', '该卡', '主卡', '工资卡'}
+            if any(term in selector for term in card_terms) or re.search(r'CARD-\d+', selector):
+                matched_rows = [field for row in rows for field in row.get('fields', [])]
+        missing |= required - set(matched_rows)
     return missing
 
 
@@ -163,6 +173,10 @@ def _validate_coverage(value: Any, goals: list[dict[str, Any]], facts: list[dict
                     raise ValueError('MISSING_GOAL_RECORD')
                 for selector in goal.get('subjects') or []:
                     rows = [row for row in matched if document_matches_subject(row, selector)]
+                    if not rows and goal['resource'] == 'balance':
+                        card_terms = {'卡', '卡片', '银行卡', '这张卡', '该卡', '主卡', '工资卡'}
+                        if any(term in selector for term in card_terms) or re.search(r'CARD-\d+', selector):
+                            rows = matched
                     if not rows or not required <= {field for row in rows for field in row.get('fields', [])}:
                         raise ValueError('MISSING_SUBJECT_RECORD')
         if item['status'] == 'UNSUPPORTED' and needs_record(goal) and goal['resource'] != 'general':
