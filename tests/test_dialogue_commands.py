@@ -119,7 +119,7 @@ def test_pause_keeps_frame_and_cancel_removes_only_selected_frame():
 
 @pytest.mark.parametrize('text,allowed', [('取消这个预约转账的想法', True), ('取消预约转账任务', False),
                                         ('取消这次预约转账任务', False),
-                                        ('取消生日锁定的想法', False)])
+                                        ('取消生日锁定的想法', False), ('取消生日预算预留的想法', False)])
 def test_withdrawing_a_matching_unfinished_idea_is_separate_from_undoing_a_saved_task(text, allowed):
     state = pending_state()
     task = state['dialogue_state']['tasks'][0]
@@ -130,6 +130,21 @@ def test_withdrawing_a_matching_unfinished_idea_is_separate_from_undoing_a_saved
     assert bool(result) == allowed
     if allowed:
         assert result['view']['tasks'] == [] and not result['proposal_input']
+
+
+@pytest.mark.parametrize('text', ['取消生日锁定的想法', '取消生日预算预留的想法', '取消生日锁资的想法'])
+def test_birth_budget_withdrawal_matches_only_its_existing_discussion(text):
+    from copy import deepcopy
+
+    state = pending_state()
+    task = state['dialogue_state']['tasks'][0]
+    task['id'] = task['intent'] = task['pending']['intent'] = task['pending']['payload']['intent'] = 'CROSS_SCENE_LOCK'
+    before = deepcopy(state)
+    parsed = command_parse(text, kind='CANCEL', task=task['id'])
+    parsed['parse_meta']['dialogue_act'] = 'WITHDRAW'
+    result = apply_command(state, parsed, text)
+    assert result and result['view']['tasks'] == [] and not result['proposal_input']
+    assert state == before
 
 
 def test_incomplete_scheduled_transfer_lists_all_missing_inputs_and_can_be_abandoned(gateway, monkeypatch):  # noqa: F811

@@ -209,6 +209,9 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
     if understood is not None and (understood.get('parse_meta') or {}).get('dialogue_act') == 'WITHDRAW':
         # A semantic label alone cannot cancel a task or authorize any action.
         verified = withdrawal_statement(text)
+        if verified and (understood.get('parse_meta') or {}).get('execution_constraint'):
+            audit_event("INTENT_WITHHELD", user_id=state.get("user_id"), request_id=state["request_id"],
+                        decision="READ_ONLY", outcome="CONSULTATION", reason="NON_EXECUTING_LANGUAGE")
         if verified:
             from bank_agent.dialogue_commands import withdraw_known_task
             withdrawn = withdraw_known_task(state, understood, text)
@@ -224,6 +227,7 @@ def intent_parser_node(state: BankingAgentState) -> dict[str, Any]:
                 return {**_quiz_result(state, '已退出风险测评并取消本次申购意向：未提交任何答案，也没有发起或继续办理。', None),
                         'business_status': 'CANCELLED'}
         return {**empty_state(final_response=('好的，本轮不继续办理，没有发起新操作。' if verified else '请明确希望暂停或放弃哪项办理。')),
+                'intent': Intent.BANKING_HELP.value if verified else Intent.UNKNOWN.value,
                 'request_id': state['request_id'], 'context': prior_context, 'business_status': 'NEEDS_INPUT'}
     if (isinstance(prior_quiz, dict) and not native_quiz_reply and not transition and understood is not None
             and (understood.get('parse_meta') or {}).get('dialogue_act') in {'QUERY', 'EXPLAIN', 'SOCIAL', 'UNSUPPORTED'}):

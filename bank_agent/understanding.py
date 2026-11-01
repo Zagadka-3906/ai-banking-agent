@@ -35,12 +35,12 @@ def help_topic(text: str) -> str:
     text = inquiry_focus(text)
     if contact_question(text):
         return "contacts"
+    if re.search(r"限额|额度|上限", text) and not re.search(r"验证|为什么|原因", text):
+        return "limits"
     if re.search(r"卡片|银行卡|卡.{0,4}冻结|冻结.{0,4}卡|解冻|挂失|解挂", text):
         return "card"
     if re.search(r"生日|跨场景|订花|订.*花|预订.*花|鲜花|蛋糕", text):
         return "cross_scene"
-    if re.search(r"限额|额度|上限", text) and not re.search(r"验证|为什么|原因", text):
-        return "limits"
     if re.search(r"核对|确认|查证|核实|本人", text) and re.search(r"消费|交易|商户|扣款", text):
         return "dispute"
     for topic, pattern in (("dispute", _DISPUTE), ("transfer", re.compile(r"转账|到账|预约")),
@@ -109,6 +109,17 @@ def fraud_action_requested(text: str) -> bool:
     return bool(re.search(r"不是我的|不是本人|非本人|被盗刷|被盗用|有人拿我的卡|(?:冻结|止付|保护).{0,8}(?:卡|交易)|(?:创建|提交|发起|申请).{0,8}(?:争议|工单)", text))
 
 
+def subscription_record_inquiry(parsed: Mapping[str, Any], text: str) -> bool:
+    """A verified record query may request confirmation, never cancellation."""
+    from bank_planning.requests import needs_record, read_only_goals
+
+    goals = (parsed.get('parse_meta') or {}).get('goals') or []
+    return bool(parsed.get('intent') == Intent.SUBSCRIPTION_QUERY.value
+                and read_only_goals(goals)
+                and any(goal['resource'] == 'subscriptions' and needs_record(goal) for goal in goals)
+                and not re.search(r"需要(?:先)?确认.*[吗么？?]|要(?:先)?确认.*[吗么？?]|需要先确认什么", text))
+
+
 def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     from bank_planning.requests import read_only_goals
     route = inquiry_route(text)
@@ -125,11 +136,11 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
     if constraint:
         from intent_language import withdrawal_statement
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "execution_constraint": constraint}
-        subscription_read = (result.get('intent') == Intent.SUBSCRIPTION_QUERY.value
-                             and not subscription_confirm_inquiry
-                             and read_only_goals((result.get('parse_meta') or {}).get('goals') or []))
+        subscription_read = subscription_record_inquiry(result, text)
         if result.get("intent") not in READ_INTENTS and not subscription_read and act not in {"SOCIAL", "UNSUPPORTED", "WITHDRAW"}:
-            if constraint == 'NEGATED_ACTION' and withdrawal_statement(text, pending_discussion=True):
+            if (constraint == 'NEGATED_ACTION' and withdrawal_statement(text, pending_discussion=True)
+                    and not (_HELP.search(text) or _READ.search(text))
+                    and not read_only_goals((result.get('parse_meta') or {}).get('goals') or [])):
                 result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "WITHDRAW"}
                 act = "WITHDRAW"
             else:
@@ -156,7 +167,8 @@ def enforce_inquiry(parsed: dict[str, Any], text: str) -> dict[str, Any]:
         result["parse_meta"] = {**(result.get("parse_meta") or {}), "dialogue_act": "UNSUPPORTED"}
         return result
     if act in {"UNSUPPORTED", "UNCLEAR", "SOCIAL", "WITHDRAW"}:
-        result.update(intent=Intent.UNKNOWN.value, target=None, amount=None)
+        result.update(intent=(Intent.BANKING_HELP.value if act == 'WITHDRAW' and constraint == 'NEGATED_ACTION'
+                              else Intent.UNKNOWN.value), target=None, amount=None)
         return result
     if act in {"QUERY", "EXPLAIN"} and result.get("intent") not in READ_INTENTS | {Intent.SUBSCRIPTION_QUERY.value}:
         result.update(intent=Intent.BANKING_HELP.value, target=None, amount=None, participants=[], product_ids=[], confidence=None)

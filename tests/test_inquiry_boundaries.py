@@ -81,7 +81,8 @@ def test_existing_case_progress_and_timing_query_do_not_repeat_protection(gatewa
     assert financial_state() == before
 
 
-@pytest.mark.parametrize("question", ["怎么冻结银行卡", "转账多久能到账", "取消订阅会马上停用吗", "申请挂失需要什么手续", "冻结卡片后还能收款吗", "怎么提交争议工单"])
+@pytest.mark.parametrize("question", ["怎么冻结银行卡", "转账多久能到账", "取消订阅会马上停用吗", "申请挂失需要什么手续", "冻结卡片后还能收款吗", "怎么提交争议工单",
+                                      "请问冻结CARD-001可以吗", "帮我了解怎么冻结CARD-001可以吗", "帮我冻结CARD-001后还能收款可以吗"])
 def test_business_procedure_questions_do_not_become_writes(gateway, monkeypatch, question):  # noqa: F811
     client, _ = gateway
     wrong_model(monkeypatch, "CARD_FREEZE")
@@ -103,7 +104,8 @@ def test_checking_a_suspicion_is_not_a_denial_or_a_freeze_request(gateway, monke
     assert financial_state() == before
 
 
-@pytest.mark.parametrize("text,intent", [("昨晚这笔境外消费不是我的", "FRAUD_DISPUTE"), ("帮我冻结CARD-001可以吗", "CARD_FREEZE")])
+@pytest.mark.parametrize("text,intent", [("昨晚这笔境外消费不是我的", "FRAUD_DISPUTE"), ("帮我冻结CARD-001可以吗", "CARD_FREEZE"),
+                                        ("请冻结CARD-001好吗", "CARD_FREEZE"), ("替我冻结CARD-001可以吗", "CARD_FREEZE")])
 def test_explicit_protection_still_requires_a_real_red_approval(gateway, monkeypatch, text, intent):  # noqa: F811
     client, _ = gateway
     wrong_model(monkeypatch, intent)

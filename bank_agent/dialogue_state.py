@@ -61,7 +61,7 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
     if intent == 'BANKING_HELP' and response.get('business_status') != 'FAILED':
         from bank_agent.parsing import _local_parse_rules
         from bank_planning.intents import missing_slots
-        from intent_language import business_text, execution_constraint
+        from intent_language import business_text, execution_constraint, withdrawal_statement
         import re
 
         source = business_text(str(state.get('user_input') or ''))
@@ -72,6 +72,7 @@ def remember_discussion(state: Mapping[str, Any], response: Mapping[str, Any]) -
         if (raw['intent'] in {'TRANSFER', 'SCHEDULED_TRANSFER', 'WEALTH_PURCHASE', 'CARD_LIMIT'}
                 and raw.get('amount') is None and missing_slots(raw)
                 and execution_constraint(source) != 'NEGATED_ACTION'
+                and not withdrawal_statement(source, pending_discussion=bool(tasks))
                 and re.search(r'我想|我要|我打算|我准备|帮我|给.{1,24}(?:转|汇)', source)):
             existing = next((task for task in tasks if task.get('intent') == raw['intent']
                              and ((task.get('pending') or {}).get('payload') or {}).get('target') == raw['target']), None)

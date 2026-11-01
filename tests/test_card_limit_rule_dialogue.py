@@ -21,7 +21,7 @@ def test_parsing_and_topic_routes_card_limit_query_to_limits():
     assert parsed.get("slots", {}).get("help_topic") == "limits"
 
 
-def test_dialogue_turn_explains_daily_limit_and_maintains_credit_boundary(tmp_path, monkeypatch):
+def test_dialogue_turn_explains_daily_limit_and_maintains_credit_boundary(tmp_path, monkeypatch, request):
     from scripts.evaluate_dialogue_tasks import isolated_settings
     settings = isolated_settings(tmp_path)
     for k, v in settings.items():
@@ -30,6 +30,7 @@ def test_dialogue_turn_explains_daily_limit_and_maintains_credit_boundary(tmp_pa
 
     task = types.SimpleNamespace(id="card_limit_boundary_test", setup="default")
     env = BankEnvironment(task)
+    request.addfinalizer(env.close)
     resp = env.gateway.post(
         "/api/v1/agent/messages",
         json={"conversation_id": env.cid, "text": "我想问一下，本产品信用卡的额度限制规则是怎样的？", "message_id": "msg-001"},

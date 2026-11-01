@@ -222,12 +222,16 @@ def test_answer_gap_drives_a_second_read_before_regeneration(gateway,monkeypatch
     assert any(payload.get('feedback') for system,payload in calls if '只读咨询规划器' in system)
 
 
-def test_mixed_subscription_query_waits_for_confirmation_then_answers_rule_and_state(gateway,monkeypatch):  # noqa: F811
+@pytest.mark.parametrize('question', [
+    '只查视频会员现在的登记状态，也解释扣款失败后会不会重试，不要取消',
+    '查看视频会员的登记状态，顺便说明扣款失败后会不会重试，先别退订',
+])
+def test_mixed_subscription_query_waits_for_confirmation_then_answers_rule_and_state(gateway,monkeypatch,question):  # noqa: F811
     client,_=gateway
     model(monkeypatch,[goal('subscriptions',['status'],'视频会员登记状态',subject='视频会员'),
                        goal('subscriptions',[],'扣款失败后会自动重试吗',act='EXPLAIN')])
     before=financial_state()
-    reply=_send(client,'只查视频会员现在的登记状态，也解释扣款失败后会不会重试，不要取消',conversation_id='confirmed-multi')
+    reply=_send(client,question,conversation_id='confirmed-multi')
     assert reply['approval'] and reply['approval']['risk_level']=='YELLOW'
     assert financial_state()[:4]==before[:4]
     completed=client.post('/api/v1/agent/approvals/'+reply['approval']['approval_id'],headers=_headers('user_zhang'),json={'decision':'approve'})

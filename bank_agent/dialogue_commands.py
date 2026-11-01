@@ -42,6 +42,8 @@ def _withdrawal_input(text: str) -> dict[str, Any]:
         if len(businesses) == 1:
             raw['intent'] = next(iter(businesses))
     raw['target'] = raw.get('target') or target_from_text(whole)
+    if raw.get('intent') == 'FUND_RESERVATION':
+        raw['intent'] = 'CROSS_SCENE_LOCK'
     return raw
 
 
@@ -124,6 +126,10 @@ def apply_command(state: Mapping[str, Any], parsed: Mapping[str, Any], text: str
         if kind == 'CANCEL' and (raw['_ambiguous'] or not withdrawal_statement(text, pending_discussion=True)):
             return None
         origin = (task.get('quiz') or {}).get('origin_intent') if questionnaire else None
+        # Questionnaires already have their own origin/target checks below;
+        # stopping a quiz may also explicitly decline the purchase it gates.
+        if kind == 'CANCEL' and not questionnaire and raw.get('intent') not in {'UNKNOWN', intent, origin}:
+            return None
         withdrawing = (act == 'WITHDRAW' and withdrawal_statement(text, pending_discussion=True)
                        and raw.get('intent') in {'UNKNOWN', intent, origin})
         saved_target = pending['payload'].get('target') or (task.get('quiz') or {}).get('origin_target')

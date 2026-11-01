@@ -181,7 +181,12 @@ def action_request_clause(text: str) -> str | None:
     for clause in re.split(r"[，,。；;!?！？]", business_text(text)):
         clause = clause.strip()
         clause = re.sub(r'^(?:不过|但是|那么|好的|接下来)\s*', '', clause)
-        if re.search(r"如何|怎么|怎样|为什么|为何|多久|多长|何时|什么时候|进度|流程|步骤|时效|规则|影响|费用|需要|假设|如果|要是|若是|能否|能不能|是否|什么|不要|别|不必|不想|不打算|[吗么“”\"‘’]", clause):
+        # A sentence-final courtesy does not turn a direct request into a
+        # capability question. Other questions, negations and conditions below
+        # still prevent it from becoming an action proposal.
+        if re.match(r'^(?:请|麻烦|帮我|替我|给我)', clause):
+            clause = re.sub(r'(?:可以吗|可以么|好吗|好么|行吗)\s*$', '', clause)
+        if re.search(r"如何|怎么|怎样|为什么|为何|多久|多长|何时|什么时候|进度|流程|步骤|时效|规则|影响|费用|需要|假设|如果|要是|若是|能否|能不能|是否|会不会|还能|可不可以|行不行|什么|不要|别|不必|不想|不打算|[吗么“”\"‘’]", clause):
             continue
         if re.match(r"^(?:那|就|现在)?(?:我(?:想|要|需要)?|请|麻烦|帮我|替我|给我)?\s*(?:先|现在|直接)?(?:预约(?:一笔)?转账|(?:安排|发起)(?:一笔)?预约转账|给.{1,24}转|向.{1,24}转|转账|转给|汇给|申购|赎回|冻结|解冻|挂失|解挂|把.{0,24}(?:限额|额度).{0,4}(?:改|调|设|补充|明确))", clause):
             return clause
@@ -285,14 +290,14 @@ def pending_withdrawal_clause(text: str, *, current_discussion: bool = False) ->
         pending = re.search(r'待确认|未确认|尚未确认|未完成|想法|意向|讨论|提案', clause)
         command = _withdrawal_command_in_clause(clause)
         current = (re.search(r'(?:这次|本次|这笔|这一笔|这个|当前|刚才那笔)[^，,。；;!?！？]{0,24}'
-                             r'(?:申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理)', clause)
+                             r'(?:申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|锁资|预留|办理)', clause)
                    and not _WITHDRAW_SAVED_OBJECT.search(clause))
         terminal = ((pending or current_discussion and current) and re.search(r'(?:取消|撤销|放弃|停止)(?:掉|吧)?$', clause)
                     and not re.search(r'解释|说明|分析|介绍|描述|谈谈|提醒|告诉|复述|转述|翻译', clause))
         pending_reference = (current_discussion and pending and (terminal or command
                              and re.search(r'(?:意向|讨论|提案)(?:吧|即可|就好)?$', clause)))
         if ((command or terminal) and (pending or current_discussion and current)
-                and (pending_reference or re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|办理', clause))):
+                and (pending_reference or re.search(r'申购|赎回|转账|调额|限额|冻结|解冻|挂失|解挂|预约|锁定|锁资|预留|办理', clause))):
             return clause
     return None
 
