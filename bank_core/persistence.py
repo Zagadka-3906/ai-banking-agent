@@ -80,6 +80,7 @@ register_collections(OPERATION_RECEIPTS=OPERATION_RECEIPTS)
 # daily counters are included so risk accumulation survives a restart instead
 # of giving a fresh 1,000-yuan yellow allowance after every bounce.
 LEDGER_STATE_NAMES = (
+    "ACCOUNT_INITIAL_STATES",
     "ACCOUNTS",
     "CONTACTS",
     "USER_CONTACTS",
@@ -140,6 +141,8 @@ def _ledger_state_valid(state: dict[str, Any]) -> bool:
     """
 
     accounts = state.get("ACCOUNTS")
+    if not isinstance(state.get('ACCOUNT_INITIAL_STATES', {}), dict):
+        return False
     if not isinstance(accounts, dict) or not accounts:
         return False
     for user_id, record in accounts.items():

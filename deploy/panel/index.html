@@ -67,12 +67,23 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow: auto; max-height: 560px;
   font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-select, input[type=password] { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px;
+select, input, textarea { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px;
   background: var(--panel); color: var(--text); }
 .login { max-width: 380px; margin: 12vh auto; text-align: center; }
 .login .logo { width: 52px; height: 52px; border-radius: 16px; margin: 0 auto 14px; }
 .login input { width: 100%; margin: 14px 0 10px; }
 .error { color: var(--bad); min-height: 20px; font-size: 13px; }
+.account-layout { display:grid; grid-template-columns:260px minmax(0,1fr); gap:16px; align-items:start; }
+.account-list button { display:block; width:100%; text-align:left; margin:6px 0; }
+.account-list button.selected { border-color:var(--accent); background:var(--accent-soft); }
+.account-form label { display:flex; flex-direction:column; gap:5px; font-size:13px; }
+.account-form textarea { width:100%; min-height:170px; font-family:ui-monospace,Consolas,monospace; }
+.account-form details { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:10px; }
+.account-form summary { cursor:pointer; font-weight:600; }
+.account-editor-grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+.account-record { margin:12px 0; padding:12px; background:var(--bg); border-radius:10px; }
+.account-actions { position:sticky; bottom:8px; display:flex; flex-wrap:wrap; gap:8px; padding:12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; z-index:2; }
+@media (max-width:800px) { .account-layout { grid-template-columns:1fr; } }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; }
 .kv span:nth-child(odd) { color: var(--muted); }
 .hidden { display: none !important; }
@@ -101,6 +112,7 @@ select, input[type=password] { font: inherit; padding: 7px 10px; border: 1px sol
   <nav id="tabs">
     <button data-tab="overview" class="on">总览</button>
     <button data-tab="business">业务数据</button>
+    <button data-tab="accounts">账户管理</button>
     <button data-tab="traffic">访问与流量</button>
     <button data-tab="audit">审计事件</button>
     <button data-tab="logs">服务日志</button>
@@ -109,6 +121,7 @@ select, input[type=password] { font: inherit; padding: 7px 10px; border: 1px sol
   <main>
     <div id="tab-overview"></div>
     <div id="tab-business" class="hidden"></div>
+    <div id="tab-accounts" class="hidden"></div>
     <div id="tab-traffic" class="hidden"></div>
     <div id="tab-audit" class="hidden">
       <div class="row"><label><input type="checkbox" id="onlyIssues"> 只看拦截与失败</label>
@@ -183,11 +196,12 @@ $("#logout").onclick = async () => { await api("/api/logout", {method: "POST"}).
 document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => open(b.dataset.tab));
 
 function open(tab) {
+  if (typeof accountDirty !== 'undefined' && accountDirty && tab !== current && !confirm('切换页面会离开未保存的账户编辑，继续吗？')) return;
   current = tab;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   document.querySelectorAll("main > div").forEach((d) => d.classList.toggle("hidden", d.id !== "tab-" + tab));
   clearInterval(timer);
-  const load = {overview: loadOverview, business: loadBusiness, traffic: loadOverview, audit: loadAudit, logs: loadLogs, ops: loadOps}[tab];
+  const load = {overview: loadOverview, business: loadBusiness, accounts: loadAccounts, traffic: loadOverview, audit: loadAudit, logs: loadLogs, ops: loadOps}[tab];
   load().catch((e) => toast(e.message));
   if (tab === "overview" || tab === "traffic") timer = setInterval(() => load().catch(() => {}), 15000);
 }
@@ -296,8 +310,8 @@ async function loadOps() {
     <div class="grid">
       <div class="card"><h2>重启服务</h2><p class="sub">服务异常或修改配置后使用。重启期间几秒内 App 请求会失败。</p>
         <div class="row">${["anyan-core", "anyan-gateway", "nginx"].map((u) => `<button class="btn" data-restart="${u}">重启 ${u}</button>`).join("")}</div></div>
-      <div class="card"><h2>恢复演示数据</h2><p class="sub">余额、交易、设备登记和对话回到初始演示状态，所有人需要重新登录。旧数据移到备份目录，不会删除；审计记录保留。</p>
-        <button class="btn danger" id="resetDemo">恢复演示数据</button></div>
+      <div class="card"><h2>全局出厂重置</h2><p class="sub">所有账户、设备和对话恢复出厂演示数据，自建账户与保存的初始状态会清除。仅重置单个账户请使用“账户管理”。旧数据移到备份目录；审计保留。</p>
+        <button class="btn danger" id="resetDemo">全局恢复出厂演示数据</button></div>
     </div>
     <div class="card section table-wrap"><h2>操作记录</h2><table><tr><th>时间</th><th>操作</th><th>结果</th></tr>
       ${d.actions.map((x) => `<tr><td>${when(x.at)}</td><td>${esc(x.action)}</td><td>${esc(x.result)}</td></tr>`).join("") || "<tr><td colspan='3' class='muted'>暂无</td></tr>"}</table></div>`;
@@ -309,7 +323,7 @@ async function loadOps() {
     loadOps().catch(() => {});
   });
   $("#resetDemo").onclick = async () => {
-    if (!confirm("确定恢复演示数据？所有账户余额、交易和对话会回到初始状态，旧数据会移到备份目录。")) return;
+    if (!confirm("确定全局恢复出厂演示数据？自建账户与保存的初始状态会清除，所有账户和对话会重置。仅恢复一个账户请使用账户管理。旧数据会移到备份目录。")) return;
     $("#resetDemo").disabled = true;
     try { const r = await api("/api/reset-demo", {method: "POST"}); toast(r.result); }
     catch (e) { toast(e.message); }
@@ -317,7 +331,8 @@ async function loadOps() {
   };
 }
 
-api("/api/actions").then(showApp).catch(() => showLogin());
 </script>
+<script src="/accounts.js"></script>
+<script>api("/api/actions").then(showApp).catch(() => showLogin());</script>
 </body>
 </html>

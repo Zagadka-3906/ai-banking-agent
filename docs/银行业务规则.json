@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-11-01.1",
-  "rules_version": "63020f7621391935b0c4134b4069b2816a89bc52c13de011beca5c528d165b98",
+  "rules_version": "bdb70f782a7832672f471ec8060468bc103c484bd0970f4314278e09ac2d83fa",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "32c286544fc1b33fad305e2a738f62e010d9712c2eb2ad8c66de16c44b2019f8",
     "bank_agent/answer_presentation.py": "b678def1f80c2bfdaaeaaa783ab7fc4b7ae43c0fced68590da39663f39a1db7f",
@@ -30,10 +30,10 @@
     "bank_agent/understanding.py": "aa7668c806ad43ac1c7f33e6fa6a1644eeba7bf81314a83007cabdf1b63af16b",
     "bank_core/cards.py": "a603c3a03d48837dee697abb8f57ad4612a87978ac8b9a2c3754a4a52facf844",
     "bank_core/contacts.py": "96741bdfcbd68c7b2a25cbca37d9053c819e57c8e2b5a4787845b52cc36fa7c6",
-    "bank_core/ledger.py": "4a4d0f20c2feeb01466e71504472a2d48a15c7109f46453f835b1dcd327f444c",
+    "bank_core/ledger.py": "3b06e860effe6f084982c7d5bacce6d407cd7bb22ae93a0f6ce486099a4885ce",
     "bank_core/operations.py": "ad55c9aaf1b27496736412a44d46e39bd122ed3d10c9fc90f3a82bab477ad887",
     "bank_core/payments.py": "854c2d384016820460201ae2b29dba7ef6d9f304dde18f93adde148785e355a3",
-    "bank_core/persistence.py": "a5cb23508670bb8048ee94fc9d20b83e3322a902b1fd2901435cf53a20882b7f",
+    "bank_core/persistence.py": "71338f4d49d2b97dc677d4452cb4e1a0ea22516c5e8fe89618abd9057ab8a480",
     "bank_core/routes/accounts.py": "4b074c3ea6457781a864cf97cae406e7246ee421f9412a8c9ff38b8a90333f7e",
     "bank_core/routes/approvals.py": "09d81226f36b9828e73c7387e1d5b0e7826f8e15a4c90007cef31e0ecbdc02ec",
     "bank_core/routes/contacts.py": "c5735666fb65ce1975354c10614b6f077887fe603b737b3f7e605bf341478cac",

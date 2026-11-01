@@ -14,12 +14,15 @@ Run: uvicorn server:app --app-dir deploy/panel --host 127.0.0.1 --port 9100
 from __future__ import annotations
 
 import hmac
+from functools import wraps
 import json
 import os
 import re
 import secrets
 import shutil
 import subprocess
+import sys
+import threading
 import time
 import urllib.request
 from collections import Counter
@@ -50,6 +53,7 @@ RESETTABLE = ("ledger.json", "devices.json", "conversations.sqlite3", "conversat
 
 app = FastAPI(title="安言运维台", docs_url=None, redoc_url=None, openapi_url=None)
 _sessions: dict[str, float] = {}
+_account_lock = threading.Lock()
 
 
 # --- pure helpers (unit-tested) ----------------------------------------------
@@ -286,6 +290,11 @@ def index() -> FileResponse:
     return FileResponse(STATIC, headers={"Cache-Control": "no-store"})
 
 
+@app.get('/accounts.js')
+def account_script() -> FileResponse:
+    return FileResponse(STATIC.with_name('accounts.js'), media_type='application/javascript', headers={'Cache-Control': 'no-store'})
+
+
 @app.post("/api/login")
 async def login(request: Request, response: Response) -> dict[str, Any]:
     body = await request.json()
@@ -381,7 +390,124 @@ def actions(anyan_panel: Optional[str] = Cookie(None)) -> dict[str, Any]:
 
 # --- write endpoints ---------------------------------------------------------
 
+def _account_worker(command: dict[str, Any]) -> dict[str, Any]:
+    """Separate process: no Core globals, credentials or models in panel memory."""
+    root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, 'ANYAN_DATA_DIR': str(DATA_DIR), 'ANYAN_ENV_FILE': str(ENV_FILE), 'PYTHONIOENCODING': 'utf-8'}
+    try:
+        worker = subprocess.run([sys.executable, '-m', 'deploy.panel.account_worker'], cwd=root, env=env,
+            input=json.dumps(command, ensure_ascii=False, allow_nan=False), capture_output=True, text=True, encoding='utf-8', timeout=45)
+        result = json.loads(worker.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(503, '账户管理暂时不可用，原始错误未公开，请检查服务日志') from exc
+    if worker.returncode or not isinstance(result, dict):
+        raise HTTPException(503, '账户管理进程未正常完成')
+    if result.get('ok') is False:
+        raise HTTPException(409, str(result.get('error') or '操作未完成'))
+    return result
+
+
+@app.get('/api/accounts')
+def account_list(anyan_panel: Optional[str] = Cookie(None)) -> dict[str, Any]:
+    _require(anyan_panel)
+    with _account_lock:
+        return _account_worker({'action': 'list'})
+
+
+@app.get('/api/accounts/{user_id}')
+def account_detail(user_id: str, anyan_panel: Optional[str] = Cookie(None)) -> dict[str, Any]:
+    _require(anyan_panel)
+    with _account_lock:
+        return _account_worker({'action': 'get', 'user_id': user_id})
+
+
+def _checked_service(command: str, *units: str) -> None:
+    result = subprocess.run(['systemctl', command, *units], capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        raise HTTPException(503, '服务' + ('停止' if command == 'stop' else '启动') + '失败，请检查运维日志')
+
+
+@app.post('/api/accounts/{user_id}/{action}')
+async def account_change(user_id: str, action: str, request: Request, anyan_panel: Optional[str] = Cookie(None),
+                         x_requested_by: Optional[str] = Header(None)) -> dict[str, Any]:
+    _require_write(anyan_panel, x_requested_by)
+    if action not in {'create', 'save', 'reset', 'baseline', 'initialize'}:
+        raise HTTPException(400, '未知账户操作')
+    raw = await request.body()
+    if len(raw) > 2_000_000:
+        raise HTTPException(413, '账户配置过大，请减少记录')
+    try:
+        body = json.loads(raw)
+    except ValueError as exc:
+        raise HTTPException(400, '配置不是有效 JSON') from exc
+    if not isinstance(body, dict) or set(body) - {'revision', 'data', 'password'} or not isinstance(body.get('revision'), str):
+        raise HTTPException(400, '请求字段无效，请刷新后操作')
+    # Acquire without blocking the async event loop. Account writes run in a
+    # normal thread; the same mutex excludes reads, global reset and restarts.
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(_change_account_stopped, user_id, action, body)
+
+
+def _change_account_stopped(user_id: str, action: str, body: dict[str, Any]) -> dict[str, Any]:
+    with _account_lock:
+        # Cheap validation precedes downtime; Core checks again after it stops.
+        import hashlib
+        ledger = DATA_DIR / 'ledger.json'
+        if not ledger.is_file() or hashlib.sha256(ledger.read_bytes()).hexdigest() != body['revision']:
+            raise HTTPException(409, '账户数据已变化，请刷新后再保存')
+        backup = DATA_DIR / 'backup' / ('account-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + secrets.token_hex(4))
+        stopped = written = False
+        original_stat = ledger.stat()
+        try:
+            stopped = True
+            _checked_service('stop', 'anyan-gateway', 'anyan-core')
+            backup.mkdir(parents=True, mode=0o700)
+            for name in RESETTABLE:
+                if (DATA_DIR / name).is_file():
+                    shutil.copy2(DATA_DIR / name, backup / name)
+            result = _account_worker({**body, 'action': action, 'user_id': user_id})
+            written = True
+            # Worker runs as root; retain the Core's existing owner/mode.
+            if hasattr(os, 'chown'):
+                os.chown(ledger, original_stat.st_uid, original_stat.st_gid)
+            os.chmod(ledger, original_stat.st_mode & 0o777)
+        except Exception:
+            if stopped and (backup / 'ledger.json').is_file():
+                shutil.copy2(backup / 'ledger.json', ledger)
+                if hasattr(os, 'chown'):
+                    os.chown(ledger, original_stat.st_uid, original_stat.st_gid)
+            _record_action('账户管理 ' + action, '失败；未完成，保留备份 ' + str(backup))
+            raise
+        finally:
+            if stopped:
+                try:
+                    _checked_service('start', 'anyan-core')
+                finally:
+                    _checked_service('start', 'anyan-gateway')
+        if written:
+            for port in (8000, 8100):
+                for attempt in range(30):
+                    if _http_json(f'http://127.0.0.1:{port}/healthz'):
+                        break
+                    time.sleep(1)
+                else:
+                    _record_action('账户管理 ' + action, '已保存但服务健康检查未通过；备份 ' + str(backup))
+                    raise HTTPException(503, '数据已保存，但服务尚未恢复，请查看服务状态，勿重复提交')
+        labels = {'create': '新增账户', 'save': '保存账户配置', 'reset': '恢复账户初始状态',
+                  'baseline': '更新账户初始状态', 'initialize': '保存现有账户初始状态'}
+        _record_action(labels[action] + ' ' + user_id, '成功；备份 ' + str(backup))
+        return {**result, 'ok': written, 'backup': str(backup), 'result': labels[action] + '完成，请在手机重新登录'}
+
+
+def _serialize_operations(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        with _account_lock:
+            return function(*args, **kwargs)
+    return guarded
+
 @app.post("/api/restart/{unit}")
+@_serialize_operations
 def restart(unit: str, anyan_panel: Optional[str] = Cookie(None),
             x_requested_by: Optional[str] = Header(None)) -> dict[str, Any]:
     _require_write(anyan_panel, x_requested_by)
@@ -399,6 +525,7 @@ def restart(unit: str, anyan_panel: Optional[str] = Cookie(None),
 
 
 @app.post("/api/reset-demo")
+@_serialize_operations
 def reset_demo(anyan_panel: Optional[str] = Cookie(None), x_requested_by: Optional[str] = Header(None)) -> dict[str, Any]:
     """Back to the seeded demo: balances, devices and conversations. Audit files stay."""
 

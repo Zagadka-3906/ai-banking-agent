@@ -18,6 +18,7 @@ from bank_core.idempotency import (
     IDEMPOTENCY_RECORDS,
 )
 from bank_core.ledger import (
+    ACCOUNT_INITIAL_STATES,
     ACCOUNTS,
     CONTACTS,
     DAILY_TRANSFER_DATE,
@@ -76,6 +77,7 @@ def reset_state() -> None:
     persistence._LEDGER_WRITE_FAILURES = 0
     persistence._LEDGER_LAST_WRITE_FAILED = False
     with STATE_LOCK:
+        ACCOUNT_INITIAL_STATES.clear()
         ACCOUNTS.clear()
         ACCOUNTS.update(deepcopy(_INITIAL_ACCOUNTS))
         CONTACTS.clear()

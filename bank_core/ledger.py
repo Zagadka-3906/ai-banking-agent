@@ -49,6 +49,9 @@ CONTACTS: dict[str, str] = {
 # transfer to the new contact settles end to end in the mock.  Shadow accounts
 # carry an unusable password digest, so enrollment can never become a login.
 USER_CONTACTS: dict[str, list[dict[str, Any]]] = {}
+# Panel-only reset baselines share the ledger's signed atomic commit. Never
+# expose these password-bearing records through customer or panel read APIs.
+ACCOUNT_INITIAL_STATES: dict[str, dict[str, Any]] = {}
 
 # 关系词表：家人细分为爱人/兄弟/儿子/女儿/父母。录入接受中文标签或规范码，
 # 存储统一为规范码；同一张表也用于“按称呼转账”时的称呼归一。
@@ -145,6 +148,7 @@ def register_collections(**containers: Any) -> None:
 
 
 register_collections(
+    ACCOUNT_INITIAL_STATES=ACCOUNT_INITIAL_STATES,
     ACCOUNTS=ACCOUNTS, CONTACTS=CONTACTS, USER_CONTACTS=USER_CONTACTS,
     DAILY_TRANSFERS=DAILY_TRANSFERS, DAILY_TRANSFER_DATE=DAILY_TRANSFER_DATE, LOCKS=LOCKS,
     SUBSCRIPTIONS=SUBSCRIPTIONS, SCHEDULED_TRANSFERS=SCHEDULED_TRANSFERS, SPLIT_REQUESTS=SPLIT_REQUESTS,
