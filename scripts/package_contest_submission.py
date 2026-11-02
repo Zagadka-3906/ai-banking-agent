@@ -11,7 +11,6 @@ import json
 from pathlib import Path, PurePosixPath
 import posixpath
 import re
-import shutil
 import subprocess
 import tarfile
 from urllib.parse import unquote, urlsplit
@@ -21,6 +20,7 @@ REPOSITORY = "https://github.com/Zagadka-3906/ai-banking-agent"
 CATEGORIES = ("01-技术文档", "02-答辩材料", "03-源代码与部署材料", "04-安全自评报告", "05-演示视频")
 SOURCE_CATEGORY = CATEGORIES[2]
 DEFERRED_CATEGORIES = {CATEGORIES[1], CATEGORIES[4]}
+TECHNICAL_DOCUMENTS = ("技术文档.md", "核心算法说明.md", "安全设计文档.md")
 
 
 def introduction(text: str) -> str:
@@ -51,6 +51,16 @@ def assert_delivery_files(actual: set[str], expected: set[str]) -> None:
     # Preserve unexpected local files, but never silently publish them.
     if actual != expected:
         raise ValueError(f"Delivery file set differs: extra={sorted(actual - expected)}, missing={sorted(expected - actual)}")
+
+
+def assert_standalone_technical_document(text: str) -> None:
+    """Reject navigation/media dependencies before exporting separate uploads."""
+    visible = re.sub(r"(?ms)^(`{3,}|~{3,})[^\n]*\n.*?^\1\s*$", "", text)
+    targets = re.findall(r"!?\[[^\]\n]*\]\(([^)]+)\)", visible)
+    targets += re.findall(r"(?m)^\s{0,3}\[[^\]\n]+\]:\s*(\S+)", visible)
+    if (any(not target.strip().startswith("#") for target in targets)
+            or re.search(r"<(?:img|image|object|iframe|script|link)\b", visible, re.IGNORECASE)):
+        raise ValueError("Technical documents must be standalone; linked files or external media are not allowed")
 
 
 def relocate_markdown(text: str, original: str, destination: str) -> str:
@@ -94,12 +104,15 @@ def package(folder: Path, apk_source_commit: str | None = None) -> dict:
     legacy = {"01-作品简介", "02-技术文档", "03-答辩材料", "04-作品信息", "05-安全自评报告", "安言参赛交付.zip"}
     if any((folder / name).exists() for name in legacy):
         raise ValueError("Migrate legacy submission folders before preparing the current form layout")
+    technical = {name: (ROOT / "docs" / name).read_text(encoding="utf-8") for name in TECHNICAL_DOCUMENTS}
+    for text in technical.values():
+        assert_standalone_technical_document(text)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     apk_commit = None
     if apk_source_commit:
         apk_commit = subprocess.check_output(["git", "rev-parse", "--verify", apk_source_commit + "^{commit}"], cwd=ROOT, text=True).strip()
     mapping = {
-        CATEGORIES[0]: ["技术文档.md", "核心算法说明.md", "安全设计文档.md"],
+        CATEGORIES[0]: list(TECHNICAL_DOCUMENTS),
         SOURCE_CATEGORY: ["测试用例.md", "验证记录.md"],
         CATEGORIES[3]: ["安全自评报告.md"],
     }
@@ -108,8 +121,8 @@ def package(folder: Path, apk_source_commit: str | None = None) -> dict:
     for category, names in mapping.items():
         for name in names:
             text = (ROOT / "docs" / name).read_text(encoding="utf-8")
-            (folder / category / name).write_text(relocate_markdown(text, f"docs/{name}", f"{category}/{name}"), encoding="utf-8")
-    shutil.copytree(ROOT / "docs/assets", folder / CATEGORIES[0] / "assets", dirs_exist_ok=True)
+            exported = technical[name] if category == CATEGORIES[0] else relocate_markdown(text, f"docs/{name}", f"{category}/{name}")
+            (folder / category / name).write_text(exported, encoding="utf-8")
     info = folder / SOURCE_CATEGORY
     (info / "GitHub仓库地址.txt").write_text(REPOSITORY + "\n", encoding="utf-8")
     review = (ROOT / "docs/评审指南.md").read_text(encoding="utf-8")
@@ -132,7 +145,6 @@ def package(folder: Path, apk_source_commit: str | None = None) -> dict:
     files = sorted(p for p in folder.rglob("*") if p.is_file() and p != folder / "manifest.json"
                    and p.relative_to(folder).parts[0] not in DEFERRED_CATEGORIES)
     expected = {f"{category}/{name}" for category, names in mapping.items() for name in names}
-    expected.update(f"{CATEGORIES[0]}/assets/{name}" for name in ("系统架构图.svg", "系统架构图.mmd"))
     expected.update(f"{SOURCE_CATEGORY}/{name}" for name in ("README.md", "GitHub仓库地址.txt", "部署说明.md"))
     expected.update(f"{SOURCE_CATEGORY}/source/{name}" for name in source_names)
     optional = ["安装包/安言-公网演示.apk", "安装包/项目CA公开证书.pem", "补充材料/整理说明.md",

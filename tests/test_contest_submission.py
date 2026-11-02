@@ -66,7 +66,8 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     docs.mkdir()
     names = ["作品简介", "技术文档", "核心算法说明", "安全设计文档", "答辩提纲", "演示视频", "测试用例", "验证记录", "整理说明", "安全自评报告", "评审指南"]
     for name in names:
-        (docs / f"{name}.md").write_text("# 文档\n\n[规则](技术文档.md#架构)\n", encoding="utf-8")
+        text = "# 文档\n\n```text\n用户 → 网关 → 核心 → 账本\n```\n" if f"{name}.md" in packaging.TECHNICAL_DOCUMENTS else "# 文档\n\n[规则](技术文档.md#架构)\n"
+        (docs / f"{name}.md").write_text(text, encoding="utf-8")
     (docs / "作品简介.md").write_text("## 报名简介\n\n虚构账户演示。\n", encoding="utf-8")
     (docs / "assets").mkdir()
     for suffix in ("svg", "mmd"):
@@ -102,6 +103,18 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     assert not (source / "personal.txt").exists() and personal.read_text(encoding="utf-8") == "keep"
     assert not list(delivery.rglob("*.zip"))
     assert all((delivery / name).is_file() for name in manifest["files"])
+    # Each technical upload remains readable when copied away from source/ and
+    # from the other two documents. It must not need a sibling assets folder.
+    isolated = tmp_path / "independent-uploads"
+    isolated.mkdir()
+    technical = delivery / packaging.CATEGORIES[0]
+    assert {p.name for p in technical.iterdir()} == set(packaging.TECHNICAL_DOCUMENTS)
+    for name in packaging.TECHNICAL_DOCUMENTS:
+        text = (technical / name).read_text(encoding="utf-8")
+        (isolated / name).write_text(text, encoding="utf-8")
+        assert text == (docs / name).read_text(encoding="utf-8")
+        assert not local_links(text)
+        packaging.assert_standalone_technical_document(text)
     for path in delivery.rglob("*.md"):
         for target in local_links(path.read_text(encoding="utf-8")):
             assert (path.parent / target.split("#")[0]).exists(), (path, target)
@@ -141,3 +154,17 @@ def test_preparation_rejects_legacy_layout_without_mutating_user_files(tmp_path,
     with pytest.raises(ValueError, match="Migrate legacy"):
         packaging.package(tmp_path / "submission")
     assert personal.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("dependency", [
+    "[源码](../main.py)",
+    "![架构](assets/architecture.svg)",
+    "[架构][diagram]\n\n[diagram]: assets/architecture.svg",
+    '<img src="architecture.svg">',
+    '<image href="architecture.svg" />',
+    '<object data="architecture.svg"></object>',
+    "[验证](https://example.invalid/report)",
+])
+def test_standalone_technical_upload_rejects_reading_dependencies(dependency):
+    with pytest.raises(ValueError, match="standalone"):
+        packaging.assert_standalone_technical_document("# 独立材料\n\n" + dependency)
