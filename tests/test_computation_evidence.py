@@ -79,8 +79,19 @@ def test_arithmetic_does_not_read_amounts_from_question_or_reuse_derived_values(
     assert calculation_evidence(request_goals(request),[row for row in facts if row.get('derived')])==[]
 
 
+@pytest.fixture
+def tiny_shelf():
+    import main
+    original = list(main.WEALTH_PRODUCTS)
+    main.WEALTH_PRODUCTS[:] = original[:2]
+    try:
+        yield
+    finally:
+        main.WEALTH_PRODUCTS[:] = original
+
+
 @pytest.mark.parametrize('operation,expected',[('sum','1001.0'),('count','2')])
-def test_aggregate_checks_collection_completeness_and_uses_decimal(gateway,operation,expected):  # noqa: F811
+def test_aggregate_checks_collection_completeness_and_uses_decimal(gateway,tiny_shelf,operation,expected):  # noqa: F811
     request=state([calculation(operation,[])])
     session=EvidenceSession(request)
     session.read({'tool':'wealth_products','fields':['min_amount']})
@@ -98,6 +109,17 @@ def test_aggregate_checks_collection_completeness_and_uses_decimal(gateway,opera
         assert calculation_evidence(request_goals(request),incomplete)==[]
     else:
         assert calculation_evidence(request_goals(request),incomplete)[0]['values'][field]==expected
+
+
+def test_large_shelf_count_uses_the_collection_size_and_sum_refuses_truncated_operands(gateway):  # noqa: F811
+    request = state([calculation('count', [])])
+    session = EvidenceSession(request)
+    session.read({'tool': 'wealth_products', 'fields': ['min_amount']})
+    facts = [row for row in session.facts() if not row.get('derived')]
+    assert len([row for row in facts if row.get('entity_id')]) < 25
+    assert calculation_evidence(request_goals(request), facts)[0]['values']['records'] == '25'
+    summed = state([calculation('sum', [])])
+    assert calculation_evidence(request_goals(summed), facts) == []
 
 
 def test_empty_complete_collection_can_be_counted_without_inventing_records():

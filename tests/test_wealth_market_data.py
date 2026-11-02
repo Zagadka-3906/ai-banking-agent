@@ -44,9 +44,16 @@ def test_all_products_expose_complete_mock_detail_shape(client: TestClient) -> N
     response = client.get("/api/v1/wealth/products", headers={"X-User-Id": "user_zhang"})
     assert response.status_code == 200, response.text
     products = response.json()["data"]
-    # Five fictional products, one per risk level R1-R5.
-    assert len(products) == 5
-    assert [item["risk_level"] for item in products] == ["R1", "R2", "R3", "R4", "R5"]
+    assert len(products) == 25
+    assert {item["risk_level"] for item in products} == {"R1", "R2", "R3", "R4", "R5"}
+    assert len({item['product_id'] for item in products}) == len(products)
+    allowed = {'cash': {'R1'}, 'low_volatility': {'R1', 'R2'}, 'steady_growth': {'R2'},
+               'balanced_growth': {'R3'}, 'growth': {'R3', 'R4', 'R5'}}
+    for group, risks in allowed.items():
+        members = [row for row in products if row['market_group'] == group]
+        assert len(members) >= 4
+        assert all(row['risk_level'] in risks and row['min_amount'] > 0 for row in members)
+        assert all(isinstance(row['holding_days'], int) and row['display_tags'] and row['strategy'] for row in members)
 
     required = {
         "data_source", "as_of_date", "latest_nav", "daily_change_pct", "performance_history",
@@ -128,7 +135,7 @@ def test_sg_detail_matches_its_fixture(client: TestClient) -> None:
 def test_every_name_in_the_catalogue_is_fictional(client: TestClient) -> None:
     response = client.get("/api/v1/wealth/products", headers={"X-User-Id": "user_zhang"})
     for product in response.json()["data"]:
-        assert product["manager_company"] == "星河理财有限公司"
+        assert product["manager_company"] in {"星河理财有限公司", "安言演示理财管理有限公司（虚构）"}
         assert "虚构" in product["manager"]["bio"] and "虚构" in product["announcement"]
         assert all(holding["code"].startswith("Z") for holding in product["top_holdings"])
 
@@ -144,7 +151,9 @@ def test_a_saved_ledger_does_not_bring_back_retired_products(tmp_path, monkeypat
     main.WEALTH_PRODUCTS[:] = [row for row in main.WEALTH_PRODUCTS if row["product_id"] != "OLD00001"]
     summary = persistence.load_ledger_store(str(store))
     assert summary["loaded_state"] is True
-    assert [row["product_id"] for row in main.WEALTH_PRODUCTS] == ["LX00118", "HQ30060", "SG20270", "YH50365", "XH70730"]
+    assert len(main.WEALTH_PRODUCTS) == 25
+    assert 'OLD00001' not in {row['product_id'] for row in main.WEALTH_PRODUCTS}
+    assert {'LX00118', 'HQ30060', 'SG20270', 'YH50365', 'XH70730'} <= {row['product_id'] for row in main.WEALTH_PRODUCTS}
     monkeypatch.delenv("BANK_LEDGER_STORE_PATH")
     main.reset_state()
 
@@ -179,4 +188,22 @@ def test_the_r5_product_is_only_offered_to_an_aggressive_profile(client: TestCli
 
     assert "XH70730" in offered("C5")
     assert "XH70730" not in offered("C4") and "YH50365" in offered("C4")
-    assert offered("C1") == ["LX00118"]
+    by_id = {row['product_id']: row for row in main.WEALTH_PRODUCTS}
+    assert len(offered('C1')) >= 4 and all(by_id[pid]['risk_level'] == 'R1' for pid in offered('C1'))
+    for rank in range(1, 6):
+        assert all(int(by_id[pid]['risk_level'][1:]) <= rank for pid in offered(f'C{rank}'))
+
+
+def test_new_product_id_and_name_are_parseable_and_still_use_red_approval(client):
+    from bank_agent.parsing import local_parse
+    by_code = local_parse('申购 FH20030 1000元')
+    by_name = local_parse('申购丰禾·30天稳益1000元')
+    assert by_code['target'] == by_name['target'] == 'FH20030'
+    client.post('/api/v1/wealth/risk-assessment', json={'user_id': 'user_zhang', 'horizon_years': 3,
+                'loss_tolerance': 'MEDIUM', 'experience': 'BASIC'}, headers={'X-User-Id': 'user_zhang'})
+    before = main.ACCOUNTS['user_zhang']['balance']
+    response = client.post('/api/v1/risk/precheck/operation',
+        json={'user_id': 'user_zhang', 'operation': 'WEALTH_PURCHASE', 'product_id': 'FH20030', 'amount': 1000},
+        headers={'X-User-Id': 'user_zhang'})
+    assert response.status_code == 200 and response.json()['risk_level'] == 'RED'
+    assert main.ACCOUNTS['user_zhang']['balance'] == before and not main.WEALTH_HOLDINGS['user_zhang']

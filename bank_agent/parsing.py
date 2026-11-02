@@ -173,7 +173,7 @@ def _local_parse_rules(text: str) -> dict[str, Any]:
     for product_id in re.findall(PRODUCT_ID_PATTERN, text.upper()):
         if product_id not in product_ids:
             product_ids.append(product_id)
-    if target in PRODUCT_IDS and target in text.upper() and target not in product_ids:
+    if isinstance(target, str) and target in PRODUCT_IDS and target in text.upper() and target not in product_ids:
         # The general alias matcher must not promote a substring of an unknown
         # longer product code into the target of a purchase or redemption.
         target = None

@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -42,7 +43,8 @@ import kotlin.math.sin
 
 /** Render returned facts without fabricating defaults or deriving financial outcomes. */
 @Composable
-fun ResultExtras(result: Map<String, Any?>?) {
+fun ResultExtras(result: Map<String, Any?>?, showWealthProducts: Boolean = true, showWealthHoldings: Boolean = true,
+                 onWealthProduct: (String) -> Unit = {}, onWealthBrowse: () -> Unit = {}) {
     if (result.isNullOrEmpty()) return
     val executions = buildList {
         result.child("execution_result")?.let { add(it) }
@@ -58,11 +60,11 @@ fun ResultExtras(result: Map<String, Any?>?) {
             // Transport fields (user_id, policy version, topic) are not extra cards.
             if (type == "DISPUTE_QUERY" || type == "BANKING_HELP") return@forEach
             if (type in WEALTH_PRODUCT_TYPES) {
-                execution.child("data")?.let { WealthProducts(it, type) }
+                if (showWealthProducts) execution.child("data")?.let { WealthProducts(it, type, onWealthProduct, onWealthBrowse) }
                 return@forEach
             }
             if (type == "WEALTH_HOLDINGS") {
-                execution.child("data")?.let { WealthHoldings(it) }
+                if (showWealthHoldings) execution.child("data")?.let { WealthHoldings(it) }
                 return@forEach
             }
             execution.child("facts")?.let { BillFacts(it) }
@@ -240,9 +242,8 @@ private val WEALTH_PRODUCT_TYPES = setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WE
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun WealthProducts(data: Map<String, Any?>, type: String?) {
-    val products = data.children("data")
-    if (products.isEmpty()) return
+private fun WealthProducts(data: Map<String, Any?>, type: String?, onProduct: (String) -> Unit, onBrowse: () -> Unit) {
+    val products = remember(data) { parseWealthProductRows(data) } ?: return
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ResultCardTitle(
             when (type) {
@@ -252,31 +253,12 @@ private fun WealthProducts(data: Map<String, Any?>, type: String?) {
             },
             BankIconKind.Chart,
         )
-        products.forEach { product ->
-            val name = product.text("name") ?: return@forEach
-            ReplyPanel {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // The code is what "申购 LX00118 500 元" needs, so the card shows it.
-                    product.text("product_id")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
-                    product.text("category")?.let { BankStatusChip(it, BankSemanticStatus.Neutral) }
-                    RiskBadge(product.text("risk_level") ?: "—")
-                }
-                Text(name, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    product.text("benchmark") ?: "业绩比较基准以产品说明书为准",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.secondary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                val minAmount = product.number("min_amount")
-                val term = product.text("term")
-                Text(
-                    listOfNotNull(minAmount?.let { "起购 " + money(it) }, term).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        WealthMarketGroups.forEach { group ->
+            WealthCategorySection(group, products, onProduct, compactReply = true)
         }
+        Text("以上均为虚构演示产品。业绩参考不代表收益承诺，申购仍需风险匹配与确认。",
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        BankSecondaryButton("打开理财频道 · 查看全部", onBrowse, modifier = Modifier.fillMaxWidth().testTag("wealth_reply_browse"))
     }
 }
 

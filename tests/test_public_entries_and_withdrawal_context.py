@@ -45,7 +45,9 @@ def test_catalog_entry_reaches_the_real_shelf_without_questionnaire_or_authoriza
     assert reply['intent'] == 'WEALTH_QUERY' and reply['approval'] is None
     assert reply['business_status'] == 'SUCCEEDED'
     shelf = reply['result']['execution_result']['data']['data']
-    assert {'LX00118', 'HQ30060', 'SG20270', 'YH50365', 'XH70730'} == {row['product_id'] for row in shelf}
+    assert len(shelf) == 25
+    assert {'LX00118', 'HQ30060', 'SG20270', 'YH50365', 'XH70730'} <= {row['product_id'] for row in shelf}
+    assert {row['market_group'] for row in shelf} == {'cash', 'low_volatility', 'steady_growth', 'balanced_growth', 'growth'}
     assert financial_state() == before
 
 

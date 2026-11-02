@@ -13,75 +13,11 @@ from bank_core.ledger import register_collections
 # without pretending that a real bank is connected.  These records are
 # deterministic fixtures; all writes still pass through the same authorization
 # gateway used by transfers.
-# 演示产品货架：五款虚构产品覆盖 R1-R5 完整风险谱系。产品、管理人、托管行、
+# 演示产品货架：五个展示分组覆盖 R1-R5 完整风险谱系。产品、管理人、托管行、
 # 基金经理与持仓名称全部为虚构，业绩比较基准不是收益承诺。
-WEALTH_PRODUCTS: list[dict[str, Any]] = [
-    {
-        "product_id": "LX00118",
-        "name": "零星宝·活钱管家",
-        "category": "现金管理类",
-        "risk_level": "R1",
-        "benchmark": "1.85% ~ 2.20%（7日年化）",
-        "annualized_yield": 0.0205,
-        "min_amount": 1.0,
-        "liquidity": "T+0 快速赎回/T+1 确认",
-        "term": "随存随取（工作日 T+1 确认，单日快速赎回最高 5 万元）",
-        "underlying": "银行存款、同业存单与剩余期限 397 天以内的高等级短期债券",
-        "target_clients": "存放日常零花、工资备用金，要求随时可取的保守型客户",
-    },
-    {
-        "product_id": "HQ30060",
-        "name": "恒泉稳利·60天持有",
-        "category": "固定收益类",
-        "risk_level": "R2",
-        "benchmark": "2.40% ~ 2.90%（年化）",
-        "annualized_yield": 0.0265,
-        "min_amount": 1000.0,
-        "liquidity": "60 天最短持有",
-        "term": "每笔申购持有满 60 天后可在任一工作日赎回",
-        "underlying": "不低于 85% 投资国债、政策性金融债与 AAA 级信用债，其余为货币市场工具",
-        "target_clients": "有两三个月闲钱、希望收益高于活期且能接受短期锁定的稳健型客户",
-    },
-    {
-        "product_id": "SG20270",
-        "name": "双桂平衡·股债270天",
-        "category": "固收+混合类",
-        "risk_level": "R3",
-        "benchmark": "3.20% ~ 4.60%（年化）",
-        "annualized_yield": 0.039,
-        "min_amount": 10000.0,
-        "liquidity": "270 天定开",
-        "term": "每 270 天开放一次申赎",
-        "underlying": "75% ~ 85% 投资中高等级债券打底，15% ~ 25% 配置红利与宽基指数权益资产",
-        "target_clients": "能接受一定净值波动、希望在债券打底的同时分享权益收益的平衡型客户",
-    },
-    {
-        "product_id": "YH50365",
-        "name": "远航智造·产业精选1年",
-        "category": "权益类",
-        "risk_level": "R4",
-        "benchmark": "宽基股票指数收益率×75% + 综合债券指数收益率×25%",
-        "annualized_yield": None,
-        "min_amount": 50000.0,
-        "liquidity": "365 天封闭",
-        "term": "365 天封闭运作，到期一次性开放赎回",
-        "underlying": "不低于 75% 投资于股票资产，重点布局智能制造、工业软件与新材料等成长行业",
-        "target_clients": "能承受较大本金波动、追求长期资本增值的进取型客户",
-    },
-    {
-        "product_id": "XH70730",
-        "name": "星汉·全球多策略2年",
-        "category": "另类投资类",
-        "risk_level": "R5",
-        "benchmark": "无业绩比较基准（净值型，可能出现较大亏损）",
-        "annualized_yield": None,
-        "min_amount": 100000.0,
-        "liquidity": "730 天封闭",
-        "term": "730 天封闭运作，期间不可赎回",
-        "underlying": "全球股票、商品与股指期货等衍生品的多策略组合，可使用不超过 1.4 倍杠杆",
-        "target_clients": "具备丰富投资经验、能承受本金大幅亏损、追求高收益的激进型客户",
-    },
-]
+from bank_core.wealth_catalogue import WEALTH_PRODUCTS as _PUBLIC_PRODUCTS
+
+WEALTH_PRODUCTS: list[dict[str, Any]] = deepcopy(_PUBLIC_PRODUCTS)
 WEALTH_CATALOGUE: list[dict[str, Any]] = deepcopy(WEALTH_PRODUCTS)
 
 _COMPANY = "星河理财有限公司"
@@ -376,13 +312,62 @@ def _normalized_wealth_series(detail: dict[str, Any], as_of: Optional[date] = No
 
 
 
+def _additional_product_detail(product: Mapping[str, Any]) -> dict[str, Any]:
+    """Deterministic fictional detail per product, never a real market quote."""
+    pid = str(product['product_id'])
+    index = next(i for i, row in enumerate(WEALTH_CATALOGUE) if row['product_id'] == pid)
+    risk = int(str(product['risk_level'])[1:])
+    annual = (float(product['annualized_yield']) * 100 if product.get('annualized_yield') is not None
+              else round((4.5 + index * .17) * (-1 if index % 3 == 0 else 1), 2))
+    history = [{'period': period, 'product_return_pct': round(annual * fraction, 2),
+                'benchmark_return_pct': round(annual * fraction * .92, 2),
+                'peer_average_pct': round(annual * fraction * .88, 2), 'rank': '未提供'}
+               for period, fraction in [('近1周', 1 / 52), ('近1月', 1 / 12), ('近3月', .25),
+                                        ('近6月', .5), ('近1年', 1), ('成立以来', 1.8)]]
+    high = risk >= 3
+    days = int(product.get('holding_days') or 0)
+    return {
+        'latest_nav': round(1 + annual * 1.8 / 100, 4), 'daily_change_pct': round(annual / 250, 2),
+        'annual_return_pct': annual, 'recent_month_return_pct': history[1]['product_return_pct'],
+        'performance_history': history, 'net_value_date': '2026-09-15',
+        'analysis_metrics': [
+            {'label': '配置方向', 'score': 3, 'value': product['strategy'], 'description': '虚构组合示例，不代表投资建议'},
+            {'label': '流动性安排', 'score': 3, 'value': product['liquidity'], 'description': '以产品规则和实际办理回执为准'},
+        ],
+        'manager': {'name': ['林知夏', '许云帆', '沈亦宁', '陆清和', '程观澜'][index % 5],
+                    'title': '演示投资经理', 'experience_years': 6.0 + index % 7,
+                    'tenure_since': '2024-01-01', 'managed_scale_billion': round(8.0 + index * .7, 1),
+                    'annualized_yield_pct': annual, 'tenure_return_pct': history[-1]['product_return_pct'],
+                    'bio': '虚构人物，仅用于展示产品资料与交互流程。'},
+        'asset_allocation': [{'name': '权益及策略资产' if high else '高等级债券', 'percentage': 55.0 if high else 70.0},
+                             {'name': '债券资产' if high else '同业存单', 'percentage': 35.0 if high else 20.0},
+                             {'name': '现金与货币工具', 'percentage': 10.0}],
+        'top_holdings': [{'name': f'演示组合{index + 1}号资产A', 'category': '策略资产' if high else '高等级债券',
+                          'percentage': 10.0, 'code': f'Z{index:04d}01', 'daily_change_pct': round(annual / 250, 2)},
+                         {'name': f'演示组合{index + 1}号资产B', 'category': '债券资产',
+                          'percentage': 8.0, 'code': f'Z{index:04d}02', 'daily_change_pct': .01}],
+        'established_at': '2024-01-01', 'scale_billion': round(6.5 + index * .8, 1),
+        'manager_company': '安言演示理财管理有限公司（虚构）', 'custodian': '云川演示银行（虚构）',
+        'fund_type': product['category'], 'dividend_mode': '演示净值型，分配安排以产品资料为准',
+        'original_fee_rate': .2, 'discount_fee_rate': 0.0 if risk == 1 else .1, 'fee_rate': .1,
+        'purchase_rule': f"{float(product['min_amount']):g}元起购，工作日开放申购",
+        'redemption_rule': '工作日可申请赎回，快赎受限额约束' if days == 0 else product['term'],
+        'confirm_time': 'T+1', 'summary': f"{product['name']}为虚构的{product['strategy']}演示产品。",
+        'promo_title': product['strategy'], 'promo_subtitle': '虚构演示产品，非真实销售或投资推荐',
+        'institution_founded_years': 12, 'institution_aum_billion': 360.0,
+        'institution_rating': '未提供评级', 'announcement': _NOTICE,
+    }
+
+
 def wealth_product_view(product: Mapping[str, Any]) -> dict[str, Any]:
     """Project presentation fixtures without persisting them with the ledger."""
 
     view = deepcopy(dict(product))
     detail = _WEALTH_DETAIL_FIXTURES.get(str(product.get("product_id")))
     if detail is None:
-        return view
+        if not any(row['product_id'] == product.get('product_id') for row in WEALTH_CATALOGUE):
+            return view
+        detail = _additional_product_detail(product)
     as_of = wealth_as_of_date()
     view.update({**deepcopy(detail), "data_source": "MOCK_FIXTURE", "as_of_date": as_of.isoformat(),
                  "net_value_date": as_of.isoformat(), "nav_series": _normalized_wealth_series(detail, as_of)})

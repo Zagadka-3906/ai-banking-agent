@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -131,7 +132,8 @@ internal fun WealthDetailScreen(state: ChatUiState, viewModel: ChatViewModel, sn
     ) { padding ->
         if (rendered == null) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("产品不存在或已下架。", style = MaterialTheme.typography.bodyMedium)
+                if (state.panelBusy) CircularProgressIndicator()
+                else Text(state.panelError ?: "产品不存在或已下架。", style = MaterialTheme.typography.bodyMedium)
             }
             return@Scaffold
         }

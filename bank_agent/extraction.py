@@ -7,6 +7,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
+from bank_core.wealth_catalogue import WEALTH_PRODUCTS as _PUBLIC_PRODUCTS
+
 
 from intent_language import _PAYEE_PREFIX, _PAYEE_TOKEN, ambiguous_amount, ambiguous_target, normalize_money_separators, split_tasks, recipient_source
 
@@ -116,8 +118,9 @@ def amount_from_text(text: str) -> Optional[float]:
     return float(parsed) if parsed is not None and 0 < parsed <= 100_000_000 else None
 
 
-# The demo bank's product shelf as users name it; mirrors bank_core/wealth_data.py.
-PRODUCT_IDS = ("LX00118", "HQ30060", "SG20270", "YH50365", "XH70730")
+# Public product identities; no ledger, credentials or runtime dependency.
+
+PRODUCT_IDS = tuple(row["product_id"] for row in _PUBLIC_PRODUCTS)
 PRODUCT_ALIASES = {
     "零星宝": "LX00118", "活钱管家": "LX00118",
     "恒泉稳利": "HQ30060", "恒泉": "HQ30060",
@@ -125,6 +128,7 @@ PRODUCT_ALIASES = {
     "远航智造": "YH50365", "远航": "YH50365",
     "星汉": "XH70730", "全球多策略": "XH70730",
 }
+PRODUCT_ALIASES.update({row["name"]: row["product_id"] for row in _PUBLIC_PRODUCTS})
 PRODUCT_ID_PATTERN = r"(?<![A-Za-z0-9])(?:" + "|".join(PRODUCT_IDS) + r")(?![A-Za-z0-9])"
 
 

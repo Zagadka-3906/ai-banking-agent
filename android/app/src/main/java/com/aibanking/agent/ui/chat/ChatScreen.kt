@@ -451,6 +451,8 @@ private fun ChatHome(
                         freshReveal = fresh,
                         onReconcile = { viewModel.reconcileMessage(message.id) },
                         onOutcome = { viewModel.openOutcome(message.id) },
+                        onWealthProduct = viewModel::openWealthProduct,
+                        onWealthBrowse = viewModel::openWealth,
                     )
                 }
                 state.pending?.let { approval ->
@@ -696,9 +698,12 @@ private fun MessageBubble(
     freshReveal: Boolean = false,
     onReconcile: () -> Unit = {},
     onOutcome: () -> Unit = {},
+    onWealthProduct: (String) -> Unit = {},
+    onWealthBrowse: () -> Unit = {},
 ) {
     if (message.role == ChatRole.ASSISTANT) {
-        AgentReplyCard(message, modifier, freshReveal = freshReveal, onReconcile = onReconcile, onOutcome = onOutcome)
+        AgentReplyCard(message, modifier, freshReveal = freshReveal, onReconcile = onReconcile, onOutcome = onOutcome,
+            onWealthProduct = onWealthProduct, onWealthBrowse = onWealthBrowse)
         return
     }
     Column(modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalAlignment = Alignment.End) {

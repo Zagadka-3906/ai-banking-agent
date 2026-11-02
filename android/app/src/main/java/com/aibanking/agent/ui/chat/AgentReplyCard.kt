@@ -40,6 +40,8 @@ internal fun AgentReplyCard(
     freshReveal: Boolean = false,
     onReconcile: () -> Unit = {},
     onOutcome: () -> Unit = {},
+    onWealthProduct: (String) -> Unit = {},
+    onWealthBrowse: () -> Unit = {},
 ) {
     if (message.streaming) {
         Box(modifier.fillMaxWidth().testTag("reply_card_${message.id}")) {
@@ -75,14 +77,16 @@ internal fun AgentReplyCard(
                 }
                 SelectionContainer {
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        AgentMarkdown(message.text, animateReveal = freshReveal)
+                        AgentMarkdown(displayText(message.text, message.result, message.businessStatus), animateReveal = freshReveal)
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .riseIn(animate = freshReveal, delayMillis = 120, rise = 6.dp, durationMillis = 260),
                             verticalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
-                            ResultExtras(message.result)
+                            ResultExtras(message.result, showWealthProducts = message.businessStatus !in setOf("FAILED", "BLOCKED", "NEEDS_INPUT", "PENDING_RECONCILIATION") && wealthReplyProducts(message.result) != null,
+                                showWealthHoldings = message.businessStatus !in setOf("FAILED", "BLOCKED", "NEEDS_INPUT", "PENDING_RECONCILIATION") && hasWealthHoldingCards(message.result),
+                                onWealthProduct = onWealthProduct, onWealthBrowse = onWealthBrowse)
                         }
                         message.response?.workflowPlan?.let { plan ->
                             ReplyPanel {

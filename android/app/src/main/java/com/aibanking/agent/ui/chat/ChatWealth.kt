@@ -13,11 +13,19 @@ import java.math.BigDecimal
 // -- wealth (银行风格理财页) ----------------------------------------------
 
 fun ChatViewModel.openWealth() {
-    _state.update { it.copy(showWealth = true, showCards = false, showContacts = false, showDevices = false, showTasks = false, wealthScreen = WealthScreen.LIST, panelBusy = true) }
+    _state.update { it.copy(showWealth = true, showCards = false, showContacts = false, showDevices = false, showTasks = false, wealthScreen = WealthScreen.LIST, wealthMarketGroupId = null, panelBusy = true) }
     refreshWealth()
 }
 
 fun ChatViewModel.closeWealth() = _state.update { it.copy(showWealth = false) }
+
+fun ChatViewModel.selectWealthMarketGroup(groupId: String?) =
+    _state.update { it.copy(wealthMarketGroupId = groupId) }
+
+fun ChatViewModel.openWealthProduct(productId: String) {
+    openWealth()
+    showProductDetail(productId)
+}
 
 fun ChatViewModel.showProductDetail(productId: String) =
     _state.update { it.copy(wealthScreen = WealthScreen.DETAIL, selectedProductId = productId, buyAmount = "", purchaseAmountError = null) }

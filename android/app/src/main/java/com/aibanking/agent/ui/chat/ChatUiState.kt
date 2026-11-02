@@ -142,6 +142,7 @@ data class ChatUiState(
     /** 理财页：银行风格产品超市 → 详情。 */
     val showWealth: Boolean = false,
     val wealthScreen: WealthScreen = WealthScreen.LIST,
+    val wealthMarketGroupId: String? = null,
     val wealthProducts: List<ProductView> = emptyList(),
     val wealthHoldings: List<HoldingView> = emptyList(),
     val riskProfile: RiskProfileView? = null,

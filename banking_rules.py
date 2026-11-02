@@ -36,7 +36,7 @@ REFERENCES = {
     'cross_scene': ['bank_core/routes/execution.py', 'bank_core/routes/tasks.py', 'scheduler.py'],
     'tasks': ['bank_core/routes/tasks.py', 'bank_core/undo.py', 'bank_core/task_scheduler.py'],
     'dispute': ['bank_core/routes/accounts.py', 'bank_core/routes/execution.py'],
-    'wealth': ['bank_core/routes/wealth.py', 'bank_core/routes/execution.py', 'bank_agent/risk_quiz.py'],
+    'wealth': ['bank_core/routes/wealth.py', 'bank_core/routes/execution.py', 'bank_core/wealth_catalogue.py', 'bank_core/wealth_data.py', 'bank_agent/risk_quiz.py'],
     'subscription': ['bank_core/routes/subscriptions.py', 'bank_core/routes/execution.py', 'bank_agent/query_focus.py'],
 }
 FIELD_NAMES = {'target': '对象或编号', 'amount': '金额', 'participants': '参与人', 'product_ids': '产品编号',

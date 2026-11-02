@@ -59,11 +59,14 @@ internal fun hasFocusedBalanceAnswer(result: Map<String, Any?>?): Boolean {
         presentation["source"] == "VERIFIED_FACTS" && presentation["result_type"] == "BALANCE"
 }
 
-internal fun displayText(reply: String, result: Map<String, Any>?): String {
+internal fun displayText(reply: String, result: Map<String, Any>?, businessStatus: String? = null): String {
+    if (businessStatus in setOf("FAILED", "BLOCKED", "NEEDS_INPUT", "PENDING_RECONCILIATION")) return reply
     // Finished questionnaire: the level card and the matched products follow.
     // Structured replies arrive as "execution_results" (one per section); older ones as "execution_result".
-    val executions = (result?.get("execution_results") as? List<*>)?.filterIsInstance<Map<*, *>>()
-        ?: listOfNotNull(result?.get("execution_result") as? Map<*, *>)
+    val executions = buildList {
+        (result?.get("execution_result") as? Map<*, *>)?.let { add(it) }
+        (result?.get("execution_results") as? List<*>)?.filterIsInstance<Map<*, *>>()?.let { addAll(it) }
+    }.distinct()
     val types = executions.mapNotNull { it["type"]?.toString() }
     if (result?.get("profile_result") is Map<*, *> && "WEALTH_RECOMMEND" in types) {
         return "✅ 风险测评完成，以下是您的风险等级和与之匹配的在售产品。"
@@ -72,15 +75,20 @@ internal fun displayText(reply: String, result: Map<String, Any>?): String {
     if ((result?.get("risk_quiz") as? Map<*, *>)?.get("active") == true) {
         QUIZ_PROGRESS.find(reply)?.let { return "已记录 ${it.groupValues[1]}/8 题，请在下方继续作答。" }
     }
+    if (wealthReplyProducts(result) != null) {
+        return if (types.singleOrNull() == "WEALTH_RECOMMEND")
+            "以下是与风险档案匹配的演示产品，点开可查看详情。"
+        else "以下为在售演示理财产品，点开可查看详情。"
+    }
+    if (hasWealthHoldingCards(result)) return "以下是你当前的理财持仓，市值仅为演示值。"
     var lines = reply.lines()
     val execution = executions.singleOrNull()
     // Receipts and balances are shown in full on their card; one introducing line is enough.
     if (execution?.get("data") is Map<*, *> && !(execution["type"] == "BALANCE" && hasFocusedBalanceAnswer(result))) {
         CARD_LEADS[execution["type"]?.toString()]?.let { return it }
     }
-    if (types.any { it in setOf("WEALTH_QUERY", "WEALTH_RECOMMEND", "WEALTH_COMPARE", "WEALTH_HOLDINGS") }) {
-        lines = lines.filterNot { it.trimStart().startsWith("- `") }
-    }
+    // Comparisons, focused explanations, mixed results and incomplete payloads
+    // keep their full text. They must not lose facts to an incomplete card.
     // 测评结果的三行说明渲染成彩色结果卡，文本里不再重复。
     if (result?.get("profile_result") != null) {
         lines = lines.filterNot {

@@ -692,7 +692,8 @@ def test_quiz_collects_answers_and_recommends_matching_products(wired):
     assert values["execution_result"]["type"] == "WEALTH_RECOMMEND"
     assert values["risk_quiz"]["active"] is False  # 完成后载荷关闭
     ids = {item["product_id"] for item in values["execution_result"]["data"]["data"]}
-    assert ids == {"LX00118", "HQ30060", "SG20270"}
+    assert {"LX00118", "HQ30060", "SG20270"} <= ids
+    assert ids == {row['product_id'] for row in main.WEALTH_PRODUCTS if row['risk_level'] in {'R1', 'R2', 'R3'}}
 
 
 def test_quiz_supports_partial_answers_then_completion(wired):
