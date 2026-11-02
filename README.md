@@ -4,6 +4,8 @@
 
 GitHub 仓库：https://github.com/Zagadka-3906/ai-banking-agent
 
+当前选定安装包为 [AnYan-Shaping-20261102.apk](build/releases/AnYan-Shaping-20261102.apk)，对应源码 `3a1bfd6`，连接公网 HTTPS。项目中仅保留这一版 APK；参赛目录及交付 ZIP 内的“安言-公网演示.apk”为同版本副本。
+
 ## 参赛材料
 
 | 类别 | 文档或文件 |
