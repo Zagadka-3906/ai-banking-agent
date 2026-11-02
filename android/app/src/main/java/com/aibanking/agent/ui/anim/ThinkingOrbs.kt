@@ -1,6 +1,6 @@
 package com.aibanking.agent.ui.anim
 
-// Native port of thinking-orbs' working/20 preset, orbits.ts + core.ts.
+// Native port of thinking-orbs' shaping/20 preset, morph.ts + core.ts.
 // Copyright (c) 2026 Jakub Antalik. MIT; full notice in assets/licenses/.
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
@@ -20,46 +20,59 @@ import kotlin.math.*
 
 internal data class OrbDot(val x: Double, val y: Double, val depth: Double, val radius: Double, val ink: Double, val alpha: Double)
 
-/** Same deterministic geometry and 20px tuning as upstream's working state. */
-internal fun workingOrbFrame(time: Double): List<OrbDot> {
-    val dots = ArrayList<OrbDot>(39)
-    val radius = 10 * .82
-    val scale = (20.0 / 300).pow(.6) * 2.4
-    fun hash(a: Double, b: Double): Double = (sin(a * 12.9898 + b * 78.233) * 43758.5453).let { it - floor(it) }
-    fun project(x: Double, y: Double, z: Double): Triple<Double, Double, Double> {
-        val yaw = time * .12
-        val x1 = x * cos(yaw) + z * sin(yaw)
-        val z1 = -x * sin(yaw) + z * cos(yaw)
-        return Triple(10 + x1, 10 - (y * cos(.3) - z1 * sin(.3)), y * sin(.3) + z1 * cos(.3))
-    }
-    repeat(3) { orbit ->
-        val h1 = hash(orbit.toDouble(), 1.7)
-        val h2 = hash(orbit.toDouble(), 5.2)
-        val h3 = hash(orbit.toDouble(), 8.9)
-        val r = radius * (.45 + .52 * h1)
-        val theta = h1 * 2 * PI
-        val phi = acos(2 * h2 - 1)
-        val nx = sin(phi) * cos(theta)
-        val ny = cos(phi)
-        val nz = sin(phi) * sin(theta)
-        val length = max(1e-6, sqrt(ny * ny + nx * nx))
-        val ux = -ny / length
-        val uy = nx / length
-        val vx = -nz * uy
-        val vy = nz * ux
-        val vz = nx * uy - ny * ux
-        fun dot(angle: Double, ghost: Boolean) {
-            val (x, y, z) = project((ux * cos(angle) + vx * sin(angle)) * r,
-                (uy * cos(angle) + vy * sin(angle)) * r, vz * sin(angle) * r)
-            val depth = (z / r + 1) / 2
-            dots += OrbDot(x, y, z, max(.3, (if (ghost) .9 else 1.2 + 1.6 * depth) * scale),
-                if (ghost) .72 else .3 - .22 * depth, if (ghost) .5 * (.4 + .6 * depth) else 1.0)
+/** Arc-length sampled circle → triangle → square, matching upstream shaping/20. */
+internal fun shapingOrbFrame(time: Double): List<OrbDot> {
+    fun polygon(vertices: List<Pair<Double, Double>>, fraction: Double): Pair<Double, Double> {
+        val lengths = vertices.indices.map { index ->
+            val a = vertices[index]
+            val b = vertices[(index + 1) % vertices.size]
+            hypot(b.first - a.first, b.second - a.second)
         }
-        repeat(10) { dot(it / 10.0 * 2 * PI, true) }
-        val speed = (.25 + .55 * h3) * if (h3 > .5) 1 else -1
-        repeat(3) { dot(time * speed + it / 3.0 * 2 * PI + h2 * 6, false) }
+        var target = fraction * lengths.sum()
+        var index = 0
+        while (target > lengths[index] && index < vertices.lastIndex) { target -= lengths[index]; index++ }
+        val a = vertices[index]
+        val b = vertices[(index + 1) % vertices.size]
+        val f = if (lengths[index] > 0) min(1.0, target / lengths[index]) else 0.0
+        return (a.first + (b.first - a.first) * f) to (a.second + (b.second - a.second) * f)
     }
-    return dots.sortedBy { it.depth }
+    fun path(shape: Int, fraction: Double): Pair<Double, Double> = when (shape) {
+        0 -> (-PI / 2 + fraction * 2 * PI).let { cos(it) * .24 to sin(it) * .24 }
+        1 -> polygon(listOf(0.0 to -.26, .24 to .16, -.24 to .16), fraction)
+        else -> polygon(listOf(0.0 to -.2, .2 to -.2, .2 to .2, -.2 to .2, -.2 to -.2), fraction)
+    }
+    val segmentTime = 1.4 + .9
+    val cycleTime = time % (segmentTime * 3)
+    val shape = floor(cycleTime / segmentTime).toInt()
+    val local = cycleTime - shape * segmentTime
+    val blend = if (local > 1.4) ((local - 1.4) / .9).let { it * it * (3 - 2 * it) } else 0.0
+    val points = List(160) { index ->
+        val a = path(shape, index / 160.0)
+        val b = path((shape + 1) % 3, index / 160.0)
+        ((a.first + (b.first - a.first) * blend) * 1.45) to ((a.second + (b.second - a.second) * blend) * 1.45)
+    }
+    val lengths = points.indices.map { index ->
+        val a = points[index]
+        val b = points[(index + 1) % points.size]
+        hypot(b.first - a.first, b.second - a.second)
+    }
+    val total = lengths.sum()
+    val pulse = 1 + .02 * sin(local * 3.1)
+    var segment = 0
+    var accumulated = 0.0
+    return List(18) { index ->
+        val target = index / 18.0 * total
+        while (accumulated + lengths[segment] < target && segment < points.lastIndex) {
+            accumulated += lengths[segment]
+            segment++
+        }
+        val a = points[segment]
+        val b = points[(segment + 1) % points.size]
+        val fraction = if (lengths[segment] > 0) min(1.0, (target - accumulated) / lengths[segment]) else 0.0
+        OrbDot(10 + (a.first + (b.first - a.first) * fraction) * pulse * 20,
+            10 + (a.second + (b.second - a.second) * fraction) * pulse * 20,
+            0.0, max(.35, .021 * 1.011 * 1.35 * 1.45 * 20), .1, 1.0)
+    }
 }
 
 @Composable
@@ -71,12 +84,12 @@ internal fun ThinkingOrbs(modifier: Modifier = Modifier) {
     LaunchedEffect(motion, lifecycle) {
         if (!motion) { time = .6; return@LaunchedEffect }
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (isActive) withFrameNanos { time = (it / 1_000_000_000.0) * 3.9 }
+            while (isActive) withFrameNanos { time = (it / 1_000_000_000.0) * 2.08 }
         }
     }
     Canvas(modifier.size(24.dp).testTag("thinking_orbs").semantics { contentDescription = "安言正在思考" }) {
         val scale = size.minDimension / 20f
-        workingOrbFrame(time).forEach { dot ->
+        shapingOrbFrame(time).forEach { dot ->
             drawCircle(ink.copy(alpha = ((1 - dot.ink) * dot.alpha).toFloat().coerceIn(0f, 1f)),
                 (dot.radius * scale).toFloat(), Offset((dot.x * scale).toFloat(), (dot.y * scale).toFloat()))
         }
