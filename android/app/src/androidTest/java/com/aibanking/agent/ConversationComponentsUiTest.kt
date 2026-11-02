@@ -89,6 +89,14 @@ class ConversationComponentsUiTest {
         render { ApprovalFixture(busy = true) }
         ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().assertIsNotEnabled()
         ui.onNodeWithTag(UiTags.APPROVAL_REJECT).performScrollTo().assertIsNotEnabled()
+        ui.onNodeWithText("已确认操作，正在安全办理中…").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test fun confirmed_approval_stops_countdown_and_shows_processing() {
+        render { ApprovalFixture(confirmed = true) }
+        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().assertIsNotEnabled()
+        ui.onNodeWithTag(UiTags.APPROVAL_REJECT).performScrollTo().assertIsNotEnabled()
+        ui.onNodeWithText("已确认操作，正在安全办理中…").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun timeline_updates_from_server_events_without_claiming_a_business_success() {
@@ -188,12 +196,13 @@ class ConversationComponentsUiTest {
 
     @Composable private fun ApprovalFixture(
         red: Boolean = false, otp: String = "", expired: Boolean = false, busy: Boolean = false,
+        confirmed: Boolean = false,
         canPromptBiometric: Boolean = true, onOtpChange: (String) -> Unit = {},
         onApprove: () -> Unit = {}, onBiometric: () -> Unit = {}, onReject: () -> Unit = {},
     ) {
         val deadline = remember { SystemClock.elapsedRealtime() + if (expired) -1000L else 120000L }
         ApprovalCard(ApprovalView("fixture", summary = summary, mfaRequired = red, expiresIn = 120),
-            deadlineMillis = deadline, otp = otp, busy = busy, canPromptBiometric = canPromptBiometric,
+            deadlineMillis = deadline, otp = otp, busy = busy, confirmed = confirmed, canPromptBiometric = canPromptBiometric,
             onOtpChange = onOtpChange, onRequestOtp = {}, onReject = onReject,
             onApprove = onApprove, onBiometricApprove = onBiometric)
     }

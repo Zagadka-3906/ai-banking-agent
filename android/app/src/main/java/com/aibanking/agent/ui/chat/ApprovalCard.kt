@@ -39,6 +39,7 @@ internal fun ApprovalCard(
     deadlineMillis: Long,
     otp: String,
     busy: Boolean,
+    confirmed: Boolean = false,
     canPromptBiometric: Boolean,
     onOtpChange: (String) -> Unit,
     onRequestOtp: () -> Unit,
@@ -49,6 +50,7 @@ internal fun ApprovalCard(
 ) {
     val view = LocalView.current
     val isRed = approval.mfaRequired
+    val isProcessing = busy || confirmed
     val semantic = LocalBankSemanticColors.current
     val riskColor = if (isRed) semantic.riskRed else semantic.riskYellow
     val focusManager = LocalFocusManager.current
@@ -57,7 +59,8 @@ internal fun ApprovalCard(
     val motion = LocalBankMotionEnabled.current
     fun secondsLeft(): Int = ((deadlineMillis - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999L).div(1_000L).toInt()
     var remainingSeconds by remember(approval.approvalId, deadlineMillis) { mutableIntStateOf(secondsLeft()) }
-    LaunchedEffect(approval.approvalId, deadlineMillis) {
+    LaunchedEffect(approval.approvalId, deadlineMillis, isProcessing) {
+        if (isProcessing) return@LaunchedEffect
         do {
             val prev = remainingSeconds
             remainingSeconds = secondsLeft()
@@ -67,8 +70,8 @@ internal fun ApprovalCard(
             if (remainingSeconds > 0) delay(250)
         } while (remainingSeconds > 0)
     }
-    val isUrgent = remainingSeconds in 1..15
-    val isExpired = remainingSeconds == 0
+    val isUrgent = !isProcessing && remainingSeconds in 1..15
+    val isExpired = !isProcessing && remainingSeconds == 0
     val heartbeatScale = if (isUrgent && motion) {
         val transition = rememberInfiniteTransition(label = "urgentHeartbeat")
         transition.animateFloat(
@@ -122,25 +125,49 @@ internal fun ApprovalCard(
                 modifier = Modifier.graphicsLayer { scaleX = heartbeatScale; scaleY = heartbeatScale },
             ) {
                 Text(
-                    text = if (remainingSeconds > 0) "请在 $remainingSeconds 秒内确认" else "已超时，请重新发起操作",
+                    text = if (isProcessing) {
+                        "已确认操作，正在安全办理中…"
+                    } else if (remainingSeconds > 0) {
+                        "请在 $remainingSeconds 秒内确认"
+                    } else {
+                        "已超时，请重新发起操作"
+                    },
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (remainingSeconds <= 15) semantic.riskRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isProcessing) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else if (remainingSeconds <= 15) {
+                        semantic.riskRed
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
             // A timer is feedback, never a moving or pulsing financial fact.
-            val total = approval.expiresIn.coerceAtLeast(1).toFloat()
-            val fraction by animateFloatAsState((remainingSeconds / total).coerceIn(0f, 1f),
-                if (LocalBankMotionEnabled.current) tween(450, easing = LinearEasing) else snap(), label = "approvalTime")
-            LinearProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
-                color = if (remainingSeconds <= 15) semantic.riskRed else riskColor,
-                trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
-                drawStopIndicator = {},
-            )
+            if (isProcessing) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                    color = riskColor,
+                    trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                )
+            } else {
+                val total = approval.expiresIn.coerceAtLeast(1).toFloat()
+                val fraction by animateFloatAsState(
+                    (remainingSeconds / total).coerceIn(0f, 1f),
+                    if (LocalBankMotionEnabled.current) tween(450, easing = LinearEasing) else snap(),
+                    label = "approvalTime"
+                )
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
+                    color = if (remainingSeconds <= 15) semantic.riskRed else riskColor,
+                    trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                    drawStopIndicator = {},
+                )
+            }
             if (isRed) {
                 OutlinedTextField(
+                    enabled = !isProcessing,
                     colors = bankTextFieldColors(),
                     value = otp,
                     isError = otpError != null || error?.contains("验证码") == true,
@@ -152,7 +179,7 @@ internal fun ApprovalCard(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_OTP),
                 )
-                TextButton(onClick = onRequestOtp, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), enabled = !busy && remainingSeconds > 0) { Text("获取本机一次性演示验证码") }
+                TextButton(onClick = onRequestOtp, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), enabled = !isProcessing && remainingSeconds > 0) { Text("获取本机一次性演示验证码") }
                 if (!canPromptBiometric) {
                     Text(
                         "本设备未录入生物识别凭据，无法完成红色风险强验证。",
@@ -190,8 +217,8 @@ internal fun ApprovalCard(
                                 onBiometricApprove()
                             }
                         },
-                        enabled = !busy && remainingSeconds > 0 && canPromptBiometric && otp.matches(Regex("[0-9]{6}")),
-                        loading = busy,
+                        enabled = !isProcessing && remainingSeconds > 0 && canPromptBiometric && otp.matches(Regex("[0-9]{6}")),
+                        loading = isProcessing,
                         colors = approveButtonColors,
                         modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
                     )
@@ -206,12 +233,12 @@ internal fun ApprovalCard(
                                 onApprove()
                             }
                         },
-                        enabled = !busy && remainingSeconds > 0,
-                        loading = busy,
+                        enabled = !isProcessing && remainingSeconds > 0,
+                        loading = isProcessing,
                         modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
                     )
                 }
-                BankSecondaryButton("取消操作", onReject, enabled = !busy,
+                BankSecondaryButton("取消操作", onReject, enabled = !isProcessing,
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_REJECT))
             }
             Text(

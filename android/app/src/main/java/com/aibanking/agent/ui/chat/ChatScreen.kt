@@ -461,6 +461,7 @@ private fun ChatHome(
                             deadlineMillis = requireNotNull(approvalDeadlineMillis),
                             otp = state.otp,
                             busy = state.busy,
+                            confirmed = state.approvalConfirmed,
                             error = state.approvalError,
                             onOtpChange = viewModel::onOtpChange,
                             onRequestOtp = viewModel::requestDemoOtp,
