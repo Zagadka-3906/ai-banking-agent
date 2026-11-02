@@ -13,7 +13,7 @@
 | 失败复现 | `replay_dialogue_failures.py`、`summarize_conversation_comparison.py` | 保留原失败、重放及对照，不改写历史成绩 |
 | 提示词优化 | `optimize_dialogue_prompts.py` | 可选离线 GEPA；联网优化须设置预算，不自动发布 |
 | 发布门槛 | `check_dialogue_release.py`、`package_stable_candidate.py` | 完整证据检查后才能生成稳定候选源码包 |
-| 参赛材料 | `package_contest_submission.py` | 从已提交源码和已有媒体生成交付包，独立记录 APK 来源；不等于通过稳定门槛 |
+| 参赛材料 | `package_contest_submission.py` | 按提交页面五栏整理目录，从已提交源码导出 source/；不转换格式，不依赖或校验 PPT／视频，可选记录 APK 来源 |
 | Android 隔离回归 | `run_android_regression.py`、`scenario_backend.py`、`device_signer.py`、`VerifyDeviceProto.java` | 专用场景包、临时服务、设备签名及官方 protobuf 结果核对 |
 | 演示录制 | `serve_contest_demo.py` | 隔离录制服务，与设备用例配合 |
 | 可用性页面 | `evaluate_usability.py` | 配合 `tools/usability/index.html`，原始观察不公开 |

@@ -2,11 +2,10 @@
 from pathlib import Path
 import json
 import subprocess
-import zipfile
 
 import pytest
 
-from scripts.package_contest_submission import assert_delivery_files, assert_public_source, ensure_source_clean, introduction, validate_media
+from scripts.package_contest_submission import assert_delivery_files, assert_public_source, ensure_source_clean, introduction
 from scripts import package_contest_submission as packaging
 from scripts.check_repository_docs import local_links
 
@@ -36,16 +35,6 @@ def test_source_allows_examples_and_ci():
         assert_delivery_files(set(), {"source.zip"})
 
 
-@pytest.mark.parametrize("values", [(11, 550, 80), (10, 601, 80), (10, 550, 301), (10, 0, 80), (10, 550, 0)])
-def test_media_limits(values):
-    with pytest.raises(ValueError):
-        validate_media(*values)
-
-
-def test_media_limit_boundaries():
-    validate_media(10, 600, 300)
-
-
 def test_untracked_preserved_but_tracked_changes_rejected(tmp_path: Path):
     def git(*args):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
@@ -66,9 +55,8 @@ def test_untracked_preserved_but_tracked_changes_rejected(tmp_path: Path):
 
 
 def test_directory_delivery_exports_committed_source_and_resolves_copied_links(tmp_path, monkeypatch):
-    """Exercise the real git export with a different APK/media source version."""
+    """Export real committed source without depending on presentation or video files."""
     monkeypatch.setattr(packaging, "ROOT", tmp_path)
-    monkeypatch.setattr(packaging, "video_duration", lambda *args: 47.0)
     def git(*args):
         return subprocess.check_output(["git", *args], cwd=tmp_path).decode("utf-8").strip()
     git("init", "--quiet")
@@ -95,16 +83,11 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     personal = tmp_path / "personal.txt"
     personal.write_text("keep", encoding="utf-8")
     delivery = tmp_path / "submission"
-    talk = delivery / packaging.CATEGORIES[2]
-    talk.mkdir(parents=True)
-    with zipfile.ZipFile(talk / "安言答辩.pptx", "w") as deck:
-        deck.writestr("ppt/presentation.xml", "<presentation/>")
-        for i in range(1, 11):
-            deck.writestr(f"ppt/slides/slide{i}.xml", "<slide/>")
-    for name in ("安言演示视频.mp4", "安言演示字幕.srt"):
-        (talk / name).write_bytes(b"media fixture")
-    (talk / "媒体说明.json").write_text(json.dumps({"speaking_seconds": 550, "business_version": apk_commit}), encoding="utf-8")
-    install = delivery / packaging.CATEGORIES[3] / "安装包"
+    packaging.package(delivery)
+    manifest = json.loads((delivery / "manifest.json").read_text(encoding="utf-8"))
+    assert "apk" not in manifest
+    assert not any(key in manifest for key in ("slides", "video_seconds", "speaking_seconds"))
+    install = delivery / packaging.SOURCE_CATEGORY / "安装包"
     install.mkdir(parents=True)
     (install / "安言-公网演示.apk").write_bytes(b"apk fixture")
     (install / "项目CA公开证书.pem").write_bytes(b"public CA fixture")
@@ -113,7 +96,7 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     assert result["directory"] == str(delivery)
     assert manifest["delivery_format"] == "directory"
     assert manifest["commit"] != manifest["apk"]["source_commit"] == apk_commit
-    assert manifest["media_business_version"] == apk_commit
+    assert set(manifest["deferred"]) == packaging.DEFERRED_CATEGORIES
     source = install.parent / "source"
     assert (source / "docs/验证记录.md").read_text(encoding="utf-8") == "updated documentation"
     assert not (source / "personal.txt").exists() and personal.read_text(encoding="utf-8") == "keep"
@@ -122,6 +105,18 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     for path in delivery.rglob("*.md"):
         for target in local_links(path.read_text(encoding="utf-8")):
             assert (path.parent / target.split("#")[0]).exists(), (path, target)
+    # Media may be absent, use any format, and change independently of this task.
+    media = delivery / packaging.CATEGORIES[1] / "draft.custom"
+    media.write_bytes(b"unchanged presentation draft")
+    video = delivery / packaging.CATEGORIES[4] / "clip.custom"
+    video.write_bytes(b"unchanged video draft")
+    result = packaging.package(delivery)  # APK provenance is optional; never infer it from HEAD.
+    manifest = json.loads((delivery / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["apk"]["source_commit"] is None
+    assert media.read_bytes() == b"unchanged presentation draft"
+    assert video.read_bytes() == b"unchanged video draft"
+    assert not any(n.startswith(tuple(packaging.DEFERRED_CATEGORIES)) for n in manifest["files"])
+    assert {p.name for p in delivery.iterdir() if p.is_dir()} == set(packaging.CATEGORIES)
     # Rerunning cannot silently delete user files added to the exported tree.
     extra = source / "personal.txt"
     extra.write_text("keep too", encoding="utf-8")
@@ -134,3 +129,15 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
 def test_source_export_rejects_paths_outside_directory(target):
     with pytest.raises(ValueError):
         assert_public_source([target])
+
+
+def test_preparation_rejects_legacy_layout_without_mutating_user_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(packaging, "ROOT", tmp_path)
+    monkeypatch.setattr(packaging, "ensure_source_clean", lambda root: None)
+    old = tmp_path / "submission/04-作品信息"
+    old.mkdir(parents=True)
+    personal = old / "personal.txt"
+    personal.write_bytes(b"keep")
+    with pytest.raises(ValueError, match="Migrate legacy"):
+        packaging.package(tmp_path / "submission")
+    assert personal.read_bytes() == b"keep"
