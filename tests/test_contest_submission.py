@@ -72,6 +72,8 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     (docs / "assets").mkdir()
     for suffix in ("svg", "mmd"):
         (docs / f"assets/系统架构图.{suffix}").write_text("fixture", encoding="utf-8")
+    architecture = docs / "技术文档.md"
+    architecture.write_text(architecture.read_text(encoding="utf-8") + "\n![架构](assets/系统架构图.svg)\n\n```mermaid\nsequenceDiagram\n    用户->>核心: 确认\n```\n", encoding="utf-8")
     (tmp_path / "deploy").mkdir()
     (tmp_path / "deploy/README.md").write_text("[技术](../docs/技术文档.md)", encoding="utf-8")
     git("add", "docs", "deploy")
@@ -103,18 +105,21 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     assert not (source / "personal.txt").exists() and personal.read_text(encoding="utf-8") == "keep"
     assert not list(delivery.rglob("*.zip"))
     assert all((delivery / name).is_file() for name in manifest["files"])
-    # Each technical upload remains readable when copied away from source/ and
-    # from the other two documents. It must not need a sibling assets folder.
+    # PDF-authoring inputs stay independent of source/. Bundled SVG and inline
+    # Mermaid must be retained for the eventual embedded PDF figures.
     isolated = tmp_path / "independent-uploads"
     isolated.mkdir()
     technical = delivery / packaging.CATEGORIES[0]
-    assert {p.name for p in technical.iterdir()} == set(packaging.TECHNICAL_DOCUMENTS)
+    assert {p.name for p in technical.iterdir()} == {*packaging.TECHNICAL_DOCUMENTS, "assets"}
     for name in packaging.TECHNICAL_DOCUMENTS:
         text = (technical / name).read_text(encoding="utf-8")
         (isolated / name).write_text(text, encoding="utf-8")
         assert text == (docs / name).read_text(encoding="utf-8")
-        assert not local_links(text)
+        assert all(target in packaging.TECHNICAL_ASSETS for target in local_links(text))
         packaging.assert_standalone_technical_document(text)
+    for relative in packaging.TECHNICAL_ASSETS:
+        assert (technical / relative).read_bytes() == (docs / relative).read_bytes()
+    assert "```mermaid" in (technical / "技术文档.md").read_text(encoding="utf-8")
     for path in delivery.rglob("*.md"):
         for target in local_links(path.read_text(encoding="utf-8")):
             assert (path.parent / target.split("#")[0]).exists(), (path, target)

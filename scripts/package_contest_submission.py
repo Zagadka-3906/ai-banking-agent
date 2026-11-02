@@ -11,6 +11,7 @@ import json
 from pathlib import Path, PurePosixPath
 import posixpath
 import re
+import shutil
 import subprocess
 import tarfile
 from urllib.parse import unquote, urlsplit
@@ -21,6 +22,7 @@ CATEGORIES = ("01-技术文档", "02-答辩材料", "03-源代码与部署材料
 SOURCE_CATEGORY = CATEGORIES[2]
 DEFERRED_CATEGORIES = {CATEGORIES[1], CATEGORIES[4]}
 TECHNICAL_DOCUMENTS = ("技术文档.md", "核心算法说明.md", "安全设计文档.md")
+TECHNICAL_ASSETS = ("assets/系统架构图.svg", "assets/系统架构图.mmd")
 
 
 def introduction(text: str) -> str:
@@ -54,9 +56,13 @@ def assert_delivery_files(actual: set[str], expected: set[str]) -> None:
 
 
 def assert_standalone_technical_document(text: str) -> None:
-    """Reject navigation/media dependencies before exporting separate uploads."""
+    """Allow bundled diagram inputs for PDF embedding, reject reading dependencies."""
     visible = re.sub(r"(?ms)^(`{3,}|~{3,})[^\n]*\n.*?^\1\s*$", "", text)
-    targets = re.findall(r"!?\[[^\]\n]*\]\(([^)]+)\)", visible)
+    images = re.findall(r"!\[[^\]\n]*\]\(([^)]+)\)", visible)
+    if any(target not in TECHNICAL_ASSETS or not target.endswith(".svg") for target in images):
+        raise ValueError("Technical documents must be standalone; only bundled diagrams may be embedded")
+    visible = re.sub(r"!\[[^\]\n]*\]\([^)]+\)", "", visible)
+    targets = re.findall(r"\[[^\]\n]*\]\(([^)]+)\)", visible)
     targets += re.findall(r"(?m)^\s{0,3}\[[^\]\n]+\]:\s*(\S+)", visible)
     if (any(not target.strip().startswith("#") for target in targets)
             or re.search(r"<(?:img|image|object|iframe|script|link)\b", visible, re.IGNORECASE)):
@@ -123,6 +129,10 @@ def package(folder: Path, apk_source_commit: str | None = None) -> dict:
             text = (ROOT / "docs" / name).read_text(encoding="utf-8")
             exported = technical[name] if category == CATEGORIES[0] else relocate_markdown(text, f"docs/{name}", f"{category}/{name}")
             (folder / category / name).write_text(exported, encoding="utf-8")
+    for relative in TECHNICAL_ASSETS:
+        destination = folder / CATEGORIES[0] / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "docs" / relative, destination)
     info = folder / SOURCE_CATEGORY
     (info / "GitHub仓库地址.txt").write_text(REPOSITORY + "\n", encoding="utf-8")
     review = (ROOT / "docs/评审指南.md").read_text(encoding="utf-8")
@@ -145,6 +155,7 @@ def package(folder: Path, apk_source_commit: str | None = None) -> dict:
     files = sorted(p for p in folder.rglob("*") if p.is_file() and p != folder / "manifest.json"
                    and p.relative_to(folder).parts[0] not in DEFERRED_CATEGORIES)
     expected = {f"{category}/{name}" for category, names in mapping.items() for name in names}
+    expected.update(f"{CATEGORIES[0]}/{relative}" for relative in TECHNICAL_ASSETS)
     expected.update(f"{SOURCE_CATEGORY}/{name}" for name in ("README.md", "GitHub仓库地址.txt", "部署说明.md"))
     expected.update(f"{SOURCE_CATEGORY}/source/{name}" for name in source_names)
     optional = ["安装包/安言-公网演示.apk", "安装包/项目CA公开证书.pem", "补充材料/整理说明.md",
