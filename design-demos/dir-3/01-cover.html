@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>安言 · 封面</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700;900&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Serif:wght@400;600&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #2A2621 0%, #30312D 40%, #362F28 100%);
+  font-family: 'Noto Sans SC', sans-serif;
+  color: #F6F3EB;
+  position: relative;
+}
+
+/* 竖排大标题 */
+.title-vertical {
+  position: absolute;
+  left: 140px;
+  top: 50%;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 140px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: #F6F3EB;
+  line-height: 1.15;
+}
+
+/* 副标题 */
+.subtitle {
+  position: absolute;
+  left: 310px;
+  top: 50%;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: #B39A68;
+  line-height: 1.8;
+}
+
+/* 同心环盘容器 */
+.mandala-container {
+  position: absolute;
+  right: 240px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 720px;
+  height: 720px;
+}
+
+.mandala-svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Logo */
+.logo {
+  position: absolute;
+  bottom: 60px;
+  left: 140px;
+  width: 48px;
+  height: 48px;
+  opacity: 0.8;
+}
+
+/* 声明文字 */
+.declaration {
+  position: absolute;
+  bottom: 60px;
+  right: 140px;
+  font-family: 'Noto Sans SC', sans-serif;
+  font-size: 24px;
+  font-weight: 400;
+  color: #B39A68;
+  text-align: right;
+  line-height: 1.6;
+  opacity: 0.85;
+}
+</style>
+</head>
+<body>
+
+<!-- 竖排标题 -->
+<div class="title-vertical">安言</div>
+
+<!-- 副标题 -->
+<div class="subtitle">安全可控的银行 AI 智能体</div>
+
+<!-- 同心环盘 -->
+<div class="mandala-container">
+  <svg class="mandala-svg" viewBox="0 0 720 720" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <!-- 定义渐变用于环盘 -->
+      <radialGradient id="envGlow" cx="50%" cy="50%">
+        <stop offset="0%" style="stop-color:#B4472E;stop-opacity:0.2"/>
+        <stop offset="100%" style="stop-color:#B4472E;stop-opacity:0"/>
+      </radialGradient>
+    </defs>
+
+    <!-- 外环光晕 -->
+    <circle cx="360" cy="360" r="340" fill="url(#envGlow)" opacity="0.3"/>
+
+    <!-- 外环：刻度环 -->
+    <g class="outer-ring">
+      <!-- 外环圆 -->
+      <circle cx="360" cy="360" r="300" fill="none" stroke="#B39A68" stroke-width="1.5" opacity="0.6"/>
+      <circle cx="360" cy="360" r="280" fill="none" stroke="#B39A68" stroke-width="0.8" opacity="0.35"/>
+
+      <!-- 刻度线（24条） -->
+      <g class="ticks">
+        <!-- 主刻度（每45度） -->
+        <line x1="360" y1="60" x2="360" y2="75" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+        <line x1="572.5" y1="147.5" x2="563" y2="158" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+        <line x1="660" y1="360" x2="645" y2="360" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+        <line x1="572.5" y1="572.5" x2="563" y2="562" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+        <line x1="360" y1="660" x2="360" y2="645" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+        <line x1="147.5" y1="572.5" x2="157" y2="562" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+        <line x1="60" y1="360" x2="75" y2="360" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+        <line x1="147.5" y1="147.5" x2="157" y2="158" stroke="#B39A68" stroke-width="2" opacity="0.7"/>
+
+        <!-- 次刻度（每22.5度，较短） -->
+        <g opacity="0.4">
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(22.5 360 360)"/>
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(67.5 360 360)"/>
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(112.5 360 360)"/>
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(157.5 360 360)"/>
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(202.5 360 360)"/>
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(247.5 360 360)"/>
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(292.5 360 360)"/>
+          <line x1="360" y1="60" x2="360" y2="70" stroke="#B39A68" stroke-width="1" transform="rotate(337.5 360 360)"/>
+        </g>
+      </g>
+
+      <!-- 沿圆周旋转的文字（四个关键词） -->
+      <g class="ring-text" font-family="Noto Serif SC, serif" font-size="22" font-weight="700" fill="#F6F3EB">
+        <text text-anchor="middle" transform="translate(360,95) rotate(0)">
+          <tspan>可核对</tspan>
+        </text>
+        <text text-anchor="middle" transform="translate(625,360) rotate(90)">
+          <tspan>可复现</tspan>
+        </text>
+        <text text-anchor="middle" transform="translate(360,625) rotate(180)">
+          <tspan>可审计</tspan>
+        </text>
+        <text text-anchor="middle" transform="translate(95,360) rotate(270)">
+          <tspan>可追溯</tspan>
+        </text>
+      </g>
+    </g>
+
+    <!-- 中环：四级闸门扇区 -->
+    <g class="middle-ring">
+      <!-- 中环圆 -->
+      <circle cx="360" cy="360" r="220" fill="none" stroke="#B39A68" stroke-width="1" opacity="0.5"/>
+      <circle cx="360" cy="360" r="160" fill="none" stroke="#B39A68" stroke-width="1" opacity="0.5"/>
+
+      <!-- 四个扇区（每个90度） -->
+      <!-- 扇区1：授权绑定 -->
+      <path d="M 360,140 A 220,220 0 0,1 580,360 L 470,360 A 110,110 0 0,0 360,250 Z"
+            fill="#B39A68" opacity="0.25"/>
+      <text x="470" y="220" font-family="Noto Sans SC" font-size="20" font-weight="500" fill="#F6F3EB" text-anchor="middle">授权绑定</text>
+
+      <!-- 扇区2：执行复核 -->
+      <path d="M 580,360 A 220,220 0 0,1 360,580 L 360,470 A 110,110 0 0,0 470,360 Z"
+            fill="#B39A68" opacity="0.35"/>
+      <text x="500" y="500" font-family="Noto Sans SC" font-size="20" font-weight="500" fill="#F6F3EB" text-anchor="middle">执行复核</text>
+
+      <!-- 扇区3：幂等提交 -->
+      <path d="M 360,580 A 220,220 0 0,1 140,360 L 250,360 A 110,110 0 0,0 360,470 Z"
+            fill="#B39A68" opacity="0.25"/>
+      <text x="250" y="500" font-family="Noto Sans SC" font-size="20" font-weight="500" fill="#F6F3EB" text-anchor="middle">幂等提交</text>
+
+      <!-- 扇区4：回执确认 -->
+      <path d="M 140,360 A 220,220 0 0,1 360,140 L 360,250 A 110,110 0 0,0 250,360 Z"
+            fill="#B39A68" opacity="0.35"/>
+      <text x="220" y="220" font-family="Noto Sans SC" font-size="20" font-weight="500" fill="#F6F3EB" text-anchor="middle">回执确认</text>
+    </g>
+
+    <!-- 内环：小圆装饰 -->
+    <g class="inner-ring">
+      <circle cx="360" cy="360" r="100" fill="none" stroke="#B39A68" stroke-width="0.8" opacity="0.4"/>
+
+      <!-- 8个小圆 -->
+      <circle cx="360" cy="260" r="6" fill="#B39A68" opacity="0.6"/>
+      <circle cx="431" cy="289" r="6" fill="#B39A68" opacity="0.6"/>
+      <circle cx="460" cy="360" r="6" fill="#B39A68" opacity="0.6"/>
+      <circle cx="431" cy="431" r="6" fill="#B39A68" opacity="0.6"/>
+      <circle cx="360" cy="460" r="6" fill="#B39A68" opacity="0.6"/>
+      <circle cx="289" cy="431" r="6" fill="#B39A68" opacity="0.6"/>
+      <circle cx="260" cy="360" r="6" fill="#B39A68" opacity="0.6"/>
+      <circle cx="289" cy="289" r="6" fill="#B39A68" opacity="0.6"/>
+    </g>
+
+    <!-- 中心点：朱红强调 -->
+    <circle cx="360" cy="360" r="18" fill="#B4472E" opacity="0.9"/>
+    <circle cx="360" cy="360" r="12" fill="#B4472E"/>
+    <circle cx="360" cy="360" r="4" fill="#F6F3EB"/>
+  </svg>
+</div>
+
+<!-- Logo -->
+<svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="brand-title"><title id="brand-title">安言</title><path fill="#B39A68" d="M32 224V112C32 56 74 24 128 24C182 24 224 56 224 112V224H178V112C178 82 158 62 128 62C98 62 78 82 78 112V129H142V167H78V224Z" /></svg>
+
+<!-- 声明 -->
+<div class="declaration">
+  本系统用于答辩演示 / 交易为虚构<br>
+  所有账户资金通信均为受控测试环境
+</div>
+
+</body>
+</html>
