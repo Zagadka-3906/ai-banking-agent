@@ -1,7 +1,6 @@
 package com.aibanking.agent.ui.anim
 
 import android.graphics.BlurMaskFilter
-import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PathMeasure
@@ -9,7 +8,6 @@ import android.graphics.RectF
 import android.graphics.SweepGradient
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
@@ -72,9 +70,9 @@ private class GlowLayer(val strokeDp: Float, val blurDp: Float, val alpha: Float
  * A soft, living light around the screen in the colour of the risk tier, in the
  * manner of the Gemini input glow: a gradient of neighbouring hues along the
  * border, drawn as three blurred strokes (wide bloom, middle glow, bright core).
- * The light breathes and smoothly flows along the border. It never pops in - the ring
- * grows from the middle of the screen out to the edges while it fades up - flows,
- * breathes, and fades out when done. A waiting approval keeps it flowing and breathing.
+ * The light does not travel; it breathes. It never pops in - the ring grows from
+ * the middle of the screen out to the edges while it fades up - breathes, and
+ * fades out when done. A waiting approval keeps it breathing.
  *
  * Drawing only; it never takes touches. With system animations off the light
  * simply appears at the edges and disappears.
@@ -83,8 +81,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
     val motion = LocalBankMotionEnabled.current
     val intensity = remember { Animatable(0f) }
     val spread = remember { Animatable(1f) }
-    val flow = remember { Animatable(0f) }
-    val flowMatrix = remember { Matrix() }
     // Events already on screen when composed (a restored conversation) or already
     // shown once never light up again.
     val shown = remember { mutableSetOf<String>().apply { signal?.key?.let(::add) } }
@@ -95,24 +91,16 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
             return@LaunchedEffect
         }
         coroutineScope {
-            val flowJob = if (motion) {
+            if (motion) {
                 spread.snapTo(0f)
                 intensity.snapTo(0f)
                 // Light rises from the middle of both sides and runs up and down the
                 // border until the four ends meet at the top and the bottom.
                 launch { spread.animateTo(1f, tween(1300, easing = FastOutSlowInEasing)) }
-                launch {
-                    flow.snapTo(0f)
-                    flow.animateTo(360f, infiniteRepeatable(tween(5000, easing = LinearEasing), RepeatMode.Restart))
-                }
+                intensity.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
             } else {
                 spread.snapTo(1f)
                 intensity.snapTo(1f)
-                flow.snapTo(0f)
-                null
-            }
-            if (motion) {
-                intensity.animateTo(1f, tween(500, easing = FastOutSlowInEasing))
             }
             if (signal.sustained) {
                 // An infinite spec (not a loop) so UI tests can still reach idle.
@@ -124,7 +112,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
                     intensity.animateTo(1f, tween(1100, easing = FastOutSlowInEasing))
                 }
                 intensity.animateTo(0f, tween(1200, easing = FastOutSlowInEasing))
-                flowJob?.cancel()
             } else {
                 delay(2600L)
                 intensity.snapTo(0f)
@@ -153,8 +140,6 @@ fun Modifier.riskEdgeGlow(signal: RiskSignal?): Modifier = composed {
         val cx = size.width / 2f
         val cy = size.height / 2f
         val shader = SweepGradient(cx, cy, tier.glowPalette(), null)
-        flowMatrix.setRotate(flow.value, cx, cy)
-        shader.setLocalMatrix(flowMatrix)
         val path = border.revealed(size.width, size.height, 40.dp.toPx(), spread.value)
         drawIntoCanvas { canvas ->
             layers.forEach { layer ->
