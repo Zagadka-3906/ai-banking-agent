@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>边界与风险</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #F6F3EB;
+  color: #30312D;
+  font-family: 'Noto Sans SC', 'Inter', sans-serif;
+  position: relative;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+  height: 100%;
+  padding: 80px 80px 60px 80px;
+  position: relative;
+}
+
+.label-column {
+  grid-column: 1 / 4;
+  border-right: 0.5px solid #30312D;
+  padding-right: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.label-top {
+  display: flex;
+  flex-direction: column;
+  gap: 120px;
+}
+
+.logo-mark {
+  width: 72px;
+  height: 72px;
+}
+
+.page-label {
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6B6B68;
+  font-family: 'Inter', sans-serif;
+}
+
+.label-bottom {
+  font-size: 24px;
+  line-height: 1.6;
+  color: #6B6B68;
+  font-weight: 300;
+  font-family: 'Inter', sans-serif;
+}
+
+.content-area {
+  grid-column: 4 / 13;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  padding-left: 48px;
+}
+
+.section-title {
+  font-size: 72px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.risks-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 32px;
+}
+
+.risk-card {
+  border: 0.5px solid #30312D;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.risk-title {
+  font-size: 28px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.risk-icon {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #30312D;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.risk-list {
+  font-size: 20px;
+  line-height: 1.6;
+  color: #4A4A47;
+  list-style: none;
+}
+
+.risk-list li {
+  margin-bottom: 8px;
+}
+
+.risk-list li::before {
+  content: '·';
+  margin-right: 8px;
+  color: #B39A68;
+}
+
+.risk-note {
+  font-size: 16px;
+  color: #6B6B68;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 0.5px solid rgba(48, 49, 45, 0.2);
+}
+</style>
+</head>
+<body>
+
+<div class="grid">
+  <div class="label-column">
+    <div class="label-top">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" class="logo-mark" role="img" aria-labelledby="brand-title"><title id="brand-title">安言</title><path fill="#30312D" d="M32 224V112C32 56 74 24 128 24C182 24 224 56 224 112V224H176V112C176 82 156 64 128 64C100 64 80 82 80 112V128H144V168H80V224Z" /></svg>
+      <div class="page-label">Limitations</div>
+    </div>
+    <div class="label-bottom">
+      边界与风险
+    </div>
+  </div>
+
+  <div class="content-area">
+    <div class="section-title">
+      诚实声明<br>已知缺口
+    </div>
+
+    <div class="risks-grid">
+      <div class="risk-card">
+        <div class="risk-title">
+          <div class="risk-icon">!</div>
+          演示约束
+        </div>
+        <ul class="risk-list">
+          <li>所有资金、理财产品均虚构</li>
+          <li>演示 OTP 不是真实短信</li>
+          <li>服务器使用私有 CA</li>
+          <li>商户行为为程序模拟</li>
+        </ul>
+        <div class="risk-note">仅展示架构可行性</div>
+      </div>
+
+      <div class="risk-card">
+        <div class="risk-title">
+          <div class="risk-icon">!</div>
+          安全风险
+        </div>
+        <ul class="risk-list">
+          <li>公网后台属高权限运维入口</li>
+          <li>本地免令牌依赖回环绑定</li>
+          <li>第三方模型存在数据外发风险</li>
+        </ul>
+        <div class="risk-note">令牌不得随包公开</div>
+      </div>
+
+      <div class="risk-card">
+        <div class="risk-title">
+          <div class="risk-icon">!</div>
+          验证边界
+        </div>
+        <ul class="risk-list">
+          <li>视频使用隔离规则模式</li>
+          <li>端侧语音需独立验收</li>
+          <li>飞书平台策略未覆盖</li>
+          <li>完整真机验收待补充</li>
+        </ul>
+        <div class="risk-note">不能替代所有平台验收</div>
+      </div>
+
+      <div class="risk-card">
+        <div class="risk-title">
+          <div class="risk-icon">!</div>
+          模型限制
+        </div>
+        <ul class="risk-list">
+          <li>成本风险：按 token 计费</li>
+          <li>准确度：生成答案需核验</li>
+          <li>响应时间：网络延迟影响</li>
+        </ul>
+        <div class="risk-note">详见安全自评报告 R1–R22</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

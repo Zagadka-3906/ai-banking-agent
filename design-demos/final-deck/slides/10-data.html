@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>安言 · 测试数据</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #F6F3EB;
+  color: #30312D;
+  font-family: 'Noto Sans SC', 'Inter', sans-serif;
+  position: relative;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+  height: 100%;
+  padding: 80px 80px 60px 80px;
+  position: relative;
+}
+
+/* 左栏标签带 */
+.label-column {
+  grid-column: 1 / 4;
+  border-right: 0.5px solid #30312D;
+  padding-right: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.label-top {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+
+.logo-mark {
+  width: 56px;
+  height: 56px;
+}
+
+.page-title {
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.3;
+  font-family: 'Noto Sans SC', sans-serif;
+}
+
+.page-label {
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6B6B68;
+  font-family: 'Inter', sans-serif;
+  margin-top: 16px;
+}
+
+.label-bottom {
+  font-size: 24px;
+  line-height: 1.6;
+  color: #6B6B68;
+  font-weight: 300;
+  font-family: 'Inter', sans-serif;
+}
+
+/* 右侧内容区 */
+.content-area {
+  grid-column: 4 / 13;
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  grid-template-rows: 1fr 1fr;
+  gap: 0;
+  padding-left: 48px;
+}
+
+/* 主数据块 - 占据上半部分的 6 栏 */
+.data-primary {
+  grid-column: 1 / 7;
+  grid-row: 1 / 2;
+  border-right: 0.5px solid #30312D;
+  border-bottom: 0.5px solid #30312D;
+  padding: 48px 48px 48px 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 24px;
+}
+
+.data-number-large {
+  font-size: 240px;
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.04em;
+  font-family: 'Inter', sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-label-large {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-family: 'Noto Sans SC', sans-serif;
+  color: #4A4A47;
+}
+
+.data-source {
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: #6B6B68;
+  margin-top: 8px;
+  font-family: 'Inter', sans-serif;
+}
+
+/* 次要数据块 - 右上角 3 栏 */
+.data-secondary {
+  grid-column: 7 / 10;
+  grid-row: 1 / 2;
+  border-bottom: 0.5px solid #30312D;
+  padding: 48px 0 48px 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 56px;
+}
+
+.data-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.data-number-medium {
+  font-size: 84px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-family: 'Inter', sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.data-label-medium {
+  font-size: 18px;
+  font-weight: 400;
+  font-family: 'Noto Sans SC', sans-serif;
+  color: #4A4A47;
+}
+
+/* 底部说明区 - 下半部分的 9 栏 */
+.data-footnote {
+  grid-column: 1 / 10;
+  grid-row: 2 / 3;
+  padding: 48px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.footnote-title {
+  font-size: 20px;
+  font-weight: 600;
+  font-family: 'Noto Sans SC', sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.footnote-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 48px;
+  font-size: 16px;
+  line-height: 1.6;
+  font-family: 'Noto Sans SC', sans-serif;
+  color: #4A4A47;
+}
+
+.footnote-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.footnote-bullet {
+  font-size: 8px;
+  color: #B39A68;
+  flex-shrink: 0;
+}
+
+/* 网格线辅助（可选） */
+.grid::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 80px;
+  right: 80px;
+  height: 100%;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent,
+    transparent calc((100% - 11 * 24px) / 12),
+    rgba(179, 154, 104, 0.08) calc((100% - 11 * 24px) / 12),
+    rgba(179, 154, 104, 0.08) calc((100% - 11 * 24px) / 12 + 24px)
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+.grid > * {
+  position: relative;
+  z-index: 1;
+}
+</style>
+</head>
+<body>
+
+<div class="grid">
+  <div class="label-column">
+    <div class="label-top">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" class="logo-mark" role="img" aria-labelledby="brand-title"><title id="brand-title">安言</title><path fill="#30312D" d="M32 224V112C32 56 74 24 128 24C182 24 224 56 224 112V224H176V112C176 82 156 64 128 64C100 64 80 82 80 112V128H144V168H80V224Z" /></svg>
+      <div>
+        <h2 class="page-title">测试数据</h2>
+        <div class="page-label">Test Coverage</div>
+      </div>
+    </div>
+    <div class="label-bottom">
+      2026-11-02<br>
+      Build 20261102.1
+    </div>
+  </div>
+
+  <div class="content-area">
+    <div class="data-primary">
+      <div class="data-number-large">3101</div>
+      <div>
+        <div class="data-label-large">后端测试通过</div>
+        <div class="data-source">mock-banking-core JUnit 5 / passed</div>
+      </div>
+    </div>
+
+    <div class="data-secondary">
+      <div class="data-item">
+        <div class="data-number-medium">115</div>
+        <div class="data-label-medium">Android JVM</div>
+      </div>
+
+      <div class="data-item">
+        <div class="data-number-medium">24</div>
+        <div class="data-label-medium">设备专项</div>
+      </div>
+    </div>
+
+    <div class="data-footnote">
+      <div class="footnote-title">测试覆盖范围</div>
+      <div class="footnote-list">
+        <div class="footnote-item">
+          <span class="footnote-bullet">●</span>
+          <span>授权与权限分级：绿黄红三区规则验证</span>
+        </div>
+        <div class="footnote-item">
+          <span class="footnote-bullet">●</span>
+          <span>幂等提交与回执闭环：写盘失败回滚</span>
+        </div>
+        <div class="footnote-item">
+          <span class="footnote-bullet">●</span>
+          <span>证据链完整性：缺资料明确失败</span>
+        </div>
+        <div class="footnote-item">
+          <span class="footnote-bullet">●</span>
+          <span>Android 界面与工作流：设备专项 24 项</span>
+        </div>
+        <div class="footnote-item">
+          <span class="footnote-bullet">●</span>
+          <span>模拟查询与办理：四类业务对象</span>
+        </div>
+        <div class="footnote-item">
+          <span class="footnote-bullet">●</span>
+          <span>收尾演示单例：完整流程端到端验证 1 项</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>交付清单</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #F6F3EB;
+  color: #30312D;
+  font-family: 'Noto Sans SC', 'Inter', sans-serif;
+  position: relative;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+  height: 100%;
+  padding: 80px 80px 60px 80px;
+  position: relative;
+}
+
+.label-column {
+  grid-column: 1 / 4;
+  border-right: 0.5px solid #30312D;
+  padding-right: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.label-top {
+  display: flex;
+  flex-direction: column;
+  gap: 120px;
+}
+
+.logo-mark {
+  width: 72px;
+  height: 72px;
+}
+
+.page-label {
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6B6B68;
+  font-family: 'Inter', sans-serif;
+}
+
+.label-bottom {
+  font-size: 24px;
+  line-height: 1.6;
+  color: #6B6B68;
+  font-weight: 300;
+  font-family: 'Inter', sans-serif;
+}
+
+.content-area {
+  grid-column: 4 / 13;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  padding-left: 48px;
+}
+
+.section-title {
+  font-size: 72px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.delivery-list {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.delivery-item {
+  border: 0.5px solid #30312D;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.delivery-num {
+  font-size: 36px;
+  font-weight: 900;
+  color: #B39A68;
+  font-family: 'Inter', sans-serif;
+}
+
+.delivery-title {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.delivery-desc {
+  font-size: 18px;
+  line-height: 1.5;
+  color: #4A4A47;
+}
+
+.delivery-footer {
+  padding-top: 24px;
+  border-top: 0.5px solid #30312D;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 32px;
+}
+
+.footer-item {
+  font-size: 20px;
+  line-height: 1.5;
+}
+
+.footer-label {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.footer-value {
+  color: #4A4A47;
+  font-family: 'Inter', monospace;
+  font-size: 16px;
+  word-break: break-all;
+}
+</style>
+</head>
+<body>
+
+<div class="grid">
+  <div class="label-column">
+    <div class="label-top">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" class="logo-mark" role="img" aria-labelledby="brand-title"><title id="brand-title">安言</title><path fill="#30312D" d="M32 224V112C32 56 74 24 128 24C182 24 224 56 224 112V224H176V112C176 82 156 64 128 64C100 64 80 82 80 112V128H144V168H80V224Z" /></svg>
+      <div class="page-label">Deliverables</div>
+    </div>
+    <div class="label-bottom">
+      交付清单
+    </div>
+  </div>
+
+  <div class="content-area">
+    <div class="section-title">
+      五类材料<br>可复现源码
+    </div>
+
+    <div class="delivery-list">
+      <div class="delivery-item">
+        <div class="delivery-num">01</div>
+        <div class="delivery-title">作品简介</div>
+        <div class="delivery-desc">名称与 171 字简介</div>
+      </div>
+
+      <div class="delivery-item">
+        <div class="delivery-num">02</div>
+        <div class="delivery-title">技术文档</div>
+        <div class="delivery-desc">架构图、核心算法、安全设计</div>
+      </div>
+
+      <div class="delivery-item">
+        <div class="delivery-num">03</div>
+        <div class="delivery-title">答辩材料</div>
+        <div class="delivery-desc">可编辑 PPTX、讲稿、演示视频</div>
+      </div>
+
+      <div class="delivery-item">
+        <div class="delivery-num">04</div>
+        <div class="delivery-title">作品信息</div>
+        <div class="delivery-desc">源码、README、部署说明、测试与公网 APK</div>
+      </div>
+
+      <div class="delivery-item">
+        <div class="delivery-num">05</div>
+        <div class="delivery-title">安全自评</div>
+        <div class="delivery-desc">权限分级与 R1–R22 已知风险</div>
+      </div>
+
+      <div class="delivery-item">
+        <div class="delivery-num">+</div>
+        <div class="delivery-title">仓库地址</div>
+        <div class="delivery-desc">github.com/Zagadka-3906/ai-banking-agent</div>
+      </div>
+    </div>
+
+    <div class="delivery-footer">
+      <div class="footer-item">
+        <div class="footer-label">源码提交</div>
+        <div class="footer-value">2822c538db73965a4cf31f78340e193c9fbe0a8b</div>
+      </div>
+      <div class="footer-item">
+        <div class="footer-label">演示视频</div>
+        <div class="footer-value">47.00 秒，真实安卓，隔离规则模式，中文字幕</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

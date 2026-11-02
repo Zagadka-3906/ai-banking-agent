@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>授权闭环</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #F6F3EB;
+  color: #30312D;
+  font-family: 'Noto Sans SC', 'Inter', sans-serif;
+  position: relative;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+  height: 100%;
+  padding: 80px 80px 60px 80px;
+  position: relative;
+}
+
+.label-column {
+  grid-column: 1 / 4;
+  border-right: 0.5px solid #30312D;
+  padding-right: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.label-top {
+  display: flex;
+  flex-direction: column;
+  gap: 120px;
+}
+
+.logo-mark {
+  width: 72px;
+  height: 72px;
+}
+
+.page-label {
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6B6B68;
+  font-family: 'Inter', sans-serif;
+}
+
+.label-bottom {
+  font-size: 24px;
+  line-height: 1.6;
+  color: #6B6B68;
+  font-weight: 300;
+  font-family: 'Inter', sans-serif;
+}
+
+.content-area {
+  grid-column: 4 / 13;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding-left: 48px;
+}
+
+.section-title {
+  font-size: 72px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.loop-container {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 32px;
+}
+
+.loop-step {
+  border: 0.5px solid #30312D;
+  padding: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+}
+
+.loop-step::after {
+  content: '→';
+  position: absolute;
+  font-size: 48px;
+  color: #B39A68;
+  font-weight: 300;
+}
+
+.loop-step:nth-child(1)::after { content: '→'; right: -40px; top: 50%; transform: translateY(-50%); }
+.loop-step:nth-child(2)::after { content: '↓'; right: 50%; bottom: -40px; transform: translateX(50%); }
+.loop-step:nth-child(4)::after { content: '↑'; left: 50%; top: -40px; transform: translateX(-50%); }
+
+.loop-step:nth-child(3)::after { content: ''; }
+
+.step-num {
+  font-size: 24px;
+  font-weight: 700;
+  color: #B39A68;
+  font-family: 'Inter', sans-serif;
+}
+
+.step-title {
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.step-body {
+  font-size: 20px;
+  line-height: 1.5;
+  color: #4A4A47;
+}
+
+.step-detail {
+  font-size: 16px;
+  color: #6B6B68;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 0.5px solid rgba(48, 49, 45, 0.2);
+}
+</style>
+</head>
+<body>
+
+<div class="grid">
+  <div class="label-column">
+    <div class="label-top">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" class="logo-mark" role="img" aria-labelledby="brand-title"><title id="brand-title">安言</title><path fill="#30312D" d="M32 224V112C32 56 74 24 128 24C182 24 224 56 224 112V224H176V112C176 82 156 64 128 64C100 64 80 82 80 112V128H144V168H80V224Z" /></svg>
+      <div class="page-label">Authorization Loop</div>
+    </div>
+    <div class="label-bottom">
+      授权闭环
+    </div>
+  </div>
+
+  <div class="content-area">
+    <div class="section-title">
+      绕一圈才生效<br>写盘失败回滚
+    </div>
+
+    <div class="loop-container">
+      <div class="loop-step">
+        <div class="step-num">STEP 1</div>
+        <div class="step-title">预检绑定</div>
+        <div class="step-body">绑定具体主体、对象、金额与操作</div>
+        <div class="step-detail">用户确认只对本次申请有效，红区签名绑定挑战与有效期</div>
+      </div>
+
+      <div class="loop-step">
+        <div class="step-num">STEP 2</div>
+        <div class="step-title">执行复核</div>
+        <div class="step-body">核心重新检查风险与余额</div>
+        <div class="step-detail">执行前再次校验主体、对象、权限，不依赖客户端</div>
+      </div>
+
+      <div class="loop-step">
+        <div class="step-num">STEP 4</div>
+        <div class="step-title">回执确认</div>
+        <div class="step-body">可核对的完成证明</div>
+        <div class="step-detail">遇不确定结果应查原回执，不自动重做付款</div>
+      </div>
+
+      <div class="loop-step">
+        <div class="step-num">STEP 3</div>
+        <div class="step-title">幂等提交</div>
+        <div class="step-body">以幂等标识提交，业务与回执同时保存</div>
+        <div class="step-detail">只有保存成功才能宣布完成，写盘失败则回滚</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>导航</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #F6F3EB;
+  color: #30312D;
+  font-family: 'Noto Sans SC', 'Inter', sans-serif;
+  position: relative;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 24px;
+  height: 100%;
+  padding: 80px 80px 60px 80px;
+  position: relative;
+}
+
+.label-column {
+  grid-column: 1 / 4;
+  border-right: 0.5px solid #30312D;
+  padding-right: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.label-top {
+  display: flex;
+  flex-direction: column;
+  gap: 120px;
+}
+
+.logo-mark {
+  width: 72px;
+  height: 72px;
+}
+
+.page-label {
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #6B6B68;
+  font-family: 'Inter', sans-serif;
+}
+
+.label-bottom {
+  font-size: 24px;
+  line-height: 1.6;
+  color: #6B6B68;
+  font-weight: 300;
+  font-family: 'Inter', sans-serif;
+}
+
+.content-area {
+  grid-column: 4 / 13;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 48px;
+  padding-left: 48px;
+}
+
+.nav-card {
+  border: 0.5px solid #30312D;
+  padding: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.nav-number {
+  font-size: 84px;
+  font-weight: 900;
+  line-height: 1;
+  font-family: 'Inter', sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: #B39A68;
+}
+
+.nav-title {
+  font-size: 48px;
+  font-weight: 700;
+  margin-top: 24px;
+}
+
+.nav-desc {
+  font-size: 24px;
+  line-height: 1.5;
+  color: #4A4A47;
+  margin-top: 16px;
+}
+</style>
+</head>
+<body>
+
+<div class="grid">
+  <div class="label-column">
+    <div class="label-top">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" class="logo-mark" role="img" aria-labelledby="brand-title"><title id="brand-title">安言</title><path fill="#30312D" d="M32 224V112C32 56 74 24 128 24C182 24 224 56 224 112V224H176V112C176 82 156 64 128 64C100 64 80 82 80 112V128H144V168H80V224Z" /></svg>
+      <div class="page-label">Navigation</div>
+    </div>
+    <div class="label-bottom">
+      四个板块
+    </div>
+  </div>
+
+  <div class="content-area">
+    <div class="nav-card">
+      <div>
+        <div class="nav-number">01</div>
+        <div class="nav-title">能力</div>
+        <div class="nav-desc">查询与模拟办理<br>四类业务对象</div>
+      </div>
+    </div>
+
+    <div class="nav-card">
+      <div>
+        <div class="nav-number">02</div>
+        <div class="nav-title">架构</div>
+        <div class="nav-desc">分权设计<br>模型不写账本</div>
+      </div>
+    </div>
+
+    <div class="nav-card">
+      <div>
+        <div class="nav-number">03</div>
+        <div class="nav-title">安全</div>
+        <div class="nav-desc">三级权限<br>授权与闭环</div>
+      </div>
+    </div>
+
+    <div class="nav-card">
+      <div>
+        <div class="nav-number">04</div>
+        <div class="nav-title">交付</div>
+        <div class="nav-desc">测试与边界<br>可复现源码</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
