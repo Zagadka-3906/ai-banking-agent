@@ -230,7 +230,10 @@ private fun WealthListScreen(state: ChatUiState, viewModel: ChatViewModel, snack
 /** 加载中的理财骨架：横幅/持仓/标题/产品卡的排版占位（含高光扫过）。 */
 @Composable
 private fun WealthSkeleton(modifier: Modifier = Modifier) {
-    Column(modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    Column(
+        modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
         SkeletonBlock(height = 188.dp, corner = 24.dp)
         SkeletonBlock(height = 104.dp, corner = 24.dp)
         SkeletonBlock(width = 88.dp, height = 16.dp, corner = 4.dp)

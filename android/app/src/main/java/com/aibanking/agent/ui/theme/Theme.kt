@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
+import com.aibanking.agent.ui.anim.bankShimmerTheme
 import com.aibanking.agent.ui.anim.rememberBankMotionEnabled
 import com.valentinilk.shimmer.LocalShimmerTheme
 import com.valentinilk.shimmer.defaultShimmerTheme
@@ -147,14 +148,7 @@ private val BankShapes = Shapes(
 @Composable
 fun BankAgentTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
     val motionEnabled = rememberBankMotionEnabled()
-    val shimmerTheme = remember {
-        defaultShimmerTheme.copy(
-            animationSpec = infiniteRepeatable(tween<Float>(1400, delayMillis = 250, easing = LinearEasing)),
-            rotation = 12f,
-            shaderColors = listOf(Color.White.copy(alpha = 0.45f), Color.White, Color.White.copy(alpha = 0.45f)),
-            shimmerWidth = 240.dp,
-        )
-    }
+    val shimmerTheme = remember(darkTheme) { bankShimmerTheme(darkTheme) }
     MaterialTheme(colorScheme = if (darkTheme) DarkColors else LightColors, typography = BankTypography, shapes = BankShapes) {
         CompositionLocalProvider(
             LocalBankSemanticColors provides bankSemanticColors(darkTheme),

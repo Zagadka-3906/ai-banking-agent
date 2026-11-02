@@ -327,10 +327,17 @@ private fun CardsListScreen(
 @Composable
 private fun CardsSkeleton() {
     Column(
-        Modifier.fillMaxSize().padding(BankSpacing.md),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        Modifier
+            .fillMaxSize()
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 104.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        repeat(3) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SkeletonBlock(width = 64.dp, height = 18.dp, corner = 6.dp)
+            SkeletonBlock(width = 220.dp, height = 32.dp, corner = 8.dp)
+            SkeletonBlock(width = 160.dp, height = 16.dp, corner = 4.dp)
+        }
+        repeat(2) {
             SkeletonBlock(height = 280.dp, corner = 24.dp)
         }
     }
