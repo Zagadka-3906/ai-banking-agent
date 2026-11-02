@@ -102,7 +102,14 @@ def package(folder: Path, ffmpeg: str | None = None) -> dict:
     (folder / CATEGORIES[0] / "报名简介.txt").write_text(intro + "\n", encoding="utf-8")
     info = folder / CATEGORIES[3]
     (info / "GitHub仓库地址.txt").write_text(REPOSITORY + "\n", encoding="utf-8")
-    (info / "README.md").write_text("# 作品源码与运行\n\n仓库：" + REPOSITORY + "\n\n解压 source.zip 后先阅读根目录 README.md。部署说明、测试与全部源码均在包内。本目录文档副本便于浏览，相对链接以解压后的源码目录为准。\n", encoding="utf-8")
+    (info / "README.md").write_text(
+        "# 作品源码与运行\n\n"
+        "仓库：" + REPOSITORY + "\n\n"
+        "解压 source.zip 后，先读根目录 README.md，再按 deploy/README.md 部署。"
+        "测试用例、验证记录和安全自评报告在 docs/ 下，本目录放的是便于浏览的副本。\n\n"
+        "副本里的相对链接以解压后的源码目录为准，不指向本交付目录。"
+        "源码包不含真实配置、私钥、会话、设备登记、账本、日志和构建缓存。\n",
+        encoding="utf-8")
     shutil.copy2(ROOT / "deploy/README.md", info / "部署说明.md")
     source = info / "source.zip"
     subprocess.run(["git", "archive", "--format=zip", "--prefix=ai-banking-agent/", "--output", str(source), "HEAD"], cwd=ROOT, check=True)
