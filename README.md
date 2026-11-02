@@ -7,7 +7,7 @@
 
 **用自然语言查询、规划和办理模拟银行业务，把每一次执行留在可核对的授权与回执之间。**
 
-[![持续集成入口](https://img.shields.io/badge/CI-GitHub_Actions-30312D)](https://github.com/Zagadka-3906/ai-banking-agent/actions/workflows/ci.yml) [![许可证：MIT](https://img.shields.io/badge/license-MIT-30312D)](LICENSE) ![Android：Kotlin 与 Compose](https://img.shields.io/badge/Android-Kotlin%20%2B%20Compose-30312D) ![后端：Python 与 FastAPI](https://img.shields.io/badge/Backend-Python%20%2B%20FastAPI-30312D)
+[![持续集成状态](https://github.com/Zagadka-3906/ai-banking-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Zagadka-3906/ai-banking-agent/actions/workflows/ci.yml) [![许可证：MIT](https://img.shields.io/badge/license-MIT-30312D)](LICENSE) ![Android：Kotlin 与 Compose](https://img.shields.io/badge/Android-Kotlin%20%2B%20Compose-30312D) ![后端：Python 与 FastAPI](https://img.shields.io/badge/Backend-Python%20%2B%20FastAPI-30312D)
 
 [界面预览](#界面预览) · [可以做什么](#可以做什么) · [系统如何工作](#系统如何工作) · [快速开始](#快速开始) · [文档中心](docs/README.md) · [参与开发](CONTRIBUTING.md)
 
