@@ -179,21 +179,38 @@ internal fun ApprovalCard(
             }
             BankFormError(error)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                BankPrimaryButton(
-                    text = if (isRed) "验证并确认办理" else "确认本次操作",
-                    onClick = {
-                        remainingSeconds = secondsLeft()
-                        if (remainingSeconds > 0) {
-                            keyboardController?.hide()
-                            focusManager.clearFocus()
-                            if (isRed) onBiometricApprove() else onApprove()
-                        }
-                    },
-                    enabled = !busy && remainingSeconds > 0 && (!isRed || (canPromptBiometric && otp.matches(Regex("[0-9]{6}")))),
-                    loading = busy,
-                    colors = approveButtonColors,
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
-                )
+                if (isRed) {
+                    BankPrimaryButton(
+                        text = "验证并确认办理",
+                        onClick = {
+                            remainingSeconds = secondsLeft()
+                            if (remainingSeconds > 0) {
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                                onBiometricApprove()
+                            }
+                        },
+                        enabled = !busy && remainingSeconds > 0 && canPromptBiometric && otp.matches(Regex("[0-9]{6}")),
+                        loading = busy,
+                        colors = approveButtonColors,
+                        modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
+                    )
+                } else {
+                    BankHoldToConfirmButton(
+                        text = "长按确认本次操作",
+                        onConfirmed = {
+                            remainingSeconds = secondsLeft()
+                            if (remainingSeconds > 0) {
+                                keyboardController?.hide()
+                                focusManager.clearFocus()
+                                onApprove()
+                            }
+                        },
+                        enabled = !busy && remainingSeconds > 0,
+                        loading = busy,
+                        modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
+                    )
+                }
                 BankSecondaryButton("取消操作", onReject, enabled = !busy,
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_REJECT))
             }

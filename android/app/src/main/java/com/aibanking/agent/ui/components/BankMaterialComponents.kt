@@ -1,8 +1,17 @@
 package com.aibanking.agent.ui.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,21 +37,37 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aibanking.agent.ui.anim.BankHaptics
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.SkeletonBlock
 import com.aibanking.agent.ui.theme.BankSpacing
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
+import kotlin.math.hypot
+import kotlinx.coroutines.launch
 
 /** Pastel brand fills stay on buttons; input labels and focus need stronger contrast. */
 @Composable
@@ -189,6 +214,148 @@ fun BankSecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = 
         shape = CircleShape,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 14.dp),
     ) { Text(text, style = MaterialTheme.typography.labelLarge) }
+}
+
+/**
+ * 黄区长按确认按钮：
+ * 1. 按住时，从手指触碰的真实物理坐标 (x, y) 向四周展开液体扩散填充动画（周期 1000ms）。
+ * 2. 蓄满指定时长后，填满整个胶囊按钮，触发成功触感反馈并执行确认回调。
+ * 3. 中途松开或划出则取消执行，液体平滑倒流回缩并复位。
+ * 4. 支持语义点击事件（Semantics onClick），在自动化测试与无障碍服务（TalkBack）中正常触发。
+ */
+@Composable
+fun BankHoldToConfirmButton(
+    text: String,
+    onConfirmed: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    durationMillis: Long = 1000L,
+) {
+    val motion = LocalBankMotionEnabled.current
+    val view = LocalView.current
+    val isDark = isSystemInDarkTheme()
+    val coroutineScope = rememberCoroutineScope()
+    val fillProgress = remember { Animatable(0f) }
+    var touchOrigin by remember { mutableStateOf(Offset.Unspecified) }
+
+    val baseContainerColor = if (isDark) Color(0xFF382900) else Color(0xFFFFF3D0)
+    val liquidColor = if (isDark) Color(0xFFFDD663) else Color(0xFFF9AB00)
+    val borderColor = if (isDark) Color(0xFFFDD663).copy(alpha = 0.5f) else Color(0xFFF9AB00).copy(alpha = 0.7f)
+    val contentColor = Color(0xFF1F1F1F)
+
+    Box(
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .clip(CircleShape)
+            .background(if (enabled) baseContainerColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+            .border(
+                width = 1.5.dp,
+                color = if (enabled) borderColor else Color.Transparent,
+                shape = CircleShape,
+            )
+            .semantics {
+                role = Role.Button
+                if (!enabled || loading) {
+                    disabled()
+                } else {
+                    onClick(label = text) {
+                        onConfirmed()
+                        true
+                    }
+                }
+            }
+            .pointerInput(enabled, loading) {
+                if (!enabled || loading) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    touchOrigin = down.position
+                    var confirmed = false
+                    val animJob = coroutineScope.launch {
+                        if (motion) {
+                            BankHaptics.tick(view)
+                            fillProgress.snapTo(0f)
+                            fillProgress.animateTo(
+                                targetValue = 1f,
+                                animationSpec = tween(durationMillis = durationMillis.toInt(), easing = LinearEasing),
+                            )
+                        } else {
+                            fillProgress.snapTo(1f)
+                        }
+                        confirmed = true
+                        BankHaptics.confirm(view)
+                        onConfirmed()
+                    }
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null || !change.pressed) break
+                    }
+
+                    if (!confirmed) {
+                        animJob.cancel()
+                        coroutineScope.launch {
+                            fillProgress.animateTo(0f, tween(200, easing = FastOutSlowInEasing))
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            val progress = fillProgress.value
+            if (progress > 0f) {
+                val origin = if (touchOrigin.isSpecified) touchOrigin else Offset(size.width / 2f, size.height / 2f)
+                val maxRadius = hypot(
+                    maxOf(origin.x, size.width - origin.x),
+                    maxOf(origin.y, size.height - origin.y),
+                )
+                val waveRadius = (maxRadius * progress * 1.06f).coerceAtMost(maxRadius)
+                drawCircle(
+                    color = liquidColor.copy(alpha = 0.45f),
+                    radius = waveRadius,
+                    center = origin,
+                )
+                drawCircle(
+                    color = liquidColor,
+                    radius = maxRadius * progress,
+                    center = origin,
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = contentColor,
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                BankIcon(
+                    kind = BankIconKind.Check,
+                    modifier = Modifier.size(18.dp),
+                    tint = if (enabled) contentColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                )
+            }
+            val label = when {
+                loading -> "正在办理..."
+                fillProgress.value in 0.05f..0.99f -> "按住以确认..."
+                else -> text
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (enabled) contentColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            )
+        }
+    }
 }
 
 @Composable
