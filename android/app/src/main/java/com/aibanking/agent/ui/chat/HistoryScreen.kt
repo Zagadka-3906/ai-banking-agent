@@ -67,6 +67,7 @@ import com.aibanking.agent.ui.anim.CascadeEntranceSpec
 import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
+import com.aibanking.agent.ui.components.ElasticSegmentedControl
 import com.aibanking.agent.ui.components.BankBrandMark
 import com.aibanking.agent.ui.components.BankIcon
 import com.aibanking.agent.ui.components.BankIconKind
@@ -116,13 +117,13 @@ fun HistoryUi(state: ChatUiState, viewModel: ChatViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // 时间范围过滤 Chip
+            // 时间范围分段控制器
             DateScopeFilterRow(
                 currentScope = state.historyDateScope,
                 onSelectScope = viewModel::setHistoryDateScope,
             )
 
-            // 业务分类过滤 Chip
+            // 业务类型分段控制器
             CategoryFilterRow(
                 currentCategory = state.historyCategory,
                 onSelectCategory = viewModel::setHistoryCategory,
@@ -192,7 +193,7 @@ fun HistoryUi(state: ChatUiState, viewModel: ChatViewModel) {
 }
 
 @Composable
-private fun DateScopeFilterRow(currentScope: String, onSelectScope: (String) -> Unit) {
+internal fun DateScopeFilterRow(currentScope: String, onSelectScope: (String) -> Unit) {
     val scopes = listOf(
         "ALL" to "全部时间",
         "TODAY" to "今日",
@@ -200,29 +201,12 @@ private fun DateScopeFilterRow(currentScope: String, onSelectScope: (String) -> 
         "LAST_MONTH" to "上月",
         "YEAR" to "全年",
     )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        scopes.forEach { (key, label) ->
-            FilterChip(
-                selected = currentScope == key,
-                onClick = { onSelectScope(key) },
-                label = { Text(label, style = MaterialTheme.typography.labelMedium) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-            )
-        }
-    }
+    ElasticSegmentedControl(scopes, currentScope, onSelectScope,
+        Modifier.padding(horizontal = 16.dp, vertical = 4.dp), "history_date_segments")
 }
 
 @Composable
-private fun CategoryFilterRow(currentCategory: String?, onSelectCategory: (String?) -> Unit) {
+internal fun CategoryFilterRow(currentCategory: String?, onSelectCategory: (String?) -> Unit) {
     val categories = listOf(
         null to "全部类型",
         "转账支出" to "转账支出",
@@ -231,25 +215,9 @@ private fun CategoryFilterRow(currentCategory: String?, onSelectCategory: (Strin
         "订阅代扣" to "订阅代扣",
         "餐饮" to "餐饮消费",
     )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        categories.forEach { (cat, label) ->
-            FilterChip(
-                selected = currentCategory == cat,
-                onClick = { onSelectCategory(cat) },
-                label = { Text(label, style = MaterialTheme.typography.labelMedium) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-            )
-        }
-    }
+    ElasticSegmentedControl(categories.map { (key, label) -> (key ?: "ALL") to label }, currentCategory ?: "ALL",
+        { onSelectCategory(it.takeUnless { key -> key == "ALL" }) },
+        Modifier.padding(horizontal = 16.dp, vertical = 4.dp), "history_category_segments")
 }
 
 @Composable

@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -33,6 +34,7 @@ class VoiceInputUiTest {
     private var deliveries = 0
     private var starts = 0
     private var cancels = 0
+    private var meterLevel = .35f
     private val limits = mutableListOf<() -> Unit>()
     private val responses = mutableListOf<Pair<(String) -> Unit, (String) -> Unit>>()
 
@@ -58,18 +60,18 @@ class VoiceInputUiTest {
         render()
         openAndRecord()
         screenshot("voice-recording")
-        ui.onNodeWithTag("voice_finish").performClick()
+        ui.onNodeWithTag("voice_finish").performSemanticsAction(SemanticsActions.OnClick) { it() }
         ui.onNodeWithTag("voice_transcribing").assertExists()
         screenshot("voice-transcribing")
         val old = responses.single()
         ui.onNodeWithTag("voice_cancel").performClick()
-        ui.onNodeWithTag("voice_start").performClick()
+        ui.onNodeWithTag("voice_start").performSemanticsAction(SemanticsActions.OnClick) { it() }
         ui.runOnIdle { old.first("过期识别"); old.second("过期错误"); limits.first().invoke() }
         assertEquals(VoicePhase.RECORDING, voice.phase)
         assertNull(voice.message)
         assertEquals("帮我查一下余额", draft)
         Thread.sleep(700)
-        ui.onNodeWithTag("voice_finish").performClick()
+        ui.onNodeWithTag("voice_finish").performSemanticsAction(SemanticsActions.OnClick) { it() }
         ui.runOnIdle { responses.last().first("查询本月消费"); responses.last().first("重复回调") }
         ui.onNodeWithTag("draft").assertTextContains("查询本月消费")
         assertEquals(1, deliveries)
@@ -82,9 +84,9 @@ class VoiceInputUiTest {
         ui.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         ui.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         ui.runOnIdle { assertEquals(VoicePhase.IDLE, voice.phase); assertEquals(1, cancels) }
-        ui.onNodeWithTag("voice_start").performClick()
+        ui.onNodeWithTag("voice_start").performSemanticsAction(SemanticsActions.OnClick) { it() }
         Thread.sleep(700)
-        ui.onNodeWithTag("voice_finish").performClick()
+        ui.onNodeWithTag("voice_finish").performSemanticsAction(SemanticsActions.OnClick) { it() }
         val response = responses.single()
         ui.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         ui.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
@@ -120,10 +122,47 @@ class VoiceInputUiTest {
         assertEquals(0, deliveries)
     }
 
+    @Test fun holding_records_and_releasing_transcribes_while_quiet_pcm_moves_the_waveform() {
+        render()
+        ui.onNodeWithTag("voice_input").performClick()
+        ui.onNodeWithText("长按说话").assertIsDisplayed()
+        ui.onNodeWithTag("voice_start").performTouchInput { down(center) }
+        ui.mainClock.advanceTimeBy(650)
+        Thread.sleep(700)
+        ui.onNodeWithTag("voice_finish").assertExists()
+        ui.runOnIdle { meterLevel = 0f }
+        Thread.sleep(150)
+        ui.mainClock.advanceTimeBy(200)
+        val quiet = ui.onNodeWithTag("voice_waveform").captureToImage().asAndroidBitmap()
+        ui.runOnIdle { meterLevel = pcmLevel(byteArrayOf(32, 0, 32, 0), 4) }
+        Thread.sleep(250)
+        ui.mainClock.advanceTimeBy(280)
+        val speaking = ui.onNodeWithTag("voice_waveform").captureToImage().asAndroidBitmap()
+        assertFalse("quiet microphone PCM must produce visible amplitude", quiet.sameAs(speaking))
+        ui.onNodeWithTag("voice_finish").performTouchInput { up() }
+        ui.onNodeWithTag("voice_transcribing").assertExists()
+        assertEquals(1, responses.size)
+        ui.onNodeWithTag("voice_cancel").performClick()
+    }
+
+    @Test fun sliding_up_during_a_hold_discards_audio_without_transcription() {
+        render()
+        ui.onNodeWithTag("voice_input").performClick()
+        ui.onNodeWithTag("voice_start").performTouchInput { down(center) }
+        ui.mainClock.advanceTimeBy(650)
+        Thread.sleep(700)
+        ui.onNodeWithTag("voice_finish").performTouchInput { moveTo(androidx.compose.ui.geometry.Offset(center.x, -600f)) }
+        ui.onNodeWithText("松开取消").assertExists()
+        ui.onNodeWithTag("voice_finish").performTouchInput { up() }
+        ui.onNodeWithTag("voice_start").assertExists()
+        assertTrue(responses.isEmpty())
+        assertEquals("帮我查一下余额", draft)
+    }
+
     private fun openAndRecord() {
         ui.onNodeWithTag("voice_input").performClick()
-        ui.onNodeWithTag("voice_start").performClick()
-        ui.onNodeWithText("正在听你说").assertIsDisplayed()
+        ui.onNodeWithTag("voice_start").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        ui.onNodeWithText("正在听你说").performScrollTo().assertIsDisplayed()
         Thread.sleep(700)
     }
 
@@ -136,7 +175,7 @@ class VoiceInputUiTest {
             voice = rememberVoiceInput(true, captureResult = { { text -> draft = text; deliveries++ } },
                 cloudAvailable = { it(true) }, transcribeCloud = { _, success, failure -> responses += success to failure },
                 audioRecorderFactory = { onLimit -> limits += onLimit; object : VoiceAudioCapture {
-                    override val level = .35f
+                    override val level get() = meterLevel
                     override fun start(): Boolean { starts++; return true }
                     override fun stop() = pcmToWav(ByteArray(3200))
                     override fun cancel() { cancels++ }

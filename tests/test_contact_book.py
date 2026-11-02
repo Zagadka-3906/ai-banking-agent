@@ -249,7 +249,7 @@ def test_kinship_word_without_a_book_entry_falls_back_to_the_builtin(client):
     # 未添加爱人时，“爱人”仍走内置白名单 → 王美（原有演示行为保持）。
     settled = _transfer(client, "爱人", amount=200)
     assert settled.status_code == 200, settled.text
-    assert settled.json()["receiver_name"] == "王美（爱人）"
+    assert settled.json()["receiver_name"] == "王美"
 
 
 def test_multiple_contacts_with_the_same_relationship_are_ambiguous(client):

@@ -95,7 +95,7 @@ internal class WavRecorder(private val onLimit: () -> Unit) : VoiceAudioCapture 
     override fun cancel() { stop() }
 }
 
-/** Root-mean-square loudness of 16-bit little-endian PCM, scaled so normal speech fills most of 0..1. */
+/** Perceptual meter for quiet phone microphones; true silence remains zero. */
 internal fun pcmLevel(buffer: ByteArray, length: Int): Float {
     var sum = 0.0
     var samples = 0
@@ -108,5 +108,7 @@ internal fun pcmLevel(buffer: ByteArray, length: Int): Float {
     }
     if (samples == 0) return 0f
     val rms = kotlin.math.sqrt(sum / samples) / 32768.0
-    return (rms * 6).coerceIn(0.0, 1.0).toFloat()
+    if (rms <= 0.0001) return 0f
+    val decibels = 20 * kotlin.math.log10(rms)
+    return ((decibels + 70) / 58).coerceIn(0.0, 1.0).toFloat()
 }

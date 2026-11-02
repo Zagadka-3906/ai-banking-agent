@@ -44,6 +44,7 @@ internal class VoiceInput {
     var voiceMode by mutableStateOf(false)
     var phase by mutableStateOf(VoicePhase.IDLE)
     var cloudRecognition by mutableStateOf(false)
+    var cancelArmed by mutableStateOf(false)
     var partialText by mutableStateOf("")
     var elapsedSeconds by mutableIntStateOf(0)
     var level by mutableFloatStateOf(0f)
@@ -96,6 +97,7 @@ internal fun rememberVoiceInput(
 
     fun reset() {
         voice.phase = VoicePhase.IDLE
+        voice.cancelArmed = false
         voice.partialText = ""
         voice.level = 0f
         voice.elapsedSeconds = 0
@@ -221,6 +223,7 @@ internal fun rememberVoiceInput(
         if (!granted()) { permission.launch(Manifest.permission.RECORD_AUDIO); return@start }
         generation.value++
         pendingResult.value = captureResult()
+        voice.cancelArmed = false
         earlyText.value = null
         voice.partialText = ""
         voice.elapsedSeconds = 0
@@ -233,6 +236,7 @@ internal fun rememberVoiceInput(
         if (voice.phase != VoicePhase.RECORDING) return@finish
         val recorded = SystemClock.elapsedRealtime() - startedAt.value
         when {
+            voice.cancelArmed -> cancelAll()
             recorded < MIN_RECORD_MILLIS -> { cancelAll(); voice.message = "说话时间太短" }
             else -> {
                 voice.phase = VoicePhase.RECOGNIZING

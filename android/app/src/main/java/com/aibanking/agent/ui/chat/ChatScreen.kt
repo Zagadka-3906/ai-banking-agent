@@ -653,20 +653,19 @@ internal fun ChatWelcome(onSuggestion: (String) -> Unit) {
     }
 }
 
-/** The assistant's place in the conversation while it works: its mark turns and the steps fill in. */
+/** Static AnYan avatar; the separate thought orb carries the processing motion. */
 @Composable
 internal fun ThinkingReply(stages: List<com.aibanking.agent.data.StageProgress>, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("thinking_reply"),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(Modifier.padding(top = 2.dp)) { ThinkingMark() }
+        BankGradientMark(Modifier.padding(top = 2.dp).size(26.dp).testTag("thinking_avatar"))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            ShimmerGradientText(
-                "安言正在为您处理…",
-                LocalBankSemanticColors.current.brandGradientColors,
-                style = MaterialTheme.typography.bodyLarge,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.aibanking.agent.ui.anim.ThinkingOrbs()
+                Text("安言正在为您处理…", style = MaterialTheme.typography.bodyLarge)
+            }
             if (stages.isNotEmpty()) ReplyPanel {
                 Text("处理进度", style = MaterialTheme.typography.labelLarge)
                 WorkflowProgress(stages)
@@ -678,17 +677,6 @@ internal fun ThinkingReply(stages: List<com.aibanking.agent.data.StageProgress>,
             }
         }
     }
-}
-
-/** Slowly turning brand mark shown while a turn is being processed. */
-@Composable
-private fun ThinkingMark() {
-    val motion = com.aibanking.agent.ui.anim.LocalBankMotionEnabled.current
-    val angle = if (motion) {
-        val transition = rememberInfiniteTransition(label = "thinking")
-        transition.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "spin").value
-    } else 0f
-    BankGradientMark(Modifier.size(26.dp).rotate(angle))
 }
 
 @Composable

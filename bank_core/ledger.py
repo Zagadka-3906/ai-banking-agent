@@ -29,7 +29,7 @@ DEMO_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$01eEUN2Ii59Smsmuoc9mhg$O+kW
 ACCOUNTS: dict[str, dict[str, Any]] = {
     "user_zhang": {"card_no": "622202001", "name": "张三", "phone": "13800138000", "balance": 15000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1, "password_hash": DEMO_PASSWORD_HASH},
     "user_li": {"card_no": "622202002", "name": "李四", "phone": "13900139000", "balance": 2000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1, "password_hash": DEMO_PASSWORD_HASH},
-    "user_wife": {"card_no": "622202003", "name": "王美（爱人）", "phone": "13700137000", "balance": 5000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1, "password_hash": DEMO_PASSWORD_HASH},
+    "user_wife": {"card_no": "622202003", "name": "王美", "phone": "13700137000", "balance": 5000.0, "locked_amount": 0.0, "status": "ACTIVE", "credential_version": 1, "password_hash": DEMO_PASSWORD_HASH},
 }
 
 CONTACTS: dict[str, str] = {
@@ -126,7 +126,7 @@ def demo_contact_rows(owner_id: str) -> list[dict[str, Any]]:
     return [{
         'contact_id': transfer_contact_id(owner_id, uid), 'owner_id': owner_id,
         'name': ACCOUNTS[uid]['name'], 'phone': ACCOUNTS[uid]['phone'],
-        'relationship': 'OTHER', 'birthday': None, 'account_id': uid,
+        'relationship': 'SPOUSE' if {owner_id, uid} == {'user_zhang', 'user_wife'} else 'OTHER', 'birthday': None, 'account_id': uid,
         'linked_existing': True, 'link_verification': LINK_UNVERIFIED, 'source': 'DEMO_SEED',
         'created_at': datetime.now(timezone.utc).isoformat(),
     } for uid in DEMO_ACCOUNT_IDS if uid != owner_id and uid in ACCOUNTS]

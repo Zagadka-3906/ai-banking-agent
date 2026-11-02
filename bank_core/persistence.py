@@ -451,6 +451,8 @@ def load_ledger_store(path: Optional[str] = None) -> dict[str, Any]:
         _LEDGER_STORE_LOAD_SUMMARY = {"loaded_state": False, "path": target, "rejected": True, "error": "账本文件记录无效"}
         return _LEDGER_STORE_LOAD_SUMMARY
 
+    from bank_core.demo_contacts import normalize_demo_contact_identity
+    normalize_demo_contact_identity(state)
     with STATE_LOCK:
         for name in LEDGER_STATE_NAMES:
             container = LEDGER_COLLECTIONS[name]

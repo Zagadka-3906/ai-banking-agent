@@ -6,6 +6,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -19,6 +22,11 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -43,6 +51,7 @@ internal fun VoiceInputPanel(voice: VoiceInput, modifier: Modifier = Modifier) {
     val recording = voice.phase == VoicePhase.RECORDING
     val recognizing = voice.phase == VoicePhase.RECOGNIZING
     val haptics = LocalHapticFeedback.current
+    val cancelDistance = with(LocalDensity.current) { 96.dp.toPx() }
     val panelLimit = with(LocalDensity.current) { (LocalWindowInfo.current.containerSize.height * .68f).toDp() }
     BackHandler(enabled = voice.voiceMode) { voice.close() }
     Column(modifier.fillMaxWidth().heightIn(max = panelLimit).verticalScroll(rememberScrollState())
@@ -66,12 +75,12 @@ internal fun VoiceInputPanel(voice: VoiceInput, modifier: Modifier = Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(when (voice.phase) {
                 VoicePhase.IDLE -> "说说你想做什么"
-                VoicePhase.RECORDING -> "正在听你说"
+                VoicePhase.RECORDING -> if (voice.cancelArmed) "松开即可取消" else "正在听你说"
                 VoicePhase.RECOGNIZING -> "正在转成文字"
             }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
             Text(when (voice.phase) {
                 VoicePhase.IDLE -> "例如：帮我查一下本月的消费"
-                VoicePhase.RECORDING -> "说完后点击完成，最长 ${SPEECH_MAX_SECONDS} 秒"
+                VoicePhase.RECORDING -> "松开转成文字，上滑取消 · 最长 ${SPEECH_MAX_SECONDS} 秒"
                 VoicePhase.RECOGNIZING -> "请稍候，识别结果将填入输入框"
             }, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, textAlign = TextAlign.Center)
         }
@@ -82,7 +91,7 @@ internal fun VoiceInputPanel(voice: VoiceInput, modifier: Modifier = Modifier) {
                     Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(Modifier.size(30.dp).testTag("voice_transcribing"), color = colors.secondary, strokeWidth = 2.dp)
                     }
-                } else VoiceWaveform(voice.wave, recording, Modifier.fillMaxWidth().height(48.dp))
+                } else VoiceWaveform(voice.wave.toList(), recording, Modifier.fillMaxWidth().height(48.dp))
                 Text(voiceElapsedLabel(voice.elapsedSeconds), Modifier.testTag("voice_timer"),
                     style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
             }
@@ -94,19 +103,71 @@ internal fun VoiceInputPanel(voice: VoiceInput, modifier: Modifier = Modifier) {
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (recording || recognizing) BankSecondaryButton("取消", onClick = { voice.cancel() },
                 modifier = Modifier.heightIn(min = 52.dp).testTag("voice_cancel"))
-            Button(
-                onClick = {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    if (recording) voice.finish() else voice.start()
-                }, enabled = !recognizing,
-                modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag(if (recording) "voice_finish" else "voice_start"),
+            Surface(
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag(if (recording) "voice_finish" else "voice_start")
+                    .semantics {
+                        role = Role.Button
+                        if (recognizing) disabled()
+                        contentDescription = if (recognizing) "正在转写" else "长按说话，松开转文字，上滑取消"
+                        if (!recognizing) onClick(label = if (recording) "完成转文字" else "开始录音") {
+                            if (voice.phase == VoicePhase.RECORDING) voice.finish() else voice.start()
+                            true
+                        }
+                    }
+                    .pointerInput(voice) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            if (voice.phase != VoicePhase.IDLE) return@awaitEachGesture
+                            val longPress = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            voice.start()
+                            var released = false
+                            try {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == longPress.id } ?: break
+                                    val cancel = change.position.y - down.position.y < -cancelDistance
+                                    if (voice.phase == VoicePhase.RECORDING && voice.cancelArmed != cancel) {
+                                        voice.cancelArmed = cancel
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                    change.consume()
+                                    if (!change.pressed) {
+                                        released = true
+                                        voice.finish()
+                                        break
+                                    }
+                                }
+                            } finally {
+                                if (!released && voice.phase == VoicePhase.RECORDING) voice.cancel()
+                            }
+                        }
+                    },
                 shape = RoundedCornerShape(18.dp),
+                color = when {
+                    voice.cancelArmed -> colors.errorContainer
+                    recognizing -> colors.surfaceContainerHighest
+                    else -> colors.primary
+                },
+                contentColor = when {
+                    voice.cancelArmed -> colors.onErrorContainer
+                    recognizing -> colors.onSurfaceVariant
+                    else -> colors.onPrimary
+                },
             ) {
-                if (!recognizing) {
-                    BankIcon(if (recording) BankIconKind.Check else BankIconKind.Mic, Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    if (!recognizing) {
+                        BankIcon(if (voice.cancelArmed) BankIconKind.Close else BankIconKind.Mic, Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(when {
+                        voice.cancelArmed -> "松开取消"
+                        recording -> "松开转文字"
+                        recognizing -> "转写中…"
+                        else -> "长按说话"
+                    }, textAlign = TextAlign.Center)
                 }
-                Text(if (recording) "完成并转文字" else if (recognizing) "转写中…" else "开始说话", textAlign = TextAlign.Center)
             }
         }
         Text("转成文字后，由你核对发送", Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
@@ -126,7 +187,7 @@ private fun VoiceWaveform(levels: List<Float>, active: Boolean, modifier: Modifi
             if (motion) tween(80) else snap(), label = "voiceAmplitude")
         height
     }
-    Canvas(modifier.semantics { contentDescription = if (active) "麦克风实时音量" else "等待开始录音" }) {
+    Canvas(modifier.testTag("voice_waveform").semantics { contentDescription = if (active) "麦克风实时音量" else "等待开始录音" }) {
         val step = size.width / amplitudes.size.coerceAtLeast(1)
         val width = minOf(4.dp.toPx(), step * .55f)
         amplitudes.forEachIndexed { index, level ->

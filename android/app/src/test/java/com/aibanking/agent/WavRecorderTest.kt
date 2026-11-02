@@ -5,6 +5,7 @@ import com.aibanking.agent.ui.chat.pcmLevel
 import com.aibanking.agent.ui.chat.pcmToWav
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -42,10 +43,15 @@ class WavRecorderTest {
     }
 
     @Test
-    fun aQuietSignalScalesLinearlyUnderTheSpeechGain() {
-        // 1638 is 5% of full scale; the 6x gain that makes speech fill the meter puts it at 0.3.
-        val pcm = littleEndian(1638, samples = 100)
-        assertEquals(0.3f, pcmLevel(pcm, pcm.size), 1e-3f)
+    fun quietPhoneSpeechIsVisibleAndTheMeterRemainsMonotonic() {
+        val veryQuiet = littleEndian(32, samples = 100)
+        val quiet = littleEndian(320, samples = 100)
+        val normal = littleEndian(1638, samples = 100)
+        val a = pcmLevel(veryQuiet, veryQuiet.size)
+        val b = pcmLevel(quiet, quiet.size)
+        val c = pcmLevel(normal, normal.size)
+        assertTrue(a > .1f)
+        assertTrue(a < b && b < c && c < 1f)
     }
 
     @Test
@@ -64,7 +70,7 @@ class WavRecorderTest {
     @Test
     fun aTrailingOddByteIsIgnoredRatherThanReadAsASample() {
         val pcm = littleEndian(1638, samples = 4).copyOf(9).also { it[8] = 0x7F }
-        assertEquals(0.3f, pcmLevel(pcm, 9), 1e-3f)
+        assertEquals(pcmLevel(littleEndian(1638, samples = 4), 8), pcmLevel(pcm, 9), 1e-6f)
     }
 
     /** [count] samples of a constant value, little-endian, as the recorder reads it. */
