@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#2D6047</color>
-    <color name="anyan_brand_primary">#2D6047</color>
+    <color name="ic_launcher_background">#30312D</color>
+    <color name="anyan_brand_primary">#30312D</color>
+    <color name="anyan_brand_accent">#B39A68</color>
+    <color name="anyan_brand_background">#F6F3EB</color>
 </resources>

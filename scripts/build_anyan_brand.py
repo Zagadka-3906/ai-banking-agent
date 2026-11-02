@@ -50,7 +50,12 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
     from concept_sheet import embed
 
     palette = json.loads((source / "palette.json").read_text(encoding="utf-8"))
-    green, ink, white, paper, sage = [c["hex"] for c in palette["colors"]]
+    if "roles" in palette:
+        primary, ink, white, paper, accent = [palette["roles"][k] for k in ("primary", "ink", "white", "background", "accent")]
+    else:
+        # Re-export earlier delivered palettes without changing their source schema.
+        primary, ink, white, paper, accent = [c["hex"] for c in palette["colors"]]
+    icon_foreground = palette.get("roles", {}).get("icon_foreground", white)
     for name in ("masters", "android"):
         shutil.copytree(source / name, output / name)
     for name in ("README.md", "palette.json", "presentation-spec.json"):
@@ -77,8 +82,9 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
     # Use the skill's recolouring exporter, then apply the authored optical reverse.
     for layout in ("symbol", "horizontal", "stacked", "wordmark"):
         dest = output / "digital" / layout
+        mono_args = [arg for color in dict.fromkeys((primary, ink, accent)) for arg in ("--mono", color)]
         run("export_variants.py", masters / f"anyan-{layout}.svg", "--out-dir", dest,
-            "--title", "AnYan", "--name", f"anyan-{layout}", "--only", "black", "white", "mono", "--mono", green, "--mono", ink, "--mono", sage)
+            "--title", "AnYan", "--name", f"anyan-{layout}", "--only", "black", "white", "mono", *mono_args)
         shutil.copy2(masters / f"anyan-{layout}.svg", dest / f"anyan-{layout}-color.svg")
         shutil.copy2(masters / f"anyan-{layout}-reversed.svg", dest / f"anyan-{layout}-white.svg")
         for vector in sorted(dest.glob("*.svg")):
@@ -99,7 +105,7 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
     web = output / "web"
     run("export_variants.py", masters / "anyan-symbol.svg", "--out-dir", web, "--title", "AnYan",
         "--only", "favicon", "app-icon", "--favicon-source", masters / "anyan-symbol-small.svg",
-        "--icon-bg", green, "--icon-scale", ".672", "--web-icons")
+        "--icon-bg", primary, "--icon-fg", icon_foreground, "--icon-scale", ".672", "--web-icons")
     # Opaque tile favicons remain legible on both light and dark browser chrome.
     shutil.copy2(masters / "anyan-favicon.svg", web / "favicon.svg")
     for size in (16, 32, 48):
@@ -108,8 +114,8 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
     for name, size in (("apple-touch-icon.png", 180), ("icon-192.png", 192), ("icon-512.png", 512)):
         render(masters / "anyan-app-icon-square.svg", web / name, size)
     maskable = (f'<svg xmlns="{SVG}" viewBox="0 0 256 256" width="256" height="256" role="img"><title>AnYan maskable icon</title>'
-                f'<rect width="256" height="256" fill="{green}"/><g transform="translate(46.08 48.64) scale(0.64)">'
-                f'<path fill="{white}" d="{palette["paths"]["reversed"]}"/></g></svg>')
+                f'<rect width="256" height="256" fill="{primary}"/><g transform="translate(46.08 48.64) scale(0.64)">'
+                f'<path fill="{icon_foreground}" d="{palette["paths"]["reversed"]}"/></g></svg>')
     (web / "anyan-maskable.svg").write_text(maskable, encoding="utf-8")
     render(web / "anyan-maskable.svg", web / "maskable-512.png", 512)
     manifest = json.loads((web / "site.webmanifest").read_text(encoding="utf-8"))
@@ -148,13 +154,17 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
     def label(text, x, y, size=24, color=ink):
         return f'<text x="{x}" y="{y}" font-family="Microsoft YaHei, sans-serif" font-size="{size}" fill="{color}">{html.escape(text)}</text>'
 
-    parts = [f'<rect width="1600" height="1100" fill="{paper}"/>', label("AnYan 安言", 72, 78, 38), label("开口 A · 松柏绿主题", 72, 124, 24),
+    theme_name = palette.get("theme_name", palette["colors"][0]["name"])
+    parts = [f'<rect width="1600" height="1100" fill="{paper}"/>', label("AnYan 安言", 72, 78, 38), label(f"开口 A · {theme_name}", 72, 124, 24),
              art(masters / "anyan-horizontal.svg", "hero", 72, 175, 1100, 245),
              art(masters / "anyan-app-icon.svg", "app", 1280, 178, 220, 220)]
-    for i, (name, color) in enumerate((("松柏绿", green), ("米白", paper), ("墨黑", ink), ("浅鼠尾草绿", sage))):
+    swatches = palette.get("overview_swatches", ((palette["colors"][0]["name"], primary), ("背景", paper), ("正文", ink), ("点缀", accent)))
+    for i, (name, color) in enumerate(swatches):
         x = 72 + i * 378
         parts += [f'<rect x="{x}" y="470" width="322" height="64" fill="{color}" stroke="{ink}" stroke-width="0.5"/>', label(name, x, 573), label(color, x, 608, 21)]
-    for i, (name, file, dark) in enumerate((("标准符号", masters / "anyan-symbol.svg", False), ("墨黑单色", output / f"digital/symbol/anyan-symbol-mono-{ink[1:].lower()}.svg", False), ("反白", masters / "anyan-symbol-reversed.svg", True))):
+    dark_mark = masters / "anyan-symbol-on-dark.svg"
+    alternate = ("浅金深底", dark_mark, True) if dark_mark.exists() else ("单色", output / f"digital/symbol/anyan-symbol-mono-{ink[1:].lower()}.svg", False)
+    for i, (name, file, dark) in enumerate((("标准符号", masters / "anyan-symbol.svg", False), alternate, ("白色反白", masters / "anyan-symbol-reversed.svg", True))):
         x = 72 + i * 378
         parts.append(label(name, x, 705))
         if dark:
@@ -190,7 +200,7 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
     ico_sizes = sorted({ico[6 + 16 * i] or 256 for i in range(count)})
     if ico_sizes != [16, 32, 48]:
         raise ValueError("Favicon ICO sizes mismatch")
-    ratios = {"pine_on_white": round(contrast(green, white), 2), "pine_on_paper": round(contrast(green, paper), 2), "white_on_ink": round(contrast(white, ink), 2), "sage_on_ink": round(contrast(sage, ink), 2)}
+    ratios = {"primary_on_white": round(contrast(primary, white), 2), "primary_on_paper": round(contrast(primary, paper), 2), "white_on_ink": round(contrast(white, ink), 2), "accent_on_ink": round(contrast(accent, ink), 2), "icon_foreground_on_primary": round(contrast(icon_foreground, primary), 2)}
     if min(ratios.values()) < 4.5:
         raise ValueError("Approved colour pair has insufficient contrast")
     raster_validation = "PNG headers and declared dimensions"
@@ -226,6 +236,7 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
                     raise RuntimeError("Android resource validation failed: " + result.stderr[-2000:])
         android_validation = "aapt2 compile and link passed; minSdk 26"
     validation = {"version": palette["version"], "colors": [c["hex"] for c in palette["colors"]], "contrast_ratios": ratios,
+                  "accent_on_background": round(contrast(accent, paper), 2), "usage_restrictions": palette.get("usage_restrictions", []),
                   "masters": len(list(masters.glob("*.svg"))), "live_text_in_masters": False, "gradients_in_masters": False,
                   "android_safe_circle_radius": 33, "android_max_control_point_radius": round(android_radius, 3),
                   "maskable_safe_circle_radius": 102.4, "maskable_max_control_point_radius": round(mask_radius, 3),
@@ -235,9 +246,12 @@ def export(source: Path, output: Path, skill: Path, android_sdk: Path | None = N
     files = sorted(p for p in output.rglob("*") if p.is_file())
     checksums = {p.relative_to(output).as_posix(): {"bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in files}
     (output / "manifest.json").write_text(json.dumps({"brand": "AnYan", "version": palette["version"], "files": checksums}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    archive_root = palette.get("archive_root", "AnYan-Logo-Kit")
+    if archive_root in ("", ".", "..") or any(c in archive_root for c in ("/", "\\", ":")):
+        raise ValueError("Archive root must be a single directory name")
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for p in [*files, output / "manifest.json"]:
-            bundle.write(p, "AnYan-Logo-Kit/" + p.relative_to(output).as_posix())
+            bundle.write(p, archive_root + "/" + p.relative_to(output).as_posix())
     with zipfile.ZipFile(archive) as bundle:
         if bundle.testzip():
             raise ValueError("Invalid final ZIP")

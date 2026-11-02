@@ -15,7 +15,7 @@
 
 ## 技术附录
 
-品牌文件：[AnYan「开口 A」松柏绿 Logo 套件与使用规范](brand/anyan-20261102/final/README.md)。
+品牌文件：[AnYan「开口 A」暖石墨＋浅金 Logo 套件与使用规范](brand/anyan-20261102/final/README.md)。
 
 [Agent 架构](Agent架构.md)、[对话可靠性](对话可靠性改造.md)、[多轮评测](多轮任务评测.md)、[稳定验收标准](稳定验收标准.md)、[UI 设计约定](UI建议.md)、[飞书接入](飞书IM接入.md)、[业务规则](银行业务规则说明.md)与[规则 JSON](银行业务规则.json)保留作源码参考。
 

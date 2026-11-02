@@ -1,12 +1,12 @@
 {
   "brand": "AnYan",
-  "deck_title": "安言 · 正式 Logo 套件",
+  "deck_title": "安言 · 暖石墨＋浅金 Logo 套件",
   "date": "2026-11-02",
   "final": true,
   "greyscale": false,
   "label": "A · 开口 A",
   "industry": "finance",
-  "brand_color": "#2D6047",
+  "brand_color": "#30312D",
   "tagline": "安全可控的银行 AI 助手",
   "brief": "以名字首字母建立识别，横梁保留开口。适用于 Android、聊天头像、后台页眉与答辩材料。全部场景为品牌应用示意。",
   "adjectives": [
@@ -15,7 +15,7 @@
     "克制",
     "易接近"
   ],
-  "criteria": "单色可用，16 px 可辨认；使用松柏绿、米白与墨黑，不使用蓝色或渐变。",
+  "criteria": "用户已选定右侧暖石墨＋浅金。浅底用石墨色，浅金用于深底图标和装饰；无蓝色、无渐变。",
   "nav": [
     "功能",
     "安全",
@@ -28,19 +28,19 @@
       "avatar": "masters/anyan-symbol.svg",
       "lockup": "masters/anyan-horizontal.svg",
       "stacked": "masters/anyan-stacked.svg",
-      "symbol_on_tile": "masters/anyan-symbol-reversed.svg",
-      "symbol_on_dark": "masters/anyan-symbol-reversed.svg",
-      "lockup_on_dark": "masters/anyan-horizontal-reversed.svg",
-      "stacked_on_tile": "masters/anyan-stacked-reversed.svg",
+      "symbol_on_tile": "masters/anyan-symbol-on-dark.svg",
+      "symbol_on_dark": "masters/anyan-symbol-on-dark.svg",
+      "lockup_on_dark": "masters/anyan-horizontal-on-dark.svg",
+      "stacked_on_tile": "masters/anyan-stacked-on-dark.svg",
       "idea": "圆拱构成 A，开放横梁形成独特识别。",
       "rationale": [
         "字母对应 AnYan，减少额外符号。",
         "宽间隙支持小尺寸与单色。",
-        "松柏绿搭配米白，路径字标避免字体依赖。"
+        "石墨色承担正文，浅金仅点缀；路径字标避免字体依赖。"
       ]
     }
   ],
-  "recommendation": "使用主色横向组合；深色背景使用反白；16–32 px 使用专用小尺寸版本。场景图仅示意，不代表真实银行卡或已更新客户端。",
+  "recommendation": "浅底使用石墨色主标，深底可用浅金标志配白字或纯白反白；浅金不作浅底小字。场景图为示意，客户端发布版本另行接入。",
   "next_steps": [
     "套件含 SVG、透明 PNG、Android 与网页图标。",
     "使用规范说明安全留白、最小尺寸和正确背景。",
