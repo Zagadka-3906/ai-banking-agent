@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>安言 · 测试数据</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #F6F3EB;
+  font-family: 'Noto Sans SC', sans-serif;
+  position: relative;
+}
+
+.logo-area {
+  position: absolute;
+  top: 60px;
+  left: 80px;
+}
+
+.logo-area img {
+  height: 36px;
+  width: auto;
+}
+
+.page-title {
+  position: absolute;
+  top: 60px;
+  left: 320px;
+  font-size: 72px;
+  font-weight: 900;
+  color: #30312D;
+  letter-spacing: -0.01em;
+}
+
+/* 主数据横幅 */
+.hero-number-band {
+  position: absolute;
+  top: 200px;
+  left: 0;
+  right: 0;
+  height: 360px;
+  background: #30312D;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.hero-number-band .big-number {
+  font-size: 280px;
+  font-weight: 900;
+  font-family: 'Archivo', sans-serif;
+  color: #FFFFFF;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-number-band .caption {
+  font-size: 32px;
+  font-weight: 400;
+  color: #FFFFFF;
+  margin-top: 20px;
+  opacity: 0.9;
+}
+
+/* 卡片网格 */
+.data-cards {
+  position: absolute;
+  top: 620px;
+  left: 80px;
+  right: 80px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+}
+
+.data-card {
+  background: #FFFFFF;
+  border-radius: 12px;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-card .number {
+  font-size: 120px;
+  font-weight: 900;
+  font-family: 'Archivo', sans-serif;
+  color: #30312D;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 16px;
+}
+
+.data-card .label {
+  font-size: 28px;
+  font-weight: 400;
+  color: #30312D;
+  line-height: 1.3;
+}
+
+.data-card .sublabel {
+  font-size: 20px;
+  font-weight: 400;
+  color: #6B6C68;
+  margin-top: 8px;
+}
+
+/* 几何装饰 */
+.geometric-bg {
+  position: absolute;
+  top: 200px;
+  right: 80px;
+  width: 160px;
+  height: 360px;
+  pointer-events: none;
+}
+
+.arch-small {
+  position: absolute;
+  bottom: 60px;
+  left: 80px;
+  width: 180px;
+  height: 180px;
+}
+</style>
+</head>
+<body>
+
+<div class="logo-area">
+  <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsbGVkYnk9ImJyYW5kLXRpdGxlIj48dGl0bGUgaWQ9ImJyYW5kLXRpdGxlIj5BbllhbiAvIGFueWFuLXN5bWJvbDwvdGl0bGU+PHBhdGggZmlsbD0iIzMwMzEyRCIgZD0iTTMyIDIyNFYxMTJDMzIgNTYgNzQgMjQgMTI4IDI0QzE4MiAyNCAyMjQgNTYgMjI0IDExMlYyMjRIMTc2VjExMkMxNzYgODIgMTU2IDY0IDEyOCA2NEMxMDAgNjQgODAgODIgODAgMTEyVjEyOEgxNDRWMTY4SDgwVjIyNFoiIC8+PC9zdmc+DQo=" alt="安言">
+</div>
+
+<h1 class="page-title">测试数据</h1>
+
+<!-- 主数据横幅 -->
+<div class="hero-number-band">
+  <div class="big-number">3101</div>
+  <div class="caption">后端测试通过用例</div>
+</div>
+
+<!-- 几何装饰（在横幅上方） -->
+<svg class="geometric-bg" viewBox="0 0 160 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="80" cy="180" r="40" fill="#B39A68" opacity="0.3"/>
+</svg>
+
+<!-- 次级数据卡片 -->
+<div class="data-cards">
+  <div class="data-card">
+    <div class="number">115</div>
+    <div class="label">Android JVM 单元测试</div>
+    <div class="sublabel">客户端逻辑验证</div>
+  </div>
+
+  <div class="data-card">
+    <div class="number">24</div>
+    <div class="label">Android 设备专项测试</div>
+    <div class="sublabel">真机功能与 UI 验证</div>
+  </div>
+
+  <div class="data-card">
+    <div class="number">1</div>
+    <div class="label">收尾演示单例</div>
+    <div class="sublabel">端到端流程演示</div>
+  </div>
+</div>
+
+<!-- 左下角几何点缀 -->
+<svg class="arch-small" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M 90 180 Q 90 90, 180 90 L 180 180 Z" fill="#30312D" opacity="0.05"/>
+</svg>
+
+</body>
+</html>
