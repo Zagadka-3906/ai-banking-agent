@@ -1,0 +1,36 @@
+{
+  "slug": "graphite-gold",
+  "name": "暖石墨＋浅金",
+  "primary": "#30312D",
+  "background": "#F6F3EB",
+  "text": "#30312D",
+  "accent": "#B39A68",
+  "soft": "#E9E5DB",
+  "line": "#D9D3C7",
+  "on_primary": "#FFFFFF",
+  "icon_foreground": "#B39A68",
+  "dark": "#30312D",
+  "on_dark": "#B39A68",
+  "description": "克制、正式；浅金只作深底图标与少量点缀。",
+  "swatches": [
+    [
+      "暖石墨",
+      "#30312D"
+    ],
+    [
+      "米白",
+      "#F6F3EB"
+    ],
+    [
+      "浅金",
+      "#B39A68"
+    ]
+  ],
+  "contrast_ratios": {
+    "primary_on_background": 11.82,
+    "text_on_background": 11.82,
+    "white_on_primary": 13.1,
+    "app_mark_on_tile": 4.83,
+    "accent_on_background": 2.45
+  }
+}
