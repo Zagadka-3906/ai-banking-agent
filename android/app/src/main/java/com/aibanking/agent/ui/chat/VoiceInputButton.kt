@@ -6,107 +6,45 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Stable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.aibanking.agent.ui.components.BankIcon
-import com.aibanking.agent.ui.components.BankIconKind
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val VOICE_PREFS = "voice_input"
 private const val CLOUD_CONSENT_KEY = "cloud_asr_consent"
-private const val MIN_HOLD_MILLIS = 600L
-private const val WAVE_BARS = 22
-
-// The familiar chat-app palette for the recording bubble.
-private val BubbleGreen = Color(0xFF95EC69)
-private val BubbleRed = Color(0xFFFA5151)
-private val WaveInk = Color(0xFF1B1B1B)
+private const val MIN_RECORD_MILLIS = 600L
+private const val WAVE_BARS = 40
 
 private enum class VoiceEngine { DEVICE, CLOUD }
 
 internal enum class VoicePhase { IDLE, RECORDING, RECOGNIZING }
 
-/**
- * Hold-to-talk voice input in the manner of a chat app: the composer turns into
- * a "按住 说话" bar; while held, a dimmed overlay shows a live waveform and the
- * elapsed time; sliding up cancels; releasing turns the speech into text in the
- * input box, where the user reviews it before sending. Nothing is sent by voice.
- *
- * On-device recognition is preferred: the audio never leaves the phone. Only
- * when the device has no recogniser, and the gateway has cloud recognition
- * configured, does the user get the option to upload a clip - after an
- * explicit, remembered consent that says where the audio goes.
- */
+/** Dictation only. Audio is transient; recognized text is reviewed in the composer. */
 @Stable
 internal class VoiceInput {
     var voiceMode by mutableStateOf(false)
     var phase by mutableStateOf(VoicePhase.IDLE)
-    var cancelArmed by mutableStateOf(false)
+    var cloudRecognition by mutableStateOf(false)
+    var partialText by mutableStateOf("")
     var elapsedSeconds by mutableIntStateOf(0)
     var level by mutableFloatStateOf(0f)
     val wave = mutableStateListOf<Float>().apply { repeat(WAVE_BARS) { add(0f) } }
@@ -114,12 +52,16 @@ internal class VoiceInput {
     var askConsent by mutableStateOf(false)
 
     internal var onToggle: () -> Unit = {}
-    internal var onPress: () -> Unit = {}
-    internal var onRelease: () -> Unit = {}
+    internal var onStart: () -> Unit = {}
+    internal var onFinish: () -> Unit = {}
+    internal var onCancel: () -> Unit = {}
+    internal var onClose: () -> Unit = {}
 
     fun toggle() = onToggle()
-    fun press() = onPress()
-    fun release() = onRelease()
+    fun start() = onStart()
+    fun finish() = onFinish()
+    fun cancel() = onCancel()
+    fun close() = onClose()
 }
 
 @Composable
@@ -128,33 +70,45 @@ internal fun rememberVoiceInput(
     captureResult: () -> (String) -> Unit,
     cloudAvailable: ((Boolean) -> Unit) -> Unit = { it(false) },
     transcribeCloud: (ByteArray, (String) -> Unit, (String) -> Unit) -> Unit = { _, _, fail -> fail("云端语音识别不可用") },
+    audioRecorderFactory: (() -> Unit) -> VoiceAudioCapture = ::WavRecorder,
+    onDeviceAvailable: (Context) -> Boolean = { context ->
+        Build.VERSION.SDK_INT >= 31 && runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }.getOrDefault(false)
+    },
 ): VoiceInput {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE) }
     val voice = remember { VoiceInput() }
-    val onDevice = remember { Build.VERSION.SDK_INT >= 31 && runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }.getOrDefault(false) }
+    val currentEnabled by rememberUpdatedState(enabled)
+    val onDevice = remember { onDeviceAvailable(context) }
     val engine = remember { mutableStateOf(VoiceEngine.DEVICE) }
     val recognizer = remember { mutableStateOf<SpeechRecognizer?>(null) }
-    val recorder = remember { mutableStateOf<WavRecorder?>(null) }
+    val recorder = remember { mutableStateOf<VoiceAudioCapture?>(null) }
     val pendingResult = remember { mutableStateOf<((String) -> Unit)?>(null) }
     val earlyText = remember { mutableStateOf<String?>(null) }
     val startedAt = remember { mutableStateOf(0L) }
+    val generation = remember { mutableStateOf(0L) }
+    val alive = remember { mutableStateOf(true) }
 
     fun resumed() = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
     fun granted() = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     fun reset() {
         voice.phase = VoicePhase.IDLE
-        voice.cancelArmed = false
+        voice.partialText = ""
         voice.level = 0f
+        voice.elapsedSeconds = 0
+        voice.wave.indices.forEach { voice.wave[it] = 0f }
         pendingResult.value = null
         earlyText.value = null
     }
 
     fun cancelAll() {
-        val previous = recognizer.value; recognizer.value = null; previous?.cancel(); previous?.destroy()
+        generation.value++
+        val previous = recognizer.value; recognizer.value = null
+        runCatching { previous?.cancel() }
+        runCatching { previous?.destroy() }
         recorder.value?.cancel(); recorder.value = null
         reset()
     }
@@ -191,22 +145,33 @@ internal fun rememberVoiceInput(
                     if (recognizer.value !== engineInstance || !resumed()) return
                     val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                     recognizer.value = null; engineInstance.destroy()
-                    // The recogniser may finish on silence while the user still holds the bar.
-                    if (voice.phase == VoicePhase.RECORDING) earlyText.value = text else deliver(text)
+                    // On-device recognition may finish on silence before the user taps Done.
+                    if (voice.phase == VoicePhase.RECORDING) {
+                        earlyText.value = text
+                        voice.partialText = text
+                    } else deliver(text)
                 }
-                override fun onPartialResults(partialResults: Bundle?) = Unit
+                override fun onPartialResults(partialResults: Bundle?) {
+                    if (recognizer.value === engineInstance && voice.phase == VoicePhase.RECORDING && resumed()) {
+                        voice.partialText = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                    }
+                }
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
             })
             engineInstance.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             })
         } catch (_: Exception) { cancelAll(); voice.message = "本机语音服务不可用，请输入文字" }
     }
 
     fun startCloud() {
-        val active = WavRecorder(onLimit = { scope.launch { voice.release() } })
+        val capture = generation.value
+        val active = audioRecorderFactory { scope.launch {
+            if (generation.value == capture && voice.phase == VoicePhase.RECORDING) voice.finish()
+        } }
         if (!active.start()) { cancelAll(); voice.message = "无法打开麦克风，请输入文字"; return }
         recorder.value = active
     }
@@ -216,15 +181,23 @@ internal fun rememberVoiceInput(
         recorder.value = null
         val wav = active.stop()
         if (wav == null) { reset(); voice.message = "没有录到声音，请再说一次"; return }
-        transcribeCloud(wav, { text -> deliver(text) }, { failure -> reset(); voice.message = failure })
+        val request = generation.value
+        fun current() = alive.value && resumed() && generation.value == request && voice.phase == VoicePhase.RECOGNIZING
+        transcribeCloud(wav, { text -> if (current()) deliver(text) }, { failure ->
+            if (current()) { reset(); voice.message = failure }
+        })
     }
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (ok) voice.voiceMode = true else voice.message = "未启用麦克风，可继续输入文字"
+        if (alive.value && resumed()) {
+            if (ok && currentEnabled) voice.voiceMode = true else if (!ok) voice.message = "未启用麦克风，可继续输入文字"
+        }
     }
 
     fun enterVoiceMode(useEngine: VoiceEngine) {
+        if (!alive.value || !resumed() || !currentEnabled) return
         engine.value = useEngine
+        voice.cloudRecognition = useEngine == VoiceEngine.CLOUD
         if (granted()) voice.voiceMode = true else permission.launch(Manifest.permission.RECORD_AUDIO)
     }
 
@@ -234,6 +207,7 @@ internal fun rememberVoiceInput(
             !enabled -> Unit
             onDevice -> enterVoiceMode(VoiceEngine.DEVICE)
             else -> cloudAvailable { available ->
+                if (!alive.value || !resumed() || !currentEnabled) return@cloudAvailable
                 when {
                     !available -> voice.message = "本设备不支持端侧语音识别，请输入文字"
                     prefs.getBoolean(CLOUD_CONSENT_KEY, false) -> enterVoiceMode(VoiceEngine.CLOUD)
@@ -242,24 +216,24 @@ internal fun rememberVoiceInput(
             }
         }
     }
-    voice.onPress = press@{
-        if (!enabled || voice.phase != VoicePhase.IDLE) return@press
-        if (!granted()) { permission.launch(Manifest.permission.RECORD_AUDIO); return@press }
+    voice.onStart = start@{
+        if (!enabled || !voice.voiceMode || !resumed() || voice.phase != VoicePhase.IDLE) return@start
+        if (!granted()) { permission.launch(Manifest.permission.RECORD_AUDIO); return@start }
+        generation.value++
         pendingResult.value = captureResult()
         earlyText.value = null
-        voice.cancelArmed = false
+        voice.partialText = ""
         voice.elapsedSeconds = 0
         voice.wave.indices.forEach { voice.wave[it] = 0f }
-        startedAt.value = System.currentTimeMillis()
+        startedAt.value = SystemClock.elapsedRealtime()
         voice.phase = VoicePhase.RECORDING
         if (engine.value == VoiceEngine.CLOUD) startCloud() else startDevice()
     }
-    voice.onRelease = release@{
-        if (voice.phase != VoicePhase.RECORDING) return@release
-        val held = System.currentTimeMillis() - startedAt.value
+    voice.onFinish = finish@{
+        if (voice.phase != VoicePhase.RECORDING) return@finish
+        val recorded = SystemClock.elapsedRealtime() - startedAt.value
         when {
-            voice.cancelArmed -> cancelAll()
-            held < MIN_HOLD_MILLIS -> { cancelAll(); voice.message = "说话时间太短" }
+            recorded < MIN_RECORD_MILLIS -> { cancelAll(); voice.message = "说话时间太短" }
             else -> {
                 voice.phase = VoicePhase.RECOGNIZING
                 voice.level = 0f
@@ -274,20 +248,34 @@ internal fun rememberVoiceInput(
         }
     }
 
-    // Time and waveform while recording.
+    voice.onCancel = { cancelAll() }
+    voice.onClose = { cancelAll(); voice.voiceMode = false }
+
+    // Both engines share the same bounded capture and measured waveform.
     LaunchedEffect(voice.phase) {
         while (voice.phase == VoicePhase.RECORDING) {
             recorder.value?.let { voice.level = it.level }
             voice.wave.removeAt(0)
             voice.wave.add(voice.level)
-            voice.elapsedSeconds = ((System.currentTimeMillis() - startedAt.value) / 1000).toInt()
+            voice.elapsedSeconds = ((SystemClock.elapsedRealtime() - startedAt.value) / 1000).toInt()
+            if (voice.elapsedSeconds >= SPEECH_MAX_SECONDS) { voice.finish(); break }
             delay(70)
         }
     }
+    LaunchedEffect(voice.phase) {
+        if (voice.phase == VoicePhase.RECOGNIZING) {
+            delay(35_000)
+            if (voice.phase == VoicePhase.RECOGNIZING) {
+                cancelAll()
+                voice.message = "语音识别超时，请再试一次或输入文字"
+            }
+        }
+    }
     DisposableEffect(lifecycle) {
+        alive.value = true
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) cancelAll() }
         lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); recognizer.value?.destroy(); recognizer.value = null; recorder.value?.cancel(); recorder.value = null }
+        onDispose { alive.value = false; lifecycle.removeObserver(observer); cancelAll() }
     }
     LaunchedEffect(enabled) { if (!enabled) { cancelAll(); voice.voiceMode = false } }
 
@@ -305,119 +293,5 @@ internal fun rememberVoiceInput(
             title = { Text("语音输入") }, text = { Text(text) },
             confirmButton = { TextButton(colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), onClick = { voice.message = null }) { Text("知道了") } })
     }
-    if (voice.phase != VoicePhase.IDLE) VoiceOverlay(voice)
     return voice
-}
-
-/** Mic in text mode, keyboard in voice mode. */
-@Composable
-internal fun VoiceModeToggle(voice: VoiceInput, enabled: Boolean) {
-    val label = if (voice.voiceMode) "切换到键盘输入" else "语音输入"
-    IconButton(onClick = { voice.toggle() }, enabled = enabled || voice.voiceMode,
-        modifier = Modifier.testTag("voice_input").semantics { contentDescription = label }) {
-        BankIcon(if (voice.voiceMode) BankIconKind.Keyboard else BankIconKind.Mic, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-/** The wide "按住 说话" bar that replaces the text field in voice mode. */
-@Composable
-internal fun HoldToTalkBar(voice: VoiceInput, modifier: Modifier = Modifier) {
-    val haptics = LocalHapticFeedback.current
-    val cancelDistance = with(LocalDensity.current) { 96.dp.toPx() }
-    val held = voice.phase == VoicePhase.RECORDING
-    val container by animateColorAsState(
-        if (held) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surface, tween(120), label = "holdBar")
-    Surface(
-        shape = RoundedCornerShape(22.dp),
-        color = container,
-        modifier = modifier
-            .heightIn(min = 48.dp)
-            .padding(vertical = 4.dp)
-            .testTag("voice_hold")
-            .semantics { contentDescription = "按住说话" }
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    voice.press()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        val armed = change.position.y - down.position.y < -cancelDistance
-                        if (armed != voice.cancelArmed) {
-                            voice.cancelArmed = armed
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        }
-                        change.consume()
-                        if (!change.pressed) break
-                    }
-                    voice.release()
-                }
-            },
-    ) {
-        Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
-            Text(if (held) "松开 转文字" else "按住 说话", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
-private fun VoiceOverlay(voice: VoiceInput) {
-    Popup(properties = PopupProperties(focusable = false, clippingEnabled = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f))) {
-            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                val bubble by animateColorAsState(if (voice.cancelArmed) BubbleRed else BubbleGreen, tween(150), label = "bubble")
-                Surface(shape = RoundedCornerShape(18.dp), color = bubble, shadowElevation = 6.dp) {
-                    Box(Modifier.width(220.dp).height(84.dp), contentAlignment = Alignment.Center) {
-                        if (voice.phase == VoicePhase.RECOGNIZING) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                CircularProgressIndicator(Modifier.size(20.dp), color = WaveInk, strokeWidth = 2.dp)
-                                Text("识别中…", color = WaveInk, style = MaterialTheme.typography.titleSmall)
-                            }
-                        } else {
-                            Waveform(voice.wave)
-                        }
-                    }
-                }
-                if (voice.phase == VoicePhase.RECORDING) {
-                    Text(formatElapsed(voice.elapsedSeconds), color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelLarge)
-                }
-            }
-            Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 150.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                if (voice.phase == VoicePhase.RECORDING) {
-                    val size by animateDpAsState(if (voice.cancelArmed) 76.dp else 60.dp, tween(150), label = "cancelSize")
-                    val disc by animateColorAsState(if (voice.cancelArmed) Color.White else Color.White.copy(alpha = 0.18f), tween(150), label = "cancelDisc")
-                    Box(Modifier.size(size).clip(CircleShape).background(disc), contentAlignment = Alignment.Center) {
-                        BankIcon(BankIconKind.Close, Modifier.size(26.dp), tint = if (voice.cancelArmed) BubbleRed else Color.White)
-                    }
-                }
-                Text(
-                    when {
-                        voice.phase == VoicePhase.RECOGNIZING -> "正在把语音转成文字"
-                        voice.cancelArmed -> "松开手指，取消输入"
-                        else -> "松开 转文字，上滑 取消"
-                    },
-                    color = Color.White, style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun Waveform(levels: List<Float>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-        levels.forEach { level ->
-            val height by animateDpAsState(4.dp + 30.dp * level, tween(90), label = "bar")
-            Box(Modifier.width(3.dp).height(height).clip(RoundedCornerShape(2.dp)).background(WaveInk))
-        }
-        Spacer(Modifier.width(0.dp))
-    }
-}
-
-private fun formatElapsed(seconds: Int): String {
-    val left = SPEECH_MAX_SECONDS - seconds
-    return if (left in 0..5) "还可以说 $left 秒" else "0:%02d".format(seconds)
 }

@@ -97,15 +97,15 @@ class ScenarioAccountIsolationUiTest {
         val requestsBefore = messageRequests()
         ui.onNodeWithTag("voice_input").performClick()
         ui.waitUntil(10_000) {
-            ui.onAllNodesWithTag("voice_hold").fetchSemanticsNodes().isNotEmpty() ||
+            ui.onAllNodesWithTag("voice_panel").fetchSemanticsNodes().isNotEmpty() ||
                 ui.onAllNodesWithTag("voice_cloud_consent").fetchSemanticsNodes().isNotEmpty() ||
                 ui.onAllNodesWithText("本设备不支持端侧语音识别，请输入文字").fetchSemanticsNodes().isNotEmpty()
         }
         if (ui.onAllNodesWithTag("voice_cloud_consent").fetchSemanticsNodes().isNotEmpty()) {
             ui.onNodeWithTag("voice_cloud_consent").performClick()
         }
-        if (ui.onAllNodesWithTag("voice_hold").fetchSemanticsNodes().isNotEmpty()) {
-            ui.onNodeWithTag("voice_hold").assertIsDisplayed()
+        if (ui.onAllNodesWithTag("voice_panel").fetchSemanticsNodes().isNotEmpty()) {
+            ui.onNodeWithTag("voice_panel").assertIsDisplayed()
             ui.onNodeWithTag(UiTags.CHAT_INPUT).assertDoesNotExist()
             assertEquals("给李四转300元", model.state.value.input)
             ui.onNodeWithTag("voice_input").performClick()

@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -89,6 +90,10 @@ internal fun InputRow(
     val view = LocalView.current
     val send = { if (enabled) { focus.clearFocus(); onSend() } }
     val voice = rememberVoiceInput(voiceEnabled, captureVoiceResult, cloudSpeechAvailable, transcribeCloud)
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(voice.voiceMode) {
+        if (voice.voiceMode) { focus.clearFocus(); keyboard?.hide() }
+    }
     var focused by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val motion = LocalBankMotionEnabled.current
@@ -135,7 +140,7 @@ internal fun InputRow(
         ) {
             Column(Modifier.fillMaxWidth().padding(8.dp)) {
                 if (voice.voiceMode) {
-                    HoldToTalkBar(voice, Modifier.fillMaxWidth())
+                    VoiceInputPanel(voice)
                 } else {
                     TextField(
                         value = value,
@@ -159,7 +164,7 @@ internal fun InputRow(
                         keyboardActions = KeyboardActions(onSend = { send() }),
                     )
                 }
-                Row(
+                if (!voice.voiceMode) Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

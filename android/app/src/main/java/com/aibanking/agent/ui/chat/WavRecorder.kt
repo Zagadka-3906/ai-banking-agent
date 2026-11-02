@@ -28,18 +28,25 @@ internal fun pcmToWav(pcm: ByteArray, sampleRate: Int = SPEECH_SAMPLE_RATE): Byt
  * Audio stays in memory only (never written to storage) and is capped at
  * [SPEECH_MAX_SECONDS]; [onLimit] fires when the cap stops the recording.
  */
-internal class WavRecorder(private val onLimit: () -> Unit) {
+internal interface VoiceAudioCapture {
+    val level: Float
+    fun start(): Boolean
+    fun stop(): ByteArray?
+    fun cancel()
+}
+
+internal class WavRecorder(private val onLimit: () -> Unit) : VoiceAudioCapture {
     private var record: AudioRecord? = null
     private var worker: Thread? = null
     private val pcm = ByteArrayOutputStream()
     @Volatile private var running = false
     /** Loudness of the latest buffer, 0..1, for the recording waveform. */
-    @Volatile var level = 0f
+    @Volatile override var level = 0f
         private set
 
     /** Caller must hold RECORD_AUDIO (requested by the voice button just before). */
     @SuppressLint("MissingPermission")
-    fun start(): Boolean {
+    override fun start(): Boolean {
         val minimum = AudioRecord.getMinBufferSize(SPEECH_SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minimum <= 0) return false
         val recorder = runCatching {
@@ -50,7 +57,14 @@ internal class WavRecorder(private val onLimit: () -> Unit) {
         record = recorder
         pcm.reset()
         running = true
-        recorder.startRecording()
+        try {
+            recorder.startRecording()
+        } catch (_: Exception) {
+            running = false
+            recorder.release()
+            record = null
+            return false
+        }
         val limitBytes = SPEECH_SAMPLE_RATE * 2 * SPEECH_MAX_SECONDS
         worker = Thread({
             val buffer = ByteArray(minimum)
@@ -67,7 +81,7 @@ internal class WavRecorder(private val onLimit: () -> Unit) {
     }
 
     /** Stop and return the clip as WAV, or null when nothing was captured. */
-    fun stop(): ByteArray? {
+    override fun stop(): ByteArray? {
         running = false
         worker?.join(1_000)
         worker = null
@@ -78,7 +92,7 @@ internal class WavRecorder(private val onLimit: () -> Unit) {
     }
 
     /** Discard without returning audio (screen left, voice disabled). */
-    fun cancel() { stop() }
+    override fun cancel() { stop() }
 }
 
 /** Root-mean-square loudness of 16-bit little-endian PCM, scaled so normal speech fills most of 0..1. */
