@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
+import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aibanking.agent.data.ContactRepository
 import com.aibanking.agent.data.SessionStore
@@ -40,19 +41,24 @@ class ContestDemoRecordingTest {
         ui.ensureLoggedIn("Bank@2026")
         ui.waitUntil(20_000) { model.state.value.authenticated }
         mark("首页", "文字对话与业务入口，所有账户均为虚构数据", "home")
-        ui.sendChatMessage("查一下余额")
+        send("查一下余额")
         ui.waitUntil(25_000) { !model.state.value.busy && model.state.value.messages.any { it.businessStatus == "SUCCEEDED" } }
         mark("绿区查询", "查询只读本人余额，不创建付款授权", "balance")
-        ui.sendChatMessage("给李四转10元")
+        send("给李四转10元")
         ui.waitUntil(25_000) { model.state.value.pending != null }
         assertFalse(checkNotNull(model.state.value.pending).mfaRequired)
         mark("黄区确认", "核对收款人和10元金额，再由用户确认", "yellow")
-        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo().performClick()
+        Espresso.closeSoftKeyboard()
+        ui.onNodeWithTag(UiTags.APPROVAL_APPROVE).performScrollTo()
+            .performTouchInput { longClick(durationMillis = 1600) }
         ui.waitUntil(25_000) { !model.state.value.busy && model.state.value.pending == null }
+        ui.waitUntil(10_000) {
+            runCatching { ui.onNodeWithTag(UiTags.OUTCOME_SCREEN).assertIsDisplayed(); true }.getOrDefault(false)
+        }
         ui.onNodeWithTag(UiTags.OUTCOME_SCREEN).assertIsDisplayed()
         mark("核心回执", "本段实际完成10元模拟转账，结果来自核心回执", "receipt")
         ui.returnFromOutcome()
-        ui.sendChatMessage("给李四转2000元")
+        send("给李四转2000元")
         ui.waitUntil(25_000) { model.state.value.pending != null }
         assertTrue(checkNotNull(model.state.value.pending).mfaRequired)
         mark("红区要求", "大额需要额外验证；本段展示要求后取消，不执行付款", "red")
@@ -93,7 +99,16 @@ class ContestDemoRecordingTest {
         val image = ui.onRoot().captureToImage().asAndroidBitmap()
         File(folder, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
         image.recycle()
+        // Retain each observed frame even if a later recording step fails and
+        // the test orchestrator clears the isolated app's external storage.
+        shell("cp ${File(folder, "$name.png").absolutePath} /data/local/tmp/anyan-contest-$name.png")
+        shell("cp ${File(folder, "chapters.json").absolutePath} /data/local/tmp/anyan-contest-chapters.json")
         SystemClock.sleep(3500)
+    }
+
+    private fun send(text: String) {
+        ui.onNodeWithTag(UiTags.CHAT_INPUT).performTextClearance()
+        ui.sendChatMessage(text)
     }
 
     private fun control(port: Int) {
