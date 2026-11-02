@@ -9,7 +9,7 @@
 
 [![持续集成状态](https://github.com/Zagadka-3906/ai-banking-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Zagadka-3906/ai-banking-agent/actions/workflows/ci.yml) [![许可证：MIT](https://img.shields.io/badge/license-MIT-30312D)](LICENSE) ![Android：Kotlin 与 Compose](https://img.shields.io/badge/Android-Kotlin%20%2B%20Compose-30312D) ![后端：Python 与 FastAPI](https://img.shields.io/badge/Backend-Python%20%2B%20FastAPI-30312D)
 
-[界面预览](#界面预览) · [可以做什么](#可以做什么) · [系统如何工作](#系统如何工作) · [快速开始](#快速开始) · [文档中心](docs/README.md) · [参与开发](CONTRIBUTING.md)
+[本地版下载](https://github.com/Zagadka-3906/ai-banking-agent/releases/tag/v2.0.0-beta.1) · [界面预览](#界面预览) · [可以做什么](#可以做什么) · [系统如何工作](#系统如何工作) · [快速开始](#快速开始) · [文档中心](docs/README.md) · [参与开发](CONTRIBUTING.md)
 
 传统银行 App 把业务分散在不同入口。安言尝试让用户直接表达目标：查清一笔消费、给联系人转账，或把生日安排拆成几个有先后关系的任务。模型负责理解、补问和规划，独立的银行核心负责身份、权限、资金与最终结果。
 
@@ -105,6 +105,9 @@ flowchart LR
 > 当前 MFA 使用演示 OTP 与登记设备的签名，不是真实银行短信或支付认证。审计链可检测部分篡改，不能抵御掌握服务器和密钥的管理员整体替换记录。完整威胁边界见[安全设计](docs/安全设计文档.md)和[安全自评](docs/安全自评报告.md)。
 
 ## 快速开始
+
+> [!TIP]
+> [下载 v2.0.0-beta.1 本地运行版](https://github.com/Zagadka-3906/ai-banking-agent/releases/tag/v2.0.0-beta.1)：提供模拟器 APK、USB 手机 APK 和中文运行指南，无需自行编译 App。APK 仍需连接你电脑上的后端，并使用你自己的模型 Key；这次发布不提供作者云端体验版。
 
 推荐 Windows + Python 3.12。后端支持的 Python 范围为 3.10–3.12；Android 构建另需 JDK 17 或 21、Android SDK API 37 与 Build Tools 36.0.0，App 最低支持 Android 8.0。
 
