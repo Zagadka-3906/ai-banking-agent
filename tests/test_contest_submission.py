@@ -16,8 +16,9 @@ def test_intro_rejects_outside_limit(length):
         introduction("## 报名简介\n\n" + "字" * length + "\n")
 
 
-def test_intro_boundary():
-    assert len(introduction("## 报名简介\n\n" + "字" * 200 + "\n")) == 200
+@pytest.mark.parametrize("heading", ["项目简介", "报名简介"])
+def test_intro_boundary(heading):
+    assert len(introduction("## " + heading + "\n\n" + "字" * 200 + "\n")) == 200
 
 
 @pytest.mark.parametrize("name", [".env", "nested/.env.production", "agent_devices.json", "sessions.sqlite3", "build/log.json", "id_ed25519", "android/local.properties"])

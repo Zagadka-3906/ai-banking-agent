@@ -26,7 +26,7 @@ TECHNICAL_ASSETS = ("assets/系统架构图.svg", "assets/系统架构图.mmd")
 
 
 def introduction(text: str) -> str:
-    match = re.search(r"## 报名简介[^\n]*\n\s*\n([^\n]+)", text)
+    match = re.search(r"## (?:项目简介|报名简介)[^\n]*\n\s*\n([^\n]+)", text)
     if not match or not 1 <= len(match[1].strip()) <= 200:
         raise ValueError("Introduction must contain 1–200 characters")
     return match[1].strip()

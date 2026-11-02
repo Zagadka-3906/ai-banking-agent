@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "knowledge_version": "2026-11-01.2",
-  "rules_version": "c0aad2dd3cf4af42ab4fac948d0a3dc2f7a65fc4426b3e84b958ae3b9f2cf03c",
+  "rules_version": "0a8866dc9624d2b0b378e6479416cce7eca0b9b35e002c661c9f9a82200dcf8c",
   "implementation": {
     "android/app/src/main/java/com/aibanking/agent/ui/chat/ChatContacts.kt": "a2fe7d5a52207d69195a2bf70dc3fab87657dfe260b44a3d4b3e2f5effff0916",
     "bank_agent/answer_presentation.py": "b943edb452361884f9265ed814d8624f34b62d8eb2db431e86d0ba0bd4788224",
@@ -50,7 +50,7 @@
     "bank_security/authorization.py": "652fe51c1fd7d96fbc580661f4352a2ceaafc00fb2cd85cb1aa5c47387ac48c7",
     "bank_security/sessions.py": "1a3a408d060ff2ff5d61b610feae960beea68e607e3e8391d3b4c10ffd63a927",
     "banking_knowledge.py": "878382b0138c287be878ee5107914c235447e49c4bfa033ac71e2caabb92ed3e",
-    "banking_rules.py": "3907677d39a1c721a035217842c4f0efba0dafef51f18bd116e286ab6337f31a",
+    "banking_rules.py": "7a354afec457ac99b073cd70696ff9a96c5fdaa2210641c5df1a4265a075f4bf",
     "intent_language.py": "f943915dd60191ddc8cb274f80890778ec8625534ad58ea2bc079ffa7f40847d",
     "model_config.py": "2ce2f0b20b18d920968ad385b88f9d9ca30ca6a37425ca33af1ca7215ca0b701",
     "scheduler.py": "1b8770971c8bca61439bdd39a3a0fa8c2ffe0adec985b1824f5026f8e66d078f",

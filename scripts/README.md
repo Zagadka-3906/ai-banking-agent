@@ -1,23 +1,45 @@
-# 脚本用途
+# 工具与脚本
 
-所有命令从仓库根目录运行。日志、截图、费用和报告写入忽略的 `build/`；配置与真实凭据留在本机。
+所有入口默认从仓库根目录运行。先用 `--help` 核对参数；运行产物放在忽略的 `build/`。模型调用会消耗额度，消息监听和写操作需要专用测试环境，不能对共享服务直接执行。
 
-| 用途 | 入口 | 说明 |
-| --- | --- | --- |
-| 本地服务与面板 | `serve_local_panel.py` | `start/status/stop`；独立本机数据目录 |
-| 基础验证 | `smoke_test.py`、`agent_gateway_e2e.py` | Core 与 Gateway 链路检查；先核对目标环境，避免向共享账本写测试数据 |
-| 规则导出 | `export_banking_rules.py` | `--check` 核对文档和 JSON 与源码一致 |
-| 仓库文档 | `check_repository_docs.py` | 检查已跟踪 Markdown 的本地链接，忽略用户未跟踪笔记 |
-| 场景与意图 | `benchmark_intents.py`、`evaluate_agent_scenarios.py` | 固定数据回归；模型调用按命令参数启用 |
-| 多轮评测 | `evaluate_dialogue_tasks.py`、`dialogue_eval/` | 模拟用户、独立评分、状态检查与费用记录；联网运行会产生费用 |
-| 失败复现 | `replay_dialogue_failures.py`、`summarize_conversation_comparison.py` | 保留原失败、重放及对照，不改写历史成绩 |
-| 提示词优化 | `optimize_dialogue_prompts.py` | 可选离线 GEPA；联网优化须设置预算，不自动发布 |
-| 发布门槛 | `check_dialogue_release.py`、`package_stable_candidate.py` | 完整证据检查后才能生成稳定候选源码包 |
-| 参赛材料 | `package_contest_submission.py` | 按提交页面五栏整理目录，技术三份正文禁止依赖其他报告或源码，保留随文图表供 PDF 嵌入；从已提交源码导出 source/，不转换格式，不依赖或校验 PPT／视频，可选记录 APK 来源 |
-| Android 隔离回归 | `run_android_regression.py`、`scenario_backend.py`、`device_signer.py`、`VerifyDeviceProto.java` | 专用场景包、临时服务、设备签名及官方 protobuf 结果核对 |
-| 演示录制 | `serve_contest_demo.py` | 隔离录制服务，与设备用例配合 |
-| 可用性页面 | `evaluate_usability.py` | 配合 `tools/usability/index.html`，原始观察不公开 |
-| 飞书排查与验收 | `diagnose_feishu_access.py`、`feishu_acceptance.py` | 脱敏诊断及明确测试窗口内的真实消息验收 |
-| 品牌导出 | `build_anyan_brand.py` | 保留的 SVG 原稿生成交付套件，需要 logo-design 技能及渲染器 |
+## 日常开发
 
-`dialogue_eval/` 的环境、传输、计量、评分和门槛模块被上述入口及测试共同使用。Java 结果核对器、旧版数据集和场景后端仍有调用，不按文件名或年代删除。参数以各入口的 `--help` 为准；多轮评测的详细操作见[评测说明](../docs/多轮任务评测.md)。
+| 入口 | 用途 |
+| --- | --- |
+| `serve_local_panel.py start/status/stop` | 本地 Core、Gateway 与运维台，独立配置与数据目录 |
+| `export_banking_rules.py` | 从同源规则与能力生成 Markdown / JSON；`--check` 只校验 |
+| `check_repository_docs.py` | 检查已跟踪 Markdown 的本地导航和图像路径 |
+| `smoke_test.py`、`agent_gateway_e2e.py` | 基础链路检查，可能操作演示账本，先确认目标 |
+
+## 对话与发布证据
+
+| 入口 | 用途 |
+| --- | --- |
+| `benchmark_intents.py`、`evaluate_agent_scenarios.py` | 固定意图与场景回归，模型按参数启用 |
+| `evaluate_dialogue_tasks.py`、`dialogue_eval/` | 多轮模拟用户、环境硬检查、语义评分与费用记录 |
+| `replay_dialogue_failures.py`、`summarize_conversation_comparison.py` | 原失败重放和对照，不改写历史成绩 |
+| `optimize_dialogue_prompts.py` | 可选 GEPA 离线候选，不自动发布，真实运行设置预算 |
+| `check_dialogue_release.py` | 检查完整冻结证据和运维复核 |
+| `package_stable_candidate.py` | 已提交源码通过门槛后导出稳定候选，不部署 |
+
+评测的环境、传输、计量和评分模块被多个入口和测试共享，不应当作重复代码清理。[评测说明](../docs/多轮任务评测.md)
+
+## 设备、渠道与素材
+
+| 入口 | 用途与约束 |
+| --- | --- |
+| `run_android_regression.py`、`scenario_backend.py` | Android 隔离场景、临时后端与设备结果 |
+| `device_signer.py`、`VerifyDeviceProto.java` | 设备证明与官方 protobuf 结果核对，有实际调用 |
+| `serve_contest_demo.py` | 保留旧命名的隔离录制服务，不代替日常后台 |
+| `evaluate_usability.py` | 配合 `tools/usability/index.html`，原始观察私下保留 |
+| `diagnose_feishu_access.py` | 飞书脱敏诊断，不把原始凭据写报告 |
+| `feishu_acceptance.py` | 真实消息验收监听，同 App 不能与其他监听并行 |
+| `build_anyan_brand.py` | 从定稿导出品牌套件，依赖本机品牌技能与渲染器 |
+
+## 历史兼容工具
+
+`package_contest_submission.py` 保留已有自动化与历史数据契约，属于早期材料整理入口，不是当前 GitHub 的安装方式，也不证明稳定发布通过。普通开发不需要运行它；提交材料目录不随公开文档更新而重新生成。
+
+## 添加工具
+
+明确输入、输出、是否联网、是否收费、是否写状态以及失败退出码。默认保持私有数据隔离，输出选择新目录，不覆盖旧证据；临时脚本、密钥、数据库和构建产物不入库。更多约定见[贡献指南](../CONTRIBUTING.md)。
