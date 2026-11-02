@@ -117,7 +117,7 @@ def package(folder: Path, ffmpeg: str | None = None) -> dict:
         assert_public_source(archive.namelist())
         if archive.testzip():
             raise ValueError("Invalid source archive")
-    descriptions = ["名称与 171 字简介，自行上传报名系统。", "系统架构图、核心算法、安全设计。", "10 页可编辑 PPTX、9 分 10 秒讲稿、真实安卓演示 MP4。", "源码、README、GitHub 地址、部署说明、测试与公网 APK。", "权限分级与 R1–R22 已知风险。"]
+    descriptions = [f"名称与 {len(intro)} 字简介，自行上传报名系统。", "系统架构图、核心算法、安全设计。", "10 页可编辑 PPTX、9 分 10 秒讲稿、真实安卓演示 MP4。", "源码、README、GitHub 地址、部署说明、测试与公网 APK。", "权限分级与 R1–R22 已知风险。"]
     (folder / "交付清单.md").write_text("# 安言参赛交付\n\n" + "\n".join(f"{i}. [{c[3:]}]({c}/)：{d}" for i, (c, d) in enumerate(zip(CATEGORIES, descriptions), 1)) + f"\n\n源码提交：`{commit}`。视频 {duration:.2f} 秒，真实安卓、隔离规则模式、中文字幕、无音轨，红区展示后取消。\n\n不含本机账户、会话、设备、私钥、令牌、日志和缓存。源码解压后查看完整相对链接。APK 连接公网地址，绑定项目 CA。\n", encoding="utf-8")
     files = sorted(p for p in folder.rglob("*") if p.is_file() and p.name not in {"安言参赛交付.zip", "manifest.json"})
     expected = {f"{category}/{name}" for category, names in mapping.items() for name in names}
