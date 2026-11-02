@@ -5,10 +5,12 @@ import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -47,6 +51,7 @@ import com.aibanking.agent.security.BiometricGate
 import com.aibanking.agent.ui.UiTags
 import com.aibanking.agent.ui.anim.BankConversationMotion
 import com.aibanking.agent.ui.anim.BankHaptics
+import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.GradientRevealText
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.RiskSignal
@@ -104,27 +109,52 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
         else -> AppPage.CHAT
     }
 
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val drawerScope = rememberCoroutineScope()
+    var drawerOpen by rememberSaveable { mutableStateOf(false) }
+    val motion = LocalBankMotionEnabled.current
+    val drawerProgress by animateFloatAsState(
+        targetValue = if (drawerOpen) 1f else 0f,
+        animationSpec = if (motion) tween(durationMillis = 320, easing = FastOutSlowInEasing) else snap(),
+        label = "zoomDrawerProgress",
+    )
+
+    fun openDrawer() { drawerOpen = true }
+    fun closeDrawer() { drawerOpen = false }
     fun closeDrawerThen(action: () -> Unit) {
-        drawerScope.launch { drawerState.close() }
+        drawerOpen = false
         action()
     }
-    BackHandler(enabled = drawerState.isOpen) { drawerScope.launch { drawerState.close() } }
-    // Screen-edge light while a yellow or red approval waits for the user; it
-    // fades once decided. The completed reply does not light it again.
+    BackHandler(enabled = drawerOpen) { closeDrawer() }
+
     val pendingApproval = state.pending
     val riskSignal = pendingApproval?.let {
         RiskSignal("approval:${it.approvalId}", if (it.mfaRequired) RiskTier.RED else RiskTier.YELLOW, sustained = true)
     }
-    // Conversation first: every other destination lives in the side drawer.
-    ModalNavigationDrawer(
-        modifier = Modifier.riskEdgeGlow(riskSignal),
-        drawerState = drawerState,
-        gesturesEnabled = page == AppPage.CHAT || drawerState.isOpen,
-        drawerContent = {
+
+    val drawerWidth = 280.dp
+    val shiftDistance = 250.dp
+    val targetScale = 1f - 0.18f * drawerProgress
+    val cornerRadius = 24.dp * drawerProgress
+    val elevation = 16.dp * drawerProgress
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .riskEdgeGlow(riskSignal),
+    ) {
+        // 1. 左侧抽屉面板：伴随抽屉打开从左侧平滑滑入
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(drawerWidth)
+                .graphicsLayer {
+                    translationX = -drawerWidth.toPx() * 0.35f * (1f - drawerProgress)
+                    alpha = drawerProgress.coerceIn(0f, 1f)
+                }
+                .zIndex(0f),
+        ) {
             BankNavigationDrawer(
-                open = drawerState.targetValue == DrawerValue.Open,
+                open = drawerOpen,
                 currentPage = page,
                 principal = state.principal,
                 onChat = { closeDrawerThen(viewModel::dismissPanels) },
@@ -136,44 +166,75 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                 onDevices = { closeDrawerThen(viewModel::openDevices) },
                 onLogout = { closeDrawerThen(viewModel::logout) },
             )
-        },
-    ) {
-        Scaffold(
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            snackbarHost = { SnackbarHost(snackbar) },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) { outerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = outerPadding.calculateBottomPadding())
-                    .navigationBarsPadding(),
-            ) {
-                PredictiveBackPreview(
-                    enabled = page != AppPage.CHAT,
-                    onBack = viewModel::dismissPanels,
-                    beneath = { ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis, onMenu = {}) },
+        }
+
+        // 2. 主页面：右移 + 缩小（缩放至 0.82，附带圆角与阴影）
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = targetScale
+                    scaleY = targetScale
+                    translationX = shiftDistance.toPx() * drawerProgress
+                    shape = RoundedCornerShape(cornerRadius)
+                    clip = drawerProgress > 0.01f
+                    shadowElevation = elevation.toPx()
+                }
+                .zIndex(1f),
+        ) {
+            Scaffold(
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                snackbarHost = { SnackbarHost(snackbar) },
+                containerColor = MaterialTheme.colorScheme.background,
+            ) { outerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = outerPadding.calculateBottomPadding())
+                        .navigationBarsPadding(),
                 ) {
-                    AnimatedContent(
-                        targetState = page,
-                        transitionSpec = { pageSlideSpec(AppPage::ordinal) },
-                        modifier = Modifier.fillMaxSize(),
-                        label = "appPage",
-                    ) { current ->
-                        Box(Modifier.fillMaxSize()) {
-                            when (current) {
-                                AppPage.CHAT -> ChatHome(
-                                    state, viewModel, activity, listState, approvalDeadlineMillis,
-                                    onMenu = { drawerScope.launch { drawerState.open() } },
-                                )
-                                AppPage.HISTORY -> HistoryUi(state, viewModel)
-                                AppPage.CARDS -> CardsUi(state, viewModel)
-                                AppPage.WEALTH -> WealthUi(state, viewModel, snackbar)
-                                AppPage.CONTACTS -> ContactsUi(state, viewModel)
+                    PredictiveBackPreview(
+                        enabled = page != AppPage.CHAT,
+                        onBack = viewModel::dismissPanels,
+                        beneath = { ChatHome(state, viewModel, activity, listState, approvalDeadlineMillis, onMenu = {}) },
+                    ) {
+                        AnimatedContent(
+                            targetState = page,
+                            transitionSpec = { pageSlideSpec(AppPage::ordinal) },
+                            modifier = Modifier.fillMaxSize(),
+                            label = "appPage",
+                        ) { current ->
+                            Box(Modifier.fillMaxSize()) {
+                                when (current) {
+                                    AppPage.CHAT -> ChatHome(
+                                        state, viewModel, activity, listState, approvalDeadlineMillis,
+                                        onMenu = ::openDrawer,
+                                    )
+                                    AppPage.HISTORY -> HistoryUi(state, viewModel)
+                                    AppPage.CARDS -> CardsUi(state, viewModel)
+                                    AppPage.WEALTH -> WealthUi(state, viewModel, snackbar)
+                                    AppPage.CONTACTS -> ContactsUi(state, viewModel)
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            // 3. 点击主页面复原蒙层：抽屉展开后覆盖在缩小的页面上，点击即可触发复原
+            if (drawerProgress > 0.01f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(cornerRadius))
+                        .background(Color.Black.copy(alpha = 0.08f * drawerProgress))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClickLabel = "复原主页面",
+                            onClick = ::closeDrawer,
+                        ),
+                )
             }
         }
     }
@@ -226,10 +287,10 @@ private fun BankNavigationDrawer(
     onDevices: () -> Unit,
     onLogout: () -> Unit,
 ) {
-    ModalDrawerSheet(
-        drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
-        modifier = Modifier.widthIn(max = 320.dp).testTag(UiTags.NAV_DRAWER),
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
+        modifier = Modifier.fillMaxHeight().widthIn(max = 300.dp).testTag(UiTags.NAV_DRAWER),
     ) {
         Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 16.dp)) {
             Row(
