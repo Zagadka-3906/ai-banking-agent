@@ -1,6 +1,6 @@
 # AnYan Logo 重设计：第一轮方案
 
-日期：2026-11-02。当前阶段为三款黑白概念评审，尚未选定正式方向；应用图标、客户端组件、服务器面板和现有参赛包沿用各自已发布版本。
+日期：2026-11-02。本页保留首轮三款黑白概念。用户已选定 **A「开口 A」**，并要求放弃蓝色、由设计决定主题色；正式套件采用**松柏绿 `#2D6047`**，见[最终文件与使用规范](final/README.md)。应用图标、客户端组件、服务器面板和现有参赛包仍以各自实际发布版本为准。
 
 ![三款概念与现有图标对照](concepts-overview.svg)
 
@@ -70,4 +70,4 @@
 
 ## 后续范围
 
-使用的 [logo-design 技能](https://github.com/kaankiziltug/logo-design-skill/tree/main/skills/logo-design) 要求先展示并确认方向，再制作完整套件。用户选定后，可细化品牌色、单色和反白、横竖组合、Android／网页图标与一页使用规范；客户端或后台替换应使用最终选定的同一套资产。
+使用的 [logo-design 技能](https://github.com/kaankiziltug/logo-design-skill/tree/main/skills/logo-design) 要求先展示并确认方向，再制作完整套件。该确认已完成；A 方向的松柏绿正式套件、单色和反白、横竖组合、Android／网页图标及使用规范见 [final/README.md](final/README.md)。客户端或后台接入时应使用这套最终资产。
