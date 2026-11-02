@@ -61,3 +61,8 @@ htmlcov/
 # 交付二进制由审核后的材料和已提交源码生成
 /submission/
 /.claude/
+
+# 本地设计稿、录制素材与临时制版文件
+/design-demos/
+/film/
+/tmp/

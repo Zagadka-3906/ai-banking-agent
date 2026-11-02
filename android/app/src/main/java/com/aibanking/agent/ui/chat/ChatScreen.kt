@@ -56,7 +56,6 @@ import com.aibanking.agent.ui.anim.GradientRevealText
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.RiskSignal
 import com.aibanking.agent.ui.anim.RiskTier
-import com.aibanking.agent.ui.anim.ShimmerGradientText
 import com.aibanking.agent.ui.anim.bankPressScale
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberEntranceTracker

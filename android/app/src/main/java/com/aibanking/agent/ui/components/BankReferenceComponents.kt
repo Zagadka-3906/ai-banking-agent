@@ -24,17 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aibanking.agent.ui.anim.bankPressScale
 import com.aibanking.agent.ui.theme.LocalBankSemanticColors
-
-/**
- * Retired with the flat redesign: surfaces no longer cast hard offset shadows.
- * Kept as a no-op so older call sites compile while they are migrated.
- */
-@Suppress("UNUSED_PARAMETER")
-fun Modifier.bankHardShadow(shape: Shape, offset: Dp = 0.dp): Modifier = this
 
 /** Filled, borderless card on the cool-grey container colour. */
 @Composable
