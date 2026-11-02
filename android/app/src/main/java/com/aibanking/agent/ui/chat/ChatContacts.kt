@@ -25,7 +25,7 @@ fun ChatViewModel.openContacts() {
     refreshContacts()
 }
 
-fun ChatViewModel.closeContacts() = _state.update { it.copy(showContacts = false) }
+fun ChatViewModel.closeContacts() = _state.update { it.copy(showContacts = false, selectedContactId = null) }
 
 fun ChatViewModel.showContactDetail(contactId: String) =
     _state.update { it.copy(contactsScreen = ContactsScreen.DETAIL, selectedContactId = contactId) }
@@ -34,7 +34,7 @@ fun ChatViewModel.openContactEditor() =
     _state.update { it.copy(contactsScreen = ContactsScreen.ADD, error = null, contactFormError = null) }
 
 fun ChatViewModel.backToContactList() =
-    _state.update { it.copy(contactsScreen = ContactsScreen.LIST, selectedContactId = null) }
+    _state.update { it.copy(contactsScreen = ContactsScreen.LIST) }
 
 fun ChatViewModel.onContactSearchChange(value: String) =
     _state.update { it.copy(contactSearch = value.take(50)) }

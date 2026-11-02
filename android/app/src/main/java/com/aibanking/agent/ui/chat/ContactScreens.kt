@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +58,7 @@ import com.aibanking.agent.ui.anim.CONTAINER_TRANSFORM_DURATION_MILLIS
 import com.aibanking.agent.ui.anim.CascadeEntranceSpec
 import com.aibanking.agent.ui.anim.ContainerTransformEasing
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
+import com.aibanking.agent.ui.anim.MorphShapeOverlayClip
 import com.aibanking.agent.ui.anim.PredictiveBackPreview
 import com.aibanking.agent.ui.anim.ShimmerSwitch
 import com.aibanking.agent.ui.anim.SkeletonRow
@@ -77,23 +80,35 @@ import kotlin.math.abs
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
+    var hasCascaded by rememberSaveable { mutableStateOf(false) }
     SharedTransitionLayout {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             PredictiveBackPreview(
                 enabled = state.contactsScreen != ContactsScreen.LIST,
                 onBack = viewModel::backToContactList,
-                beneath = { ContactListScreen(state, viewModel) },
+                beneath = { ContactListScreen(state, viewModel, hasCascaded = true) },
             ) {
                 val motion = LocalBankMotionEnabled.current
                 AnimatedContent(
                     targetState = state.contactsScreen,
                     transitionSpec = {
-                        if ((initialState == ContactsScreen.LIST && targetState == ContactsScreen.DETAIL) ||
-                            (initialState == ContactsScreen.DETAIL && targetState == ContactsScreen.LIST)
-                        ) {
+                        val enteringDetail =
+                            initialState == ContactsScreen.LIST && targetState == ContactsScreen.DETAIL
+                        val leavingDetail =
+                            initialState == ContactsScreen.DETAIL && targetState == ContactsScreen.LIST
+                        if (enteringDetail) {
                             if (motion) {
-                                fadeIn(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing)) togetherWith
-                                    fadeOut(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing))
+                                (fadeIn(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing)) togetherWith
+                                    fadeOut(tween(1, delayMillis = CONTAINER_TRANSFORM_DURATION_MILLIS)))
+                                    .apply { targetContentZIndex = 1f }
+                            } else {
+                                fadeIn(snap()) togetherWith fadeOut(snap())
+                            }
+                        } else if (leavingDetail) {
+                            if (motion) {
+                                (fadeIn(tween(0)) togetherWith
+                                    fadeOut(tween(CONTAINER_TRANSFORM_DURATION_MILLIS, easing = ContainerTransformEasing)))
+                                    .apply { targetContentZIndex = -1f }
                             } else {
                                 fadeIn(snap()) togetherWith fadeOut(snap())
                             }
@@ -107,6 +122,8 @@ fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
                         ContactsScreen.LIST -> ContactListScreen(
                             state = state,
                             viewModel = viewModel,
+                            hasCascaded = hasCascaded,
+                            onCascaded = { hasCascaded = true },
                             sharedTransitionScope = this@SharedTransitionLayout,
                             animatedVisibilityScope = this@AnimatedContent,
                         )
@@ -146,6 +163,8 @@ private data class ContactSection(val letter: String, val contacts: List<Contact
 private fun ContactListScreen(
     state: ChatUiState,
     viewModel: ChatViewModel,
+    hasCascaded: Boolean = false,
+    onCascaded: () -> Unit = {},
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
@@ -230,9 +249,14 @@ private fun ContactListScreen(
                 ) {
                     Box(Modifier.fillMaxSize()) {
                         val cascade = rememberCascadeEntrance(
-                            ready = !state.panelBusy && state.contacts.isNotEmpty(),
+                            ready = !hasCascaded && !state.panelBusy && state.contacts.isNotEmpty(),
                             state.contacts,
                         )
+                        LaunchedEffect(state.contacts, state.panelBusy) {
+                            if (state.contacts.isNotEmpty() && !state.panelBusy) {
+                                onCascaded()
+                            }
+                        }
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
@@ -247,17 +271,20 @@ private fun ContactListScreen(
                                 stickyHeader(key = "header-${section.letter}") {
                                     SectionHeader(
                                         section.letter,
-                                        Modifier.cascadeItem(cascade, headerIndex, CascadeEntranceSpec.ContactCascade),
+                                        if (!hasCascaded) Modifier.cascadeItem(cascade, headerIndex, CascadeEntranceSpec.ContactCascade) else Modifier,
                                     )
                                 }
                                 itemsIndexed(section.contacts, key = { _, contact -> contact.contactId }) { offset, contact ->
-                                    ContactRow(
-                                        contact = contact,
-                                        modifier = Modifier.cascadeItem(
+                                    val rowModifier = if (!hasCascaded) {
+                                        Modifier.cascadeItem(
                                             cascade,
                                             firstRowIndex + offset,
                                             CascadeEntranceSpec.ContactCascade,
-                                        ),
+                                        )
+                                    } else Modifier
+                                    ContactRow(
+                                        contact = contact,
+                                        modifier = rowModifier,
                                         sharedTransitionScope = sharedTransitionScope,
                                         animatedVisibilityScope = animatedVisibilityScope,
                                     ) {
@@ -361,12 +388,12 @@ private fun ContactRow(
                         sharedContentState = rememberSharedContentState(key = "contact-avatar-${contact.contactId}"),
                         animatedVisibilityScope = animatedVisibilityScope,
                         boundsTransform = containerTransformBoundsTransform(LocalBankMotionEnabled.current),
+                        clipInOverlayDuringTransition = MorphShapeOverlayClip(CircleShape),
+                        zIndexInOverlay = 4f,
                     )
                 }
             } else Modifier
-            Box(avatarModifier) {
-                ContactAvatar(contact.name, 48.dp)
-            }
+            ContactAvatar(contact.name, 48.dp, avatarModifier)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text(contact.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(contact.phone, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -411,20 +438,7 @@ private fun ContactDetailScreen(
     SideEffect { if (contact != null) lastRendered = contact }
     val rendered = if (state.contactsScreen == ContactsScreen.DETAIL) contact else lastRendered
     Scaffold(
-        modifier = if (rendered != null) {
-            Modifier.fillMaxSize().bankContainerTransform(
-                sharedTransitionScope = sharedTransitionScope,
-                animatedVisibilityScope = animatedVisibilityScope,
-                key = "contact-container-${rendered.contactId}",
-                cardCorner = 16.dp,
-                detailCorner = 0.dp,
-                cardElevation = 2.dp,
-                elevatedElevation = 8.dp,
-                detailElevation = 0.dp,
-                containerColor = MaterialTheme.colorScheme.background,
-                isDetail = true,
-            )
-        } else Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
@@ -448,7 +462,24 @@ private fun ContactDetailScreen(
             }
             return@Scaffold
         }
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .bankContainerTransform(
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    key = "contact-container-${rendered.contactId}",
+                    cardCorner = 16.dp,
+                    detailCorner = 0.dp,
+                    cardElevation = 2.dp,
+                    elevatedElevation = 8.dp,
+                    detailElevation = 0.dp,
+                    containerColor = MaterialTheme.colorScheme.background,
+                    isDetail = true,
+                ),
+            contentAlignment = Alignment.TopCenter
+        ) {
             Column(
                 modifier = Modifier.widthIn(max = BankSpacing.contentMaxWidth).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -470,12 +501,17 @@ private fun ContactDetailScreen(
                                     sharedContentState = rememberSharedContentState(key = "contact-avatar-${rendered.contactId}"),
                                     animatedVisibilityScope = animatedVisibilityScope,
                                     boundsTransform = containerTransformBoundsTransform(LocalBankMotionEnabled.current),
+                                    clipInOverlayDuringTransition = MorphShapeOverlayClip(CircleShape),
+                                    zIndexInOverlay = 4f,
                                 )
                             }
                         } else Modifier
-                        Box(avatarModifier) {
-                            ContactAvatar(rendered.name, 80.dp, MaterialTheme.typography.headlineLarge)
-                        }
+                        ContactAvatar(
+                            name = rendered.name,
+                            size = 80.dp,
+                            modifier = avatarModifier,
+                            textStyle = MaterialTheme.typography.headlineLarge,
+                        )
                         Text(rendered.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                         BankStatusChip(rendered.relationshipLabel.ifBlank { rendered.relationship }, BankSemanticStatus.RiskGreen)
                         Text(rendered.phone, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
@@ -928,10 +964,21 @@ private fun <T> WheelColumn(
 private val RELATIONSHIP_OPTIONS = listOf("爱人", "兄弟", "儿子", "女儿", "父母", "家人", "朋友", "同事", "其他")
 
 @Composable
-private fun ContactAvatar(name: String, size: Dp, textStyle: TextStyle = MaterialTheme.typography.titleMedium) {
+private fun ContactAvatar(
+    name: String,
+    size: Dp,
+    modifier: Modifier = Modifier,
+    textStyle: TextStyle = MaterialTheme.typography.titleMedium,
+) {
     val colors = listOf(Color(0xFFD3E3FD), Color(0xFFE8DEF8), Color(0xFFC4EED0), Color(0xFFFFE0D2))
     val accent = colors[Math.floorMod(name.hashCode(), colors.size)]
-    Box(Modifier.size(size).clip(CircleShape).background(accent), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(accent),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(name.trim().firstOrNull()?.toString() ?: "?", color = BankPalette.Ink, style = textStyle, fontWeight = FontWeight.Medium)
     }
 }

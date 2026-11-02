@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -65,11 +66,12 @@ class MorphShapeOverlayClip(private val shape: Shape) : SharedTransitionScope.Ov
     ): Path? {
         val size = Size(bounds.width.coerceAtLeast(1f), bounds.height.coerceAtLeast(1f))
         val outline = shape.createOutline(size, layoutDirection, density)
-        return when (outline) {
+        val path = when (outline) {
             is Outline.Rectangle -> Path().apply { addRect(outline.rect) }
             is Outline.Rounded -> Path().apply { addRoundRect(outline.roundRect) }
-            is Outline.Generic -> outline.path
+            is Outline.Generic -> Path().apply { addPath(outline.path) }
         }
+        return path.apply { translate(Offset(bounds.left, bounds.top)) }
     }
 }
 
@@ -140,12 +142,6 @@ fun Modifier.bankContainerTransform(
     }
 
     this
-        .shadow(
-            elevation = elevation,
-            shape = currentShape,
-            clip = false,
-        )
-        .then(backgroundModifier)
         .then(
             with(sharedTransitionScope) {
                 Modifier.sharedBounds(
@@ -153,10 +149,15 @@ fun Modifier.bankContainerTransform(
                     animatedVisibilityScope = animatedVisibilityScope,
                     boundsTransform = containerTransformBoundsTransform(motion),
                     resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds,
-                    clipInOverlayDuringTransition = MorphShapeOverlayClip(currentShape),
                     zIndexInOverlay = 3f,
                 )
             }
         )
+        .shadow(
+            elevation = elevation,
+            shape = currentShape,
+            clip = false,
+        )
+        .then(backgroundModifier)
         .clip(currentShape)
 }
