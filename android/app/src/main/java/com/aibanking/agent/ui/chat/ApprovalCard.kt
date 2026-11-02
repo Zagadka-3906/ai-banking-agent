@@ -2,6 +2,7 @@ package com.aibanking.agent.ui.chat
 
 import android.os.SystemClock
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -159,6 +161,22 @@ internal fun ApprovalCard(
                     )
                 }
             }
+            val isDark = isSystemInDarkTheme()
+            val approveButtonColors = if (isRed) {
+                ButtonDefaults.buttonColors(
+                    containerColor = if (isDark) Color(0xFFF28B82) else Color(0xFFB3261E),
+                    contentColor = if (isDark) Color(0xFF380704) else Color.White,
+                    disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                )
+            } else {
+                ButtonDefaults.buttonColors(
+                    containerColor = if (isDark) Color(0xFFFDD663) else Color(0xFFF9AB00),
+                    contentColor = Color(0xFF1F1F1F),
+                    disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                )
+            }
             BankFormError(error)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 BankPrimaryButton(
@@ -173,6 +191,7 @@ internal fun ApprovalCard(
                     },
                     enabled = !busy && remainingSeconds > 0 && (!isRed || (canPromptBiometric && otp.matches(Regex("[0-9]{6}")))),
                     loading = busy,
+                    colors = approveButtonColors,
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.APPROVAL_APPROVE),
                 )
                 BankSecondaryButton("取消操作", onReject, enabled = !busy,

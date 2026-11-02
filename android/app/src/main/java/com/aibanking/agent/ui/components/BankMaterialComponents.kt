@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.material3.ButtonColors
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -152,7 +154,14 @@ fun BankStatusChip(label: String, status: BankSemanticStatus, modifier: Modifier
 }
 
 @Composable
-fun BankPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, loading: Boolean = false) {
+fun BankPrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    colors: ButtonColors = ButtonDefaults.buttonColors(),
+) {
     val interaction = remember { MutableInteractionSource() }
     BankButton(
         onClick = onClick,
@@ -160,6 +169,7 @@ fun BankPrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Mo
         modifier = modifier.heightIn(min = 48.dp),
         interactionSource = interaction,
         shape = CircleShape,
+        colors = colors,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 24.dp, vertical = 14.dp),
     ) {
         if (loading) {
