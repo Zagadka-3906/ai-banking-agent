@@ -17,23 +17,24 @@
 ## 需要你在阿里云上做的
 
 1. **安全组放行 443**：ECS 控制台 → 实例 → 安全组 → 入方向，添加规则：TCP 443，来源 0.0.0.0/0。确认 22 端口（SSH）已放行；如果你的网络出口 IP 固定，建议把 22 的来源限制为该 IP。不要放行 8000、8100。
-2. **添加部署公钥**：ECS 控制台 → 实例 → 远程连接 → Workbench 登录（root），执行：
+2. **配置自己的 SSH 公钥**：在部署电脑生成专用密钥，把 `.pub` 公钥加入目标服务器的 `~/.ssh/authorized_keys`；私钥只留在部署电脑。脚本默认使用 `~/.ssh/id_anyan_deploy` 和 `root`，可用 `ANYAN_SSH_KEY`、`ANYAN_SSH_USER` 指定身份。当前安装脚本需要服务器管理权限。
 
    ```bash
-   mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ6ZpRm+dCLL2aB58lGIfpRQjNrMDBZj6RMJx0qbj4Qq anyan-deploy' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+   ssh-keygen -t ed25519 -f ~/.ssh/id_anyan_deploy -C anyan-deploy
+   export ANYAN_HOST=203.0.113.10  # 替换为自己的服务器地址；示例地址不可用
    ```
 
-   这把公钥只对应部署电脑上的 `~/.ssh/id_anyan_deploy`，不会给出任何密码。之后要收回权限，删掉 `authorized_keys` 里这一行即可。
+   通过云控制台或既有管理连接安装公钥，设置 `~/.ssh` 为 700、`authorized_keys` 为 600，再测试 SSH。不要复制其他维护者的公钥，也不要覆盖已有授权记录。
 3. **（可选）给 DeepSeek 设消费上限**：在 DeepSeek 开放平台设置余额提醒或限额。服务器会用你的密钥调用模型。
 
 ## 部署命令（在本仓库根目录，Git Bash）
 
 ```bash
-deploy/deploy.sh server 47.107.49.125   # 上传已提交的代码，安装或更新
-deploy/deploy.sh keys   47.107.49.125   # 把本机 .env 里的 DeepSeek、百炼密钥写到服务器（可选）
-deploy/deploy.sh feishu 47.107.49.125   # 把本机 .env 里的飞书应用 ID 和密钥写到服务器并启用飞书机器人（可选）
-deploy/deploy.sh app    47.107.49.125   # 打包连接服务器的 APK：build/deploy/anyan-47.107.49.125.apk
-deploy/deploy.sh status 47.107.49.125   # 查看服务状态
+deploy/deploy.sh server ${ANYAN_HOST}   # 上传已提交的代码，安装或更新
+deploy/deploy.sh keys   ${ANYAN_HOST}   # 把本机 .env 里的 DeepSeek、百炼密钥写到服务器（可选）
+deploy/deploy.sh feishu ${ANYAN_HOST}   # 把本机 .env 里的飞书应用 ID 和密钥写到服务器并启用飞书机器人（可选）
+deploy/deploy.sh app    ${ANYAN_HOST}   # 打包连接服务器的 APK：build/deploy/anyan-${ANYAN_HOST}.apk
+deploy/deploy.sh status ${ANYAN_HOST}   # 查看服务状态
 ```
 
 - 只上传 `git` 已提交的文件，`.env`、日志和构建产物不会上传。
@@ -66,7 +67,7 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
 - **服务日志**：查看三个服务最近的日志，可以只看警告和错误。
 - **运维操作**：重启服务、恢复演示数据，以及操作记录。恢复演示数据时，旧数据移到 `/var/lib/anyan/backup/<时间>/`，不会删除；审计记录保留。
 
-公网浏览器可打开 `https://47.107.49.125/panel/`（其他部署替换为自己的 IP 或域名），HTTPS 首页会跳转到面板。服务器面板仍需输入访问令牌（`/etc/anyan/panel.token`，部署时随机生成）。首次在其他电脑打开时，因当前证书由项目自建 CA 签发，浏览器会提示不受信任；可将项目 CA 公共证书导入信任库后访问。密钥文件不能当作 CA 公共证书分发。
+公网浏览器可打开 `https://<你的服务器地址>/panel/`（其他部署替换为自己的 IP 或域名），HTTPS 首页会跳转到面板。服务器面板仍需输入访问令牌（`/etc/anyan/panel.token`，部署时随机生成）。首次在其他电脑打开时，因当前证书由项目自建 CA 签发，浏览器会提示不受信任；可将项目 CA 公共证书导入信任库后访问。密钥文件不能当作 CA 公共证书分发。
 
 面板进程仍只监听服务器本机的 9100 端口，由 Nginx 的 HTTPS `/panel/` 入口转发，不直接开放 9100。登录和其他面板请求分别限流，HTTPS 登录 Cookie 带 Secure、HttpOnly、SameSite=Strict 且作用于 `/panel/`；写操作继续要求操作确认头。原银行 `/core/`、`/gateway/` 入口保持原路由。
 
@@ -75,10 +76,10 @@ nano /etc/anyan/anyan.env && systemctl restart anyan-core anyan-gateway
 1. 在部署这台电脑的 Git Bash 里运行下面这条命令。它会先显示访问令牌，再建立隧道；窗口保持打开。
 
    ```bash
-   deploy/deploy.sh panel 47.107.49.125
+   deploy/deploy.sh panel ${ANYAN_HOST}
    ```
 
-   用 PowerShell 也可以：先用 `ssh -i $HOME\.ssh\id_anyan_deploy root@47.107.49.125 cat /etc/anyan/panel.token` 查看令牌，再运行 `ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 19100:127.0.0.1:9100 root@47.107.49.125`。
+   用 PowerShell 也可以：先设置 `$anyanHost = "你的服务器地址"`，再用 `ssh -i $HOME\.ssh\id_anyan_deploy root@$anyanHost cat /etc/anyan/panel.token` 查看令牌，再运行 `ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 19100:127.0.0.1:9100 root@$anyanHost`。
 2. 浏览器打开 `http://localhost:9100`（上述 PowerShell 示例为 `http://localhost:19100`），粘贴令牌，登录。登录状态保持 12 小时。
 3. 用完关掉命令窗口，或按 Ctrl+C。
 
@@ -103,13 +104,13 @@ Windows 在项目根目录双击 `start-local-panel.bat`，或运行 `.\.venv\Sc
 服务器装了 Ubuntu 官方的 Cockpit，可以在网页里查看服务、启停服务、看日志、用终端。它只监听服务器本机的 9090 端口，公网访问不到，要通过 SSH 隧道打开：
 
 1. **只需做一次：** 在 Workbench 里以 root 登录，执行 `passwd panel`，为面板用户 `panel` 设置密码（输入两次，屏幕上不显示）。`panel` 有 sudo 权限，面板里可以切换到管理员模式。
-2. **每次使用：** 在部署这台电脑的 PowerShell 里执行下面这条命令，窗口保持打开：
+2. **每次使用：** 在部署这台电脑的 PowerShell 中先设置 `$anyanHost = "你的服务器地址"`，再执行下面这条命令，窗口保持打开：
 
    ```powershell
-   ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 9090:127.0.0.1:9090 root@47.107.49.125
+   ssh -i $HOME\.ssh\id_anyan_deploy -o IdentitiesOnly=yes -N -L 9090:127.0.0.1:9090 root@$anyanHost
    ```
 
-   在 Git Bash 里也可以用 `deploy/deploy.sh cockpit 47.107.49.125`。
+   在 Git Bash 里也可以用 `deploy/deploy.sh cockpit ${ANYAN_HOST}`。
 3. 浏览器打开 `https://localhost:9090`。证书是面板自签的，浏览器提示不安全时，选“高级 → 继续访问”。用户名填 `panel`，密码填第 1 步设置的密码。
 4. 用完关掉命令窗口，或按 Ctrl+C。
 

@@ -1,4 +1,4 @@
-"""Package five contest categories, excluding credentials and runtime data.
+"""Prepare five contest folders, excluding credentials and runtime data.
 
 This material package does not certify stable-release acceptance.
 """
@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import shutil
 import subprocess
+import tarfile
+from urllib.parse import unquote, urlsplit
 import zipfile
 from xml.etree import ElementTree
 
@@ -37,7 +41,7 @@ def assert_public_source(names: list[str]) -> None:
     for name in names:
         p = PurePosixPath(name)
         leaf = p.name.lower()
-        if (forbidden.intersection(p.parts) or (leaf.startswith(".env") and not leaf.endswith(".example"))
+        if (p.is_absolute() or ".." in p.parts or forbidden.intersection(p.parts) or (leaf.startswith(".env") and not leaf.endswith(".example"))
                 or leaf.endswith((".sqlite", ".sqlite3", ".sqlite3-wal", ".sqlite3-shm", ".db", ".log", ".apk", ".key", ".p12", ".pfx", ".keystore", ".jks"))
                 or leaf in {"agent_devices.json", "local.properties", "id_rsa", "id_ed25519", "panel.token"}):
             raise ValueError(f"Private or generated source entry: {name}")
@@ -69,11 +73,49 @@ def video_duration(path: Path, ffmpeg: str | None = None) -> float:
     return int(match[1]) * 3600 + int(match[2]) * 60 + float(match[3])
 
 
-def package(folder: Path, ffmpeg: str | None = None) -> dict:
+def relocate_markdown(text: str, original: str, destination: str) -> str:
+    """Make copied documents link to the complete, exported source tree."""
+    def replace(match: re.Match) -> str:
+        target = match[2]
+        url = urlsplit(target)
+        if url.scheme or url.netloc or not url.path:
+            return match[0]
+        relative = posixpath.normpath(posixpath.join(posixpath.dirname(original), unquote(url.path)))
+        if relative.startswith("../") or relative.startswith("/"):
+            raise ValueError(f"Document link leaves repository: {target}")
+        exported = f"{CATEGORIES[3]}/source/{relative}"
+        relocated = posixpath.relpath(exported, posixpath.dirname(destination))
+        if url.fragment:
+            relocated += "#" + url.fragment
+        return match[1] + relocated + match[3]
+    return re.sub(r"(!?\[[^\]\n]*\]\()([^\s)]+)(\))", replace, text)
+
+
+def export_source(source: Path) -> set[str]:
+    data = subprocess.check_output(["git", "archive", "--format=tar", "HEAD"], cwd=ROOT)
+    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        members = archive.getmembers()
+        assert_public_source([m.name for m in members])
+        if any(not m.isfile() and not m.isdir() for m in members):
+            raise ValueError("Source export must contain regular files and directories only")
+        names = {m.name for m in members if m.isfile()}
+        existing = {p.relative_to(source).as_posix() for p in source.rglob("*") if p.is_file()}
+        if existing - names:
+            raise ValueError("Unexpected existing source files; preserve and review them before preparing delivery")
+        archive.extractall(source, filter="data")
+    return names
+
+
+def package(folder: Path, ffmpeg: str | None = None, apk_source_commit: str | None = None) -> dict:
     folder = folder.resolve()
     if folder != ROOT / "submission":
         raise ValueError("Delivery destination must be ignored project submission/")
     ensure_source_clean(ROOT)
+    if (folder / "安言参赛交付.zip").exists() or (folder / CATEGORIES[3] / "source.zip").exists():
+        raise ValueError("Review and remove legacy ZIP files before preparing directory delivery")
+    if not apk_source_commit:
+        raise ValueError("Supply the APK build source commit separately from the documentation/source version")
+    apk_commit = subprocess.check_output(["git", "rev-parse", "--verify", apk_source_commit + "^{commit}"], cwd=ROOT, text=True).strip()
     intro = introduction((ROOT / "docs/作品简介.md").read_text(encoding="utf-8"))
     talk = folder / CATEGORIES[2]
     deck, video = talk / "安言答辩.pptx", talk / "安言演示视频.mp4"
@@ -96,58 +138,47 @@ def package(folder: Path, ffmpeg: str | None = None) -> dict:
     for category, names in mapping.items():
         (folder / category).mkdir(parents=True, exist_ok=True)
         for name in names:
-            shutil.copy2(ROOT / "docs" / name, folder / category / name)
+            text = (ROOT / "docs" / name).read_text(encoding="utf-8")
+            (folder / category / name).write_text(relocate_markdown(text, f"docs/{name}", f"{category}/{name}"), encoding="utf-8")
     shutil.copytree(ROOT / "docs/assets", folder / CATEGORIES[1] / "assets", dirs_exist_ok=True)
     (folder / CATEGORIES[0] / "作品名称.txt").write_text("安言：安全可控的银行 AI 智能体\n", encoding="utf-8")
     (folder / CATEGORIES[0] / "报名简介.txt").write_text(intro + "\n", encoding="utf-8")
     info = folder / CATEGORIES[3]
     (info / "GitHub仓库地址.txt").write_text(REPOSITORY + "\n", encoding="utf-8")
-    (info / "README.md").write_text(
-        "# 作品源码与运行\n\n"
-        "仓库：" + REPOSITORY + "\n\n"
-        "解压 source.zip 后，先读根目录 README.md，再按 deploy/README.md 部署。"
-        "测试用例、验证记录和安全自评报告在 docs/ 下，本目录放的是便于浏览的副本。\n\n"
-        "副本里的相对链接以解压后的源码目录为准，不指向本交付目录。"
-        "源码包不含真实配置、私钥、会话、设备登记、账本、日志和构建缓存。\n",
-        encoding="utf-8")
-    shutil.copy2(ROOT / "deploy/README.md", info / "部署说明.md")
-    source = info / "source.zip"
-    subprocess.run(["git", "archive", "--format=zip", "--prefix=ai-banking-agent/", "--output", str(source), "HEAD"], cwd=ROOT, check=True)
-    with zipfile.ZipFile(source) as archive:
-        assert_public_source(archive.namelist())
-        if archive.testzip():
-            raise ValueError("Invalid source archive")
-    descriptions = [f"名称与 {len(intro)} 字简介，自行上传报名系统。", "系统架构图、核心算法、安全设计。", "10 页可编辑 PPTX、9 分 10 秒讲稿、真实安卓演示 MP4。", "源码、README、GitHub 地址、部署说明、测试与公网 APK。", "权限分级与 R1–R22 已知风险。"]
-    (folder / "交付清单.md").write_text("# 安言参赛交付\n\n" + "\n".join(f"{i}. [{c[3:]}]({c}/)：{d}" for i, (c, d) in enumerate(zip(CATEGORIES, descriptions), 1)) + f"\n\n源码提交：`{commit}`。视频 {duration:.2f} 秒，真实安卓、隔离规则模式、中文字幕、无音轨，红区展示后取消。\n\n不含本机账户、会话、设备、私钥、令牌、日志和缓存。源码解压后查看完整相对链接。APK 连接公网地址，绑定项目 CA。\n", encoding="utf-8")
-    files = sorted(p for p in folder.rglob("*") if p.is_file() and p.name not in {"安言参赛交付.zip", "manifest.json"})
+    review = (ROOT / "docs/评审指南.md").read_text(encoding="utf-8")
+    (info / "README.md").write_text(relocate_markdown(review, "docs/评审指南.md", f"{CATEGORIES[3]}/README.md"), encoding="utf-8")
+    deployment = (ROOT / "deploy/README.md").read_text(encoding="utf-8")
+    (info / "部署说明.md").write_text(relocate_markdown(deployment, "deploy/README.md", f"{CATEGORIES[3]}/部署说明.md"), encoding="utf-8")
+    source_names = export_source(info / "source")
+    descriptions = [f"名称与 {len(intro)} 字简介，自行上传报名系统。", "系统架构图、核心算法、安全设计。", "已有 PPTX、真实安卓演示 MP4 与更新后的文字说明；媒体版本分别记录。", "展开的源码目录、评审 README、GitHub 地址、部署说明、测试与公网 APK。", "权限分级与 R1–R22 已知风险。"]
+    (folder / "交付清单.md").write_text("# 安言参赛交付\n\n" + "\n".join(f"{i}. [{c[3:]}]({c}/)：{d}" for i, (c, d) in enumerate(zip(CATEGORIES, descriptions), 1)) + f"\n\n源码提交：`{commit}`；APK 构建源码：`{apk_commit}`。视频 {duration:.2f} 秒，真实安卓、隔离规则模式、中文字幕、无音轨，红区展示后取消。\n\n本次只整理文件夹，不生成 ZIP。不含本机账户、会话、设备、私钥、令牌、日志和缓存。副本链接指向 source/ 内的完整文档。APK 连接公网地址，绑定项目 CA。\n", encoding="utf-8")
+    files = sorted(p for p in folder.rglob("*") if p.is_file() and p != folder / "manifest.json")
     expected = {f"{category}/{name}" for category, names in mapping.items() for name in names}
     expected.update({f"{CATEGORIES[0]}/{name}" for name in ("作品名称.txt", "报名简介.txt")})
     expected.update({f"{CATEGORIES[1]}/assets/{name}" for name in ("系统架构图.svg", "系统架构图.mmd")})
     expected.update({f"{CATEGORIES[2]}/{name}" for name in ("安言答辩.pptx", "安言演示视频.mp4", "安言演示字幕.srt", "媒体说明.json")})
-    expected.update({f"{CATEGORIES[3]}/{name}" for name in ("README.md", "GitHub仓库地址.txt", "部署说明.md", "source.zip", "安装包/安言-公网演示.apk", "安装包/项目CA公开证书.pem")})
+    expected.update({f"{CATEGORIES[3]}/{name}" for name in ("README.md", "GitHub仓库地址.txt", "部署说明.md", "安装包/安言-公网演示.apk", "安装包/项目CA公开证书.pem")})
+    expected.update(f"{CATEGORIES[3]}/source/{name}" for name in source_names)
     expected.add("交付清单.md")
     assert_delivery_files({p.relative_to(folder).as_posix() for p in files}, expected)
-    manifest = {"commit": commit, "repository": REPOSITORY, "introduction_characters": len(intro), "slides": count,
+    apk = info / "安装包/安言-公网演示.apk"
+    manifest = {"commit": commit, "repository": REPOSITORY, "delivery_format": "directory", "introduction_characters": len(intro), "slides": count,
+                "apk": {"source_commit": apk_commit, "sha256": hashlib.sha256(apk.read_bytes()).hexdigest()},
+                "media_business_version": timing.get("business_version"),
                 "speaking_seconds": timing["speaking_seconds"], "video_seconds": duration, "video_mode": "actual_android_offline_rules",
                 "files": {p.relative_to(folder).as_posix(): {"bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in files},
                 "excluded": ["credentials", "runtime_data", "private_archives", "logs", "build_caches"]}
     (folder / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    bundle = folder / "安言参赛交付.zip"
-    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for p in [*files, folder / "manifest.json"]:
-            archive.write(p, p.relative_to(folder).as_posix())
-    with zipfile.ZipFile(bundle) as archive:
-        if archive.testzip():
-            raise ValueError("Invalid delivery archive")
-    return {"commit": commit, "archive": str(bundle), "bytes": bundle.stat().st_size, "files": len(files), "video_seconds": duration}
+    return {"commit": commit, "directory": str(folder), "files": len(files), "video_seconds": duration}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--delivery-dir", type=Path, default=ROOT / "submission")
     parser.add_argument("--ffmpeg", help="Path to installed FFmpeg")
+    parser.add_argument("--apk-source-commit", required=True, help="Actual source commit used to build the existing APK")
     args = parser.parse_args()
-    print(json.dumps(package(args.delivery_dir, args.ffmpeg), ensure_ascii=False))
+    print(json.dumps(package(args.delivery_dir, args.ffmpeg, args.apk_source_commit), ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -20,6 +20,8 @@ jobs:
         run: python -m compileall -q .
       - name: Verify generated banking rules
         run: python scripts/export_banking_rules.py --check
+      - name: Verify repository documentation paths
+        run: python scripts/check_repository_docs.py
       - name: Tests with coverage
         # Branch coverage of the backend packages; the table is appended to the
         # job summary and the run fails if coverage drops below fail_under.

@@ -1,147 +1,92 @@
-# 安言：安全可控的银行 AI 智能体
+<p align="center"><img src="docs/brand/anyan-20261102/final/masters/anyan-horizontal.svg" alt="AnYan 安言" width="280"></p>
 
-通过文字或语音查询余额、分析账单、办理模拟转账、管理卡片、理财和订阅。Android 提供对话和确认界面，Agent Gateway 理解需求、读取证据并核验回答，Mock Core 独立执行授权、风控、设备签名和幂等提交。全部账户与交易均为虚构数据。
+# 安言：银行 AI 智能体演示
 
-GitHub 仓库：https://github.com/Zagadka-3906/ai-banking-agent
+用文字或语音查询账户、分析账单、发起模拟转账，管理卡片、理财和订阅。安言把自然语言对话与资金执行分开：模型理解需求、规划只读取证并生成回答，Mock Core 独立核对权限和业务条件，持久提交后返回回执。
 
-当前选定安装包为 [AnYan-Shaping-20261102.apk](build/releases/AnYan-Shaping-20261102.apk)，对应源码 `3a1bfd6`，连接公网 HTTPS。项目中仅保留这一版 APK；参赛目录及交付 ZIP 内的“安言-公网演示.apk”为同版本副本。
+这是一个可运行的 Android 与 Python 演示项目，账户、资金、产品和商户均为虚构数据。
 
-## 参赛材料
+[开始运行](docs/本地开发.md) · [技术架构](docs/技术文档.md) · [文档索引](docs/README.md) · [赛事评审指南](docs/评审指南.md)
 
-| 类别 | 文档或文件 |
+## 能做什么
+
+| 场景 | 当前实现 |
 | --- | --- |
-| 作品名称与简介 | [作品简介](docs/作品简介.md)，正文 167 字，参赛者自行提交报名系统 |
-| 技术文档 | [系统架构](docs/技术文档.md)、[核心算法](docs/核心算法说明.md)、[安全设计](docs/安全设计文档.md) |
-| 答辩材料 | [10 页答辩讲稿](docs/答辩提纲.md)、[真实演示说明](docs/演示视频.md) |
-| 作品信息 | 本仓库源码、[部署说明](deploy/README.md)、[测试用例](docs/测试用例.md)、[验证记录](docs/验证记录.md) |
-| 安全自评 | [权限分级与已知风险](docs/安全自评报告.md) |
+| 对话查询 | 余额、流水、消费分析、持仓和卡片；多个问题分别取证、计算和核验 |
+| 模拟办理 | 转账、预约、AA、资金预留、理财申赎、卡片变更及订阅；按业务要求确认和强验证 |
+| 多轮讨论 | 补充信息、插问、暂停、更正与恢复；恢复讨论后重新预检，不沿用旧授权 |
+| 理财浏览 | 五类 25 款虚构产品，支持搜索、期限与策略筛选、净值和申赎规则详情 |
+| Android 交互 | 长按说话、松开转写、上滑取消；识别文字核对后发送；联系人删除前确认并同步服务器 |
+| 演示管理 | 本地与服务器面板配置账户、保存初始状态、备份和恢复 |
+| 可选飞书 | 绑定 Android 登录会话后私聊查询；资金办理回到 App 确认 |
 
-本地 `submission/` 按上述五类放置交付文件，包含可编辑 PPTX、演示 MP4、源码 ZIP 和公网演示 APK。二进制交付物不进入 Git；可用 `scripts/package_contest_submission.py` 重新打包，交付包的 manifest 记录源码提交及文件哈希。它是参赛材料包，不替代稳定候选发布门槛。
+语音、理财与反馈动画的实现分别见[语音输入](docs/语音输入界面.md)、[理财频道](docs/理财界面.md)和[交互细节](docs/交互细节.md)。
 
-## 功能与权限
+## 怎么保证操作有据可查
 
-| 功能 | 授权要求 |
-| --- | --- |
-| 本人余额、流水、持仓、卡片查询 | 登录会话，服务端核验主体与对象 |
-| 小额转账、未执行安排撤销、订阅查询与取消 | 核对对象与金额后确认 |
-| 大额转账、理财申赎、冻结挂失、调额、开通渠道 | 用户确认、一次性演示验证码、登记设备签名 |
+```mermaid
+flowchart LR
+    U[Android 文字或语音] --> G[Gateway / LangGraph]
+    G <--> M[模型理解、生成与核验]
+    G -->|受限只读取证| C[Mock Core]
+    G -->|预检、用户确认、必要强验证| C
+    C --> L[(签名账本与业务回执)]
+```
 
-核心依据实际金额、累计支付及业务类型判定等级。模型回复和客户端标记不能替代核心授权或成功回执。已结算转账不能直接撤销。
+查询回答基于当前规则与本人记录，金额由程序计算，生成后再核对引用、字段和操作声明。资金成功结果以 Core 回执为准。绿区为本人只读；黄区要求核对确认；红区另需一次性演示验证码和登记设备签名。Core 按业务、金额及累计行为定级，订阅查询也保留黄区确认。
 
-联系人删除前弹窗核对姓名，确认后同步服务器，成功或只读核对后更新列表。个人转账成功后自动保存双方，保留去重和删除状态。客户端与后台使用纯色和中性背景。
-
-理财频道按活钱管理、稳健低波、稳健增值、稳中求进、进取投资展示 25 款虚构产品，支持搜索、期限与策略筛选及详情浏览；聊天中的产品文字与卡片统一去重。分类与数据口径见[理财界面](docs/理财界面.md)。
-
-语音输入使用底部面板：长按说话、松开转文字、上滑取消或切回键盘，显示实际音量波形与计时；识别文字由用户核对后发送。交互与识别边界见[语音输入界面](docs/语音输入界面.md)。办理历史分段控制器、静止头像旁的 thinking-orbs 动画及联系人关系修正见[交互细节](docs/交互细节.md)。
-
-后台支持创建账户、编辑关联数据、保存初始状态，以及恢复到创建／首次保存时的状态。保存前备份；本地后台免令牌、绑定回环地址，公网后台需要令牌。管理权限仅用于演示环境。
+技术栈：Python 3.10–3.12、FastAPI、LangGraph、可配置 DeepSeek 模型；Android 使用 Kotlin、Jetpack Compose 和 Keystore。详细边界见[安全设计](docs/安全设计文档.md)。
 
 ## 快速开始（Windows）
 
-**环境要求：**
-
-- Python 3.10–3.12
-- JDK 17 或 21
-- Android SDK API 37（Build Tools 36.0.0）与 Android Emulator，并建立名为 `bankagent` 的 AVD
-
-首次可运行 `android/tools/install-android-toolchain.ps1` 安装构建工具链。
+准备 Python 3.12；运行 Android 另需 JDK 17/21、Android SDK API 37、Build Tools 36.0.0 和名为 `bankagent` 的 AVD。工具链安装脚本及完整配置见[本地开发](docs/本地开发.md)。
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+.\start-local-panel.bat
 ```
 
-`.env` 只在本机使用，不入库。可选填写：
+打开 `http://127.0.0.1:9100` 管理本机演示数据。启动 Android 模拟器、构建并安装应用用 `start-emulator.bat`。演示账户 `user_zhang`、`user_li`、`user_wife` 共用公开口令 `Bank@2026`；红区演示还需屏幕锁及设备登记。
 
-- `DEEPSEEK_API_KEY`：启用对话理解、只读咨询规划、自然回答、独立核验及“猜你想问”。未配置或调用失败时使用规则与已验证结果，复杂理解和解释能力会下降。
-- `BANK_LLM_MODEL`：默认 `deepseek-flash`；本机 Agent、核验、模拟用户与评分器均使用 Flash。`BANK_MODEL_THINKING` 选择 `disabled/enabled`，空值跟随服务商默认；当前候选为 `disabled`，与 12 秒单次期限一同评测。
-  初始理解等待 4 秒且模型池仅有当前调用时，最多追加一次相同输入请求，共用原 12 秒期限；两次真实调用均计量，运行中未采用的调用保留占位。评测记录推理策略及 SDK 完成计量证明，晚到输出不参与改答或评分。
-- `BANK_ANSWER_PLANNING`：默认 `1`，启用有依据的自然回答和独立核验；`0` 保留固定结果，咨询取证与规划仍可运行。`BANK_ANSWER_MODE=shadow` 生成核验但不替换可见回复；`BANK_REVIEW_MODEL` 可配置同一模型服务上的核验模型。详见 [Agent 架构](docs/Agent架构.md)。
-- `DASHSCOPE_API_KEY`：没有端侧识别时，经百炼转写语音。
+在首次启动前填写 `.env` 中的 `DEEPSEEK_API_KEY` 可启用模型链路；未配置时只能演示规则与固定结果。默认模型为 `deepseek-flash`，思考模式为 `disabled`。可选 `DASHSCOPE_API_KEY` 用于经用户同意的云端转写，`BANK_AUTH_SECRET` 应换成随机长密钥。变量见[配置示例](.env.example)。首次启动后，本地面板使用独立数据目录内的 `local.env`，后续修改位置见[本地开发](docs/本地开发.md)。
 
-建议把 `BANK_AUTH_SECRET` 换成随机长密钥。全部变量见 [`.env.example`](.env.example)。
+云端 HTTPS 和 APK 构建见[部署说明](deploy/README.md)，飞书见[接入说明](docs/飞书IM接入.md)。
 
-**一键启动**会启动 Core、Gateway 和本地管理面板，构建并安装 Debug APK，再打开模拟器：
+## 验证与版本
 
-```powershell
-.\start-emulator.bat
-```
-
-只启动电脑后端和管理面板，可双击根目录的 `start-local-panel.bat`，或运行：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\serve_local_panel.py start
-```
-
-浏览器打开 `http://127.0.0.1:9100`，无需登录令牌，直接进入后台。进入“账户管理”即可新增账户、编辑账户和关联业务数据、重新保存初始状态，或将单个账户恢复到创建／首次保存时的状态。保存前自动备份，保存后自动重载本机银行服务；修改或重置后 App 需重新登录。该面板只管理电脑上的数据，与云服务器分开；服务器面板仍需令牌登录。
-
-首次启动会将根目录 `.env` 复制为独立的 `local.env`，并保留签名密钥；若原先配置了本地账本，则复制其文件，同时复制已有设备登记、通过 SQLite 备份导入会话，原文件保留。管理数据保存在 `%LOCALAPPDATA%\bank-agent\local-panel\<仓库标识>`，不进入 Git。已有账户在首次启用时保存初始状态；新账户在创建时保存。本机默认关闭飞书事件接收，避免与云端重复接收。
-
-后续模型等配置请修改该目录的 `local.env`，再在面板中重启对应服务。不要随意更换账本签名密钥或管理数据路径。查看状态、停止这套本机服务：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\serve_local_panel.py status
-.\.venv\Scripts\python.exe scripts\serve_local_panel.py stop
-```
-
-启动器只管理自己创建的进程。若端口被原先手动启动的服务占用，会提示占用并退出；请先正常结束原服务，再重新启动面板。Core、Gateway、面板和内部控制均只监听 `127.0.0.1`；面板限制本机 Host，写操作保留操作确认头。内部进程控制的随机令牌由启动器自动管理，无需用户输入。电脑关闭后重新运行启动入口即可恢复。
-
-仅调试原始服务时，也可分别运行（此方式不提供本地面板的服务管理和数据导入）：
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
-.\.venv\Scripts\python.exe -m uvicorn agent_api:app --host 127.0.0.1 --port 8100
-```
-
-健康检查：`http://127.0.0.1:8000/healthz`、`http://127.0.0.1:8100/healthz`。模拟器通过 `10.0.2.2` 访问电脑。
-
-**演示账户**（仅限虚构数据）：
-
-| 用户 | 登录口令 |
-| --- | --- |
-| `user_zhang`（张三）、`user_li`（李四）、`user_wife` | `Bank@2026` |
-
-红区操作还需要：
-
-- 模拟器设置屏幕锁，应用会登记设备公钥。
-- 一次性演示验证码，普通 App 在红区审批时自动获取并填入；隔离回归包关闭自动填码，供测试分别验证正确码和错误码。
-
-飞书接入步骤见[飞书接入说明](docs/飞书IM接入.md)。
-
-
-## 验证
-
-业务版本 `cb37631` 的结果：后端 3101 项通过、1 项历史跳过；Android JVM 115 项通过，联系人与主题设备专项 24 项通过。收尾新增演示录制用例单独记录，不混入历史统计。详见[测试用例](docs/测试用例.md)与[验证记录](docs/验证记录.md)。
+截至 2026-11-02，本次仓库整理后的后端全量为 **3147 passed、1 skipped**（新增三项交付目录边界测试，业务实现未改动），最终 shaping 客户端 JVM 测试为 **140 passed**。设备测试分版本记录；最终 shaping 动画未重跑设备专项。完整范围、部署提交和测试限制见[验证记录](docs/验证记录.md)。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m mypy
 .\.venv\Scripts\python.exe scripts/export_banking_rules.py --check
+.\.venv\Scripts\python.exe scripts/check_repository_docs.py
 ```
 
-## 源码结构
+普通回归使用隔离数据与受控模型替身。联网模型评测、实际语音准确率和完整真机验收另行执行；参赛演示和源码打包不代表通过[稳定发布门槛](docs/稳定验收标准.md)。仓库不跟踪 APK、PPTX、视频及本机数据，参赛包的版本与获取范围见[评审指南](docs/评审指南.md)。
 
-```text
-bank_agent/       会话、取证、审批与回答核验
-bank_planning/    规划、表达式计算与来源
-bank_core/        模拟银行核心、账本和业务路由
-bank_security/    授权、签名与安全组件
-android/          Android 源码、JVM 与设备测试
-deploy/           Linux 部署、Nginx 和管理面板
-scripts/          本地启动、评测、验证与打包工具
-tests/            后端测试用例
-docs/             五类参赛文档和技术附录
-submission/       本机生成的最终交付物，不入库
-```
+## 目录
 
-`.venv`、`.env`、Android 本机配置和现有账户／设备／会话数据保留供本机运行，不进入交付包。历史试验工作区和构建缓存已清理，未合并版本与未提交内容另存私有历史备份，详见[整理说明](docs/整理说明.md)。
+| 路径 | 内容 |
+| --- | --- |
+| `bank_agent/`、`bank_planning/` | 对话、取证、计算、审批与回答核验 |
+| `bank_core/`、`bank_security/` | 模拟核心、账本、授权、签名和安全组件 |
+| `android/` | 客户端、JVM 与设备测试、工具链脚本 |
+| `deploy/` | Linux 服务、Nginx 和本地／服务器管理面板 |
+| [scripts/](scripts/README.md) | 启动、评测、验证与打包工具 |
+| [tests/](tests/README.md) | 后端回归、版本化数据和共享契约 |
+| [docs/](docs/README.md) | 技术说明、评审材料、版本证据与品牌原稿 |
+| `tools/usability/` | 配合可用性评估脚本的观察页面 |
 
-## 已知边界
+根目录 Python 模块保留运行入口及共享业务接口。`build/`、`submission/` 和虚拟环境是忽略的本地产物，目录整理及保留依据见[整理说明](docs/整理说明.md)。
 
-本项目不接入真实银行、短信、商户履约或客服审核。公网演示使用私有 CA，安装包需要与服务器证书和地址匹配。规则模式录制不证明联网大模型效果，端侧语音及完整真机矩阵仍需单独验收。风险清单见[安全自评](docs/安全自评报告.md)。
+## 使用边界
+
+项目不接入真实银行、短信或商户履约。演示 OTP 可由 App 获取，设备登记未达到真实银行认证强度；模型核验可能误判。账本面向单进程演示，公网演示使用私有 CA。已知风险与生产化缺口见[安全自评](docs/安全自评报告.md)。
 
 ## 许可证
 
-[MIT](LICENSE)。
+[MIT](LICENSE)。思考动画移植自 thinking-orbs，其 MIT 许可证随应用提供，来源见[交互细节](docs/交互细节.md)。
