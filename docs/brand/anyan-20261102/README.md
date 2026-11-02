@@ -4,6 +4,8 @@
 
 [最终文件与使用规范](final/README.md) · [配色数据](final/palette.json)
 
+[软件接入说明](integration.md)：Android 桌面、登录与聊天标识，以及本地／服务器后台。
+
 ![AnYan 主标](final/masters/anyan-horizontal.svg)
 
 - 暖石墨 `#30312D`：浅底主标和正文。

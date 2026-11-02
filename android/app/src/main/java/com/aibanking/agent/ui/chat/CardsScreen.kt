@@ -99,6 +99,7 @@ import com.aibanking.agent.ui.anim.containerTransformBoundsTransform
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
 import com.aibanking.agent.ui.components.BankBottomSheet
+import com.aibanking.agent.ui.components.BankBrandMark
 import com.aibanking.agent.ui.components.BankButton
 import com.aibanking.agent.ui.components.BankCard
 import com.aibanking.agent.ui.components.BankFilterChip
@@ -421,7 +422,10 @@ private fun CardFace(card: CardView) {
             .padding(24.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("ANYAN · BANKING", color = foreground.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.5.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BankBrandMark(Modifier.size(24.dp), tint = if (dark) BankPalette.Gold else BankPalette.Ink)
+                Text("ANYAN · BANKING", color = foreground.copy(alpha = .72f), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.5.sp)
+            }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text("安言 AI 银行", color = foreground, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)

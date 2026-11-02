@@ -1,10 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 24 / 108 on each side renders the shared mark at 60 units. Its curved
-     shoulders stay inside the central 66-unit circle as well as the square.
-     Fractional insets scale with launcher bounds. -->
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@drawable/ic_anyan_mark"
-    android:insetLeft="22.222222%"
-    android:insetTop="22.222222%"
-    android:insetRight="22.222222%"
-    android:insetBottom="22.222222%" />
+<!-- Foreground fits inside the central 66-unit circle; background is a separate solid layer. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="24.56" android:translateY="25.48" android:scaleX="0.23" android:scaleY="0.23">
+        <path android:fillColor="#B39A68" android:pathData="M32 224V112C32 56 74 24 128 24C182 24 224 56 224 112V224H178V112C178 82 158 62 128 62C98 62 78 82 78 112V129H142V167H78V224Z" />
+    </group>
+</vector>

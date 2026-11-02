@@ -325,6 +325,15 @@ def account_script() -> FileResponse:
     return FileResponse(STATIC.with_name('accounts.js'), media_type='application/javascript', headers={'Cache-Control': 'no-store'})
 
 
+@app.get('/brand/{name}')
+def brand_asset(name: str) -> FileResponse:
+    # Public artwork is needed on the login page; expose only these two files.
+    if name not in {'anyan-app-icon.svg', 'favicon.svg'}:
+        raise HTTPException(404, '资源不存在')
+    return FileResponse(STATIC.parent / 'brand' / name, media_type='image/svg+xml',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
 @app.get('/api/panel-info')
 def panel_info() -> dict[str, Any]:
     return {'mode': 'local' if LOCAL_MODE else 'server', 'services': list(SERVICES),

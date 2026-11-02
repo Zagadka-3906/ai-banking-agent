@@ -4,17 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>安言运维台</title>
+<link rel="icon" type="image/svg+xml" href="brand/favicon.svg">
 <style>
 :root {
-  --bg: #f6f7fb; --panel: #ffffff; --line: #e4e6ef; --text: #1b1d2a; --muted: #6b6f85;
-  --accent: #0b57d0; --accent-soft: #e8f0fe; --on-accent: #fff; --good: #1f9d55; --good-soft: #e3f5ea;
+  --bg: #f6f3eb; --panel: #ffffff; --line: #cac8bd; --text: #30312d; --muted: #5e6057;
+  --accent: #30312d; --accent-soft: #e9e2d4; --on-accent: #fff; --good: #1f9d55; --good-soft: #e3f5ea;
   --warn: #b7791f; --warn-soft: #fdf3dd; --bad: #d64545; --bad-soft: #fde8e8;
   --radius: 14px; --shadow: 0 1px 2px rgba(20, 22, 40, .06), 0 4px 16px rgba(20, 22, 40, .04);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #12131a; --panel: #1b1d27; --line: #2c2f3d; --text: #e9eaf2; --muted: #9a9db3;
-    --accent: #a8c7fa; --accent-soft: #24354f; --on-accent: #062e6f; --good: #4ade80; --good-soft: #163524;
+    --bg: #22231f; --panel: #30312d; --line: #5e6057; --text: #f6f3eb; --muted: #cac8bd;
+    --accent: #b39a68; --accent-soft: #414239; --on-accent: #30312d; --good: #4ade80; --good-soft: #163524;
     --warn: #f6c453; --warn-soft: #3a2f12; --bad: #f87171; --bad-soft: #3d1a1a;
     --shadow: none;
   }
@@ -24,7 +25,7 @@ body { margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.55 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
 header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; background: var(--panel);
   border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
-.logo { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); }
+.logo { display: block; flex-shrink: 0; width: 36px; height: 36px; }
 h1 { font-size: 17px; margin: 0; }
 header .meta { color: var(--muted); font-size: 12px; margin-left: auto; text-align: right; }
 nav { display: flex; gap: 4px; padding: 10px 24px 0; overflow-x: auto; }
@@ -69,7 +70,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
 select, input, textarea { font: inherit; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px;
   background: var(--panel); color: var(--text); }
 .login { max-width: 380px; margin: 12vh auto; text-align: center; }
-.login .logo { width: 52px; height: 52px; border-radius: 16px; margin: 0 auto 14px; }
+.login .logo { width: 64px; height: 64px; margin: 0 auto 14px; }
 .login input { width: 100%; margin: 14px 0 10px; }
 .error { color: var(--bad); min-height: 20px; font-size: 13px; }
 .account-layout { display:grid; grid-template-columns:260px minmax(0,1fr); gap:16px; align-items:start; }
@@ -94,7 +95,7 @@ select, input, textarea { font: inherit; padding: 7px 10px; border: 1px solid va
 <body>
 
 <section id="login" class="login hidden">
-  <div class="logo"></div>
+  <img class="logo" src="brand/anyan-app-icon.svg" alt="" aria-hidden="true">
   <h1>安言运维台</h1>
   <p class="sub" id="panelLoginHint">输入访问令牌。令牌位于服务器的 /etc/anyan/panel.token。</p>
   <input id="token" type="password" placeholder="访问令牌" autocomplete="current-password">
@@ -104,7 +105,7 @@ select, input, textarea { font: inherit; padding: 7px 10px; border: 1px solid va
 
 <div id="app" class="hidden">
   <header>
-    <div class="logo"></div>
+    <img class="logo" src="brand/anyan-app-icon.svg" alt="" aria-hidden="true">
     <div><h1>安言运维台</h1><div class="sub" id="host"></div></div>
     <div class="meta"><div id="updated">—</div><button class="btn" id="logout" style="margin-top:4px">退出</button></div>
   </header>

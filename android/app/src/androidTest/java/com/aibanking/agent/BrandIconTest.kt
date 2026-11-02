@@ -15,19 +15,19 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
 
-/** Native resource rendering: launcher padding, real cutouts and themed-icon masks. */
+/** Native resource rendering: open-A gap, safe padding, gold and themed-icon masks. */
 @BankingRegression
 class BrandIconTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
-    @Test fun foreground_keeps_transparent_padding_and_both_open_lines() {
+    @Test fun foreground_keeps_transparent_padding_and_the_open_a_crossbar() {
         val bitmap = render(drawable(R.drawable.ic_launcher_foreground), 540)
         try {
             val bounds = visibleBounds(bitmap)
             // The launcher canvas is 108 units; the safe square is [21, 87].
             assertTrue("brand must stay inside the adaptive icon safe area", bounds.left >= 105 && bounds.top >= 105)
             assertTrue("brand must stay inside the adaptive icon safe area", bounds.right <= 435 && bounds.bottom <= 435)
-            assertTrue("brand must remain readable instead of shrinking to a tiny logo", bounds.width() >= 240 && bounds.height() >= 240)
+            assertTrue("brand must remain readable instead of shrinking to a tiny logo", bounds.width() >= 210 && bounds.height() >= 220)
             for (y in bounds.top until bounds.bottom) for (x in bounds.left until bounds.right) {
                 if (Color.alpha(bitmap.getPixel(x, y)) > 0) {
                     val dx = x + 0.5 - 270
@@ -38,9 +38,10 @@ class BrandIconTest {
             }
             assertEquals(0, Color.alpha(bitmap.getPixel(0, 0)))
             assertEquals(0, Color.alpha(bitmap.getPixel(539, 539)))
-            assertEquals("the first line must be a transparent cutout", 0, Color.alpha(bitmap.getPixel(270, 230)))
-            assertEquals("the second line must be a transparent cutout", 0, Color.alpha(bitmap.getPixel(270, 300)))
-            assertEquals("the shield body must be solid", 255, Color.alpha(bitmap.getPixel(270, 175)))
+            assertEquals("the arch must have an open interior", 0, Color.alpha(bitmap.getPixel(270, 230)))
+            assertEquals("the right end of the crossbar must stay open", 0, Color.alpha(bitmap.getPixel(320, 300)))
+            assertEquals("the crossbar must use the approved gold", GOLD, bitmap.getPixel(270, 300))
+            assertEquals("the left stem must stay solid", GOLD, bitmap.getPixel(190, 300))
         } finally {
             bitmap.recycle()
         }
@@ -53,10 +54,10 @@ class BrandIconTest {
         val background = render(launcher.background, 108)
         val foreground = render(launcher.foreground, 108)
         try {
-            val purple = context.getColor(R.color.ic_launcher_background)
-            assertEquals(255, Color.alpha(purple))
+            val graphite = context.getColor(R.color.ic_launcher_background)
+            assertEquals(INK, graphite)
             for (y in 0 until background.height) for (x in 0 until background.width) {
-                assertEquals("the icon background must not blend with launcher wallpaper", purple, background.getPixel(x, y))
+                assertEquals("the icon background must not blend with launcher wallpaper", graphite, background.getPixel(x, y))
             }
             if (Build.VERSION.SDK_INT >= 33) {
                 val monochrome = checkNotNull(launcher.monochrome) { "Android 13+ must expose a monochrome layer" }
@@ -67,7 +68,8 @@ class BrandIconTest {
                             Color.alpha(foreground.getPixel(x, y)), Color.alpha(mask.getPixel(x, y)))
                     }
                     assertEquals(0, Color.alpha(mask.getPixel(54, 46)))
-                    assertEquals(0, Color.alpha(mask.getPixel(54, 60)))
+                    assertEquals(0, Color.alpha(mask.getPixel(64, 60)))
+                    assertEquals(255, Color.alpha(mask.getPixel(54, 60)))
                 } finally {
                     mask.recycle()
                 }
@@ -87,9 +89,9 @@ class BrandIconTest {
             val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = INK; textSize = 18f }
             canvas.drawText("ANYAN / adaptive icon masks / large + 48px", 20f, 26f, label)
             val variants = listOf(
-                Triple("Brand", context.getColor(R.color.ic_launcher_background), INK),
-                Triple("Themed light", Color.rgb(234, 229, 252), Color.rgb(61, 49, 90)),
-                Triple("Themed dark", Color.rgb(61, 49, 90), Color.rgb(234, 229, 252)),
+                Triple("Brand", context.getColor(R.color.ic_launcher_background), GOLD),
+                Triple("Themed light", Color.rgb(246, 243, 235), INK),
+                Triple("Themed dark", INK, Color.rgb(246, 243, 235)),
             )
             variants.forEachIndexed { row, (name, background, foreground) ->
                 masks.forEachIndexed { column, shape ->
@@ -218,7 +220,8 @@ class BrandIconTest {
     }
 
     private companion object {
-        val INK = Color.rgb(22, 19, 31)
+        val INK = Color.rgb(48, 49, 45)
+        val GOLD = Color.rgb(179, 154, 104)
         val masks = listOf("circle", "rounded", "teardrop")
     }
 }

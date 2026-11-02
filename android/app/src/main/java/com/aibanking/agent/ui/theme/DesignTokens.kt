@@ -9,20 +9,22 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * Shared palette: white canvas, cool grey containers and one solid blue accent.
+ * Shared palette: warm paper, graphite text and restrained gold on dark surfaces.
  *
  * Screens should prefer [androidx.compose.material3.MaterialTheme] colours so
  * dark mode follows; these constants remain for fixed-colour surfaces (risk
  * chips, card faces) that look the same in both themes.
  */
 object BankPalette {
-    val Ink = Color(0xFF1F1F1F)
-    val Wisteria = Color(0xFFD3E3FD)
-    val Accent = Color(0xFF0B57D0)
-    val Lavender = Color(0xFFE9EEF6)
-    val Moon = Color(0xFFF0F4F9)
-    val Muted = Color(0xFF444746)
-    val Line = Color(0xFFC4C7C5)
+    val Ink = Color(0xFF30312D)
+    val Gold = Color(0xFFB39A68)
+    val Paper = Color(0xFFF6F3EB)
+    val Wisteria = Color(0xFFE9E2D4)
+    val Accent = Color(0xFF30312D)
+    val Lavender = Color(0xFFEDE9DF)
+    val Moon = Color(0xFFF6F3EB)
+    val Muted = Color(0xFF5E6057)
+    val Line = Color(0xFFCAC8BD)
     val Green = Color(0xFFC4EED0)
     val GreenSoft = Color(0xFFE6F4EA)
     val Yellow = Color(0xFFFEEFC3)
@@ -77,7 +79,7 @@ data class BankSemanticColors(
 
 // Equal stops retain text reveal/opacity animations without colour gradients.
 private val BrandStops = List(3) { BankPalette.Accent }
-private val DarkBrandStops = List(3) { Color(0xFFA8C7FA) }
+private val DarkBrandStops = List(3) { Color(0xFFB39A68) }
 
 private val LightSemanticColors = BankSemanticColors(
     inputFocus = BankPalette.Accent,
@@ -95,21 +97,21 @@ private val LightSemanticColors = BankSemanticColors(
     chartPrimary = Color(0xFFD93025),
     chartBenchmark = Color(0xFF5C6B7A),
     chartGrid = Color(0xFFE1E3E1),
-    cardActive = Color(0xFF1B2A4A),
+    cardActive = Color(0xFF30312D),
     cardFrozen = BankPalette.YellowSoft,
     cardLost = BankPalette.RedSoft,
-    cardVirtual = Color(0xFFE9EEF6),
+    cardVirtual = Color(0xFFEDE9DF),
     positiveGradient = Brush.horizontalGradient(listOf(Color(0xFFEA4335), Color(0xFFB3261E))),
-    primaryGradient = SolidColor(Color(0xFFD3E3FD)),
+    primaryGradient = SolidColor(Color(0xFFE9E2D4)),
     brandGradient = SolidColor(BankPalette.Accent),
     brandGradientColors = BrandStops,
 )
 
 private val DarkSemanticColors = BankSemanticColors(
-    inputFocus = Color(0xFFA8C7FA),
+    inputFocus = Color(0xFFB39A68),
     positive = Color(0xFFF28B82),
     negative = Color(0xFF81C995),
-    neutral = Color(0xFFC4C7C5),
+    neutral = Color(0xFFCAC8BD),
     riskGreen = Color(0xFF81C995),
     riskYellow = Color(0xFFFDD663),
     riskRed = Color(0xFFF28B82),
@@ -120,13 +122,13 @@ private val DarkSemanticColors = BankSemanticColors(
     chartPrimary = Color(0xFFF28B82),
     chartBenchmark = Color(0xFFAAB7C4),
     chartGrid = Color(0xFF3C4043),
-    cardActive = Color(0xFF1B2A4A),
+    cardActive = Color(0xFF30312D),
     cardFrozen = BankPalette.YellowSoft,
     cardLost = BankPalette.RedSoft,
-    cardVirtual = Color(0xFF273849),
+    cardVirtual = Color(0xFF3C3D37),
     positiveGradient = Brush.horizontalGradient(listOf(Color(0xFFF6AEA9), Color(0xFFF28B82))),
-    primaryGradient = SolidColor(Color(0xFF0842A0)),
-    brandGradient = SolidColor(Color(0xFFA8C7FA)),
+    primaryGradient = SolidColor(Color(0xFF414239)),
+    brandGradient = SolidColor(Color(0xFFB39A68)),
     brandGradientColors = DarkBrandStops,
 )
 

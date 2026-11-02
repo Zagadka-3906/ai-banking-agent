@@ -38,6 +38,40 @@ def _login(client):
     assert client.post("/api/login", json={"token": TOKEN}).status_code == 200
 
 
+def test_login_artwork_is_public_and_works_under_the_panel_prefix(panel):
+    from html.parser import HTMLParser
+    from urllib.parse import urljoin, urlsplit
+
+    class ArtworkParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.urls = []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'img' and attrs.get('class') == 'logo':
+                self.urls.append(attrs['src'])
+            if tag == 'link' and attrs.get('rel') == 'icon':
+                self.urls.append(attrs['href'])
+
+    _, client, *_ = panel
+    parser = ArtworkParser()
+    parser.feed(client.get('/').text)
+    assert len(parser.urls) == 3  # Login, header and favicon.
+    for base in ('http://localhost/', 'https://example.com/panel/'):
+        for relative in parser.urls:
+            path = urlsplit(urljoin(base, relative)).path
+            prefix = urlsplit(base).path.rstrip('/')
+            assert path.startswith(prefix + '/brand/')
+            response = client.get(path.removeprefix(prefix))  # Nginx strips /panel.
+            assert response.status_code == 200
+            assert response.headers['content-type'].startswith('image/svg+xml')
+            assert response.headers['x-content-type-options'] == 'nosniff'
+            assert '#B39A68' in response.text and '#30312D' in response.text
+    assert client.get('/brand/server.py').status_code == 404
+    assert client.get('/api/overview').status_code == 401
+
+
 def test_secrets_are_reported_only_as_configured():
     spec = importlib.util.spec_from_file_location("ops_panel_helpers", ROOT / "deploy/panel/server.py")
     module = importlib.util.module_from_spec(spec)

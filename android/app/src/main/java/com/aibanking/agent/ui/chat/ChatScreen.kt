@@ -377,7 +377,7 @@ internal fun AccountAvatar(principal: String, modifier: Modifier = Modifier, onC
             .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClickLabel = "打开菜单", onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        Text(initial, style = MaterialTheme.typography.titleSmall, color = Color.White)
+        Text(initial, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onPrimary)
     }
 }
 

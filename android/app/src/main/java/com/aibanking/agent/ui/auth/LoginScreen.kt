@@ -43,7 +43,7 @@ fun RestoringScreen() {
 
 @Composable
 private fun BrandMark() {
-    BankGradientMark(Modifier.size(44.dp))
+    BankBrandLockup()
 }
 
 @Composable
