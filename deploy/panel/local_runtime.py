@@ -56,6 +56,13 @@ def control_request(control_file: Path, operation: str, units: tuple[str, ...] =
 
 def port_free(port: int) -> bool:
     with socket.socket() as probe:
+        # On POSIX a stopped HTTP server can leave accepted connections in
+        # TIME_WAIT. Probe with the same reuse policy as Uvicorn so those
+        # connections do not look like a foreign listener during restart.
+        # Windows permits overlapping binds with SO_REUSEADDR, so leave its
+        # exclusive default intact rather than adopting an occupied port.
+        if os.name != 'nt':
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind(('127.0.0.1', port))
             return True

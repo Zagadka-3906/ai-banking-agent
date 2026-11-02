@@ -1,5 +1,6 @@
 """Windows-compatible local lifecycle, isolated import and real panel roundtrip."""
 from copy import deepcopy
+import errno
 import json
 import os
 from pathlib import Path
@@ -65,6 +66,34 @@ def test_foreign_port_is_never_adopted_or_stopped(tmp_path):
             stack.start('anyan-core')
         stack.stop('anyan-core')
         assert not stack.children and not runtime.port_free(port)
+
+
+def test_reusable_foreign_listener_is_still_occupied():
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        assert not runtime.port_free(listener.getsockname()[1])
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX TIME_WAIT bind semantics differ from Windows')
+def test_stopped_http_port_is_reusable_while_connections_are_in_time_wait():
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        with socket.create_connection(('127.0.0.1', port), timeout=3) as client:
+            connection, _ = listener.accept()
+            # The server actively closes an accepted connection, as an HTTP
+            # response with Connection: close can do before service shutdown.
+            connection.close()
+            assert client.recv(1) == b''
+    with socket.socket() as exclusive_probe:
+        with pytest.raises(OSError) as error:
+            exclusive_probe.bind(('127.0.0.1', port))
+        assert error.value.errno == errno.EADDRINUSE
+    assert runtime.port_free(port)
 
 
 @pytest.mark.parametrize('url', ['https://127.0.0.1', 'http://example.com', 'http://127.0.0.1/other'])
