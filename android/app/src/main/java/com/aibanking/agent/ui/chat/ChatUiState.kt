@@ -4,6 +4,7 @@ import com.aibanking.agent.data.CardView
 import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.ContactView
 import com.aibanking.agent.data.DeviceView
+import com.aibanking.agent.data.HistoryRecordView
 import com.aibanking.agent.data.HoldingView
 import com.aibanking.agent.data.ProductView
 import com.aibanking.agent.data.RiskProfileView
@@ -122,6 +123,12 @@ data class ChatUiState(
     val profileResult: Map<*, *>? = null,
     /** Predicted next requests shown above the editor; tapping sends immediately. */
     val suggestions: List<String> = DEFAULT_PREDICTED_SUGGESTIONS,
+    /** 办理历史页：展示已办理业务与交易流水。 */
+    val showHistory: Boolean = false,
+    val historyRecords: List<HistoryRecordView> = emptyList(),
+    val historyDateScope: String = "ALL",
+    val historyCategory: String? = null,
+    val selectedHistoryRecord: HistoryRecordView? = null,
     /** 银行卡管理页：卡片列表 + 添加表单。 */
     val showCards: Boolean = false,
     val cards: List<CardView> = emptyList(),

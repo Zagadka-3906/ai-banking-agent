@@ -93,6 +93,16 @@ object UiTags {
     const val CONTACT_REMOVE_CONFIRM = "contact_remove_confirm"
     const val CONTACT_REMOVE_CANCEL = "contact_remove_cancel"
 
+    // 办理历史 / 业务记录
+    const val OPEN_HISTORY = "open_history"
+    const val HISTORY_SCREEN = "history_screen"
+    const val HISTORY_LIST = "history_list"
+    const val HISTORY_FILTER_CHIP = "history_filter_chip"
+    fun historyFilterChip(key: String) = "$HISTORY_FILTER_CHIP:$key"
+    const val HISTORY_DETAIL_DIALOG = "history_detail_dialog"
+    const val HISTORY_ASK_AGENT = "history_ask_agent"
+    fun historyItem(txId: String) = "history_item:$txId"
+
     const val APPROVAL_APPROVE = "approval_approve"
     const val APPROVAL_REJECT = "approval_reject"
     const val APPROVAL_OTP = "approval_otp"

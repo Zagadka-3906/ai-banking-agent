@@ -67,8 +67,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/** 聊天之外的三个全屏覆盖页；聊天页是层级最浅的主页。 */
-private enum class AppPage { CHAT, CARDS, WEALTH, CONTACTS }
+/** 聊天之外的四个全屏覆盖页；聊天页是层级最浅的主页。 */
+private enum class AppPage { CHAT, HISTORY, CARDS, WEALTH, CONTACTS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -97,6 +97,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
 
     // 页面状态映射
     val page = when {
+        state.showHistory -> AppPage.HISTORY
         state.showCards -> AppPage.CARDS
         state.showWealth -> AppPage.WEALTH
         state.showContacts -> AppPage.CONTACTS
@@ -127,6 +128,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                 currentPage = page,
                 principal = state.principal,
                 onChat = { closeDrawerThen(viewModel::dismissPanels) },
+                onHistory = { closeDrawerThen(viewModel::openHistory) },
                 onCards = { closeDrawerThen(viewModel::openCards) },
                 onWealth = { closeDrawerThen(viewModel::openWealth) },
                 onContacts = { closeDrawerThen(viewModel::openContacts) },
@@ -164,6 +166,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
                                     state, viewModel, activity, listState, approvalDeadlineMillis,
                                     onMenu = { drawerScope.launch { drawerState.open() } },
                                 )
+                                AppPage.HISTORY -> HistoryUi(state, viewModel)
                                 AppPage.CARDS -> CardsUi(state, viewModel)
                                 AppPage.WEALTH -> WealthUi(state, viewModel, snackbar)
                                 AppPage.CONTACTS -> ContactsUi(state, viewModel)
@@ -215,6 +218,7 @@ private fun BankNavigationDrawer(
     currentPage: AppPage,
     principal: String,
     onChat: () -> Unit,
+    onHistory: () -> Unit,
     onCards: () -> Unit,
     onWealth: () -> Unit,
     onContacts: () -> Unit,
@@ -239,6 +243,7 @@ private fun BankNavigationDrawer(
             Spacer(Modifier.height(12.dp))
             val main = listOf(
                 DrawerEntry("对话", BankIconKind.Chat, "open_assistant", AppPage.CHAT, onChat),
+                DrawerEntry("办理历史", BankIconKind.History, UiTags.OPEN_HISTORY, AppPage.HISTORY, onHistory),
                 DrawerEntry("卡包", BankIconKind.Card, UiTags.OPEN_CARDS, AppPage.CARDS, onCards),
                 DrawerEntry("理财", BankIconKind.Chart, UiTags.OPEN_WEALTH, AppPage.WEALTH, onWealth),
                 DrawerEntry("联系人", BankIconKind.People, UiTags.OPEN_CONTACTS, AppPage.CONTACTS, onContacts),

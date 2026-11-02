@@ -11,6 +11,7 @@ import com.aibanking.agent.data.ApprovalView
 import com.aibanking.agent.data.ContactRepository
 import com.aibanking.agent.data.DeviceRepository
 import com.aibanking.agent.data.GatewayException
+import com.aibanking.agent.data.HistoryRepository
 import com.aibanking.agent.data.LoginRepository
 import com.aibanking.agent.data.SessionCheck
 import com.aibanking.agent.data.SessionStore
@@ -50,6 +51,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     internal val contacts = ContactRepository.create()
     internal val wealth = WealthRepository.create()
     internal val cardsRepo = CardsRepository.create()
+    internal val historyRepo = HistoryRepository.create()
     internal val gson = Gson()
 
     internal val _state = MutableStateFlow(ChatUiState(restoring = true))
@@ -531,7 +533,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false, showCards = false, feishuBindingCode = null) }
+    fun dismissPanels() = _state.update { it.copy(showDevices = false, showTasks = false, showContacts = false, showWealth = false, showCards = false, showHistory = false, feishuBindingCode = null, selectedHistoryRecord = null) }
 
     /** Exposed so the device panel can mark "this is this phone" honestly. */
     fun currentDeviceId(): String? = deviceId
