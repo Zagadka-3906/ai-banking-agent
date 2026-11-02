@@ -12,6 +12,8 @@ import com.aibanking.agent.data.TaskView
 import com.aibanking.agent.data.SplitRequestView
 import com.aibanking.agent.data.ReplyResponse
 import com.aibanking.agent.data.StageProgress
+import com.aibanking.agent.ui.anim.RiskSignal
+import com.aibanking.agent.ui.anim.RiskTier
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -98,6 +100,8 @@ data class ChatUiState(
     val activeStages: List<StageProgress> = emptyList(),
     /** Non-null while the conversation is waiting for a human decision. */
     val pending: ApprovalView? = null,
+    /** 用户已点击最终确认按钮（或拒绝操作），光效随之关闭，无需等待 Agent 回复完成。 */
+    val approvalConfirmed: Boolean = false,
     val otp: String = "",
     val approvalError: String? = null,
     /** Revealed only once the server has actually asked for a login SMS code. */
@@ -201,4 +205,17 @@ internal fun isValidContactBirthday(birthday: String, today: LocalDate = LocalDa
     if (!birthday.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) return false
     val parsed = runCatching { LocalDate.parse(birthday) }.getOrNull() ?: return false
     return parsed.year >= 1900 && !parsed.isAfter(today)
+}
+
+/**
+ * 待办审批的光效信号：在用户尚未做出确认/取消决策时持续呼吸；
+ * 一旦用户点下最终确认按钮（黄区确认、红区生物识别发起/确认）或取消，光效立刻关闭，无需等待 Agent 后续回复完成。
+ */
+fun activeApprovalRiskSignal(pending: ApprovalView?, confirmed: Boolean): RiskSignal? {
+    if (confirmed || pending == null) return null
+    return RiskSignal(
+        key = "approval:${pending.approvalId}",
+        tier = if (pending.mfaRequired) RiskTier.RED else RiskTier.YELLOW,
+        sustained = true,
+    )
 }

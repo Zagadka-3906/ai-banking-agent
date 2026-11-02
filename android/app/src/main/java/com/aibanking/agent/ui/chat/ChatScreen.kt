@@ -125,10 +125,7 @@ fun ChatScreen(viewModel: ChatViewModel, activity: FragmentActivity) {
     }
     BackHandler(enabled = drawerOpen) { closeDrawer() }
 
-    val pendingApproval = state.pending
-    val riskSignal = pendingApproval?.let {
-        RiskSignal("approval:${it.approvalId}", if (it.mfaRequired) RiskTier.RED else RiskTier.YELLOW, sustained = true)
-    }
+    val riskSignal = activeApprovalRiskSignal(state.pending, state.approvalConfirmed)
 
     val drawerWidth = 280.dp
     val shiftDistance = 250.dp
@@ -472,6 +469,7 @@ private fun ChatHome(
                             onBiometricApprove = {
                                 // Prove presence locally first; the server still
                                 // verifies the device signature it receives.
+                                viewModel.markApprovalConfirmed()
                                 val callbacks = viewModel.deviceApprovalCallbacks(approval.approvalId)
                                 BiometricGate.prompt(
                                     activity = activity,

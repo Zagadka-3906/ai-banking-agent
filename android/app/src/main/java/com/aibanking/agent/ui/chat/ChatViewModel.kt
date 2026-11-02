@@ -337,6 +337,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             lastProblem = OperationProblem(message, "DEVICE_VERIFICATION_FAILED", 400))
     }
 
+    /** 用户已点击最终确认按钮（或拒绝操作），立即关闭光效，无需等待 Agent 回复完成。 */
+    fun markApprovalConfirmed() {
+        _state.update { it.copy(approvalConfirmed = true) }
+    }
+
     /** The prompt belongs to the login and approval visible when it opened. */
     internal fun deviceApprovalCallbacks(approvalId: String): DeviceApprovalCallbacks {
         val owner = sessionWork.capture()
@@ -350,6 +355,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             },
             onFailure = { reason ->
                 owner.commit {
+                    _state.update { it.copy(approvalConfirmed = false) }
                     if (_state.value.pending?.approvalId == approvalId) reportError("生物识别未通过：$reason")
                 }
             },
@@ -596,7 +602,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } else kept + message
             // An approved operation that reached a result opens its result page at once.
             val reveal = revealOutcome && envelope.approval == null && isTaskOutcome(message)
-            state.copy(busy = false, pending = envelope.approval, otp = "", approvalError = null, activeStages = emptyList(),
+            state.copy(busy = false, approvalConfirmed = false, pending = envelope.approval, otp = "", approvalError = null, activeStages = emptyList(),
                 outcomeMessageId = if (reveal) messageId else state.outcomeMessageId,
                 lastProblem = if (clearProblem) null else state.lastProblem,
                 showProblem = if (clearProblem) false else state.showProblem,
@@ -759,6 +765,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reject() {
         val approval = _state.value.pending ?: return
+        _state.update { it.copy(approvalConfirmed = true) }
         resolve(approval, decision = "reject")
     }
 
@@ -766,9 +773,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun approve() {
         val approval = _state.value.pending ?: return
         if (approval.mfaRequired) {
-            _state.update { it.copy(approvalError = "该操作需要短信验证码与设备签名，请完成强验证") }
+            _state.update { it.copy(approvalConfirmed = false, approvalError = "该操作需要短信验证码与设备签名，请完成强验证") }
             return
         }
+        _state.update { it.copy(approvalConfirmed = true) }
         resolve(approval, decision = "approve")
     }
 
@@ -783,7 +791,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val approval = _state.value.pending ?: return
         val otp = _state.value.otp
         if (!otp.matches(Regex("[0-9]{6}"))) {
-            _state.update { it.copy(approvalError = "请输入 6 位数字验证码") }
+            _state.update { it.copy(approvalConfirmed = false, approvalError = "请输入 6 位数字验证码") }
             return
         }
         // Without an enrolled key the signature would be unverifiable, so say so
@@ -791,12 +799,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val enrolledDevice = deviceId
         val signingKeys = deviceKeys
         if (enrolledDevice.isNullOrBlank() || signingKeys == null) {
-            _state.update { it.copy(approvalError = "本机尚未完成设备注册，无法完成红色风险验证") }
+            _state.update { it.copy(approvalConfirmed = false, approvalError = "本机尚未完成设备注册，无法完成红色风险验证") }
             return
         }
         val principal = _state.value.principal
         interactionRevision++
-        _state.update { it.copy(busy = true, error = null, approvalError = null, lastProblem = null, showProblem = false, activeStages = emptyList()) }
+        _state.update { it.copy(busy = true, approvalConfirmed = true, error = null, approvalError = null, lastProblem = null, showProblem = false, activeStages = emptyList()) }
         sessionWork.launch {
             var approvalSubmitted = false
             try {
@@ -877,7 +885,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         markUserActivity()
         val principal = _state.value.principal
         interactionRevision++
-        _state.update { it.copy(busy = true, error = null, approvalError = null, lastProblem = null, showProblem = false, activeStages = emptyList()) }
+        _state.update { it.copy(busy = true, approvalConfirmed = true, error = null, approvalError = null, lastProblem = null, showProblem = false, activeStages = emptyList()) }
         sessionWork.launch {
             try {
                 val envelope = await { agent.resolveApproval(
@@ -922,7 +930,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { state ->
             // 审批/验证失败时短信验证码已经被核心消费或拒绝，字段必须清空：
             // 留着它，用户再次点“确认执行”只会把同一个失效的码再送一次。
-            state.copy(busy = false, error = failure.message.takeIf { state.pending == null },
+            state.copy(busy = false, approvalConfirmed = false, error = failure.message.takeIf { state.pending == null },
                 approvalError = failure.message.takeIf { state.pending != null }, otp = "", activeStages = emptyList(),
                 lastProblem = OperationProblem(failure.message, failure.code, failure.httpStatus))
         }
