@@ -5,8 +5,11 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,7 +17,9 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -27,17 +32,27 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.pow
+import kotlin.math.roundToInt
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -85,7 +100,13 @@ fun ContactsUi(state: ChatUiState, viewModel: ChatViewModel) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             PredictiveBackPreview(
                 enabled = state.contactsScreen != ContactsScreen.LIST,
-                onBack = viewModel::backToContactList,
+                onBack = {
+                    if (state.contactsScreen == ContactsScreen.ADD && state.contactEditingId != null) {
+                        viewModel.showContactDetail(state.contactEditingId)
+                    } else {
+                        viewModel.backToContactList()
+                    }
+                },
                 beneath = { ContactListScreen(state, viewModel, hasCascaded = true) },
             ) {
                 val motion = LocalBankMotionEnabled.current
@@ -448,8 +469,18 @@ private fun ContactDetailScreen(
                     IconButton(onClick = viewModel::backToContactList) { BankIcon(BankIconKind.ArrowBack, contentDescription = "返回列表") }
                 },
                 actions = {
-                    IconButton(onClick = { rendered?.contactId?.let(viewModel::requestContactRemoval) }, enabled = rendered != null && !state.panelBusy,
-                        modifier = Modifier.testTag(UiTags.CONTACT_REMOVE)) {
+                    IconButton(
+                        onClick = { rendered?.let(viewModel::openContactEditor) },
+                        enabled = rendered != null && !state.panelBusy,
+                        modifier = Modifier.testTag(UiTags.CONTACT_EDIT),
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "编辑联系人", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(
+                        onClick = { rendered?.contactId?.let(viewModel::requestContactRemoval) },
+                        enabled = rendered != null && !state.panelBusy,
+                        modifier = Modifier.testTag(UiTags.CONTACT_REMOVE),
+                    ) {
                         Icon(Icons.Default.Delete, contentDescription = "删除联系人", tint = MaterialTheme.colorScheme.error)
                     }
                 },
@@ -552,7 +583,15 @@ private fun DetailRow(label: String, value: String, mono: Boolean = false, divid
 private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
     val focus = LocalFocusManager.current
     val view = LocalView.current
-    val save = { focus.clearFocus(); viewModel.addContact() }
+    val isEditing = state.contactEditingId != null
+    val save = { focus.clearFocus(); viewModel.saveContact() }
+    val onBack = {
+        if (isEditing && state.selectedContactId != null) {
+            viewModel.showContactDetail(state.selectedContactId)
+        } else {
+            viewModel.backToContactList()
+        }
+    }
     var showDateWheel by remember { mutableStateOf(false) }
     var nameEdited by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var phoneEdited by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
@@ -565,9 +604,9 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("添加联系人") },
+                title = { Text(if (isEditing) "编辑联系人" else "添加联系人") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-                navigationIcon = { IconButton(onClick = viewModel::backToContactList) { BankIcon(BankIconKind.ArrowBack, contentDescription = "返回列表") } },
+                navigationIcon = { IconButton(onClick = onBack) { BankIcon(BankIconKind.ArrowBack, contentDescription = "返回") } },
             )
         },
     ) { padding ->
@@ -576,7 +615,11 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 modifier = Modifier.widthIn(max = BankSpacing.contentMaxWidth).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                BankScreenHeading("记住重要的人", subtitle = "填写资料，建立常用转账联系", eyebrow = "联系人管理")
+                if (isEditing) {
+                    BankScreenHeading("修改联系人资料", subtitle = "更新信息，常用转账更从容", eyebrow = "联系人管理")
+                } else {
+                    BankScreenHeading("记住重要的人", subtitle = "填写资料，建立常用转账联系", eyebrow = "联系人管理")
+                }
                 BankSectionCard {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text("基本信息", style = MaterialTheme.typography.titleMedium)
@@ -680,7 +723,7 @@ private fun ContactAddScreen(state: ChatUiState, viewModel: ChatViewModel) {
                 }
                 BankFormError(state.contactFormError)
                 BankPrimaryButton(
-                    text = if (state.panelBusy) "保存中…" else "保存",
+                    text = if (state.panelBusy) "保存中…" else if (isEditing) "保存修改" else "保存",
                     onClick = save,
                     enabled = state.canAddContact,
                     loading = state.panelBusy,
@@ -869,7 +912,37 @@ private fun BankDateWheelPickerSheet(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+internal data class WheelItemPerspective(
+    val rotationX: Float,
+    val scale: Float,
+    val alpha: Float,
+)
+
+internal fun calculateWheelItemPerspective(delta: Float): WheelItemPerspective {
+    val rotationX = (-delta * 22f).coerceIn(-65f, 65f)
+    val scale = (1f - abs(delta) * 0.08f).coerceIn(0.72f, 1f)
+    val alpha = (1f - (abs(delta) / 1.8f).toDouble().pow(1.5).toFloat()).coerceIn(0f, 1f)
+    return WheelItemPerspective(rotationX, scale, alpha)
+}
+
+internal fun calculateWheelOverscrollResistance(overscroll: Float): Float {
+    return (1f - (overscroll / 3.0f).coerceIn(0f, 0.85f)) * 0.42f
+}
+
+internal fun projectInertialWheelTarget(
+    current: Float,
+    velocityItemsPerSec: Float,
+    maxIndex: Float,
+    decayTimeConstant: Float = 0.45f,
+): Float {
+    if (current < 0f) return 0f
+    if (current > maxIndex) return maxIndex
+    val projected = current + velocityItemsPerSec * decayTimeConstant
+    if (projected < 0f) return 0f
+    if (projected > maxIndex) return maxIndex
+    return projected.roundToInt().coerceIn(0, maxIndex.toInt()).toFloat()
+}
+
 @Composable
 private fun <T> WheelColumn(
     items: List<T>,
@@ -881,81 +954,213 @@ private fun <T> WheelColumn(
     if (items.isEmpty()) return
     val view = LocalView.current
     val scope = rememberCoroutineScope()
-    val initialIndex = remember(items) { items.indexOf(selectedItem).coerceAtLeast(0) }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
-    val flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+    val density = LocalDensity.current
+    val itemHeight = 48.dp
+    val itemHeightPx = with(density) { itemHeight.toPx() }
 
-    // Keep list scrolled if external clamping changes selectedItem while idle.
+    val initialIndex = remember(items) { items.indexOf(selectedItem).coerceAtLeast(0) }
+    val animatable = remember { Animatable(initialIndex.toFloat()) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    // Keep wheel synchronized with external selectedItem changes while idle
     LaunchedEffect(selectedItem, items) {
         val targetIdx = items.indexOf(selectedItem)
-        if (targetIdx >= 0 && !listState.isScrollInProgress && listState.firstVisibleItemIndex != targetIdx) {
-            listState.scrollToItem(targetIdx)
-        }
-    }
-
-    val centeredIndex by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val visible = layoutInfo.visibleItemsInfo
-            if (visible.isEmpty()) {
-                0
-            } else {
-                val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
-                visible.minByOrNull { abs((it.offset + it.size / 2) - viewportCenter) }?.index ?: 0
-            }
-        }
-    }
-
-    var firstTickSkipped by remember { mutableStateOf(false) }
-    LaunchedEffect(centeredIndex, items) {
-        val bounded = centeredIndex.coerceIn(0, items.lastIndex)
-        val item = items[bounded]
-        if (item != selectedItem) {
-            onItemSelected(item)
-            if (firstTickSkipped) {
-                BankHaptics.tick(view)
-            }
-        }
-        firstTickSkipped = true
-    }
-
-    LazyColumn(
-        state = listState,
-        flingBehavior = flingBehavior,
-        contentPadding = PaddingValues(vertical = 54.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier.fillMaxHeight(),
-    ) {
-        itemsIndexed(items) { index, item ->
-            val distance = abs(index - centeredIndex)
-            val isCenter = distance == 0
-            val alpha = when (distance) {
-                0 -> 1f
-                1 -> 0.5f
-                else -> 0.25f
-            }
-            val scale = if (isCenter) 1f else 0.9f
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .graphicsLayer {
-                        this.alpha = alpha
-                        this.scaleX = scale
-                        this.scaleY = scale
-                    }
-                    .clickable {
-                        scope.launch { listState.animateScrollToItem(index) }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label(item),
-                    style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                    fontWeight = if (isCenter) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (isCenter) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
+        if (targetIdx >= 0 && !isDragging) {
+            if (abs(animatable.value - targetIdx) > 0.01f) {
+                animatable.animateTo(
+                    targetIdx.toFloat(),
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
                 )
+            }
+        }
+    }
+
+    // Clamp when items list shrinks
+    LaunchedEffect(items) {
+        val maxIdx = (items.size - 1).coerceAtLeast(0).toFloat()
+        if (animatable.value > maxIdx) {
+            animatable.snapTo(maxIdx)
+        }
+    }
+
+    // Gear tick haptics and selection update as wheel rotates
+    var lastTickIndex by remember { mutableStateOf(initialIndex) }
+    LaunchedEffect(items) {
+        snapshotFlow { animatable.value.roundToInt() }
+            .collect { nearest ->
+                val bounded = nearest.coerceIn(0, items.lastIndex)
+                if (bounded != lastTickIndex) {
+                    lastTickIndex = bounded
+                    BankHaptics.tick(view)
+                    onItemSelected(items[bounded])
+                }
+            }
+    }
+
+    val maxIndex = (items.size - 1).coerceAtLeast(0).toFloat()
+
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clipToBounds()
+            .pointerInput(items) {
+                val tracker = VelocityTracker()
+                detectVerticalDragGestures(
+                    onDragStart = {
+                        tracker.resetTracking()
+                        scope.launch { animatable.stop() }
+                        isDragging = true
+                    },
+                    onDragEnd = {
+                        isDragging = false
+                        val velocityY = tracker.calculateVelocity().y
+                        val vItems = -velocityY / itemHeightPx
+                        scope.launch {
+                            val current = animatable.value
+                            if (current < 0f) {
+                                // Overscrolled past top: rubber band bounce back to 0
+                                animatable.animateTo(
+                                    targetValue = 0f,
+                                    initialVelocity = vItems.coerceIn(-8f, 8f),
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessLow,
+                                    ),
+                                )
+                            } else if (current > maxIndex) {
+                                // Overscrolled past bottom: rubber band bounce back to maxIndex
+                                animatable.animateTo(
+                                    targetValue = maxIndex,
+                                    initialVelocity = vItems.coerceIn(-8f, 8f),
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessLow,
+                                    ),
+                                )
+                            } else {
+                                val projected = current + vItems * 0.45f
+                                if (projected < 0f) {
+                                    // Inertia shoots past top: rubber band cushions and bounces back
+                                    animatable.animateTo(
+                                        targetValue = 0f,
+                                        initialVelocity = vItems,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
+                                    )
+                                } else if (projected > maxIndex) {
+                                    // Inertia shoots past bottom: rubber band cushions and bounces back
+                                    animatable.animateTo(
+                                        targetValue = maxIndex,
+                                        initialVelocity = vItems,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
+                                    )
+                                } else {
+                                    // Inertia settles and snaps snugly to nearest tick mark
+                                    val target = projected.roundToInt().coerceIn(0, maxIndex.toInt()).toFloat()
+                                    animatable.animateTo(
+                                        targetValue = target,
+                                        initialVelocity = vItems,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = 60f,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                        scope.launch {
+                            val target = animatable.value.roundToInt().coerceIn(0, maxIndex.toInt()).toFloat()
+                            animatable.animateTo(
+                                targetValue = target,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMediumLow,
+                                ),
+                            )
+                        }
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        tracker.addPosition(change.uptimeMillis, change.position)
+                        val deltaItems = -dragAmount / itemHeightPx
+                        val current = animatable.value
+                        val nextRaw = current + deltaItems
+                        val effectiveDelta = if (nextRaw < 0f) {
+                            val overscroll = -nextRaw
+                            deltaItems * calculateWheelOverscrollResistance(overscroll)
+                        } else if (nextRaw > maxIndex) {
+                            val overscroll = nextRaw - maxIndex
+                            deltaItems * calculateWheelOverscrollResistance(overscroll)
+                        } else {
+                            deltaItems
+                        }
+                        scope.launch { animatable.snapTo(current + effectiveDelta) }
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        val currentOffset = animatable.value
+        val minVisible = (floor(currentOffset) - 2).toInt().coerceAtLeast(0)
+        val maxVisible = (ceil(currentOffset) + 2).toInt().coerceAtMost(items.lastIndex)
+
+        for (index in minVisible..maxVisible) {
+            key(index) {
+                val item = items[index]
+                val delta = index - currentOffset
+                val isCenter = abs(delta) < 0.5f
+
+                val perspective = calculateWheelItemPerspective(delta)
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(itemHeight)
+                        .graphicsLayer {
+                            this.translationY = delta * itemHeightPx
+                            this.rotationX = perspective.rotationX
+                            this.scaleX = perspective.scale
+                            this.scaleY = perspective.scale
+                            this.alpha = perspective.alpha
+                            this.cameraDistance = 12f * density.density
+                        }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {
+                            if (!isDragging && abs(animatable.value - index) > 0.05f) {
+                                scope.launch {
+                                    animatable.animateTo(
+                                        targetValue = index.toFloat(),
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
+                                    )
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label(item),
+                        style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                        fontWeight = if (isCenter) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (isCenter) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }

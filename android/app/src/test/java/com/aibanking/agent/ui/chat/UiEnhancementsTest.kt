@@ -39,6 +39,54 @@ class UiEnhancementsTest {
     }
 
     @Test
+    fun wheelPerspective_computesRotationScaleAndAlpha() {
+        val center = calculateWheelItemPerspective(0f)
+        assertEquals(0f, center.rotationX, 0.01f)
+        assertEquals(1f, center.scale, 0.01f)
+        assertEquals(1f, center.alpha, 0.01f)
+
+        val oneBelow = calculateWheelItemPerspective(1f)
+        assertEquals(-22f, oneBelow.rotationX, 0.01f)
+        assertEquals(0.92f, oneBelow.scale, 0.01f)
+        assertTrue(oneBelow.alpha in 0.5f..0.65f)
+
+        val oneAbove = calculateWheelItemPerspective(-1f)
+        assertEquals(22f, oneAbove.rotationX, 0.01f)
+        assertEquals(0.92f, oneAbove.scale, 0.01f)
+        assertTrue(oneAbove.alpha in 0.5f..0.65f)
+
+        val farOut = calculateWheelItemPerspective(2.5f)
+        assertEquals(0f, farOut.alpha, 0.01f)
+    }
+
+    @Test
+    fun wheelOverscrollResistance_increasesAsOverscrollGrows() {
+        val r0 = calculateWheelOverscrollResistance(0f)
+        val r1 = calculateWheelOverscrollResistance(1.5f)
+        val r3 = calculateWheelOverscrollResistance(3.0f)
+
+        assertEquals(0.42f, r0, 0.01f)
+        assertTrue(r1 < r0)
+        assertTrue(r3 < r1)
+        assertTrue(r3 > 0f)
+    }
+
+    @Test
+    fun projectInertialWheelTarget_snapsWithinBoundsAndBouncesOutOfBounds() {
+        // Steady release within bounds snaps to nearest integer
+        assertEquals(5f, projectInertialWheelTarget(current = 4.8f, velocityItemsPerSec = 0f, maxIndex = 10f), 0.01f)
+        assertEquals(7f, projectInertialWheelTarget(current = 5.0f, velocityItemsPerSec = 4.0f, maxIndex = 10f), 0.01f)
+
+        // Overshoot boundaries project to the edge for spring bounce
+        assertEquals(0f, projectInertialWheelTarget(current = 1.0f, velocityItemsPerSec = -10.0f, maxIndex = 10f), 0.01f)
+        assertEquals(10f, projectInertialWheelTarget(current = 9.0f, velocityItemsPerSec = 10.0f, maxIndex = 10f), 0.01f)
+
+        // Already out of bounds returns boundary
+        assertEquals(0f, projectInertialWheelTarget(current = -0.5f, velocityItemsPerSec = -2.0f, maxIndex = 10f), 0.01f)
+        assertEquals(10f, projectInertialWheelTarget(current = 10.5f, velocityItemsPerSec = 2.0f, maxIndex = 10f), 0.01f)
+    }
+
+    @Test
     fun purchaseStepperAndLiveSummary_computeShortfallAndEstimatedFee() {
         val product = ProductView(
             productId = "LX00118",

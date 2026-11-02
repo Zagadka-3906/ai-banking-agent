@@ -85,6 +85,7 @@ object UiTags {
     fun wealthProduct(productId: String) = "wealth_product:$productId"
     const val CONTACT_SEARCH = "contact_search"
     const val CONTACT_OPEN_ADD = "contact_open_add"
+    const val CONTACT_EDIT = "contact_edit"
     const val CONTACT_TRANSFER = "contact_transfer"
     const val DEVICE_REVOKE = "device_revoke"
     const val TASK_CANCEL = "task_cancel"

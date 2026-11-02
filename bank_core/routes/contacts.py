@@ -235,3 +235,83 @@ def remove_contact(user_id: str, contact_id: str, x_user_id: Optional[str] = Hea
         metadata={"contact_id": safe_contact_id, "name": str(removed.get("name") or "")},
     )
     return {"code": 200, "status": "REMOVED", "data": {"contact_id": safe_contact_id}}
+
+
+@router.post("/api/v1/contacts/{user_id}/book/{contact_id}/update")
+@durable_ledger_write
+def update_contact(
+    user_id: str,
+    contact_id: str,
+    req: ContactAddRequest,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    """Update one contact (name, phone, relationship, birthday) in the caller's book."""
+
+    request_id = server_request_id(x_request_id)
+    actor = get_actor(user_id, x_user_id, action="CONTACT_UPDATE", request_id=request_id)
+    try:
+        ensure_account(user_id)
+        safe_contact_id = sanitize_text(contact_id, field="联系人编号", max_length=64)
+        name = sanitize_text(req.name, field="联系人姓名", max_length=120)
+        if not name:
+            raise SecurityError("联系人姓名不能为空", 400, "CONTACT_NAME_REQUIRED")
+        phone = sanitize_text(req.phone, field="联系电话", max_length=20)
+        if not CONTACT_PHONE_RE.fullmatch(phone or ""):
+            raise SecurityError("联系电话格式无效", 400, "INVALID_CONTACT_PHONE")
+        relationship_raw = sanitize_text(req.relationship, field="与联系人关系", max_length=20)
+        relationship = CONTACT_RELATIONSHIPS.get(relationship_raw)
+        if relationship is None and relationship_raw.upper() in CONTACT_RELATIONSHIP_LABELS:
+            relationship = relationship_raw.upper()
+        if relationship is None:
+            raise SecurityError("关系仅支持：家人/朋友/同事/其他", 400, "INVALID_RELATIONSHIP")
+        birthday: Optional[str] = None
+        if req.birthday:
+            birthday_value = sanitize_text(req.birthday, field="生日", max_length=10)
+            if not CONTACT_BIRTHDAY_RE.fullmatch(birthday_value or ""):
+                raise SecurityError("生日格式应为 YYYY-MM-DD", 400, "INVALID_BIRTHDAY")
+            try:
+                parsed = datetime.strptime(birthday_value, "%Y-%m-%d").date()
+            except ValueError as exc:
+                raise SecurityError("生日不是有效日期", 400, "INVALID_BIRTHDAY") from exc
+            if parsed > datetime.now().date():
+                raise SecurityError("生日不能是未来日期", 400, "INVALID_BIRTHDAY")
+            birthday = birthday_value
+    except SecurityError as exc:
+        record_failure_and_raise(exc, user_id=actor, action="CONTACT_UPDATE", request_id=request_id)
+
+    with STATE_LOCK:
+        with ledger_transaction():
+            rows = USER_CONTACTS.get(user_id, [])
+            target = next((row for row in rows if row.get("contact_id") == safe_contact_id), None)
+            if target is None:
+                raise SecurityError("联系人不存在", 404, "CONTACT_NOT_FOUND")
+            if any(row.get("contact_id") != safe_contact_id and row.get("name") == name and row.get("phone") == phone for row in rows):
+                raise SecurityError("该联系人已存在", 409, "CONTACT_EXISTS")
+            account_id, linked_existing, link_verification = resolve_contact_account(name, phone, caller_id=user_id)
+            target["name"] = name
+            target["phone"] = phone
+            target["relationship"] = relationship
+            target["birthday"] = birthday
+            target["account_id"] = account_id
+            target["linked_existing"] = linked_existing
+            target["link_verification"] = link_verification
+            target["updated_at"] = datetime.now(timezone.utc).isoformat()
+    persist_ledger()
+    response = {"code": 200, "status": "UPDATED", "data": contact_public_view(dict(target), caller_id=user_id)}
+    audit_event(
+        "CONTACT_UPDATE",
+        user_id=actor,
+        risk_level="GREEN",
+        decision="ALLOW",
+        outcome="SUCCESS",
+        request_id=request_id,
+        metadata={
+            "contact_id": safe_contact_id,
+            "name": name,
+            "phone_masked": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else "****",
+            "relationship": relationship,
+            "linked_existing": linked_existing,
+        },
+    )
+    return response

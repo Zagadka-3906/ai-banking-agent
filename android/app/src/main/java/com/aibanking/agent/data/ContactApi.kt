@@ -77,6 +77,15 @@ interface ContactApi {
         @Header("X-User-Id") userIdHeader: String,
         @Header("X-Session-Token") sessionToken: String,
     ): ContactRemoveResponse
+
+    @POST("api/v1/contacts/{userId}/book/{contactId}/update")
+    suspend fun update(
+        @Path("userId") userId: String,
+        @Path("contactId") contactId: String,
+        @Body body: ContactAddRequest,
+        @Header("X-User-Id") userIdHeader: String,
+        @Header("X-Session-Token") sessionToken: String,
+    ): ContactAddResponse
 }
 
 class ContactRepository(private val api: ContactApi) {
@@ -123,6 +132,28 @@ class ContactRepository(private val api: ContactApi) {
         api.remove(userId = principal, contactId = contactId, userIdHeader = principal, sessionToken = sessionToken).also {
             if (it.code != 200 || it.status != "REMOVED") throw GatewayException(null, "服务器未返回有效的删除结果", 502)
         }
+    } catch (failure: HttpException) {
+        throw failure.asGatewayException()
+    } catch (failure: IOException) {
+        throw GatewayException(null, "无法连接核心服务：${failure.message ?: "网络错误"}", 0)
+    }
+
+    suspend fun update(
+        contactId: String,
+        principal: String,
+        sessionToken: String,
+        name: String,
+        phone: String,
+        relationship: String,
+        birthday: String?,
+    ): ContactView = try {
+        api.update(
+            userId = principal,
+            contactId = contactId,
+            body = ContactAddRequest(name = name, phone = phone, relationship = relationship, birthday = birthday?.takeIf { it.isNotBlank() }),
+            userIdHeader = principal,
+            sessionToken = sessionToken,
+        ).data ?: throw GatewayException(null, "核心服务未返回联系人", 502)
     } catch (failure: HttpException) {
         throw failure.asGatewayException()
     } catch (failure: IOException) {

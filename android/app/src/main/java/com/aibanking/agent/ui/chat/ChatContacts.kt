@@ -30,11 +30,38 @@ fun ChatViewModel.closeContacts() = _state.update { it.copy(showContacts = false
 fun ChatViewModel.showContactDetail(contactId: String) =
     _state.update { it.copy(contactsScreen = ContactsScreen.DETAIL, selectedContactId = contactId) }
 
-fun ChatViewModel.openContactEditor() =
-    _state.update { it.copy(contactsScreen = ContactsScreen.ADD, error = null, contactFormError = null) }
+fun ChatViewModel.openContactEditor(contact: ContactView? = null) {
+    if (contact != null) {
+        _state.update {
+            it.copy(
+                contactsScreen = ContactsScreen.ADD,
+                contactEditingId = contact.contactId,
+                contactName = contact.name,
+                contactPhone = contact.phone,
+                contactRelationship = contact.relationshipLabel.ifBlank { contact.relationship }.ifBlank { "朋友" },
+                contactBirthday = contact.birthday.orEmpty(),
+                error = null,
+                contactFormError = null,
+            )
+        }
+    } else {
+        _state.update {
+            it.copy(
+                contactsScreen = ContactsScreen.ADD,
+                contactEditingId = null,
+                contactName = "",
+                contactPhone = "",
+                contactRelationship = "朋友",
+                contactBirthday = "",
+                error = null,
+                contactFormError = null,
+            )
+        }
+    }
+}
 
 fun ChatViewModel.backToContactList() =
-    _state.update { it.copy(contactsScreen = ContactsScreen.LIST) }
+    _state.update { it.copy(contactsScreen = ContactsScreen.LIST, contactEditingId = null) }
 
 fun ChatViewModel.onContactSearchChange(value: String) =
     _state.update { it.copy(contactSearch = value.take(50)) }
@@ -145,6 +172,63 @@ fun ChatViewModel.addContact() {
             // 连重试的机会都没有。
             applyFormFailure(failure, BankForm.CONTACT)
         }
+    }
+}
+
+/**
+ * Update existing contact in the book.
+ */
+fun ChatViewModel.updateContact() {
+    val principal = _state.value.principal
+    val form = _state.value
+    val contactId = form.contactEditingId ?: return
+    if (!form.canAddContact || form.panelBusy) return
+
+    _state.update { it.copy(panelBusy = true, error = null, contactFormError = null) }
+    sessionWork.launch {
+        try {
+            val updated = io {
+                contacts.update(
+                    contactId = contactId,
+                    principal = principal,
+                    sessionToken = credential().orEmpty(),
+                    name = form.contactName.trim(),
+                    phone = form.contactPhone,
+                    relationship = form.contactRelationship,
+                    birthday = form.contactBirthday.takeIf { it.isNotBlank() },
+                )
+            }
+            contactsRevision++
+            _state.update {
+                it.copy(
+                    panelBusy = false,
+                    contactEditingId = null,
+                    contactsScreen = ContactsScreen.DETAIL,
+                    selectedContactId = updated.contactId,
+                    contactName = "",
+                    contactPhone = "",
+                    contactBirthday = "",
+                    contacts = it.contacts.map { row -> if (row.contactId == updated.contactId) updated else row },
+                    notice = "联系人 ${updated.name} 资料已更新",
+                )
+            }
+            refreshContacts()
+        } catch (failure: GatewayException) {
+            check()
+            applyFormFailure(failure, BankForm.CONTACT)
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            check()
+            applyFormFailure(failure, BankForm.CONTACT)
+        }
+    }
+}
+
+fun ChatViewModel.saveContact() {
+    if (_state.value.contactEditingId != null) {
+        updateContact()
+    } else {
+        addContact()
     }
 }
 

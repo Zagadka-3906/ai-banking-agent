@@ -154,6 +154,7 @@ data class ChatUiState(
     val contacts: List<ContactView> = emptyList(),
     val contactSearch: String = "",
     val selectedContactId: String? = null,
+    val contactEditingId: String? = null,
     val contactName: String = "",
     val contactPhone: String = "",
     val contactRelationship: String = "朋友",

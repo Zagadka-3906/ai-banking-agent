@@ -399,3 +399,39 @@ def test_the_contact_book_is_capped_per_user(client, monkeypatch):
     refused = _add(client, {"name": "多余", "phone": "13911112222", "relationship": "朋友"})
     assert refused.json()["detail"]["code"] == "CONTACT_LIMIT_REACHED"
     assert len(main.USER_CONTACTS["user_zhang"]) == 3
+
+
+def test_update_contact_book_entry(client):
+    """Updating a contact modifies its metadata and re-resolves the account."""
+
+    added = _add(client, {"name": "王五", "phone": "13800000005", "relationship": "朋友", "birthday": "1990-01-01"})
+    assert added.status_code == 200, added.text
+    contact_id = added.json()["data"]["contact_id"]
+
+    # Update name, phone, relationship, and birthday
+    updated = client.post(
+        f"/api/v1/contacts/user_zhang/book/{contact_id}/update",
+        json={"name": "王小五", "phone": "13800000006", "relationship": "家人", "birthday": "1992-05-20"},
+        headers={"X-User-Id": "user_zhang"},
+    )
+    assert updated.status_code == 200, updated.text
+    data = updated.json()["data"]
+    assert data["name"] == "王小五"
+    assert data["phone"] == "13800000006"
+    assert data["relationship"] == "FAMILY"
+    assert data["relationship_label"] == "家人"
+    assert data["birthday"] == "1992-05-20"
+
+    # Listed book reflects changes
+    listed = client.get("/api/v1/contacts/user_zhang/book", headers={"X-User-Id": "user_zhang"}).json()["data"]
+    assert len(listed) == 1
+    assert listed[0]["name"] == "王小五"
+
+    # 404 for unknown contact_id
+    not_found = client.post(
+        "/api/v1/contacts/user_zhang/book/CTT9999999999/update",
+        json={"name": "新名字", "phone": "13800000006", "relationship": "家人"},
+        headers={"X-User-Id": "user_zhang"},
+    )
+    assert not_found.status_code == 404
+    assert not_found.json()["detail"]["code"] == "CONTACT_NOT_FOUND"
