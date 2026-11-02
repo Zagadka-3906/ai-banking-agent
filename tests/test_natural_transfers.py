@@ -559,6 +559,91 @@ def test_second_active_card_must_be_named_by_the_payer(gateway):
     assert not main.CARD_DAILY_SPENT.get("CARD-002")
 
 
+@pytest.mark.parametrize('answer,expected', [
+    ('001', 'CARD-001'), ('用card001', 'CARD-001'), ('CARD-001', 'CARD-001'),
+    ('用card002', 'CARD-002'), ('用 CARD-002 的卡', 'CARD-002'),
+    ('123abcde', 'CARD-123ABCDE'), ('用card123abcde', 'CARD-123ABCDE'),
+])
+def test_card_number_answer_keeps_the_original_transfer_and_requires_confirmation(gateway, answer, expected):
+    client, _ = gateway
+    cid = 'card-number-answer'
+    main.CARDS['user_zhang'].append({
+        **main.CARDS['user_zhang'][0], 'card_id': 'CARD-002',
+        'last4': '1111', 'number_masked': '**** **** **** 1111',
+    })
+    main.CARDS['user_zhang'].append({
+        **main.CARDS['user_zhang'][0], 'card_id': 'CARD-123ABCDE',
+        'last4': '2222', 'number_masked': '**** **** **** 2222',
+    })
+    _clarifies(_ask(client, '给李四转100元，备注午餐', cid), cid, '尾号')
+    envelope = _ask(client, answer, cid)
+    state = _state(cid)
+    assert envelope['status'] == 'APPROVAL_REQUIRED', (envelope['reply'], state.get('parse_meta'), state.get('slots'))
+    assert (state['target'], state['amount'], state['slots']['paying_card_id']) == ('李四', 100, expected)
+    assert '午餐' in state['extra_info']
+    assert main.ACCOUNTS['user_zhang']['balance'] == 15000
+    _approve(client, envelope)
+    assert main.ACCOUNTS['user_zhang']['balance'] == 14900
+    assert main.CARD_DAILY_SPENT == {expected: 100}
+
+
+@pytest.mark.parametrize('answer', ['用card999', '用card003', '用CARD-001或CARD-002', '用尾号9999的卡'])
+def test_unknown_or_ambiguous_card_number_does_not_pay(gateway, answer):
+    client, _ = gateway
+    cid = 'card-number-refusal'
+    main.CARDS['user_zhang'].append({**main.CARDS['user_zhang'][0], 'card_id': 'CARD-002', 'last4': '1111'})
+    _clarifies(_ask(client, '给李四转100', cid), cid)
+    reply = _ask(client, answer, cid)
+    _clarifies(reply, cid)
+    assert _state(cid)['target'] == '李四' and _state(cid)['amount'] == 100
+    assert not main.CARD_DAILY_SPENT
+
+
+def test_card_lookup_failure_cannot_default_to_another_card(gateway, monkeypatch):
+    from types import SimpleNamespace
+    from bank_agent import runtime
+    client, _ = gateway
+    cid = 'card-lookup-outage'
+    main.CARDS['user_zhang'].append({**main.CARDS['user_zhang'][0], 'card_id': 'CARD-002', 'last4': '1111'})
+    _clarifies(_ask(client, '给李四转100', cid), cid)
+    original = runtime._http
+    def outage(method, path, **kwargs):
+        if method == 'GET' and path == 'cards/user_zhang':
+            return SimpleNamespace(status_code=503, json=lambda: {'detail': '卡片查询不可用'})
+        return original(method, path, **kwargs)
+    monkeypatch.setattr(runtime, '_http', outage)
+    reply = _ask(client, '用card001', cid)
+    assert reply['approval'] is None and '无法核对卡片' in reply['reply']
+    assert main.ACCOUNTS['user_zhang']['balance'] == 15000 and not main.CARD_DAILY_SPENT
+
+
+def test_a_model_card_query_classification_cannot_replace_the_pending_payment_slots():
+    from bank_agent.dialogue import merge_pending_clarification
+    state = {'context': {'pending_clarification': {
+        'intent': 'TRANSFER', 'missing': ['paying_card'],
+        'payload': {'intent': 'TRANSFER', 'target': '李四', 'amount': 100},
+    }}}
+    model = {'intent': 'CARD_QUERY', 'target': 'CARD-001', 'amount': 1, 'slots': {}, 'confidence': .99}
+    for text in ('001', '用card001', 'CARD-001'):
+        merged = merge_pending_clarification(model, state, text)
+        assert (merged['intent'], merged['target'], merged['amount']) == ('TRANSFER', '李四', 100)
+        assert merged['slots']['paying_card_reference'] == text
+    # An explicit query is a topic switch, not an authorization to keep paying.
+    assert merge_pending_clarification(model, state, '查询CARD-001')['intent'] == 'CARD_QUERY'
+
+
+def test_card_number_inside_a_transfer_memo_is_not_a_payment_card_choice(gateway):
+    client, _ = gateway
+    cid = 'memo-not-card-selection'
+    main.CARDS['user_zhang'].append({**main.CARDS['user_zhang'][0], 'card_id': 'CARD-002', 'last4': '1111'})
+    _clarifies(_ask(client, '给李四转100，备注发票CARD-002', cid), cid, '尾号')
+    envelope = _ask(client, '用card001', cid)
+    assert envelope['status'] == 'APPROVAL_REQUIRED'
+    assert _state(cid)['slots']['paying_card_id'] == 'CARD-001'
+    assert '发票CARD-002' in _state(cid)['extra_info']
+    assert main.ACCOUNTS['user_zhang']['balance'] == 15000
+
+
 def test_card_tail_in_a_full_restatement_keeps_payee_and_note(gateway):
     client, _ = gateway
     cid = "human-multi-card-restate"

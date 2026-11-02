@@ -355,6 +355,16 @@ def merge_pending_clarification(parsed: dict[str, Any], state: BankingAgentState
     if not pending_intent or pending_intent == Intent.UNKNOWN.value or not pending_payload:
         return parsed
     incoming_intent = str(parsed.get("intent") or Intent.UNKNOWN.value)
+    from bank_agent.card_references import card_selection_answer
+    if 'paying_card' in (pending.get('missing') or []) and card_selection_answer(text):
+        # The digits in a card answer cannot replace the pending amount or payee.
+        # A model may classify CARD-001 as a complete card query; this literal
+        # answer is still part of the original payment clarification.
+        parsed = {**parsed, 'intent': Intent.UNKNOWN.value, 'target': None, 'amount': None,
+                  'slots': {key: value for key, value in (parsed.get('slots') or {}).items()
+                            if key not in {'amount_ambiguous', 'target_ambiguous'}}}
+        parsed['slots']['paying_card_reference'] = text
+        incoming_intent = Intent.UNKNOWN.value
     if incoming_intent == Intent.UNKNOWN.value and pending_intent not in {Intent.BILL_QUERY.value, Intent.BILL_ANALYSIS.value}:
         parsed = {**parsed, "date_range": None, "date_scope": "ALL"}
         parsed["slots"] = {key: value for key, value in (parsed.get("slots") or {}).items() if key != "date_range_ambiguous"}

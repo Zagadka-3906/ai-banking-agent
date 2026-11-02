@@ -19,6 +19,7 @@ from planner import (
 )
 from security import audit_event
 from bank_agent import runtime
+from bank_agent.card_references import card_references
 from bank_agent.state import (
     BankingAgentState,
 )
@@ -32,15 +33,14 @@ from bank_agent.verification import (
 )
 
 
-_CARD_TAIL_RE = r"(?:尾号|末四位|后四位)\s*(?:为|是)?\s*([0-9]{4})(?![0-9])"
 # Money-moving intents that settle against one of the user's cards.  With a
 # single active card the core picks it; with several it refuses to guess and
 # the caller must name one.
 _PAYING_CARD_INTENTS = {Intent.TRANSFER.value, Intent.SCHEDULED_TRANSFER.value, Intent.WEALTH_PURCHASE.value}
 
 
-def _card_by_tail(state: BankingAgentState, text: str) -> tuple[Optional[str], Optional[str], bool]:
-    """Resolve a spoken card tail ("尾号3082") to exactly one of the user's cards.
+def _card_by_reference(state: BankingAgentState, text: str, *, tails_only: bool = False) -> tuple[Optional[str], Optional[str], bool]:
+    """Resolve card IDs or tails to exactly one of the user's verified cards.
 
     Returns ``(card_id, message, ask_again)``.  ``ask_again`` separates a gap the
     user can close by answering (no such tail, or two cards share it) from a
@@ -48,21 +48,41 @@ def _card_by_tail(state: BankingAgentState, text: str) -> tuple[Optional[str], O
     clarification instead of a dead-end error.
     """
 
-    tail = re.search(_CARD_TAIL_RE, text)
-    if not tail:
+    pending = (state.get('context') or {}).get('pending_clarification') or {}
+    refs = card_references(text, allow_short=(
+        'paying_card' in (pending.get('missing') or [])
+        or (state.get('slots') or {}).get('paying_card_reference') == text))
+    if tails_only:
+        # Card-management targets already go through Core's exact ID lookup;
+        # here only a spoken tail needs resolving or checking against that ID.
+        refs = [ref for ref in refs if ref[0] == 'tail']
+    if not refs:
         return None, None, False
     response = runtime._http("GET", f"cards/{state['user_id']}", state=state, headers={"X-User-Id": state["user_id"]})
     if response.status_code >= 400:
-        return None, f"暂时无法核对卡片尾号：{error_message(response)}", False
+        return None, f"暂时无法核对卡片：{error_message(response)}", False
     rows = response_json(response).get("data")
     if not isinstance(rows, list):
         return None, "核心返回的卡片列表无效，请稍后再试。", False
-    matches = [card for card in rows if isinstance(card, dict) and str(card.get("last4") or str(card.get("number_masked") or "")[-4:]) == tail.group(1)]
-    if not matches:
-        return None, f"没有找到尾号{tail.group(1)}的卡片，请提供明确的卡片编号（例如 CARD-001），我不会替您选卡。", True
-    if len(matches) > 1 or not matches[0].get("card_id"):
-        return None, f"尾号{tail.group(1)}对应多张卡片，请提供明确的卡片编号（例如 CARD-001），我不会替您选卡。", True
-    return str(matches[0]["card_id"]), None, False
+    resolved = []
+    for kind, value in refs:
+        matches = []
+        for card in rows:
+            if not isinstance(card, dict) or not card.get('card_id'):
+                continue
+            actual = (str(card.get('last4') or str(card.get('number_masked') or '')[-4:]) if kind == 'tail'
+                      else re.sub(r'(?i)^CARD[-_－\s]*', '', str(card['card_id'])).upper())
+            if actual == value:
+                matches.append(card)
+        label = f'尾号{value}' if kind == 'tail' else f'编号CARD-{value}'
+        if not matches:
+            return None, f'没有找到{label}的本人卡片，请核对卡片编号或尾号。', True
+        if len(matches) != 1:
+            return None, f'{label}对应多张卡片，请提供唯一的卡片编号。', True
+        resolved.append(str(matches[0]['card_id']))
+    if len(set(resolved)) != 1:
+        return None, '你提到了多张不同的卡片，请明确选择一张付款卡。', True
+    return resolved[0], None, False
 
 
 def _pending_slot_clarification(
@@ -234,7 +254,7 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
             amount = state.get("amount")
             spoken = str(state.get("user_input") or state.get("extra_info") or "")
             if intent.startswith("CARD_") and intent != Intent.CARD_APPLY.value:
-                card_id, failure, ask_again = _card_by_tail(state, spoken)
+                card_id, failure, ask_again = _card_by_reference(state, spoken, tails_only=True)
                 if failure:
                     return clarify_card(failure) if ask_again else {"risk_level": "ERROR", "final_response": failure}
                 if card_id:
@@ -245,7 +265,7 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
             # card must never overwrite the recipient the user named.
             paying_card_id = slots.get("paying_card_id")
             if intent in _PAYING_CARD_INTENTS and not paying_card_id:
-                paying_card_id, failure, ask_again = _card_by_tail(state, spoken)
+                paying_card_id, failure, ask_again = _card_by_reference(state, spoken)
                 if failure:
                     if not ask_again:
                         return {"risk_level": "ERROR", "final_response": failure}
@@ -320,7 +340,7 @@ def risk_checker_node(state: BankingAgentState) -> dict[str, Any]:
         paying_card_id = slots.get("paying_card_id")
         try:
             if not paying_card_id:
-                paying_card_id, failure, ask_again = _card_by_tail(state, str(state.get("user_input") or state.get("extra_info") or ""))
+                paying_card_id, failure, ask_again = _card_by_reference(state, str(state.get("user_input") or state.get("extra_info") or ""))
                 if failure:
                     if not ask_again:
                         return {"risk_level": "ERROR", "final_response": failure}

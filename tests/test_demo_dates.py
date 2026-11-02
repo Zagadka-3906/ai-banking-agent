@@ -1,11 +1,11 @@
 """Offline demo refresh must not rewrite money, receipts or execution state."""
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import json
 
 import pytest
 
-from bank_core.demo_dates import BANK_TIMEZONE, refresh_demo_dates
+from bank_core.demo_dates import BANK_TIMEZONE, refresh_demo_dates, refresh_expired_demo_subscriptions
 
 NOW = datetime(2026, 11, 1, 21, 0, tzinfo=BANK_TIMEZONE)
 
@@ -62,6 +62,45 @@ def test_equal_transfer_instants_and_dispute_order_are_preserved():
     case = fresh['DISPUTE_CASES'][0]
     assert parsed(rows[0]['time']) <= parsed(case['created_at']) <= parsed(case['updated_at'])
     assert parsed(case['updated_at']) == parsed(rows[2]['time'])
+
+
+def test_expired_subscription_repair_only_changes_the_old_builtin_plan():
+    state = sample()
+    state['SUBSCRIPTIONS']['user_zhang'] += [
+        {'subscription_id': 'CUSTOM', 'next_charge': '2026-01-01', 'status': 'ACTIVE'},
+        {'subscription_id': 'SUB-VIDEO', 'next_charge': '2026-01-01', 'status': 'CANCELLED'},
+    ]
+    state['SUBSCRIPTIONS']['user_zhang'][0]['subscription_id'] = 'SUB-APPLE'
+    state['SUBSCRIPTIONS']['user_zhang'][1]['subscription_id'] = 'SUB-VIDEO'
+    original = deepcopy(state)
+    fresh, changes = refresh_expired_demo_subscriptions(state, NOW)
+    assert changes == [{'path': 'SUBSCRIPTIONS.user_zhang.0.next_charge', 'before': '2026-10-03', 'after': '2026-11-02'}]
+    assert state == original
+    expected = deepcopy(state)
+    expected['SUBSCRIPTIONS']['user_zhang'][0]['next_charge'] = '2026-11-02'
+    assert fresh == expected
+    assert refresh_expired_demo_subscriptions(fresh, NOW) == (fresh, [])
+
+
+def test_subscription_repair_preserves_due_today_and_refuses_linked_pending_tasks():
+    state = {'SUBSCRIPTIONS': {'user_zhang': [{'subscription_id': 'SUB-APPLE', 'status': 'ACTIVE', 'next_charge': '2026-11-01'}]}}
+    assert refresh_expired_demo_subscriptions(state, NOW) == (state, [])
+    state['SUBSCRIPTIONS']['user_zhang'][0]['next_charge'] = '2026-10-03'
+    state['TASK_STORE'] = [{'status': 'PENDING', 'payload': {'subscription_id': 'SUB-APPLE'}}]
+    before = deepcopy(state)
+    with pytest.raises(ValueError, match='separate date plan'):
+        refresh_expired_demo_subscriptions(state, NOW)
+    assert state == before
+    with pytest.raises(ValueError, match='timezone'):
+        refresh_expired_demo_subscriptions(state, NOW.replace(tzinfo=None))
+
+
+def test_default_subscription_seed_uses_upcoming_bank_local_dates():
+    from bank_core.ledger import SUBSCRIPTIONS
+    today = datetime.now(BANK_TIMEZONE).date()
+    dates = {row['subscription_id']: date.fromisoformat(row['next_charge']) for row in SUBSCRIPTIONS['user_zhang']}
+    assert dates['SUB-APPLE'] == today + timedelta(days=1)
+    assert dates['SUB-VIDEO'] == today + timedelta(days=3)
 
 
 @pytest.mark.parametrize('key', ['TASK_STORE', 'SCHEDULED_TRANSFERS', 'LOCKS', 'MOCK_ORDERS', 'SPLIT_REQUESTS'])

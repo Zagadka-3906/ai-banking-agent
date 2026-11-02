@@ -122,19 +122,25 @@ def required_fact_present(text: str, fact: dict[str, Any]) -> bool:
 
 
 def append_required_fact(text: str, fact: dict[str, Any]) -> str:
-    """Canonicalize duplicate product notices without dropping the Mock scope."""
+    """Canonicalize narrowly equivalent notices without losing other caveats."""
     required = fact['text']
+    pattern = None
     if (fact.get('source') == 'core://wealth_products'
             and required == '以上为演示产品信息，不是未来收益预测或收益保证。'):
         pattern = (r'(?:^|(?<=[。！？\n]))[ \t]*以上(?:为|是)(?:本次)?'
                    r'(?:产品货架中展示的公开产品|演示产品(?:货架)?)信息[，,]'
                    r'不是未来收益预测或收益保证[。]?')
-        if re.search(pattern, text):
-            added = False
-            def replace(match: re.Match[str]) -> str:
-                nonlocal added
-                result = '' if added else required
-                added = True
-                return result
-            return re.sub(pattern, replace, text).strip()
+    elif (fact.get('source') == 'core://subscriptions'
+            and required == '以上为本系统订阅登记状态与原计划日期，不能证明真实会员权益、扣款结果或商户重试。'):
+        pattern = (r'(?:^|(?<=[。！？\n]))[ \t]*以上(?:为|是)本系统(?:的)?'
+                   r'订阅登记状态(?:与|和)原计划日期[，,]不能证明真实会员权益[、，,]'
+                   r'扣款结果或商户(?:是否)?重试[。]?')
+    if pattern and re.search(pattern, text):
+        added = False
+        def replace(match: re.Match[str]) -> str:
+            nonlocal added
+            result = '' if added else required
+            added = True
+            return result
+        return re.sub(pattern, replace, text).strip()
     return text if required_fact_present(text, fact) else text + '\n' + required

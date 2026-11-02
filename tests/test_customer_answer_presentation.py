@@ -70,6 +70,22 @@ def test_normalizing_notices_preserves_required_money_and_does_not_drop_new_cave
     assert append_required_fact(other, fact) == other + '\n' + fact['text']
 
 
+@pytest.mark.parametrize('notice', [
+    '以上是本系统的订阅登记状态和原计划日期，不能证明真实会员权益、扣款结果或商户是否重试。',
+    '以上为本系统订阅登记状态与原计划日期，不能证明真实会员权益、扣款结果或商户重试。',
+])
+def test_subscription_notice_is_canonicalized_once_without_losing_other_details(notice):
+    from bank_agent.answer_presentation import append_required_fact
+    fact = {'source': 'core://subscriptions',
+            'text': '以上为本系统订阅登记状态与原计划日期，不能证明真实会员权益、扣款结果或商户重试。'}
+    details = 'Apple订阅每期¥15.00，原计划2026-10-03，已过期，无法确认下次扣款时间。'
+    result = append_required_fact(details + notice + '\n' + fact['text'], fact)
+    assert result == details + fact['text']
+    assert append_required_fact(result, fact) == result
+    different = '以上订阅日期已过期，不能证明扣款失败；需向商户核实退款。'
+    assert append_required_fact(different, fact) == different + '\n' + fact['text']
+
+
 def test_customer_text_is_translated_before_review_and_evidence_keeps_original_codes(gateway, monkeypatch):  # noqa: F811
     from scheduler import TASK_STORE
     client, _ = gateway

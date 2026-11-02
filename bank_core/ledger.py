@@ -98,8 +98,8 @@ DAILY_TRANSFER_DATE: dict[str, str] = {}
 LOCKS: dict[str, dict[str, Any]] = {}
 SUBSCRIPTIONS: dict[str, list[dict[str, Any]]] = {
     "user_zhang": [
-        {"subscription_id": "SUB-APPLE", "merchant": "Apple 订阅", "amount": 15.0, "next_charge": "2026-10-03", "status": "ACTIVE"},
-        {"subscription_id": "SUB-VIDEO", "merchant": "视频会员", "amount": 25.0, "next_charge": (datetime.now().date() + timedelta(days=7)).isoformat(), "status": "ACTIVE"},
+        {"subscription_id": "SUB-APPLE", "merchant": "Apple 订阅", "amount": 15.0, "next_charge": (datetime.now(timezone(timedelta(hours=8))).date() + timedelta(days=1)).isoformat(), "status": "ACTIVE"},
+        {"subscription_id": "SUB-VIDEO", "merchant": "视频会员", "amount": 25.0, "next_charge": (datetime.now(timezone(timedelta(hours=8))).date() + timedelta(days=3)).isoformat(), "status": "ACTIVE"},
     ]
 }
 SCHEDULED_TRANSFERS: list[dict[str, Any]] = []

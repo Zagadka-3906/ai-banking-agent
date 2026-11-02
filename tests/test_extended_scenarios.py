@@ -627,6 +627,8 @@ def test_the_settlement_card_is_the_card_that_is_charged(client: TestClient, mon
 
 def test_renewal_reminders_are_idempotent_and_cascade_on_cancel(client: TestClient, monkeypatch):
     monkeypatch.delenv("BANK_ADMIN_AUDIT_TOKEN", raising=False)
+    # Pin this scheduler example independently of the recent-date demo seed.
+    main.SUBSCRIPTIONS['user_zhang'][0]['next_charge'] = '2026-10-03'
 
     first = client.post("/api/v1/subscriptions/user_zhang/reminders", headers=headers())
     assert first.status_code == 200, first.text
