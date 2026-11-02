@@ -64,7 +64,7 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     git("config", "user.email", "test@example.invalid")
     docs = tmp_path / "docs"
     docs.mkdir()
-    names = ["作品简介", "技术文档", "核心算法说明", "安全设计文档", "答辩提纲", "演示视频", "测试用例", "验证记录", "整理说明", "安全自评报告", "评审指南"]
+    names = ["作品简介", "技术文档", "核心算法说明", "安全设计文档", "答辩提纲", "演示视频", "测试用例", "验证记录", "整理说明", "安全自评报告", "评审指南", "运行与部署"]
     for name in names:
         text = "# 文档\n\n```text\n用户 → 网关 → 核心 → 账本\n```\n" if f"{name}.md" in packaging.TECHNICAL_DOCUMENTS else "# 文档\n\n[规则](技术文档.md#架构)\n"
         (docs / f"{name}.md").write_text(text, encoding="utf-8")
@@ -76,6 +76,7 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     architecture.write_text(architecture.read_text(encoding="utf-8") + "\n![架构](assets/系统架构图.svg)\n\n```mermaid\nsequenceDiagram\n    用户->>核心: 确认\n```\n", encoding="utf-8")
     (tmp_path / "deploy").mkdir()
     (tmp_path / "deploy/README.md").write_text("[技术](../docs/技术文档.md)", encoding="utf-8")
+    (docs / "运行与部署.md").write_text("# 两种运行方式\n\n本地构建或安装公网 APK。\n\n[维护](../deploy/README.md)\n", encoding="utf-8")
     git("add", "docs", "deploy")
     git("commit", "--quiet", "-m", "apk source")
     apk_commit = git("rev-parse", "HEAD")
@@ -100,6 +101,8 @@ def test_directory_delivery_exports_committed_source_and_resolves_copied_links(t
     assert manifest["delivery_format"] == "directory"
     assert manifest["commit"] != manifest["apk"]["source_commit"] == apk_commit
     assert set(manifest["deferred"]) == packaging.DEFERRED_CATEGORIES
+    guide = (install.parent / "部署说明.md").read_text(encoding="utf-8")
+    assert "两种运行方式" in guide and "source/deploy/README.md" in guide
     source = install.parent / "source"
     assert (source / "docs/验证记录.md").read_text(encoding="utf-8") == "updated documentation"
     assert not (source / "personal.txt").exists() and personal.read_text(encoding="utf-8") == "keep"

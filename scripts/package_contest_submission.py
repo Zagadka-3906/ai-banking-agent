@@ -137,8 +137,8 @@ def package(folder: Path, apk_source_commit: str | None = None) -> dict:
     (info / "GitHub仓库地址.txt").write_text(REPOSITORY + "\n", encoding="utf-8")
     review = (ROOT / "docs/评审指南.md").read_text(encoding="utf-8")
     (info / "README.md").write_text(relocate_markdown(review, "docs/评审指南.md", f"{SOURCE_CATEGORY}/README.md"), encoding="utf-8")
-    deployment = (ROOT / "deploy/README.md").read_text(encoding="utf-8")
-    (info / "部署说明.md").write_text(relocate_markdown(deployment, "deploy/README.md", f"{SOURCE_CATEGORY}/部署说明.md"), encoding="utf-8")
+    deployment = (ROOT / "docs/运行与部署.md").read_text(encoding="utf-8")
+    (info / "部署说明.md").write_text(relocate_markdown(deployment, "docs/运行与部署.md", f"{SOURCE_CATEGORY}/部署说明.md"), encoding="utf-8")
     for relative, original in (("补充材料/整理说明.md", "docs/整理说明.md"),
                                ("补充材料/作品简介/作品简介.md", "docs/作品简介.md")):
         if (info / relative).exists():
