@@ -82,13 +82,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.aibanking.agent.data.CardRevealView
 import com.aibanking.agent.data.CardView
 import com.aibanking.agent.ui.UiTags
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import com.aibanking.agent.ui.anim.CONTAINER_TRANSFORM_DURATION_MILLIS
-import com.aibanking.agent.ui.anim.CardStackMotion
 import com.aibanking.agent.ui.anim.ContainerTransformEasing
 import com.aibanking.agent.ui.anim.LocalBankMotionEnabled
 import com.aibanking.agent.ui.anim.ShimmerSwitch
@@ -100,14 +98,6 @@ import com.aibanking.agent.ui.anim.cascadeItem
 import com.aibanking.agent.ui.anim.containerTransformBoundsTransform
 import com.aibanking.agent.ui.anim.pageSlideSpec
 import com.aibanking.agent.ui.anim.rememberCascadeEntrance
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.zIndex
-import kotlinx.coroutines.delay
 import com.aibanking.agent.ui.components.BankBottomSheet
 import com.aibanking.agent.ui.components.BankButton
 import com.aibanking.agent.ui.components.BankCard
@@ -232,23 +222,6 @@ private fun CardsListScreen(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
 ) {
-    val lazyListState = rememberLazyListState()
-    var isExpanded by rememberSaveable { mutableStateOf(false) }
-
-    // 展开状态下按系统返回键，先收起堆叠，符合移动端操作习惯
-    BackHandler(enabled = isExpanded && state.cards.size > 1) {
-        isExpanded = false
-    }
-
-    // 当用户或自动化测试向下滚动列表时，自适应错位展开，确保所有卡片操作可无障碍触达
-    LaunchedEffect(lazyListState.firstVisibleItemIndex, lazyListState.isScrollInProgress) {
-        if (lazyListState.firstVisibleItemIndex > 0 || (lazyListState.isScrollInProgress && lazyListState.firstVisibleItemScrollOffset > 30)) {
-            if (!isExpanded && state.cards.size > 1) {
-                isExpanded = true
-            }
-        }
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -277,16 +250,6 @@ private fun CardsListScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回聊天")
                     }
                 },
-                actions = {
-                    if (state.cards.size > 1) {
-                        BankFilterChip(
-                            selected = isExpanded,
-                            onClick = { isExpanded = !isExpanded },
-                            label = { Text(if (isExpanded) "收起堆叠" else "错位展开") },
-                            modifier = Modifier.padding(end = 12.dp),
-                        )
-                    }
-                },
             )
         },
         floatingActionButton = {
@@ -307,45 +270,26 @@ private fun CardsListScreen(
             skeleton = { CardsSkeleton() },
         ) {
             val cascade = rememberCascadeEntrance(ready = state.cards.isNotEmpty())
-            val cardsCount = state.cards.size
-
             LazyColumn(
-                state = lazyListState,
                 modifier = Modifier.fillMaxSize().testTag(UiTags.CARD_LIST),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 104.dp),
-                verticalArrangement = Arrangement.spacedBy(if (isExpanded || cardsCount <= 1) 20.dp else 0.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 item {
                     BankScreenHeading("每张卡，都心中有数", subtitle = "管理卡片、限额与安全状态", eyebrow = "卡片管理")
-                }
-                if (cardsCount > 1) {
-                    item {
-                        CardStackModeBanner(
-                            isExpanded = isExpanded,
-                            cardCount = cardsCount,
-                            onToggle = { isExpanded = !isExpanded },
-                        )
-                    }
                 }
                 items(
                     count = state.cards.size,
                     key = { state.cards[it].cardId },
                 ) { index ->
-                    CardStackItem(
-                        index = index,
-                        totalCount = cardsCount,
-                        isExpanded = isExpanded,
-                        onExpandRequest = { isExpanded = true },
-                    ) {
-                        BankCardVisual(
-                            card = state.cards[index],
-                            viewModel = viewModel,
-                            modifier = Modifier.cascadeItem(cascade, index),
-                            sharedTransitionScope = sharedTransitionScope,
-                            animatedVisibilityScope = animatedVisibilityScope,
-                            onOpen = { onSelectCard(state.cards[index]) },
-                        )
-                    }
+                    BankCardVisual(
+                        card = state.cards[index],
+                        viewModel = viewModel,
+                        modifier = Modifier.cascadeItem(cascade, index),
+                        sharedTransitionScope = sharedTransitionScope,
+                        animatedVisibilityScope = animatedVisibilityScope,
+                        onOpen = { onSelectCard(state.cards[index]) },
+                    )
                 }
                 if (state.cards.isEmpty() && !state.panelBusy) {
                     item {
@@ -379,155 +323,6 @@ private fun CardsListScreen(
     }
 }
 
-/**
- * 堆叠与展开状态提示条。
- */
-@Composable
-private fun CardStackModeBanner(
-    isExpanded: Boolean,
-    cardCount: Int,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        onClick = onToggle,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                BankIcon(
-                    BankIconKind.Card,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Column {
-                    Text(
-                        if (isExpanded) "当前：错位排开视图" else "当前：3D 纵深堆叠视图",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        if (isExpanded) "已按顺序错位排开 · 点击卡片查看详情" else "多张卡片纵深前后景深排布 · 点击展开",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            BankFilterChip(
-                selected = isExpanded,
-                onClick = onToggle,
-                label = { Text(if (isExpanded) "收起" else "展开") },
-            )
-        }
-    }
-}
-
-/**
- * 纵深堆叠与错位展开单项容器。
- *
- * 在堆叠态下（progress = 0）：
- * - index == 0 前景卡全比例渲染，并在顶部预留露出后方卡片的空间；
- * - index > 0 后方卡片逐步缩小比例，并在 Y 轴上移至露出位置，形成前后景深层级；
- * - 展开时（progress = 1）按顺序以弹性动画依次错位排开；
- * - 收起时（progress -> 0）通过弹性回弹（StackSpringSpec）恢复堆叠。
- */
-@Composable
-private fun CardStackItem(
-    index: Int,
-    totalCount: Int,
-    isExpanded: Boolean,
-    onExpandRequest: () -> Unit,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    if (totalCount <= 1) {
-        Box(modifier) { content() }
-        return
-    }
-
-    val motion = LocalBankMotionEnabled.current
-    val animProgress = remember { Animatable(if (isExpanded) 1f else 0f) }
-
-    LaunchedEffect(isExpanded, motion) {
-        if (!motion) {
-            animProgress.snapTo(if (isExpanded) 1f else 0f)
-            return@LaunchedEffect
-        }
-        if (isExpanded) {
-            // 展开时按顺序错位排开：依次延迟推进
-            delay(index * CardStackMotion.STAGGER_STEP_MS)
-            animProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = CardStackMotion.StackSpringSpec,
-            )
-        } else {
-            // 收起时使用弹性动画恢复堆叠：从后往前依次弹性回弹收起
-            val reverseDelay = (totalCount - 1 - index).coerceAtLeast(0) * CardStackMotion.COLLAPSE_STEP_MS
-            delay(reverseDelay)
-            animProgress.animateTo(
-                targetValue = 0f,
-                animationSpec = CardStackMotion.StackSpringSpec,
-            )
-        }
-    }
-
-    val progress = animProgress.value
-    val params = CardStackMotion.computeParams(index, totalCount, progress)
-    val density = LocalDensity.current
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .zIndex(params.zIndex)
-            .graphicsLayer {
-                scaleX = params.scale
-                scaleY = params.scale
-                translationX = with(density) { params.translationXDp.toPx() }
-                transformOrigin = TransformOrigin(0.5f, 0f)
-                alpha = params.alpha
-                shadowElevation = with(density) { params.elevationDp.toPx() }
-            }
-            .layout { measurable, constraints ->
-                val placeable = measurable.measure(constraints)
-                val peekPx = with(density) { CardStackMotion.PEEK_OFFSET_PER_CARD.toPx() }
-                val maxTopPaddingPx = ((totalCount - 1).coerceAtMost(3) * peekPx)
-                val currentTopPaddingPx = (maxTopPaddingPx * (1f - progress)).toInt()
-
-                val layoutHeight = if (index == 0) {
-                    placeable.height + currentTopPaddingPx
-                } else {
-                    (placeable.height * progress).toInt()
-                }
-
-                val targetY = if (index == 0) {
-                    currentTopPaddingPx
-                } else {
-                    val collapsedOffset = -(placeable.height + index * peekPx).toInt()
-                    (collapsedOffset * (1f - progress)).toInt()
-                }
-
-                layout(placeable.width, layoutHeight) {
-                    placeable.placeRelative(0, targetY)
-                }
-            }
-            .clickable(
-                enabled = !isExpanded,
-                onClick = onExpandRequest,
-            ),
-    ) {
-        content()
-    }
-}
-
 /** 加载中的卡面骨架：与真实卡片排版一致的占位块（含高光扫过）。 */
 @Composable
 private fun CardsSkeleton() {
@@ -558,18 +353,9 @@ private fun BankCardVisual(
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     onOpen: () -> Unit = {},
 ) {
-    val isVirtual = card.type.contains("虚拟") || card.type.contains("VIRTUAL", ignoreCase = true)
     BankCard(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .border(
-                BorderStroke(
-                    1.dp,
-                    if (isVirtual) Color(0x33000000) else Color(0x38FFFFFF),
-                ),
-                shape = RoundedCornerShape(24.dp),
-            )
             .testTag("${UiTags.CARD_DETAIL}:${card.cardId}")
             .bankContainerTransform(
                 sharedTransitionScope = sharedTransitionScope,
@@ -621,30 +407,16 @@ private fun BankCardVisual(
 @Composable
 private fun CardFace(card: CardView) {
     val semantic = LocalBankSemanticColors.current
-    val isGold = card.label?.contains("金") == true || card.label?.contains("理财") == true
-    val isVirtual = card.type.contains("虚拟") || card.type.contains("VIRTUAL", ignoreCase = true)
-
-    val backgroundBrush = when (card.status) {
-        "LOST" -> Brush.linearGradient(listOf(semantic.cardLost, semantic.cardLost.copy(alpha = 0.85f)))
-        "FROZEN" -> Brush.linearGradient(listOf(semantic.cardFrozen, semantic.cardFrozen.copy(alpha = 0.85f)))
-        else -> when {
-            isVirtual -> Brush.linearGradient(
-                listOf(Color(0xFFE6ECF5), Color(0xFFD4DEEC), Color(0xFFC0CFDE))
-            )
-            isGold -> Brush.linearGradient(
-                listOf(Color(0xFF8C6420), Color(0xFFA67C2E), Color(0xFFC49A45), Color(0xFF8C6420))
-            )
-            else -> Brush.linearGradient(
-                listOf(Color(0xFF14223D), Color(0xFF1E355F), Color(0xFF264375))
-            )
-        }
+    val base = when (card.status) {
+        "LOST" -> semantic.cardLost
+        "FROZEN" -> semantic.cardFrozen
+        else -> if (card.type.contains("虚拟") || card.type.contains("VIRTUAL", ignoreCase = true)) semantic.cardVirtual else semantic.cardActive
     }
-
-    val dark = !isVirtual && card.status != "LOST"
+    val dark = base.luminance() < 0.4f
     val foreground = if (dark) Color.White else BankPalette.Ink
     Box(
         Modifier.fillMaxWidth()
-            .background(backgroundBrush)
+            .background(base)
             .cardHolographicSheen()
             .padding(24.dp),
     ) {
