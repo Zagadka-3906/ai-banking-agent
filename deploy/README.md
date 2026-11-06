@@ -84,6 +84,23 @@ journalctl -u anyan-gateway -n 100 --no-pager
 
 写盘失败返回 503 / `LEDGER_PERSISTENCE_FAILED`，检查磁盘、目录权限和健康详情的 `ledger_persistence`。加载校验失败冻结写入并返回 `LEDGER_STORE_BLOCKED`，先核对备份来源。结果未知时查询原回执，不能自动重复付款。
 
+### 账本读权限导致的调度报错
+
+`Due-task scheduler tick failed` 是调度循环的外层错误，需查看紧随其后的堆栈。若异常是 `LEDGER_STORE_BLOCKED`，并且启动日志包含 `账本文件无法读取: PermissionError`，先检查服务用户和文件权限，不能据此认定账本内容损坏：
+
+```bash
+systemctl show anyan-core -p User -p Group
+namei -l /var/lib/anyan/ledger.json
+stat -c '%a %U:%G %n' /var/lib/anyan/ledger.json
+runuser -u anyan -- test -r /var/lib/anyan/ledger.json
+```
+
+默认 Core 用户为 `anyan`，账本应由 `anyan:anyan` 持有并保持 `600` 权限。恢复前备份原文件、所有者、权限与哈希，使用对应配置验证原账本的 HMAC 和记录结构；仅在确认是权限问题后修正文件归属。不要删除账本、重新签名或绕过加载校验。文件权限修复后重启 Core，使启动时设置的写入冻结状态重新接受校验。
+
+检查 `/api/v1/security/health` 的 `ledger_persistence`：`file_loaded=true`、`file_rejected=false`、`writes_frozen=false`，并观察至少两个调度周期没有新异常。普通 `/healthz` 仅报告进程存活，即使账本冻结也可能返回正常。Core 重启后 App 需重新登录。
+
+离线维护应使用服务用户运行，或在停服维护后恢复原有文件归属；root 进程通过原子替换写入账本时可能创建 `root:root` 的新文件。账户管理应走运维台的备份、停服与权限恢复流程，维护后同时复核内容完整性和服务用户可读性。
+
 ## 发布后核对
 
 1. 核对服务器提交、模型和配置，检查 Core 与 Gateway 健康。
